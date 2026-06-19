@@ -45,9 +45,10 @@ class CarNewsRssSpider(scrapy.Spider):
         "RETRY_TIMES": 2,
     }
 
-    async def start(self):
-        for feed in FEEDS:
-            yield scrapy.Request(feed, callback=self.parse_feed)
+    start_urls = FEEDS
+
+    def parse(self, response):
+        return self.parse_feed(response)
 
     def parse_feed(self, response):
         """Parse RSS/Atom XML and follow each article link."""

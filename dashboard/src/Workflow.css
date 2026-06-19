@@ -1,0 +1,304 @@
+.workflow-layout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+  font-family: 'Outfit', sans-serif;
+}
+
+.miro-board {
+  display: flex;
+  align-items: center;
+  gap: 60px;
+  padding: 40px;
+  width: 100%;
+  max-width: 1400px;
+  position: relative;
+  z-index: 10;
+}
+
+/* Connection Arrows */
+.workflow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.workflow-arrow svg {
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.05));
+}
+
+/* Block Base */
+.workflow-block {
+  flex: 1;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  box-shadow: 0 20px 50px rgba(31, 38, 135, 0.05), inset 0 0 0 1px rgba(255,255,255,0.5);
+  padding: 30px;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.workflow-block::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  padding: 2px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(255,255,255,0.2));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.workflow-block:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 30px 60px rgba(31, 38, 135, 0.08), inset 0 0 0 1px rgba(255,255,255,0.6);
+}
+
+.block-header {
+  margin-bottom: 25px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.block-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.block-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.block-icon.get {
+  background: linear-gradient(135deg, rgba(46, 134, 222, 0.15), rgba(46, 134, 222, 0.05));
+  color: var(--secondary-color);
+}
+
+.block-icon.clean {
+  background: linear-gradient(135deg, rgba(255, 159, 67, 0.15), rgba(255, 159, 67, 0.05));
+  color: var(--primary-color);
+}
+
+.block-icon.save {
+  background: linear-gradient(135deg, rgba(46, 213, 115, 0.15), rgba(46, 213, 115, 0.05));
+  color: #2ed573;
+}
+
+/* Get Block Rows */
+.get-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+
+.get-row {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 12px;
+  padding: 8px;
+  gap: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.02);
+  transition: all 0.2s;
+}
+
+.get-row:focus-within {
+  border-color: rgba(46, 134, 222, 0.4);
+  box-shadow: 0 4px 15px rgba(46, 134, 222, 0.1);
+}
+
+.row-dropdown {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: 'Outfit', sans-serif;
+  color: var(--text-dark);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 5px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.row-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(0,0,0,0.04);
+}
+
+.row-input {
+  border: none;
+  outline: none;
+  width: 100%;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+  background: transparent;
+}
+
+.row-icon {
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+}
+
+.add-row-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border: 2px dashed rgba(0,0,0,0.1);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.4);
+  color: var(--text-light);
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: auto;
+}
+
+.add-row-btn:hover {
+  background: rgba(255,255,255,0.8);
+  border-color: var(--secondary-color);
+  color: var(--secondary-color);
+}
+
+/* Cleanup Block */
+.cleanup-status {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  justify-content: center;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  background: rgba(255,255,255,0.6);
+  padding: 15px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.04);
+}
+
+.status-spinner {
+  color: var(--primary-color);
+}
+
+.status-text {
+  font-weight: 500;
+  color: var(--text-dark);
+}
+
+/* Save Block */
+.save-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  flex: 1;
+  justify-content: center;
+}
+
+.summary-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.summary-label {
+  color: var(--text-light);
+  font-weight: 500;
+}
+
+.summary-value {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text-dark);
+}
+
+.save-btn {
+  background: linear-gradient(135deg, #2ed573, #26de81);
+  color: white;
+  border: none;
+  padding: 15px;
+  border-radius: 12px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(46, 213, 115, 0.3);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.save-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 25px rgba(46, 213, 115, 0.4);
+}
+
+/* Miro style floating badges */
+.miro-badge {
+  position: absolute;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: white;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+  border: 1px solid rgba(0,0,0,0.05);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 20;
+}
+
+.miro-badge.top-right {
+  top: -15px;
+  right: 20px;
+  color: #ff4757;
+}
+
+.miro-badge.bottom-left {
+  bottom: -15px;
+  left: 20px;
+  color: var(--secondary-color);
+}
