@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Globe, Twitter, Facebook, Link2, Type, Plus, 
+  Globe, AtSign, Share2, Link2, Type, Plus, 
   ArrowRight, DownloadCloud, Sparkles, Database, 
   CheckCircle2, RefreshCw, BarChart2 
 } from 'lucide-react';
@@ -9,8 +9,8 @@ import '../Workflow.css';
 
 const PlatformIcon = ({ platform }) => {
   if (platform === 'web') return <Globe size={18} />;
-  if (platform === 'x') return <Twitter size={18} />;
-  if (platform === 'facebook') return <Facebook size={18} />;
+  if (platform === 'x') return <AtSign size={18} />;
+  if (platform === 'facebook') return <Share2 size={18} />;
   return <Globe size={18} />;
 };
 
