@@ -1,6 +1,0 @@
-fastapi==0.110.0
-uvicorn==0.29.0
-scrapy==2.11.1
-trafilatura==1.8.1
-requests==2.31.0
-supabase==2.4.5

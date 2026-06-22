@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+articles.json
+enriched_articles.json
+enriched_articles.csv
+output.json
+test_articles.json
+fresh.json
+*.log

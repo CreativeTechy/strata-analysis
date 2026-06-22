@@ -1,11 +1,11 @@
 import React from 'react';
-import { Activity, MessageSquare, TrendingUp } from 'lucide-react';
+import { Activity, MessageSquare, TrendingUp, Database } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 
 const COLORS = ['#2ed573', '#ff4757', '#747d8c'];
 
-export default function StatsOverview({ articles }) {
+export default function StatsOverview({ articles, crawlCount = null }) {
   const total = articles.length;
   
   const sentimentCounts = articles.reduce((acc, curr) => {
@@ -32,8 +32,19 @@ export default function StatsOverview({ articles }) {
           <Activity size={24} />
         </div>
         <div className="stat-info">
-          <h4>Total Articles</h4>
+          <h4>Curated Articles</h4>
           <p>{total}</p>
+        </div>
+      </motion.div>
+
+      <motion.div className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,71,87,0.12))', color: '#ff6b35' }}>
+          <Database size={24} />
+        </div>
+        <div className="stat-info">
+          <h4>Crawl Corpus</h4>
+          <p>{crawlCount == null ? '—' : crawlCount.toLocaleString()}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>spider pages → Spark</span>
         </div>
       </motion.div>
 

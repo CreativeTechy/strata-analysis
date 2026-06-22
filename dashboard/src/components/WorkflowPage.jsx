@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Globe, AtSign, Share2, Link2, Type, Plus, 
-  ArrowRight, DownloadCloud, Sparkles, Database, 
-  CheckCircle2, RefreshCw, BarChart2 
+import {
+  Globe, AtSign, Share2, Link2, Type, Plus,
+  ArrowRight, DownloadCloud, Sparkles, Database,
+  CheckCircle2, RefreshCw
 } from 'lucide-react';
 import '../Workflow.css';
 
@@ -20,36 +20,52 @@ const TypeIcon = ({ type }) => {
   return <Link2 size={18} />;
 };
 
-export default function WorkflowPage({ articles = [] }) {
-  const [rows, setRows] = useState([
-    { id: 1, platform: 'web', type: 'link', value: 'https://www.bmwblog.com/feed/' }
-  ]);
-  
-  const [workflowState, setWorkflowState] = useState('idle'); // idle, cleaning, ready
+export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [] }) {
+  // Source rows reflect the real configured feeds (from /api/feeds).
+  const seedRows = (list) =>
+    (list.length ? list : ['https://www.bmwblog.com/feed/']).map((url, i) => ({
+      id: i + 1, platform: 'web', type: 'link', value: url,
+    }));
+
+  const [rows, setRows] = useState(() => seedRows(feeds));
+
+  useEffect(() => {
+    if (feeds.length) setRows(seedRows(feeds));
+  }, [feeds]);
+
+  // State is driven by the REAL pipeline, not a timer.
+  const hasData = articles.length > 0;
+  const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
+
+  // Stats computed from the REAL Supabase rows.
+  const stats = useMemo(() => {
+    const total = articles.length;
+    const positive = articles.filter(
+      (a) => (a.sentiment || '').toLowerCase() === 'positive'
+    ).length;
+    const sources = new Set(articles.map((a) => a.source).filter(Boolean)).size;
+    const avg = total
+      ? (articles.reduce((s, a) => s + (Number(a.relevance_score) || 0), 0) / total).toFixed(1)
+      : '0.0';
+    return { total, positive, sources, avg };
+  }, [articles]);
 
   const addRow = () => {
     setRows([...rows, { id: Date.now(), platform: 'web', type: 'keywords', value: '' }]);
   };
 
   const updateRow = (id, field, value) => {
-    setRows(rows.map(r => r.id === id ? { ...r, [field]: value } : r));
-  };
-
-  const triggerCleanup = () => {
-    setWorkflowState('cleaning');
-    setTimeout(() => {
-      setWorkflowState('ready');
-    }, 3000);
+    setRows(rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   };
 
   return (
     <div className="workflow-layout">
       <div className="bg-pattern"></div>
-      
+
       <div className="miro-board">
-        
+
         {/* BLOCK 1: GET */}
-        <motion.div 
+        <motion.div
           className="workflow-block"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -57,7 +73,7 @@ export default function WorkflowPage({ articles = [] }) {
           <div className="miro-badge top-right">
             <Sparkles size={14} /> Sources
           </div>
-          
+
           <div className="block-header">
             <div className="block-icon get">
               <DownloadCloud size={20} />
@@ -67,47 +83,51 @@ export default function WorkflowPage({ articles = [] }) {
 
           <div className="get-rows">
             <AnimatePresence>
-              {rows.map(row => (
-                <motion.div 
+              {rows.map((row) => (
+                <motion.div
                   key={row.id}
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
                   className="get-row"
                 >
-                  <div className="row-icon">
-                    <PlatformIcon platform={row.platform} />
+                  <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
+                      <PlatformIcon platform={row.platform} />
+                    </div>
+                    <select
+                      value={row.platform}
+                      onChange={(e) => updateRow(row.id, 'platform', e.target.value)}
+                      style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
+                    >
+                      <option value="web">Web RSS</option>
+                      <option value="x">X (Twitter)</option>
+                      <option value="facebook">Facebook</option>
+                    </select>
                   </div>
-                  <select 
-                    className="row-dropdown"
-                    value={row.platform}
-                    onChange={(e) => updateRow(row.id, 'platform', e.target.value)}
-                  >
-                    <option value="web">Web RSS</option>
-                    <option value="x">X (Twitter)</option>
-                    <option value="facebook">Facebook</option>
-                  </select>
 
                   <div className="row-input-wrapper">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       className="row-input"
-                      placeholder={row.type === 'link' ? "Paste URL..." : "Enter keywords..."}
+                      placeholder={row.type === 'link' ? 'Paste URL...' : 'Enter keywords...'}
                       value={row.value}
                       onChange={(e) => updateRow(row.id, 'value', e.target.value)}
                     />
                   </div>
 
-                  <select 
-                    className="row-dropdown"
-                    value={row.type}
-                    onChange={(e) => updateRow(row.id, 'type', e.target.value)}
-                  >
-                    <option value="link">Link</option>
-                    <option value="keywords">Keywords</option>
-                  </select>
-                  <div className="row-icon">
-                    <TypeIcon type={row.type} />
+                  <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
+                      <TypeIcon type={row.type} />
+                    </div>
+                    <select
+                      value={row.type}
+                      onChange={(e) => updateRow(row.id, 'type', e.target.value)}
+                      style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
+                    >
+                      <option value="link">Link</option>
+                      <option value="keywords">Keywords</option>
+                    </select>
                   </div>
                 </motion.div>
               ))}
@@ -117,14 +137,18 @@ export default function WorkflowPage({ articles = [] }) {
           <button className="add-row-btn" onClick={addRow}>
             <Plus size={18} /> Add Source
           </button>
-          
-          <button 
-            className="btn-primary" 
-            style={{ marginTop: '15px' }}
-            onClick={triggerCleanup}
+
+          <button
+            className="btn-primary"
+            style={{ marginTop: '15px', opacity: isScraping ? 0.7 : 1 }}
+            onClick={onRunScraper}
+            disabled={isScraping}
           >
-            Run Extractor
+            {isScraping ? (<><RefreshCw size={16} className="spin" /> Running…</>) : 'Run Extractor'}
           </button>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: '8px', textAlign: 'center' }}>
+            Sources are configured in feeds.txt. Editing rows here is a preview.
+          </p>
         </motion.div>
 
         {/* ARROW 1 */}
@@ -133,7 +157,7 @@ export default function WorkflowPage({ articles = [] }) {
         </div>
 
         {/* BLOCK 2: CLEANUP */}
-        <motion.div 
+        <motion.div
           className="workflow-block"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -141,7 +165,7 @@ export default function WorkflowPage({ articles = [] }) {
           style={{ opacity: workflowState === 'idle' ? 0.5 : 1 }}
         >
           <div className="miro-badge bottom-left" style={{ color: 'var(--primary-color)' }}>
-            <RefreshCw size={14} /> Pipeline Active
+            <RefreshCw size={14} /> {isScraping ? 'Pipeline Running' : 'Pipeline Active'}
           </div>
 
           <div className="block-header">
@@ -157,29 +181,24 @@ export default function WorkflowPage({ articles = [] }) {
                 Waiting for extraction...
               </div>
             )}
-            
+
             {(workflowState === 'cleaning' || workflowState === 'ready') && (
               <>
-                <motion.div className="status-item" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-                  <div className="status-spinner">
-                    {workflowState === 'cleaning' ? <RefreshCw size={18} className="spin" /> : <CheckCircle2 size={18} color="#2ed573" />}
-                  </div>
-                  <div className="status-text">Parsing Raw HTML content</div>
-                </motion.div>
-                
-                <motion.div className="status-item" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.5 }}>
-                  <div className="status-spinner">
-                    {workflowState === 'cleaning' ? <RefreshCw size={18} className="spin" /> : <CheckCircle2 size={18} color="#2ed573" />}
-                  </div>
-                  <div className="status-text">DeepSeek AI Sentiment Analysis</div>
-                </motion.div>
-                
-                <motion.div className="status-item" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 1 }}>
-                  <div className="status-spinner">
-                    {workflowState === 'cleaning' ? <RefreshCw size={18} className="spin" /> : <CheckCircle2 size={18} color="#2ed573" />}
-                  </div>
-                  <div className="status-text">Extracting Car Models & Brands</div>
-                </motion.div>
+                {['Parsing Raw HTML content', 'DeepSeek AI Sentiment Analysis', 'Extracting Car Models & Brands'].map((label, i) => (
+                  <motion.div key={label} className="status-item" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.4 }}>
+                    <div className="status-spinner">
+                      {workflowState === 'cleaning'
+                        ? <RefreshCw size={18} className="spin" />
+                        : <CheckCircle2 size={18} color="#2ed573" />}
+                    </div>
+                    <div className="status-text">{label}</div>
+                  </motion.div>
+                ))}
+                {isScraping && (
+                  <p style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: '10px', textAlign: 'center' }}>
+                    Running on GitHub Actions — new rows land in ~3 min.
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -191,12 +210,12 @@ export default function WorkflowPage({ articles = [] }) {
         </div>
 
         {/* BLOCK 3: SAVE */}
-        <motion.div 
+        <motion.div
           className="workflow-block"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          style={{ opacity: workflowState !== 'ready' ? 0.5 : 1 }}
+          style={{ opacity: workflowState === 'idle' ? 0.5 : 1 }}
         >
           <div className="block-header">
             <div className="block-icon save">
@@ -206,37 +225,37 @@ export default function WorkflowPage({ articles = [] }) {
           </div>
 
           <div className="save-summary">
-            {workflowState !== 'ready' ? (
+            {!hasData ? (
               <div style={{ textAlign: 'center', color: 'var(--text-light)' }}>
                 Awaiting enriched data...
               </div>
             ) : (
               <>
                 <div className="summary-stat">
-                  <span className="summary-label">Total Rows Processed</span>
-                  <span className="summary-value">53 Rows</span>
+                  <span className="summary-label">Total Rows Stored</span>
+                  <span className="summary-value">{stats.total} Rows</span>
                 </div>
                 <div className="summary-stat">
                   <span className="summary-label">Positive Sentiment</span>
-                  <span className="summary-value" style={{ color: '#2ed573' }}>12 Articles</span>
+                  <span className="summary-value" style={{ color: '#2ed573' }}>{stats.positive} Articles</span>
                 </div>
                 <div className="summary-stat">
-                  <span className="summary-label">Facebook Sources</span>
-                  <span className="summary-value" style={{ color: 'var(--secondary-color)' }}>0 Found</span>
+                  <span className="summary-label">Unique Sources</span>
+                  <span className="summary-value" style={{ color: 'var(--secondary-color)' }}>{stats.sources} Found</span>
                 </div>
                 <div className="summary-stat">
                   <span className="summary-label">Average Relevance</span>
-                  <span className="summary-value" style={{ color: 'var(--primary-color)' }}>8.4 / 10</span>
+                  <span className="summary-value" style={{ color: 'var(--primary-color)' }}>{stats.avg} / 10</span>
                 </div>
 
-                <button className="save-btn">
-                  <Database size={18} /> Push to Supabase
-                </button>
+                <div className="save-btn" style={{ cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                  <CheckCircle2 size={18} /> Synced to Supabase
+                </div>
               </>
             )}
           </div>
         </motion.div>
-        
+
       </div>
     </div>
   );

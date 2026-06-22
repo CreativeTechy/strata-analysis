@@ -1,0 +1,20 @@
+name = "strata-media"
+main = "worker/index.js"
+compatibility_date = "2024-09-23"
+
+# Serve the built dashboard. Run `npm run build` in dashboard/ first.
+[assets]
+directory = "dashboard/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Non-secret config for the GitHub Actions relay.
+[vars]
+GH_OWNER = "hsnmm"
+GH_REPO = "strata-media"
+GH_WORKFLOW = "scraper.yml"
+GH_REF = "main"
+
+# GITHUB_TOKEN is a SECRET — set it with:
+#   wrangler secret put GITHUB_TOKEN
+# (a fine-grained PAT scoped to this repo with Actions: read & write)

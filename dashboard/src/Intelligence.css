@@ -199,3 +199,41 @@
   gap: 20px;
   overflow-y: auto;
 }
+
+/* Markdown rendering inside chat bubbles */
+.md-content {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: #2c2c2c;
+  width: 100%;
+}
+.md-content > *:first-child { margin-top: 0; }
+.md-content > *:last-child { margin-bottom: 0; }
+.md-content h1,
+.md-content h2,
+.md-content h3 {
+  font-size: 0.98rem;
+  font-weight: 700;
+  margin: 14px 0 6px;
+  color: var(--text-dark, #1a1a1a);
+}
+.md-content p { margin: 0 0 10px; }
+.md-content strong { font-weight: 700; color: #1a1a1a; }
+.md-content ul,
+.md-content ol { margin: 0 0 10px; padding-left: 18px; }
+.md-content li { margin: 3px 0; }
+.md-content code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.85em;
+}
+.md-content a { color: var(--secondary-color, #2e86de); text-decoration: underline; }
+.md-content hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 12px 0; }
+.md-content blockquote {
+  border-left: 3px solid var(--primary-color, #ff6b35);
+  margin: 8px 0; padding: 2px 0 2px 12px; color: #555;
+}
+.md-content table { border-collapse: collapse; margin: 8px 0; font-size: 0.85rem; }
+.md-content th,
+.md-content td { border: 1px solid rgba(0,0,0,0.1); padding: 4px 8px; text-align: left; }

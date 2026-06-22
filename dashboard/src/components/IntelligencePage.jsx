@@ -3,6 +3,8 @@ import { supabase } from '../supabaseClient';
 import '../Intelligence.css';
 import { Send, Bot, User, X, FileText, ChevronRight, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function IntelligencePage() {
   const [articles, setArticles] = useState([]);
@@ -15,6 +17,7 @@ export default function IntelligencePage() {
 
   // Chat
   const [chatInput, setChatInput] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
   const [chatHistory, setChatHistory] = useState([
     { role: 'bot', text: "Hello! I am your Intelligence Copilot. I've indexed all the latest scraped car news. You can use the filters on the left to narrow down the articles, and ask me to analyze them, summarize key trends, or draft a social media report." }
   ]);
@@ -22,22 +25,27 @@ export default function IntelligencePage() {
   // Article preview
   const [selectedArticle, setSelectedArticle] = useState(null);
 
-  // Fetch data
+  // Fetch BOTH datasets so the Copilot reasons over the curated feed AND the
+  // spider's crawl volume. Interleaved so any context slice gets a mix of both.
   useEffect(() => {
     async function fetchData() {
-      // For now, load from local data.json or fallback to supabase if wired
       try {
-        const { data, error } = await supabase.from('articles').select('*').order('published', { ascending: false });
-        if (data && data.length > 0) {
-          setArticles(data);
-        } else {
-          // Fallback to local
-          const res = await fetch('/data.json');
-          if (res.ok) {
-            const localData = await res.json();
-            setArticles(localData);
-          }
+        const [arts, crawl] = await Promise.all([
+          supabase.from('articles').select('*').order('published', { ascending: false }),
+          supabase.from('crawl_pages').select('url,source,title,text').order('created_at', { ascending: false }).limit(400),
+        ]);
+        const curated = (arts.data || []).map(a => ({ ...a, origin: 'curated' }));
+        const crawled = (crawl.data || []).map(c => ({
+          url: c.url, source: c.source, title: c.title, text: c.text,
+          summary: (c.text || '').slice(0, 280),
+          sentiment: null, category: 'crawl', relevance_score: null, origin: 'crawl',
+        }));
+        const combined = [];
+        for (let i = 0; i < Math.max(curated.length, crawled.length); i++) {
+          if (curated[i]) combined.push(curated[i]);
+          if (crawled[i]) combined.push(crawled[i]);
         }
+        setArticles(combined);
       } catch (e) {
         console.error(e);
       }
@@ -73,21 +81,42 @@ export default function IntelligencePage() {
     }
   };
 
-  const handleSendMessage = () => {
-    if (!chatInput.trim()) return;
-    
-    // Add user message
-    const newHistory = [...chatHistory, { role: 'user', text: chatInput }];
+  const handleSendMessage = async (presetText) => {
+    const question = (presetText ?? chatInput).trim();
+    if (!question || isThinking) return;
+
+    const newHistory = [...chatHistory, { role: 'user', text: question }];
     setChatHistory(newHistory);
     setChatInput('');
+    setIsThinking(true);
 
-    // Mock AI response
-    setTimeout(() => {
-      setChatHistory([
-        ...newHistory, 
-        { role: 'bot', text: `I've analyzed the ${filteredArticles.length} filtered articles regarding your request. Based on the selected data, the overall sentiment indicates a shift in market perception. (This is a mocked AI response - wire this up to DeepSeek or Claude API in your backend!)` }
-      ]);
-    }, 1500);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          total: filteredArticles.length,
+          articles: filteredArticles.map(a => ({
+            source: a.source,
+            sentiment: a.sentiment,
+            category: a.category,
+            title: a.title,
+            summary: a.summary,
+            relevance_score: a.relevance_score,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const text = res.ok
+        ? (data.reply || 'No response.')
+        : `⚠️ ${data.error || `Copilot request failed (${res.status}).`}`;
+      setChatHistory([...newHistory, { role: 'bot', text }]);
+    } catch {
+      setChatHistory([...newHistory, { role: 'bot', text: '⚠️ Could not reach the Copilot backend. Is the Worker deployed with DEEPSEEK_API_KEY set?' }]);
+    } finally {
+      setIsThinking(false);
+    }
   };
 
   return (
@@ -148,7 +177,10 @@ export default function IntelligencePage() {
       <div className="intell-chat">
         <div style={{ padding: '20px 40px', borderBottom: '1px solid rgba(0,0,0,0.05)', background: 'rgba(255,255,255,0.4)', backdropFilter: 'blur(10px)' }}>
           <h2 className="title" style={{ fontSize: '1.5rem' }}>Strata Intelligence Copilot</h2>
-          <p className="subtitle" style={{ fontSize: '0.9rem' }}>Chatting with context of {filteredArticles.length} articles</p>
+          <p className="subtitle" style={{ fontSize: '0.9rem' }}>
+            Chatting over {filteredArticles.length} items —{' '}
+            {filteredArticles.filter(a => a.origin !== 'crawl').length} curated + {filteredArticles.filter(a => a.origin === 'crawl').length} crawled
+          </p>
         </div>
 
         <div className="chat-history">
@@ -160,29 +192,44 @@ export default function IntelligencePage() {
               className={`chat-bubble ${msg.role}`}
             >
               <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                {msg.role === 'bot' ? <Bot size={18} style={{ marginTop: '2px', color: 'var(--primary-color)' }} /> : <User size={18} style={{ marginTop: '2px' }} />}
-                <div>{msg.text}</div>
+                {msg.role === 'bot' ? <Bot size={18} style={{ marginTop: '2px', color: 'var(--primary-color)', flexShrink: 0 }} /> : <User size={18} style={{ marginTop: '2px', flexShrink: 0 }} />}
+                {msg.role === 'bot' ? (
+                  <div className="md-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
+                )}
               </div>
             </motion.div>
           ))}
+          {isThinking && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="chat-bubble bot">
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <Bot size={18} style={{ color: 'var(--primary-color)' }} />
+                <div style={{ color: 'var(--text-light)' }}>Analyzing {filteredArticles.length} articles…</div>
+              </div>
+            </motion.div>
+          )}
         </div>
 
         <div className="chat-input-container">
           <div className="chat-input-box">
-            <input 
-              type="text" 
-              placeholder={`Ask about the ${filteredArticles.length} filtered articles...`}
+            <input
+              type="text"
+              placeholder={isThinking ? 'Thinking…' : `Ask about the ${filteredArticles.length} filtered articles...`}
               value={chatInput}
+              disabled={isThinking}
               onChange={e => setChatInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
             />
-            <button className="chat-send-btn" onClick={handleSendMessage}>
+            <button className="chat-send-btn" onClick={() => handleSendMessage()} disabled={isThinking}>
               <Send size={18} />
             </button>
           </div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '15px', justifyContent: 'center' }}>
-             <button className="btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}>✨ Summarize Sentiment</button>
-             <button className="btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}>📄 Draft Event Report</button>
+             <button className="btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }} disabled={isThinking} onClick={() => handleSendMessage('Summarize the overall sentiment and the key trends across these articles.')}>✨ Summarize Sentiment</button>
+             <button className="btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }} disabled={isThinking} onClick={() => handleSendMessage('Draft a short social media report highlighting the most newsworthy events in these articles.')}>📄 Draft Event Report</button>
           </div>
         </div>
       </div>
@@ -241,7 +288,7 @@ export default function IntelligencePage() {
               <h1 style={{ fontSize: '2rem', marginBottom: '10px' }}>{selectedArticle.title}</h1>
               <div style={{ color: 'var(--text-light)', marginBottom: '30px', display: 'flex', gap: '15px' }}>
                 <span>{selectedArticle.source}</span>
-                <span>{new Date(selectedArticle.published).toLocaleDateString()}</span>
+                {selectedArticle.published && <span>{new Date(selectedArticle.published).toLocaleDateString()}</span>}
                 {selectedArticle.author && <span>By {selectedArticle.author}</span>}
               </div>
 

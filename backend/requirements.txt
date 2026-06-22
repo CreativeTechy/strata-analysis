@@ -1,0 +1,6 @@
+scrapy>=2.11
+trafilatura>=1.9
+requests>=2.31
+supabase>=2.4
+fastapi>=0.110
+uvicorn[standard]>=0.29

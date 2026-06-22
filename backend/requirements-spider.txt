@@ -1,0 +1,10 @@
+# Optional heavy engine for Spider Mode.
+# Spider Mode works WITHOUT this (native requests+parsel+trafilatura engine in
+# spider.py). Install this to auto-enable the faster Crawl4AI engine.
+#
+# NOTE: crawl4ai's dependency tree currently has no wheels for Python 3.13/3.14.
+# Use a Python 3.10–3.12 venv:
+#     python3.12 -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements.txt -r requirements-spider.txt
+#     crawl4ai-setup        # only if you want the browser strategy too
+crawl4ai>=0.9

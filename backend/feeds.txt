@@ -1,0 +1,9 @@
+# Car-news RSS/Atom sources — one feed URL per line.
+# Lines starting with '#' and blank lines are ignored.
+# Add or remove a source here; no code changes needed.
+# Override at runtime with the FEEDS env var (comma-separated).
+
+https://www.motor1.com/rss/news/all/
+https://www.carscoops.com/feed/
+https://www.autoblog.com/rss.xml
+https://www.bmwblog.com/feed/
