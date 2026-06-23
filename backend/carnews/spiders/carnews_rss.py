@@ -2,10 +2,10 @@
 Car-news spider: RSS discovery -> article fetch -> trafilatura extraction.
 
 Run from the backend/ directory:
-    scrapy crawl carnews_rss -O articles.json
+    scrapy crawl carnews_rss -O <output-file>
 
-Sources are defined in feeds.txt (or the FEEDS env var) and loaded via
-config.load_feeds(), so adding/removing a publisher needs no code change. The
+Sources come from Supabase via config.load_feeds() (or the FEEDS env var
+override), so adding/removing a publisher does not require code changes. The
 spider never hand-writes CSS selectors per site -- trafilatura extracts
 title/date/text generically, so one spider covers every publisher.
 """

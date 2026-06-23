@@ -4,7 +4,7 @@ A pipeline that scrapes automotive news, enriches it with AI, stores it in
 Supabase, and surfaces it in a dashboard.
 
 ```
-  feeds.txt
+  Supabase `feeds`
      │
      ▼
 ┌──────────┐   ┌───────────┐   ┌─────────┐   ┌──────────────┐
@@ -19,7 +19,6 @@ Supabase, and surfaces it in a dashboard.
 
 ```
 backend/                 Python pipeline + FastAPI
-  feeds.txt              dynamic source list (edit to change sources)
   config.py              load_feeds() + env-based credentials
   carnews/               Scrapy project (the scraper)
     spiders/carnews_rss.py
@@ -35,9 +34,9 @@ dashboard/               React + Vite UI (reads live from Supabase)
 ## Stages
 
 1. **Scraper** — `carnews/spiders/carnews_rss.py`. Reads sources from
-   `feeds.txt` (or the `FEEDS` env var) via `config.load_feeds()`, follows each
-   RSS/Atom entry, and extracts clean title/date/text with trafilatura. Add or
-   remove a publisher by editing `feeds.txt` — no code change.
+   Supabase `feeds` (or the `FEEDS` env var override) via `config.load_feeds()`,
+   follows each RSS/Atom entry, and extracts clean title/date/text with
+   trafilatura. Add or remove a publisher from the dashboard — no code change.
 2. **Enricher** — `enrich.py`. Cleans/dedupes, then tags each article with
    DeepSeek (summary, brands, car_models, sentiment, category, relevance). Falls
    back to neutral defaults if `DEEPSEEK_API_KEY` is unset.

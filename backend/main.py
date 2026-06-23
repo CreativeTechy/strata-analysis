@@ -10,9 +10,11 @@ This API triggers the jobs and exposes configured feeds to the dashboard.
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import uuid
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,26 +25,21 @@ from fastapi.responses import StreamingResponse
 
 import config
 from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
+from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
+STORAGE_DIR = BASE_DIR.parent / "storage"
 
-COPILOT_SYSTEM_PROMPT = (
-    "You are Strata Intelligence Copilot, an analyst for automotive news. You "
-    "receive a set of scraped articles (title, source, sentiment, category, "
-    "summary). Answer using ONLY these articles, and never contradict the stated "
-    "article count.\n\n"
-    "DEFAULT: keep it short and high-signal - a scannable overview, ~120-180 "
-    "words. For a general question, reply with: **Takeaway** (one sentence), "
-    "**Mood** (sentiment split + tone), **Negatives** (1-2 sentences), "
-    "**Positives** (1-2 sentences), and **Common threads** (1-3 short bullets, or "
-    "what stands out if there's no clear pattern). Use light Markdown. Do NOT "
-    "list every article, cite 'Article N', or open with 'Based on the N "
-    "articles'.\n\n"
-    "DEEP DIVE: only when the user explicitly asks to go deeper / expand / give "
-    "details / draft a full report - then give the longer structured breakdown "
-    "with evidence and specific models/brands.\n\n"
-    "Always format with clean Markdown."
-)
+
+def _load_text_asset(filename, fallback=""):
+    path = STORAGE_DIR / filename
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return fallback.strip()
+
+
+COPILOT_SYSTEM_PROMPT = _load_text_asset("copilot_system_prompt.txt")
 
 app = FastAPI(title="Strata Scraper API")
 
@@ -55,20 +52,73 @@ app.add_middleware(
 )
 
 
-def run_scraper_pipeline():
-    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+def _load_pipeline_stats(stats_file: Path):
+    if not stats_file.exists():
+        return {}
     try:
-        print("1. Scraping (carnews_rss)...")
-        subprocess.run(
-            ["scrapy", "crawl", "carnews_rss", "-O", "articles.json"],
-            cwd=BASE_DIR,
-            check=True,
-        )
-        print("2. Enriching + saving...")
-        subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True)
-        print("Pipeline complete!")
-    except subprocess.CalledProcessError as e:
-        print(f"Pipeline failed: {e}")
+        return json.loads(stats_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def run_scraper_pipeline(run_id: str):
+    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+    env = os.environ.copy()
+    env["PIPELINE_RUN_ID"] = run_id
+    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
+        run_path = Path(run_dir)
+        raw_file = run_path / "articles.raw.json"
+        enriched_file = run_path / "articles.enriched.json"
+        stats_file = run_path / "pipeline.stats.json"
+        env["PIPELINE_WORKDIR"] = str(run_path)
+        env["PIPELINE_RAW_FILE"] = str(raw_file)
+        env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
+        env["PIPELINE_STATS_FILE"] = str(stats_file)
+
+        try:
+            update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
+            print("1. Scraping (carnews_rss)...")
+            subprocess.run(
+                ["scrapy", "crawl", "carnews_rss", "-O", str(raw_file)],
+                cwd=BASE_DIR,
+                check=True,
+                env=env,
+            )
+            update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
+            print("2. Enriching + saving...")
+            subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
+            stats = _load_pipeline_stats(stats_file)
+            update_pipeline_run(
+                run_id,
+                status="success",
+                stage="done",
+                message="Pipeline complete.",
+                articles_scraped=int(stats.get("articles_scraped") or 0),
+                articles_cleaned=int(stats.get("articles_cleaned") or 0),
+                articles_saved=int(stats.get("articles_saved") or 0),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print("Pipeline complete!")
+        except subprocess.CalledProcessError as e:
+            update_pipeline_run(
+                run_id,
+                status="failed",
+                stage="error",
+                message="Pipeline failed.",
+                error=str(e),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"Pipeline failed: {e}")
+        except Exception as e:
+            update_pipeline_run(
+                run_id,
+                status="failed",
+                stage="error",
+                message="Pipeline crashed.",
+                error=str(e),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"Pipeline crashed: {e}")
 
 
 @app.get("/")
@@ -85,8 +135,13 @@ def health_check():
 def get_feeds():
     """Configured sources for the dashboard sidebar."""
     feeds = bootstrap_feeds()
-    source = feeds[0].get("source", "fallback") if feeds else "fallback"
+    source = feeds[0].get("source", "supabase") if feeds else "supabase"
     return {"feeds": feeds, "source": source}
+
+
+@app.get("/api/pipeline-runs")
+def get_pipeline_runs(limit: int = 10):
+    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
 
 
 @app.post("/api/feeds")
@@ -129,8 +184,13 @@ def remove_feed(feed_id: int):
 
 @app.post("/scrape")
 def trigger_scrape(background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_scraper_pipeline)
-    return {"message": "Scraper pipeline triggered. It will upload to Supabase when finished."}
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.")
+    run_id = run["id"] if run else uuid.uuid4().hex
+    background_tasks.add_task(run_scraper_pipeline, run_id)
+    return {
+        "message": "Scraper pipeline triggered. It will upload to Supabase when finished.",
+        "run_id": run_id,
+    }
 
 
 @app.get("/api/spider/stream")

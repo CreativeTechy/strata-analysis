@@ -15,9 +15,10 @@ export default function App() {
   const [isScraping, setIsScraping] = useState(false);
   const [activeTab, setActiveTab] = useState('workflow');
   const [feeds, setFeeds] = useState([]);
-  const [feedSource, setFeedSource] = useState('fallback');
+  const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [crawlCount, setCrawlCount] = useState(null);
+  const [pipelineRuns, setPipelineRuns] = useState([]);
 
   const feedUrls = useMemo(() => feeds.map((feed) => feed.url).filter(Boolean), [feeds]);
 
@@ -39,10 +40,10 @@ export default function App() {
       if (!res.ok) return;
       const data = await res.json();
       setFeeds(Array.isArray(data?.feeds) ? data.feeds : []);
-      setFeedSource(data?.source || 'fallback');
+      setFeedSource(data?.source || 'supabase');
     } catch {
       setFeeds([]);
-      setFeedSource('fallback');
+      setFeedSource('supabase');
     } finally {
       setIsLoadingFeeds(false);
     }
@@ -59,6 +60,17 @@ export default function App() {
       if (data) setArticles(data);
     } catch (e) {
       console.error('Failed to load articles', e);
+    }
+  };
+
+  const loadPipelineRuns = async () => {
+    try {
+      const res = await fetch('/api/pipeline-runs?limit=6');
+      if (!res.ok) return;
+      const data = await res.json();
+      setPipelineRuns(Array.isArray(data?.runs) ? data.runs : []);
+    } catch {
+      setPipelineRuns([]);
     }
   };
 
@@ -112,6 +124,7 @@ export default function App() {
     loadArticles();
     refreshFeeds();
     loadCrawlCount();
+    loadPipelineRuns();
   }, []);
 
   const runScraper = async () => {
@@ -119,11 +132,14 @@ export default function App() {
     try {
       const res = await fetch('/scrape', { method: 'POST' });
       if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
+      await res.json().catch(() => ({}));
+      await loadPipelineRuns();
       let polls = 0;
       const maxPolls = 30;
       const interval = setInterval(async () => {
         polls += 1;
         await loadArticles();
+        await loadPipelineRuns();
         if (polls >= maxPolls) {
           clearInterval(interval);
           setIsScraping(false);
@@ -197,7 +213,13 @@ export default function App() {
             <MessageSquare size={16} /> Intelligence Copilot
           </button>
         </div>
-        <WorkflowPage articles={articles} isScraping={isScraping} onRunScraper={runScraper} feeds={feedUrls} />
+        <WorkflowPage
+          articles={articles}
+          isScraping={isScraping}
+          onRunScraper={runScraper}
+          feeds={feedUrls}
+          pipelineRuns={pipelineRuns}
+        />
       </div>
     );
   }

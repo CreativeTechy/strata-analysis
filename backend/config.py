@@ -11,7 +11,6 @@ from pathlib import Path
 import requests
 
 BASE_DIR = Path(__file__).resolve().parent
-FEEDS_FILE = BASE_DIR / "feeds.txt"
 DOTENV_FILE = BASE_DIR / ".env"
 
 def _load_dotenv():
@@ -46,23 +45,6 @@ SUPABASE_SERVICE_KEY = (
     or os.environ.get("SUPABASE_KEY", "")
 )
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-
-
-def load_fallback_feed_urls():
-    """Return feed URLs from env/file when Supabase is unavailable."""
-    env_feeds = os.environ.get("FEEDS", "").strip()
-    if env_feeds:
-        return [u.strip() for u in env_feeds.split(",") if u.strip()]
-
-    if not FEEDS_FILE.exists():
-        return []
-
-    feeds = []
-    for line in FEEDS_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            feeds.append(line)
-    return feeds
 
 
 def _load_feed_records_from_supabase():
@@ -105,7 +87,6 @@ def load_feeds():
     Priority:
     1. FEEDS env var override
     2. Supabase feeds table
-    3. feeds.txt fallback
     """
     env_feeds = os.environ.get("FEEDS", "").strip()
     if env_feeds:
@@ -113,14 +94,10 @@ def load_feeds():
 
     records = _load_feed_records_from_supabase()
     if records is not None:
-        enabled_urls = [
+        return [
             r.get("url", "").strip()
             for r in records
             if r.get("enabled", True) and r.get("url")
         ]
-        if enabled_urls:
-            return enabled_urls
-        if records:
-            return []
 
-    return load_fallback_feed_urls()
+    return []
