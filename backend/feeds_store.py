@@ -55,24 +55,11 @@ def _default_name(url):
 
 
 def _fallback_records():
-    return [
-        {
-            "id": f"fallback-{i + 1}",
-            "url": url,
-            "name": _default_name(url),
-            "enabled": True,
-            "source_type": "rss",
-            "category": "",
-            "created_at": None,
-            "updated_at": None,
-            "source": "fallback",
-        }
-        for i, url in enumerate(config.load_fallback_feed_urls())
-    ]
+    return []
 
 
 def list_feeds():
-    """Return feed records from Supabase, falling back to local config."""
+    """Return feed records from Supabase."""
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return _fallback_records()
 
@@ -156,7 +143,7 @@ def _fetch_feed_by_id(feed_id):
 
 
 def bootstrap_feeds():
-    """Seed Supabase from the local fallback list when the table is empty."""
+    """Return feed records for startup."""
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return []
 
@@ -174,20 +161,9 @@ def bootstrap_feeds():
         rows = resp.json()
         if isinstance(rows, list) and rows:
             return [_normalize_record({**row, "source": "supabase"}) for row in rows]
-
-        payload = [_upsert_payload(row) for row in _fallback_records() if row.get("url")]
-        if not payload:
-            return []
-
-        requests.post(
-            f"{_feeds_endpoint()}?on_conflict=url",
-            headers={**_headers(), "Prefer": "resolution=merge-duplicates"},
-            json=payload,
-            timeout=30,
-        ).raise_for_status()
-        return list_feeds()
+        return []
     except Exception:
-        return _fallback_records()
+        return []
 
 
 def create_feed(feed):

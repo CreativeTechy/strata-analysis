@@ -14,16 +14,12 @@ import config
 from store import save_articles
 
 DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
-INPUT_FILE = "articles.json"
-OUTPUT_FILE = "enriched_articles.json"
 MIN_TEXT_LENGTH = 200
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
-PIPELINE_STATS_FILE = (
-    Path(__file__).resolve().parent / f"pipeline_run_{PIPELINE_RUN_ID}.json"
-    if PIPELINE_RUN_ID
-    else None
-)
+INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
+OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
+PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
 # Used when no DeepSeek key is available, so the pipeline still produces
 # rows that satisfy the Supabase schema instead of crashing.
@@ -111,6 +107,7 @@ def enrich_article(article, api_key):
 
 
 def write_output(articles):
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(articles, f, ensure_ascii=False, indent=2)
     print(f"Wrote {len(articles)} articles to {OUTPUT_FILE}")
@@ -119,6 +116,7 @@ def write_output(articles):
 def write_pipeline_stats(stats):
     if not PIPELINE_STATS_FILE:
         return
+    PIPELINE_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(PIPELINE_STATS_FILE, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
     print(f"Wrote pipeline stats to {PIPELINE_STATS_FILE.name}")

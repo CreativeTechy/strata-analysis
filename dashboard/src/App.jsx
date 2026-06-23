@@ -15,7 +15,7 @@ export default function App() {
   const [isScraping, setIsScraping] = useState(false);
   const [activeTab, setActiveTab] = useState('workflow');
   const [feeds, setFeeds] = useState([]);
-  const [feedSource, setFeedSource] = useState('fallback');
+  const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [crawlCount, setCrawlCount] = useState(null);
   const [pipelineRuns, setPipelineRuns] = useState([]);
@@ -40,10 +40,10 @@ export default function App() {
       if (!res.ok) return;
       const data = await res.json();
       setFeeds(Array.isArray(data?.feeds) ? data.feeds : []);
-      setFeedSource(data?.source || 'fallback');
+      setFeedSource(data?.source || 'supabase');
     } catch {
       setFeeds([]);
-      setFeedSource('fallback');
+      setFeedSource('supabase');
     } finally {
       setIsLoadingFeeds(false);
     }

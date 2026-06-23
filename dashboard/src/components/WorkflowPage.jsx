@@ -23,7 +23,7 @@ const TypeIcon = ({ type }) => {
 export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [], pipelineRuns = [] }) {
   // Source rows reflect the real configured feeds (from /api/feeds).
   const seedRows = (list) =>
-    (list.length ? list : ['https://www.bmwblog.com/feed/']).map((url, i) => ({
+    (list.length ? list : []).map((url, i) => ({
       id: i + 1, platform: 'web', type: 'link', value: url,
     }));
 

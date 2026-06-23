@@ -68,6 +68,34 @@ execute function public.set_updated_at();
 
 alter table public.feeds enable row level security;
 
+create table if not exists public.crawl_pages (
+    id          bigint generated always as identity primary key,
+    crawl_id    text,                 -- groups one Spider run
+    url         text not null unique, -- upsert key
+    source      text,
+    seed        text,                 -- the seed URL the crawl started from
+    title       text,
+    text        text,                 -- full extracted article text (for sentiment)
+    words       integer,
+    depth       integer,
+    fetched_at  timestamptz,
+    created_at  timestamptz default now()
+);
+
+create index if not exists crawl_pages_crawl_idx on public.crawl_pages (crawl_id);
+create index if not exists crawl_pages_source_idx on public.crawl_pages (source);
+create index if not exists crawl_pages_created_idx on public.crawl_pages (created_at desc);
+
+-- The dashboard and intelligence page read crawl_pages directly.
+alter table public.crawl_pages enable row level security;
+
+drop policy if exists "Public read access" on public.crawl_pages;
+create policy "Public read access"
+    on public.crawl_pages
+    for select
+    to anon, authenticated
+    using (true);
+
 create table if not exists public.articles (
     id              bigint generated always as identity primary key,
     url             text not null unique,          -- upsert key (on_conflict = url)

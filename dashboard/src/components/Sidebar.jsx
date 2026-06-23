@@ -44,7 +44,7 @@ export default function Sidebar({
           <Rss size={18} color="var(--primary-color)" /> Tracked Feeds
         </h3>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: '10px' }}>
-          Source: {feedsSource || 'fallback'}
+          Source: {feedsSource || 'supabase'}
         </div>
 
         <div className="feed-list" style={{ flex: 1, overflowY: 'auto' }}>

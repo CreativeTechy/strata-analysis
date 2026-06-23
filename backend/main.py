@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import uuid
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,8 +52,7 @@ app.add_middleware(
 )
 
 
-def _load_pipeline_stats(run_id):
-    stats_file = BASE_DIR / f"pipeline_run_{run_id}.json"
+def _load_pipeline_stats(stats_file: Path):
     if not stats_file.exists():
         return {}
     try:
@@ -65,50 +65,60 @@ def run_scraper_pipeline(run_id: str):
     """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
-    try:
-        update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
-        print("1. Scraping (carnews_rss)...")
-        subprocess.run(
-            ["scrapy", "crawl", "carnews_rss", "-O", "articles.json"],
-            cwd=BASE_DIR,
-            check=True,
-            env=env,
-        )
-        update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
-        print("2. Enriching + saving...")
-        subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
-        stats = _load_pipeline_stats(run_id)
-        update_pipeline_run(
-            run_id,
-            status="success",
-            stage="done",
-            message="Pipeline complete.",
-            articles_scraped=int(stats.get("articles_scraped") or 0),
-            articles_cleaned=int(stats.get("articles_cleaned") or 0),
-            articles_saved=int(stats.get("articles_saved") or 0),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-        print("Pipeline complete!")
-    except subprocess.CalledProcessError as e:
-        update_pipeline_run(
-            run_id,
-            status="failed",
-            stage="error",
-            message="Pipeline failed.",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-        print(f"Pipeline failed: {e}")
-    except Exception as e:
-        update_pipeline_run(
-            run_id,
-            status="failed",
-            stage="error",
-            message="Pipeline crashed.",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-        print(f"Pipeline crashed: {e}")
+    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
+        run_path = Path(run_dir)
+        raw_file = run_path / "articles.raw.json"
+        enriched_file = run_path / "articles.enriched.json"
+        stats_file = run_path / "pipeline.stats.json"
+        env["PIPELINE_WORKDIR"] = str(run_path)
+        env["PIPELINE_RAW_FILE"] = str(raw_file)
+        env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
+        env["PIPELINE_STATS_FILE"] = str(stats_file)
+
+        try:
+            update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
+            print("1. Scraping (carnews_rss)...")
+            subprocess.run(
+                ["scrapy", "crawl", "carnews_rss", "-O", str(raw_file)],
+                cwd=BASE_DIR,
+                check=True,
+                env=env,
+            )
+            update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
+            print("2. Enriching + saving...")
+            subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
+            stats = _load_pipeline_stats(stats_file)
+            update_pipeline_run(
+                run_id,
+                status="success",
+                stage="done",
+                message="Pipeline complete.",
+                articles_scraped=int(stats.get("articles_scraped") or 0),
+                articles_cleaned=int(stats.get("articles_cleaned") or 0),
+                articles_saved=int(stats.get("articles_saved") or 0),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print("Pipeline complete!")
+        except subprocess.CalledProcessError as e:
+            update_pipeline_run(
+                run_id,
+                status="failed",
+                stage="error",
+                message="Pipeline failed.",
+                error=str(e),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"Pipeline failed: {e}")
+        except Exception as e:
+            update_pipeline_run(
+                run_id,
+                status="failed",
+                stage="error",
+                message="Pipeline crashed.",
+                error=str(e),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"Pipeline crashed: {e}")
 
 
 @app.get("/")
@@ -125,7 +135,7 @@ def health_check():
 def get_feeds():
     """Configured sources for the dashboard sidebar."""
     feeds = bootstrap_feeds()
-    source = feeds[0].get("source", "fallback") if feeds else "fallback"
+    source = feeds[0].get("source", "supabase") if feeds else "supabase"
     return {"feeds": feeds, "source": source}
 
 
