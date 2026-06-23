@@ -17,6 +17,7 @@ DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
 INPUT_FILE = "articles.json"
 OUTPUT_FILE = "enriched_articles.json"
 MIN_TEXT_LENGTH = 200
+STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 PIPELINE_STATS_FILE = (
     Path(__file__).resolve().parent / f"pipeline_run_{PIPELINE_RUN_ID}.json"
@@ -54,22 +55,35 @@ def clean_articles(articles):
     return cleaned
 
 
+def _load_prompt_template():
+    prompt_file = STORAGE_DIR / "enrichment_prompt.txt"
+    try:
+        return prompt_file.read_text(encoding="utf-8")
+    except Exception:
+        return (
+            "Analyze this car news article and return ONLY a JSON object, no explanation.\n"
+            "Title: {title}\n"
+            "Text: {text}\n"
+            "Return this exact JSON structure:\n"
+            "{\n"
+            '    "summary": "2 sentence summary",\n'
+            '    "car_models": ["list", "of", "car", "models", "mentioned"],\n'
+            '    "brands": ["list", "of", "brands"],\n'
+            '    "sentiment": "positive|negative|neutral",\n'
+            '    "category": "review|event|recall|auction|race|tech|industry|other",\n'
+            '    "relevance_score": 1\n'
+            "}"
+        )
+
+
 def enrich_article(article, api_key):
     title = article.get("title", "")
     text = article.get("text", "")[:2000]
-
-    prompt = f"""Analyze this car news article and return ONLY a JSON object, no explanation.
-Title: {title}
-Text: {text}
-Return this exact JSON structure:
-{{
-    "summary": "2 sentence summary",
-    "car_models": ["list", "of", "car", "models", "mentioned"],
-    "brands": ["list", "of", "brands"],
-    "sentiment": "positive|negative|neutral",
-    "category": "review|event|recall|auction|race|tech|industry|other",
-    "relevance_score": 1
-}}"""
+    prompt = (
+        _load_prompt_template()
+        .replace("{title}", title)
+        .replace("{text}", text)
+    )
 
     try:
         response = requests.post(

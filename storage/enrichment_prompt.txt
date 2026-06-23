@@ -1,0 +1,12 @@
+Analyze this car news article and return ONLY a JSON object, no explanation.
+Title: {title}
+Text: {text}
+Return this exact JSON structure:
+{
+    "summary": "2 sentence summary",
+    "car_models": ["list", "of", "car", "models", "mentioned"],
+    "brands": ["list", "of", "brands"],
+    "sentiment": "positive|negative|neutral",
+    "category": "review|event|recall|auction|race|tech|industry|other",
+    "relevance_score": 1
+}

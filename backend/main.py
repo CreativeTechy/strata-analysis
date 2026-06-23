@@ -27,24 +27,18 @@ from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed
 from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
+STORAGE_DIR = BASE_DIR.parent / "storage"
 
-COPILOT_SYSTEM_PROMPT = (
-    "You are Strata Intelligence Copilot, an analyst for automotive news. You "
-    "receive a set of scraped articles (title, source, sentiment, category, "
-    "summary). Answer using ONLY these articles, and never contradict the stated "
-    "article count.\n\n"
-    "DEFAULT: keep it short and high-signal - a scannable overview, ~120-180 "
-    "words. For a general question, reply with: **Takeaway** (one sentence), "
-    "**Mood** (sentiment split + tone), **Negatives** (1-2 sentences), "
-    "**Positives** (1-2 sentences), and **Common threads** (1-3 short bullets, or "
-    "what stands out if there's no clear pattern). Use light Markdown. Do NOT "
-    "list every article, cite 'Article N', or open with 'Based on the N "
-    "articles'.\n\n"
-    "DEEP DIVE: only when the user explicitly asks to go deeper / expand / give "
-    "details / draft a full report - then give the longer structured breakdown "
-    "with evidence and specific models/brands.\n\n"
-    "Always format with clean Markdown."
-)
+
+def _load_text_asset(filename, fallback=""):
+    path = STORAGE_DIR / filename
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return fallback.strip()
+
+
+COPILOT_SYSTEM_PROMPT = _load_text_asset("copilot_system_prompt.txt")
 
 app = FastAPI(title="Strata Scraper API")
 
