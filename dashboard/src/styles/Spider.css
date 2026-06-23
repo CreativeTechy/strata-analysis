@@ -1,0 +1,145 @@
+.spider-layout {
+  min-height: 100vh;
+  background: #0d0f14;
+  color: #e8eaed;
+}
+
+.spider-grid {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.spider-panel {
+  padding: 28px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+.spider-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.spider-sub {
+  color: #9aa0aa;
+  font-size: 0.92rem;
+  margin-bottom: 22px;
+}
+
+.spider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.spider-field label {
+  font-size: 0.8rem;
+  color: #c4c9d2;
+}
+
+.spider-input {
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: #e8eaed;
+  border-radius: 12px;
+  padding: 12px 14px;
+  outline: none;
+  font-family: inherit;
+}
+
+.spider-row {
+  display: flex;
+  gap: 12px;
+}
+
+.spider-launch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #ff6b35, #ffb13b);
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.spider-error {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 71, 87, 0.12);
+  color: #ff8b95;
+  margin-bottom: 14px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-box {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.stat-box .num {
+  font-weight: 800;
+  font-size: 1.2rem;
+}
+
+.stat-box .lbl {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: #9aa0aa;
+}
+
+.stat-box.accent .num { color: #ffb13b; }
+.stat-box.green .num { color: #2ed573; }
+.stat-box.blue .num { color: #4aa3ff; }
+
+.spider-canvas-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.spider-ticker {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ticker-line {
+  font-size: 0.78rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.05);
+  color: #c4c9d2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticker-line.article {
+  color: #6fe3a0;
+}
