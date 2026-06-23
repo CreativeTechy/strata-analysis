@@ -6,9 +6,11 @@ a one-place change.
 """
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import requests
+from trafilatura.feeds import find_feed_urls
 
 BASE_DIR = Path(__file__).resolve().parent
 DOTENV_FILE = BASE_DIR / ".env"
@@ -45,6 +47,36 @@ SUPABASE_SERVICE_KEY = (
     or os.environ.get("SUPABASE_KEY", "")
 )
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+
+
+def _looks_like_feed_url(url: str) -> bool:
+    url = (url or "").strip().lower()
+    return any(
+        token in url
+        for token in (
+            "/feed",
+            "/rss",
+            "/atom",
+            ".xml",
+            ".rss",
+            ".rdf",
+            "?feed=",
+        )
+    )
+
+
+@lru_cache(maxsize=256)
+def _discover_feed_urls(url: str):
+    """Return discovered feed URLs for a homepage, or [] if none are found."""
+    if not url:
+        return []
+    try:
+        discovered = find_feed_urls(url)
+        if isinstance(discovered, list):
+            return [u.strip() for u in discovered if u and u.strip()]
+    except Exception:
+        pass
+    return []
 
 
 def _load_feed_records_from_supabase():
@@ -90,14 +122,29 @@ def load_feeds():
     """
     env_feeds = os.environ.get("FEEDS", "").strip()
     if env_feeds:
-        return [u.strip() for u in env_feeds.split(",") if u.strip()]
+        raw_urls = [u.strip() for u in env_feeds.split(",") if u.strip()]
+    else:
+        records = _load_feed_records_from_supabase()
+        if records is not None:
+            raw_urls = [
+                r.get("url", "").strip()
+                for r in records
+                if r.get("enabled", True) and r.get("url")
+            ]
+        else:
+            raw_urls = []
 
-    records = _load_feed_records_from_supabase()
-    if records is not None:
-        return [
-            r.get("url", "").strip()
-            for r in records
-            if r.get("enabled", True) and r.get("url")
-        ]
+    normalized = []
+    seen = set()
+    for url in raw_urls:
+        candidate_urls = [url] if _looks_like_feed_url(url) else _discover_feed_urls(url)
+        if not candidate_urls:
+            candidate_urls = [url]
 
-    return []
+        for candidate in candidate_urls:
+            candidate = (candidate or "").strip()
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+    return normalized

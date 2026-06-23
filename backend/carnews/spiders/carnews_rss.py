@@ -12,10 +12,11 @@ title/date/text generically, so one spider covers every publisher.
 
 import json
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import scrapy
 import trafilatura
+from trafilatura.feeds import find_feed_urls
 
 from config import load_feeds
 
@@ -40,7 +41,19 @@ class CarNewsRssSpider(scrapy.Spider):
     start_urls = load_feeds()
 
     def parse(self, response):
-        return self.parse_feed(response)
+        content_type = (response.headers.get(b"Content-Type") or b"").decode("utf-8", "ignore").lower()
+        is_feed_like = (
+            "xml" in content_type
+            or response.xpath("local-name(/*)").get() in {"rss", "feed"}
+            or response.xpath("//item").get()
+            or response.xpath("//entry").get()
+        )
+
+        if is_feed_like:
+            yield from self.parse_feed(response)
+            return
+
+        yield from self.parse_homepage(response)
 
     def parse_feed(self, response):
         """Parse RSS/Atom XML and follow each article link."""
@@ -59,6 +72,46 @@ class CarNewsRssSpider(scrapy.Spider):
                     callback=self.parse_article,
                     meta={"feed": response.url},
                 )
+
+    def parse_homepage(self, response):
+        """Fallback for homepage URLs that do not expose a feed directly."""
+        self.logger.info("Homepage %s -> discovering feeds/articles", response.url)
+
+        discovered_feeds = []
+        try:
+            discovered_feeds = find_feed_urls(response.url)
+        except Exception:
+            discovered_feeds = []
+
+        if discovered_feeds:
+            for feed_url in discovered_feeds:
+                yield response.follow(feed_url, callback=self.parse_feed, meta={"feed": feed_url})
+            return
+
+        article_links = []
+        selectors = [
+            'a[href*="/20"]::attr(href)',
+            'article a::attr(href)',
+            'h2 a::attr(href)',
+            'h3 a::attr(href)',
+            'main a::attr(href)',
+        ]
+        for selector in selectors:
+            article_links.extend(response.css(selector).getall())
+
+        seen = set()
+        for href in article_links:
+            link = urljoin(response.url, href.split("#")[0].strip())
+            if not link or link in seen:
+                continue
+            seen.add(link)
+            if urlparse(link).netloc != urlparse(response.url).netloc:
+                continue
+            yield response.follow(
+                link,
+                callback=self.parse_article,
+                meta={"feed": response.url},
+            )
 
     def parse_article(self, response):
         """Extract clean text + metadata with trafilatura (no per-site selectors)."""
