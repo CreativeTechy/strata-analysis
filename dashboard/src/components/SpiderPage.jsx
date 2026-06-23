@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Bug, Play, Square, Database } from 'lucide-react';
-import '../Spider.css';
+import '../styles/Spider.css';
 
 const fmt = (n) => {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';

@@ -5,7 +5,7 @@ import {
   ArrowRight, DownloadCloud, Sparkles, Database,
   CheckCircle2, RefreshCw
 } from 'lucide-react';
-import '../Workflow.css';
+import '../styles/Workflow.css';
 
 const PlatformIcon = ({ platform }) => {
   if (platform === 'web') return <Globe size={18} />;

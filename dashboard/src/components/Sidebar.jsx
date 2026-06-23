@@ -1,27 +1,22 @@
-import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, Play, Rss, Settings, LayoutDashboard, ToggleLeft, ToggleRight } from 'lucide-react';
+import React from 'react';
+import { LayoutDashboard, ToggleLeft, ToggleRight, GitMerge, Bug, BarChart3, MessageSquare, Rss, Play } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { NavLink } from 'react-router-dom';
 
 export default function Sidebar({
-  feeds,
-  feedsSource,
-  onAddFeed,
+  feeds = [],
   onToggleFeed,
-  onRemoveFeed,
   onRunScraper,
   isScraping,
-  isLoadingFeeds,
 }) {
-  const [newFeed, setNewFeed] = useState('');
-
-  const visibleFeeds = useMemo(() => feeds || [], [feeds]);
-
-  const addFeed = async () => {
-    const url = newFeed.trim();
-    if (!url) return;
-    await onAddFeed?.({ url });
-    setNewFeed('');
-  };
+  const navStyle = ({ isActive }) => ({
+    background: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+    borderColor: isActive ? 'transparent' : 'rgba(0,0,0,0.08)',
+    boxShadow: isActive ? '0 6px 18px rgba(0,0,0,0.08)' : 'none',
+    textDecoration: 'none',
+    width: '100%',
+    justifyContent: 'flex-start',
+  });
 
   return (
     <div className="sidebar">
@@ -30,37 +25,44 @@ export default function Sidebar({
         <p className="subtitle">Media Intelligence</p>
       </div>
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
-        <button className="btn-secondary" style={{ background: 'white', borderColor: 'transparent', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+        <NavLink to="/dashboard" className="btn-secondary" style={navStyle}>
           <LayoutDashboard size={18} /> Dashboard
-        </button>
-        <button className="btn-secondary" style={{ border: 'none', background: 'transparent' }}>
-          <Settings size={18} /> Settings
-        </button>
+        </NavLink>
+        <NavLink to="/feeds" className="btn-secondary" style={navStyle}>
+          <Rss size={18} /> Feeds
+        </NavLink>
+        <NavLink to="/workflow" className="btn-secondary" style={navStyle}>
+          <GitMerge size={18} /> Workflow
+        </NavLink>
+        <NavLink to="/spider" className="btn-secondary" style={navStyle}>
+          <Bug size={18} /> Spider Mode
+        </NavLink>
+        <NavLink to="/sentiment" className="btn-secondary" style={navStyle}>
+          <BarChart3 size={18} /> Brand Sentiment
+        </NavLink>
+        <NavLink to="/intelligence" className="btn-secondary" style={navStyle}>
+          <MessageSquare size={18} /> Intelligence
+        </NavLink>
       </nav>
 
       <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-          <Rss size={18} color="var(--primary-color)" /> Tracked Feeds
-        </h3>
-        <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: '10px' }}>
-          Source: {feedsSource || 'supabase'}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '12px' }}>
+          <strong style={{ fontSize: '0.92rem' }}>Tracked Feeds</strong>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{feeds.length}</span>
         </div>
 
         <div className="feed-list" style={{ flex: 1, overflowY: 'auto' }}>
-          {isLoadingFeeds && (
+          {feeds.length === 0 ? (
             <div style={{ fontSize: '0.85rem', color: 'var(--text-light)', padding: '8px 0' }}>
-              Loading feeds...
+              No feeds yet.
             </div>
-          )}
-
-          {!isLoadingFeeds && visibleFeeds.map((feed) => (
+          ) : feeds.map((feed) => (
             <motion.div
               key={feed.id ?? feed.url}
               layout
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
               className="feed-item"
               style={{ gap: '10px', alignItems: 'center' }}
             >
@@ -80,36 +82,8 @@ export default function Sidebar({
                   {feed.url}
                 </div>
               </div>
-
-              <button
-                onClick={() => onRemoveFeed?.(feed)}
-                style={{ background: 'none', border: 'none', color: '#ff4757', cursor: 'pointer', flexShrink: 0 }}
-                title="Remove feed"
-              >
-                <Trash2 size={16} />
-              </button>
             </motion.div>
           ))}
-
-          {!isLoadingFeeds && visibleFeeds.length === 0 && (
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-light)', padding: '8px 0' }}>
-              No feeds yet.
-            </div>
-          )}
-        </div>
-
-        <div className="feed-input-group">
-          <input
-            type="text"
-            className="feed-input"
-            placeholder="Add new RSS..."
-            value={newFeed}
-            onChange={(e) => setNewFeed(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addFeed()}
-          />
-          <button className="btn-secondary" onClick={addFeed} style={{ padding: '10px' }}>
-            <Plus size={18} />
-          </button>
         </div>
 
         <button
@@ -119,8 +93,8 @@ export default function Sidebar({
           disabled={isScraping}
         >
           {isScraping ? (
-            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-              <Settings size={18} />
+            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
+              <Play size={18} />
             </motion.div>
           ) : <Play size={18} />}
           {isScraping ? 'Scraping...' : 'Run Scraper'}
