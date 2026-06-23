@@ -147,7 +147,7 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
             {isScraping ? (<><RefreshCw size={16} className="spin" /> Running…</>) : 'Run Extractor'}
           </button>
           <p style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: '8px', textAlign: 'center' }}>
-            Sources are configured in feeds.txt. Editing rows here is a preview.
+            Sources are managed in Supabase. Editing rows here is a preview.
           </p>
         </motion.div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
 import FeedView from './components/FeedView';
@@ -13,17 +13,13 @@ import { supabase } from './supabaseClient';
 export default function App() {
   const [articles, setArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
-  const [activeTab, setActiveTab] = useState('workflow'); // 'dashboard', 'intelligence', 'workflow'
-  
-  // Fallback list; overwritten by the backend's /api/feeds (single source of truth).
-  const [feeds, setFeeds] = useState([
-    "https://www.motor1.com/rss/news/all/",
-    "https://www.carscoops.com/feed/",
-    "https://www.autoblog.com/rss.xml",
-    "https://www.bmwblog.com/feed/"
-  ]);
-
+  const [activeTab, setActiveTab] = useState('workflow');
+  const [feeds, setFeeds] = useState([]);
+  const [feedSource, setFeedSource] = useState('fallback');
+  const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [crawlCount, setCrawlCount] = useState(null);
+
+  const feedUrls = useMemo(() => feeds.map((feed) => feed.url).filter(Boolean), [feeds]);
 
   const loadCrawlCount = async () => {
     try {
@@ -36,14 +32,19 @@ export default function App() {
     }
   };
 
-  const loadFeeds = async () => {
+  const refreshFeeds = async () => {
+    setIsLoadingFeeds(true);
     try {
       const res = await fetch('/api/feeds');
-      if (!res.ok) return; // backend not running — keep fallback list
+      if (!res.ok) return;
       const data = await res.json();
-      if (data?.feeds?.length) setFeeds(data.feeds);
+      setFeeds(Array.isArray(data?.feeds) ? data.feeds : []);
+      setFeedSource(data?.source || 'fallback');
     } catch {
-      // backend unreachable in this environment; fallback list stays
+      setFeeds([]);
+      setFeedSource('fallback');
+    } finally {
+      setIsLoadingFeeds(false);
     }
   };
 
@@ -53,17 +54,63 @@ export default function App() {
         .from('articles')
         .select('*')
         .order('published', { ascending: false });
-        
+
       if (error) throw error;
       if (data) setArticles(data);
     } catch (e) {
-      console.error("Failed to load articles", e);
+      console.error('Failed to load articles', e);
+    }
+  };
+
+  const addFeed = async (payload) => {
+    try {
+      const res = await fetch('/api/feeds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add feed (${res.status})`);
+      await refreshFeeds();
+    } catch (error) {
+      console.error('Failed to add feed:', error);
+    }
+  };
+
+  const toggleFeed = async (feed) => {
+    if (!feed?.id) return;
+    try {
+      const res = await fetch(`/api/feeds/${feed.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...feed,
+          enabled: !feed.enabled,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update feed (${res.status})`);
+      await refreshFeeds();
+    } catch (error) {
+      console.error('Failed to toggle feed:', error);
+    }
+  };
+
+  const removeFeed = async (feed) => {
+    if (!feed?.id) return;
+    try {
+      const res = await fetch(`/api/feeds/${feed.id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to delete feed (${res.status})`);
+      await refreshFeeds();
+    } catch (error) {
+      console.error('Failed to remove feed:', error);
     }
   };
 
   useEffect(() => {
     loadArticles();
-    loadFeeds();
+    refreshFeeds();
     loadCrawlCount();
   }, []);
 
@@ -72,11 +119,8 @@ export default function App() {
     try {
       const res = await fetch('/scrape', { method: 'POST' });
       if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
-      // The pipeline (scrape -> enrich -> upsert) runs in the background and
-      // takes a few minutes. Poll Supabase so fresh rows appear without a
-      // manual refresh, keeping the "scraping" state on until it settles.
       let polls = 0;
-      const maxPolls = 30; // 30 * 8s = ~4 minutes
+      const maxPolls = 30;
       const interval = setInterval(async () => {
         polls += 1;
         await loadArticles();
@@ -86,7 +130,7 @@ export default function App() {
         }
       }, 8000);
     } catch (error) {
-      console.error("Failed to start scraper:", error);
+      console.error('Failed to start scraper:', error);
       setIsScraping(false);
     }
   };
@@ -94,12 +138,12 @@ export default function App() {
   if (activeTab === 'intelligence') {
     return (
       <div style={{ position: 'relative' }}>
-        <button 
-          onClick={() => setActiveTab('dashboard')} 
-          className="btn-secondary" 
+        <button
+          onClick={() => setActiveTab('dashboard')}
+          className="btn-secondary"
           style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000, background: 'white' }}
         >
-          ← Back to Dashboard
+          Back to Dashboard
         </button>
         <IntelligencePage />
       </div>
@@ -114,7 +158,7 @@ export default function App() {
           className="btn-secondary"
           style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000, background: 'white' }}
         >
-          ← Back
+          Back
         </button>
         <SpiderPage />
       </div>
@@ -129,7 +173,7 @@ export default function App() {
           className="btn-secondary"
           style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000, background: 'white' }}
         >
-          ← Back
+          Back
         </button>
         <BrandSentimentPage />
       </div>
@@ -141,7 +185,7 @@ export default function App() {
       <div style={{ position: 'relative' }}>
         <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000, display: 'flex', gap: '10px' }}>
           <button onClick={() => setActiveTab('dashboard')} className="btn-secondary" style={{ background: 'white' }}>
-            ← To Dashboard
+            To Dashboard
           </button>
           <button onClick={() => setActiveTab('spider')} className="btn-secondary" style={{ background: '#1a1a1a', color: '#fff', borderColor: '#1a1a1a' }}>
             <Bug size={16} /> Spider Mode
@@ -153,7 +197,7 @@ export default function App() {
             <MessageSquare size={16} /> Intelligence Copilot
           </button>
         </div>
-        <WorkflowPage articles={articles} isScraping={isScraping} onRunScraper={runScraper} feeds={feeds} />
+        <WorkflowPage articles={articles} isScraping={isScraping} onRunScraper={runScraper} feeds={feedUrls} />
       </div>
     );
   }
@@ -161,21 +205,25 @@ export default function App() {
   return (
     <div className="layout">
       <div className="bg-pattern"></div>
-      
-      <Sidebar 
-        feeds={feeds} 
-        setFeeds={setFeeds} 
-        onRunScraper={runScraper} 
-        isScraping={isScraping} 
+
+      <Sidebar
+        feeds={feeds}
+        feedsSource={feedSource}
+        onAddFeed={addFeed}
+        onToggleFeed={toggleFeed}
+        onRemoveFeed={removeFeed}
+        onRunScraper={runScraper}
+        isScraping={isScraping}
+        isLoadingFeeds={isLoadingFeeds}
       />
-      
+
       <main className="main-content">
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '10px' }}>
           <div>
             <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Data Feed</h2>
             <p className="subtitle">Real-time automotive insights and sentiment</p>
           </div>
-          
+
           <div style={{ display: 'flex', gap: '15px' }}>
             <button className="btn-secondary" onClick={() => setActiveTab('workflow')} style={{ background: 'white' }}>
               <GitMerge size={16} /> Open Workflow Board
