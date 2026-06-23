@@ -10,6 +10,7 @@ This API triggers the jobs and exposes configured feeds to the dashboard.
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -23,6 +24,7 @@ from fastapi.responses import StreamingResponse
 
 import config
 from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
+from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -55,20 +57,64 @@ app.add_middleware(
 )
 
 
-def run_scraper_pipeline():
-    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+def _load_pipeline_stats(run_id):
+    stats_file = BASE_DIR / f"pipeline_run_{run_id}.json"
+    if not stats_file.exists():
+        return {}
     try:
+        return json.loads(stats_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def run_scraper_pipeline(run_id: str):
+    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+    env = os.environ.copy()
+    env["PIPELINE_RUN_ID"] = run_id
+    try:
+        update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
         print("1. Scraping (carnews_rss)...")
         subprocess.run(
             ["scrapy", "crawl", "carnews_rss", "-O", "articles.json"],
             cwd=BASE_DIR,
             check=True,
+            env=env,
         )
+        update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
         print("2. Enriching + saving...")
-        subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True)
+        subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
+        stats = _load_pipeline_stats(run_id)
+        update_pipeline_run(
+            run_id,
+            status="success",
+            stage="done",
+            message="Pipeline complete.",
+            articles_scraped=int(stats.get("articles_scraped") or 0),
+            articles_cleaned=int(stats.get("articles_cleaned") or 0),
+            articles_saved=int(stats.get("articles_saved") or 0),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
         print("Pipeline complete!")
     except subprocess.CalledProcessError as e:
+        update_pipeline_run(
+            run_id,
+            status="failed",
+            stage="error",
+            message="Pipeline failed.",
+            error=str(e),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
         print(f"Pipeline failed: {e}")
+    except Exception as e:
+        update_pipeline_run(
+            run_id,
+            status="failed",
+            stage="error",
+            message="Pipeline crashed.",
+            error=str(e),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        print(f"Pipeline crashed: {e}")
 
 
 @app.get("/")
@@ -87,6 +133,11 @@ def get_feeds():
     feeds = bootstrap_feeds()
     source = feeds[0].get("source", "fallback") if feeds else "fallback"
     return {"feeds": feeds, "source": source}
+
+
+@app.get("/api/pipeline-runs")
+def get_pipeline_runs(limit: int = 10):
+    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
 
 
 @app.post("/api/feeds")
@@ -129,8 +180,13 @@ def remove_feed(feed_id: int):
 
 @app.post("/scrape")
 def trigger_scrape(background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_scraper_pipeline)
-    return {"message": "Scraper pipeline triggered. It will upload to Supabase when finished."}
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.")
+    run_id = run["id"] if run else uuid.uuid4().hex
+    background_tasks.add_task(run_scraper_pipeline, run_id)
+    return {
+        "message": "Scraper pipeline triggered. It will upload to Supabase when finished.",
+        "run_id": run_id,
+    }
 
 
 @app.get("/api/spider/stream")

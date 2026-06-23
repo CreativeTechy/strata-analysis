@@ -20,7 +20,7 @@ const TypeIcon = ({ type }) => {
   return <Link2 size={18} />;
 };
 
-export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [] }) {
+export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [], pipelineRuns = [] }) {
   // Source rows reflect the real configured feeds (from /api/feeds).
   const seedRows = (list) =>
     (list.length ? list : ['https://www.bmwblog.com/feed/']).map((url, i) => ({
@@ -56,6 +56,19 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
 
   const updateRow = (id, field, value) => {
     setRows(rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  };
+
+  const prettyStage = (stage) => {
+    if (!stage) return 'queued';
+    if (stage === 'done') return 'completed';
+    return stage;
+  };
+
+  const stageColor = (status) => {
+    if (status === 'success') return '#2ed573';
+    if (status === 'failed') return '#ff4757';
+    if (status === 'running') return '#ffb13b';
+    return '#9aa0aa';
   };
 
   return (
@@ -252,6 +265,55 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
                   <CheckCircle2 size={18} /> Synced to Supabase
                 </div>
               </>
+            )}
+          </div>
+        </motion.div>
+
+        <motion.div
+          className="workflow-block"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
+          <div className="block-header">
+            <div className="block-icon save">
+              <Database size={20} />
+            </div>
+            <div className="block-title">Recent Runs</div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {pipelineRuns.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-light)' }}>
+                No recorded runs yet.
+              </div>
+            ) : (
+              pipelineRuns.map((run) => (
+                <div
+                  key={run.id}
+                  style={{
+                    border: '1px solid rgba(0,0,0,0.06)',
+                    borderRadius: '12px',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.5)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '6px' }}>
+                    <strong style={{ fontSize: '0.88rem' }}>{prettyStage(run.stage)}</strong>
+                    <span style={{ color: stageColor(run.status), fontSize: '0.78rem', textTransform: 'uppercase', fontWeight: 700 }}>
+                      {run.status}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginBottom: '6px' }}>
+                    {run.message || 'No message'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '0.72rem', color: 'var(--text-light)' }}>
+                    <span>Scraped: {run.articles_scraped || 0}</span>
+                    <span>Cleaned: {run.articles_cleaned || 0}</span>
+                    <span>Saved: {run.articles_saved || 0}</span>
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </motion.div>
