@@ -5,23 +5,24 @@ The four stages live in their own modules:
   enricher -> enrich.py
   saver    -> store.py
 
-This API only triggers them and exposes the configured feeds to the dashboard.
+This API triggers the jobs and exposes configured feeds to the dashboard.
 """
 
 import asyncio
 import json
 import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import config
-from config import load_feeds
+from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -30,7 +31,7 @@ COPILOT_SYSTEM_PROMPT = (
     "receive a set of scraped articles (title, source, sentiment, category, "
     "summary). Answer using ONLY these articles, and never contradict the stated "
     "article count.\n\n"
-    "DEFAULT: keep it short and high-signal — a scannable overview, ~120-180 "
+    "DEFAULT: keep it short and high-signal - a scannable overview, ~120-180 "
     "words. For a general question, reply with: **Takeaway** (one sentence), "
     "**Mood** (sentiment split + tone), **Negatives** (1-2 sentences), "
     "**Positives** (1-2 sentences), and **Common threads** (1-3 short bullets, or "
@@ -38,14 +39,13 @@ COPILOT_SYSTEM_PROMPT = (
     "list every article, cite 'Article N', or open with 'Based on the N "
     "articles'.\n\n"
     "DEEP DIVE: only when the user explicitly asks to go deeper / expand / give "
-    "details / draft a full report — then give the longer structured breakdown "
+    "details / draft a full report - then give the longer structured breakdown "
     "with evidence and specific models/brands.\n\n"
     "Always format with clean Markdown."
 )
 
 app = FastAPI(title="Strata Scraper API")
 
-# Allow the dashboard to call this API.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -56,23 +56,23 @@ app.add_middleware(
 
 
 def run_scraper_pipeline():
-    """scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
     try:
         print("1. Scraping (carnews_rss)...")
         subprocess.run(
             ["scrapy", "crawl", "carnews_rss", "-O", "articles.json"],
-            cwd=BASE_DIR, check=True,
+            cwd=BASE_DIR,
+            check=True,
         )
         print("2. Enriching + saving...")
-        subprocess.run(["python", "enrich.py"], cwd=BASE_DIR, check=True)
-        print("🎉 Pipeline complete!")
+        subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True)
+        print("Pipeline complete!")
     except subprocess.CalledProcessError as e:
-        print(f"❌ Pipeline failed: {e}")
+        print(f"Pipeline failed: {e}")
 
 
 @app.get("/")
 def root():
-    # Root 200 so platform health probes (e.g. HF Spaces) report "Running".
     return {"service": "Strata Spider API", "ok": True, "see": "/api/health"}
 
 
@@ -83,8 +83,48 @@ def health_check():
 
 @app.get("/api/feeds")
 def get_feeds():
-    """Configured sources — single source of truth for the dashboard sidebar."""
-    return {"feeds": load_feeds()}
+    """Configured sources for the dashboard sidebar."""
+    feeds = bootstrap_feeds()
+    source = feeds[0].get("source", "fallback") if feeds else "fallback"
+    return {"feeds": feeds, "source": source}
+
+
+@app.post("/api/feeds")
+def add_feed(payload: dict):
+    """Create or update a feed record in Supabase."""
+    feed = create_feed(payload or {})
+    if not feed:
+        detail = diagnose_feed_setup()
+        return {
+            "error": "Unable to create feed. Check Supabase credentials and URL.",
+            "detail": detail or "The feed request did not return a row.",
+        }
+    return {"feed": feed}
+
+
+@app.put("/api/feeds/{feed_id}")
+def edit_feed(feed_id: int, payload: dict):
+    """Update a feed record in Supabase."""
+    feed = update_feed(feed_id, payload or {})
+    if not feed:
+        detail = diagnose_feed_setup()
+        return {
+            "error": "Unable to update feed. Check Supabase credentials and URL.",
+            "detail": detail or "The update request did not return a row.",
+        }
+    return {"feed": feed}
+
+
+@app.delete("/api/feeds/{feed_id}")
+def remove_feed(feed_id: int):
+    """Delete a feed record from Supabase."""
+    if not delete_feed(feed_id):
+        detail = diagnose_feed_setup()
+        return {
+            "error": "Unable to delete feed. Check Supabase credentials and URL.",
+            "detail": detail or "The delete request failed.",
+        }
+    return {"ok": True}
 
 
 @app.post("/scrape")
@@ -95,13 +135,7 @@ def trigger_scrape(background_tasks: BackgroundTasks):
 
 @app.get("/api/spider/stream")
 async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int = 0):
-    """Server-Sent Events: live deep crawl for the Spider Mode page.
-
-    Streams one event per discovered page (for the graph) and a final stats
-    event. With save=1, article pages are upserted into `crawl_pages` in batches
-    as the crawl runs (full text persisted server-side; never sent to the
-    browser). Engine import is lazy so the API works without crawl4ai.
-    """
+    """Server-Sent Events: live deep crawl for the Spider Mode page."""
     depth = max(1, min(int(depth), 4))
     pages = max(10, min(int(pages), 2000))
 
@@ -128,14 +162,21 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
         try:
             async for ev in deep_crawl_stream(seed, depth, pages):
                 if ev.get("type") == "node":
-                    text = ev.pop("_text", "")  # strip server-only text
+                    text = ev.pop("_text", "")
                     if save and ev.get("is_article") and text:
-                        buffer.append({
-                            "crawl_id": crawl_id, "url": ev["url"], "source": ev.get("source"),
-                            "seed": seed, "title": ev.get("title"), "text": text,
-                            "words": ev.get("words"), "depth": ev.get("depth"),
-                            "fetched_at": fetched_at,
-                        })
+                        buffer.append(
+                            {
+                                "crawl_id": crawl_id,
+                                "url": ev["url"],
+                                "source": ev.get("source"),
+                                "seed": seed,
+                                "title": ev.get("title"),
+                                "text": text,
+                                "words": ev.get("words"),
+                                "depth": ev.get("depth"),
+                                "fetched_at": fetched_at,
+                            }
+                        )
                         if len(buffer) >= 50:
                             s = await flush()
                             yield f"data: {json.dumps({'type': 'saved', 'count': s})}\n\n"
@@ -160,8 +201,7 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
 
 @app.post("/api/chat")
 async def chat(payload: dict):
-    """Intelligence Copilot -> DeepSeek over the filtered articles (local-dev
-    parity with the Cloudflare Worker)."""
+    """Intelligence Copilot -> DeepSeek over the filtered articles."""
     if not config.DEEPSEEK_API_KEY:
         return {"error": "DEEPSEEK_API_KEY not set"}
 
@@ -177,7 +217,6 @@ async def chat(payload: dict):
         f"{a.get('title', '')}\n   {a.get('summary', '')}"
         for i, a in enumerate(articles)
     )
-    system_prompt = COPILOT_SYSTEM_PROMPT
     user_prompt = (
         f"There are {total} articles in the current view.\n\n"
         f"{context or '(none)'}\n\nQuestion: {question}"
@@ -190,7 +229,7 @@ async def chat(payload: dict):
             json={
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
                 "temperature": 0.3,

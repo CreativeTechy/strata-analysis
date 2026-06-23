@@ -1,19 +1,26 @@
-import React, { useState } from 'react';
-import { Plus, Trash2, Play, Rss, Settings, LayoutDashboard } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Plus, Trash2, Play, Rss, Settings, LayoutDashboard, ToggleLeft, ToggleRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-export default function Sidebar({ feeds, setFeeds, onRunScraper, isScraping }) {
+export default function Sidebar({
+  feeds,
+  feedsSource,
+  onAddFeed,
+  onToggleFeed,
+  onRemoveFeed,
+  onRunScraper,
+  isScraping,
+  isLoadingFeeds,
+}) {
   const [newFeed, setNewFeed] = useState('');
 
-  const addFeed = () => {
-    if (newFeed && !feeds.includes(newFeed)) {
-      setFeeds([...feeds, newFeed]);
-      setNewFeed('');
-    }
-  };
+  const visibleFeeds = useMemo(() => feeds || [], [feeds]);
 
-  const removeFeed = (feedToRemove) => {
-    setFeeds(feeds.filter(f => f !== feedToRemove));
+  const addFeed = async () => {
+    const url = newFeed.trim();
+    if (!url) return;
+    await onAddFeed?.({ url });
+    setNewFeed('');
   };
 
   return (
@@ -36,25 +43,66 @@ export default function Sidebar({ feeds, setFeeds, onRunScraper, isScraping }) {
         <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
           <Rss size={18} color="var(--primary-color)" /> Tracked Feeds
         </h3>
-        
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: '10px' }}>
+          Source: {feedsSource || 'fallback'}
+        </div>
+
         <div className="feed-list" style={{ flex: 1, overflowY: 'auto' }}>
-          {feeds.map(feed => (
-            <motion.div key={feed} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="feed-item">
-              <span style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {feed.replace('https://www.', '')}
-              </span>
-              <button onClick={() => removeFeed(feed)} style={{ background: 'none', border: 'none', color: '#ff4757', cursor: 'pointer' }}>
+          {isLoadingFeeds && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-light)', padding: '8px 0' }}>
+              Loading feeds...
+            </div>
+          )}
+
+          {!isLoadingFeeds && visibleFeeds.map((feed) => (
+            <motion.div
+              key={feed.id ?? feed.url}
+              layout
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="feed-item"
+              style={{ gap: '10px', alignItems: 'center' }}
+            >
+              <button
+                onClick={() => onToggleFeed?.(feed)}
+                style={{ background: 'none', border: 'none', color: feed.enabled ? '#2ed573' : '#9aa0aa', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                title={feed.enabled ? 'Disable feed' : 'Enable feed'}
+              >
+                {feed.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+              </button>
+
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '0.84rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {feed.name || feed.url?.replace('https://www.', '')}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {feed.url}
+                </div>
+              </div>
+
+              <button
+                onClick={() => onRemoveFeed?.(feed)}
+                style={{ background: 'none', border: 'none', color: '#ff4757', cursor: 'pointer', flexShrink: 0 }}
+                title="Remove feed"
+              >
                 <Trash2 size={16} />
               </button>
             </motion.div>
           ))}
+
+          {!isLoadingFeeds && visibleFeeds.length === 0 && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-light)', padding: '8px 0' }}>
+              No feeds yet.
+            </div>
+          )}
         </div>
 
         <div className="feed-input-group">
-          <input 
-            type="text" 
-            className="feed-input" 
-            placeholder="Add new RSS..." 
+          <input
+            type="text"
+            className="feed-input"
+            placeholder="Add new RSS..."
             value={newFeed}
             onChange={(e) => setNewFeed(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addFeed()}
@@ -64,8 +112,8 @@ export default function Sidebar({ feeds, setFeeds, onRunScraper, isScraping }) {
           </button>
         </div>
 
-        <button 
-          className="btn-primary" 
+        <button
+          className="btn-primary"
           style={{ marginTop: '20px', width: '100%' }}
           onClick={onRunScraper}
           disabled={isScraping}
