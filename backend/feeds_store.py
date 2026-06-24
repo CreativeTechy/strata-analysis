@@ -34,12 +34,16 @@ def _response_error(resp):
 def _normalize_record(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
+    inferred_type = config._infer_source_type(url)
+    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
+    if inferred_type == "social":
+        source_type = "social"
     return {
         "id": row.get("id"),
         "url": url,
         "name": name,
         "enabled": bool(row.get("enabled", True)),
-        "source_type": row.get("source_type") or "rss",
+        "source_type": source_type,
         "category": row.get("category") or "",
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -91,11 +95,15 @@ def _upsert_payload(feed):
 
     raw_url = feed.get("url") or feed.get("additionalProp1") or feed.get("value") or ""
     url = str(raw_url).strip()
+    inferred_type = config._infer_source_type(url)
+    source_type = (feed.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
+    if inferred_type == "social":
+        source_type = "social"
     return {
         "url": url,
         "name": (feed.get("name") or "").strip() or _default_name(url),
         "enabled": bool(feed.get("enabled", True)),
-        "source_type": (feed.get("source_type") or "rss").strip() or "rss",
+        "source_type": source_type,
         "category": (feed.get("category") or "").strip(),
     }
 

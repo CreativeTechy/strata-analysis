@@ -12,10 +12,12 @@ title/date/text generically, so one spider covers every publisher.
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
+import requests
 import scrapy
 import trafilatura
 from trafilatura.feeds import find_feed_urls
@@ -24,6 +26,7 @@ from config import load_source_records
 from pipeline_runs import update_pipeline_run
 
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
+TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
 
 
 class CarNewsRssSpider(scrapy.Spider):
@@ -77,10 +80,11 @@ class CarNewsRssSpider(scrapy.Spider):
             url = (record.get("url") or "").strip()
             if not url:
                 continue
+            source_type = (record.get("source_type") or "rss").strip().lower()
             self.logger.info(
                 "Seed %s (%s) -> %s",
                 record.get("name") or url,
-                (record.get("source_type") or "rss").strip().lower(),
+                source_type,
                 url,
             )
             yield scrapy.Request(
@@ -88,8 +92,9 @@ class CarNewsRssSpider(scrapy.Spider):
                 callback=self.parse_source,
                 meta={
                     "feed": url,
-                    "source_type": (record.get("source_type") or "rss").strip().lower(),
+                    "source_type": source_type,
                     "source_name": record.get("name") or url,
+                    "dont_obey_robotstxt": source_type == "social",
                 },
             )
         self._push_progress(force=True)
@@ -121,6 +126,10 @@ class CarNewsRssSpider(scrapy.Spider):
 
         if source_type == "rss":
             yield from self.parse_homepage(response)
+            return
+
+        if source_type == "social":
+            yield from self.parse_social_page(response)
             return
 
         follow_links = source_type == "web"
@@ -206,7 +215,40 @@ class CarNewsRssSpider(scrapy.Spider):
                 meta={"feed": response.url, "source_type": "web"},
             )
 
+    def parse_social_page(self, response):
+        """Best-effort extraction for X/Twitter sources."""
+        self._progress_pages += 1
+        self._push_progress()
+        self.logger.info("Social page %s -> extracting", response.url)
+
+        yield from self._yield_article(response)
+
+        seen = set()
+        for href in response.css('a[href*="/status/"]::attr(href)').getall():
+            if len(seen) >= 40:
+                break
+            link = urljoin(response.url, href.split("#")[0].strip())
+            if not link or link in seen:
+                continue
+            seen.add(link)
+            if urlparse(link).netloc not in {"x.com", "twitter.com"}:
+                continue
+            yield response.follow(
+                link,
+                callback=self.parse_article,
+                meta={"feed": response.url, "source_type": "social", "dont_obey_robotstxt": True},
+            )
+
     def _yield_article(self, response):
+        status_match = TWEET_STATUS_RE.search(response.url or "")
+        if status_match:
+            tweet = self._hydrate_tweet(response.url)
+            if tweet:
+                yield tweet
+                self._progress_articles += 1
+                self._push_progress()
+                return
+
         extracted = trafilatura.extract(
             response.text,
             url=response.url,
@@ -238,3 +280,36 @@ class CarNewsRssSpider(scrapy.Spider):
     def parse_article(self, response):
         """Extract clean text + metadata with trafilatura (no per-site selectors)."""
         yield from self._yield_article(response)
+
+    @staticmethod
+    def _hydrate_tweet(url):
+        match = TWEET_STATUS_RE.search(url or "")
+        if not match:
+            return None
+
+        handle, tid = match.groups()
+        try:
+            resp = requests.get(
+                f"https://api.fxtwitter.com/{handle}/status/{tid}",
+                headers={"User-Agent": "StrataSpider/1.0"},
+                timeout=15,
+            )
+            if not resp.ok:
+                return None
+            tweet = (resp.json() or {}).get("tweet") or {}
+            text = (tweet.get("text") or "").strip()
+            if not text:
+                return None
+            author = (tweet.get("author") or {}).get("screen_name") or handle
+            return {
+                "url": tweet.get("url") or f"https://twitter.com/{handle}/status/{tid}",
+                "source": f"x.com/{author}",
+                "feed": url,
+                "title": f"@{author}",
+                "author": author,
+                "published": tweet.get("created_at"),
+                "text": text,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception:
+            return None

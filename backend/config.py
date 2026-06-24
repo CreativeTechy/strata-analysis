@@ -95,12 +95,16 @@ def _infer_source_type(url: str) -> str:
 def _normalize_source_record(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip()
+    inferred_type = _infer_source_type(url)
+    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
+    if inferred_type == "social":
+        source_type = "social"
     return {
         "id": row.get("id"),
         "url": url,
         "name": name,
         "enabled": bool(row.get("enabled", True)),
-        "source_type": (row.get("source_type") or _infer_source_type(url) or "rss").strip() or "rss",
+        "source_type": source_type,
         "category": (row.get("category") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
