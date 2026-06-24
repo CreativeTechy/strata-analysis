@@ -12,6 +12,7 @@ import config
 ARTICLE_COLUMNS = (
     "url", "source", "feed", "title", "author", "published", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
+    "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models",
 )
 

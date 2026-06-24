@@ -15,6 +15,17 @@ from store import save_articles
 
 DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
 MIN_TEXT_LENGTH = 200
+VALID_SENTIMENTS = {"positive", "negative", "neutral"}
+VALID_CATEGORIES = {
+    "review",
+    "event",
+    "recall",
+    "auction",
+    "race",
+    "tech",
+    "industry",
+    "other",
+}
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
@@ -25,6 +36,12 @@ PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.envi
 # rows that satisfy the Supabase schema instead of crashing.
 DEFAULT_ENRICHMENT = {
     "summary": "",
+    "entities": [],
+    "organizations": [],
+    "topics": [],
+    "key_points": [],
+    "risks": [],
+    "opportunities": [],
     "car_models": [],
     "brands": [],
     "sentiment": "neutral",
@@ -57,19 +74,96 @@ def _load_prompt_template():
         return prompt_file.read_text(encoding="utf-8")
     except Exception:
         return (
-            "Analyze this car news article and return ONLY a JSON object, no explanation.\n"
+            "Analyze this article and return ONLY a JSON object, no explanation.\n"
             "Title: {title}\n"
             "Text: {text}\n"
             "Return this exact JSON structure:\n"
             "{\n"
             '    "summary": "2 sentence summary",\n'
-            '    "car_models": ["list", "of", "car", "models", "mentioned"],\n'
-            '    "brands": ["list", "of", "brands"],\n'
+            '    "entities": ["people", "products", "projects", "places"],\n'
+            '    "organizations": ["companies", "groups", "institutions"],\n'
+            '    "topics": ["main", "themes"],\n'
+            '    "key_points": ["short", "bullets"],\n'
+            '    "risks": ["risks", "or", "concerns"],\n'
+            '    "opportunities": ["opportunities", "or", "upsides"],\n'
             '    "sentiment": "positive|negative|neutral",\n'
             '    "category": "review|event|recall|auction|race|tech|industry|other",\n'
             '    "relevance_score": 1\n'
             "}"
         )
+
+
+def _strip_code_fences(raw: str) -> str:
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+    return raw.strip()
+
+
+def _as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = [part.strip() for part in value.replace("\n", ",").split(",")]
+    else:
+        items = [value]
+    cleaned = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def _normalize_relevance_score(value):
+    try:
+        score = float(value)
+    except Exception:
+        return 0
+    return max(0, min(score, 10))
+
+
+def _validate_enrichment(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    summary = str(payload.get("summary", "")).strip()
+    if not summary:
+        return None
+
+    sentiment = str(payload.get("sentiment", "neutral")).strip().lower()
+    if sentiment not in VALID_SENTIMENTS:
+        sentiment = "neutral"
+
+    category = str(payload.get("category", "other")).strip().lower()
+    if category not in VALID_CATEGORIES:
+        category = "other"
+
+    organizations = _as_list(payload.get("organizations") or payload.get("brands"))
+    entities = _as_list(payload.get("entities") or payload.get("car_models"))
+    topics = _as_list(payload.get("topics"))
+    key_points = _as_list(payload.get("key_points"))
+    risks = _as_list(payload.get("risks"))
+    opportunities = _as_list(payload.get("opportunities"))
+
+    return {
+        "summary": summary,
+        "entities": entities,
+        "organizations": organizations,
+        "topics": topics,
+        "key_points": key_points,
+        "risks": risks,
+        "opportunities": opportunities,
+        "car_models": entities,
+        "brands": organizations,
+        "sentiment": sentiment,
+        "category": category,
+        "relevance_score": _normalize_relevance_score(payload.get("relevance_score", 0)),
+    }
 
 
 def enrich_article(article, api_key):
@@ -97,10 +191,12 @@ def enrich_article(article, api_key):
             timeout=30,
         )
         response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"].strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
-        return json.loads(raw)
+        raw = response.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(_strip_code_fences(raw))
+        validated = _validate_enrichment(parsed)
+        if validated is None:
+            raise ValueError("DeepSeek returned JSON that did not match the enrichment schema")
+        return validated
     except Exception as e:
         print(f"  Enrichment error for '{title[:50]}': {e}")
         return None

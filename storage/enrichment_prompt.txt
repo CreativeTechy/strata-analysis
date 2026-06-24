@@ -1,11 +1,15 @@
-Analyze this car news article and return ONLY a JSON object, no explanation.
+Analyze this article and return ONLY a JSON object, no explanation.
 Title: {title}
 Text: {text}
 Return this exact JSON structure:
 {
     "summary": "2 sentence summary",
-    "car_models": ["list", "of", "car", "models", "mentioned"],
-    "brands": ["list", "of", "brands"],
+    "entities": ["people", "products", "projects", "places"],
+    "organizations": ["companies", "groups", "institutions"],
+    "topics": ["main", "themes"],
+    "key_points": ["short", "bullets"],
+    "risks": ["risks", "or", "concerns"],
+    "opportunities": ["opportunities", "or", "upsides"],
     "sentiment": "positive|negative|neutral",
     "category": "review|event|recall|auction|race|tech|industry|other",
     "relevance_score": 1

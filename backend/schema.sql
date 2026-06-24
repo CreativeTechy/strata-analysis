@@ -1,4 +1,4 @@
--- Strata Media - Supabase schema for the car-news pipeline.
+-- Strata Media - Supabase schema for the article analysis pipeline.
 -- Run this in the Supabase SQL Editor (Dashboard -> SQL Editor -> New query).
 
 create table if not exists public.pipeline_runs (
@@ -110,6 +110,12 @@ create table if not exists public.articles (
     sentiment       text,                           -- positive | negative | neutral
     relevance_score numeric,                        -- 1..10
     category        text,                           -- review | event | recall | auction | race | tech | industry | other
+    organizations   jsonb default '[]'::jsonb,
+    entities        jsonb default '[]'::jsonb,
+    topics          jsonb default '[]'::jsonb,
+    key_points      jsonb default '[]'::jsonb,
+    risks           jsonb default '[]'::jsonb,
+    opportunities   jsonb default '[]'::jsonb,
     brands          jsonb default '[]'::jsonb,
     car_models      jsonb default '[]'::jsonb,
     created_at      timestamptz default now()
