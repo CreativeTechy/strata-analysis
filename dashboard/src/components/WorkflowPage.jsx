@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -64,10 +64,36 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
   const [runs, setRuns] = useState([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState('');
+  const [workflowStartedAt, setWorkflowStartedAt] = useState(null);
+  const [workflowElapsed, setWorkflowElapsed] = useState(0);
+  const wasScrapingRef = useRef(false);
 
   useEffect(() => {
     if (feeds.length) setRows(seedRows(feeds));
   }, [feeds]);
+
+  useEffect(() => {
+    if (isScraping && !wasScrapingRef.current) {
+      setWorkflowStartedAt(Date.now());
+      setWorkflowElapsed(0);
+    }
+
+    if (!isScraping && wasScrapingRef.current && workflowStartedAt) {
+      setWorkflowElapsed((Date.now() - workflowStartedAt) / 1000);
+    }
+
+    wasScrapingRef.current = isScraping;
+  }, [isScraping, workflowStartedAt]);
+
+  useEffect(() => {
+    if (!isScraping || !workflowStartedAt) return undefined;
+
+    const timer = setInterval(() => {
+      setWorkflowElapsed((Date.now() - workflowStartedAt) / 1000);
+    }, 200);
+
+    return () => clearInterval(timer);
+  }, [isScraping, workflowStartedAt]);
 
   useEffect(() => {
     let alive = true;
@@ -89,8 +115,10 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
       }
     };
     loadRuns();
+    const interval = isScraping ? setInterval(loadRuns, 3000) : null;
     return () => {
       alive = false;
+      if (interval) clearInterval(interval);
     };
   }, [isScraping]);
 
@@ -127,6 +155,12 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
 
   const currentRun = runs[0] || null;
   const completedRuns = runs.slice(1);
+  const pipelineStats = useMemo(() => ({
+    pages: Number(currentRun?.crawl_pages) || 0,
+    scraped: Number(currentRun?.articles_scraped) || 0,
+    cleaned: Number(currentRun?.articles_cleaned) || 0,
+    saved: Number(currentRun?.articles_saved) || 0,
+  }), [currentRun]);
 
   const formatWhen = (value) => {
     if (!value) return 'just now';
@@ -135,6 +169,18 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
     } catch {
       return String(value);
     }
+  };
+
+  const formatElapsed = (seconds) => {
+    const total = Math.max(0, Math.floor(seconds || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    return [
+      hours ? String(hours).padStart(2, '0') : null,
+      String(minutes).padStart(2, '0'),
+      String(secs).padStart(2, '0'),
+    ].filter(Boolean).join(':');
   };
 
   const updateRow = (id, field, value) => {
@@ -146,6 +192,35 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
       <div className="bg-pattern"></div>
 
       <div className="workflow-shell">
+        <motion.div
+          className="workflow-panel glass-card"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{ marginBottom: '18px' }}
+        >
+          <div className="panel-header" style={{ marginBottom: 0 }}>
+            <div>
+              <div className="panel-kicker"><Clock3 size={14} /> Live stopwatch</div>
+              <h2>Workflow elapsed time</h2>
+            </div>
+            <span className={`panel-pill ${isScraping ? 'warning' : workflowStartedAt ? 'success' : 'neutral'}`}>
+              {isScraping ? 'running' : workflowStartedAt ? 'stopped' : 'idle'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.04em', color: 'var(--text-dark)' }}>
+              {workflowStartedAt ? formatElapsed(workflowElapsed) : '00:00'}
+            </div>
+            <div style={{ color: 'var(--text-light)', fontSize: '0.9rem' }}>
+              {isScraping
+                ? 'Timer is counting while the extractor runs.'
+                : workflowStartedAt
+                  ? `Last run started at ${formatWhen(workflowStartedAt)}.`
+                  : 'Start the extractor to begin timing the workflow.'}
+            </div>
+          </div>
+        </motion.div>
+
         <div className="workflow-main-grid">
           <div className="miro-board">
             <motion.div
@@ -436,29 +511,55 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
                   <div className="panel-kicker"><TrendingUp size={14} /> Results</div>
                   <h2>Current output snapshot</h2>
                 </div>
-                <span className="panel-pill neutral">live</span>
+                <span className={`panel-pill ${statusTone(currentRun?.status || (isScraping ? 'running' : 'success'))}`}>
+                  {currentRun ? currentRun.status : (isScraping ? 'running' : 'live')}
+                </span>
               </div>
 
               <div className="result-grid">
                 <div className="result-card">
                   <FileText size={16} />
-                  <span className="result-label">Articles</span>
-                  <strong>{stats.total.toLocaleString()}</strong>
+                  <span className="result-label">Pages Crawled</span>
+                  <strong>{pipelineStats.pages.toLocaleString()}</strong>
                 </div>
                 <div className="result-card">
                   <Layers3 size={16} />
-                  <span className="result-label">Sources</span>
-                  <strong>{stats.sources.toLocaleString()}</strong>
+                  <span className="result-label">Articles Scraped</span>
+                  <strong>{pipelineStats.scraped.toLocaleString()}</strong>
                 </div>
                 <div className="result-card">
                   <BadgeCheck size={16} />
-                  <span className="result-label">Positive</span>
-                  <strong>{stats.positive.toLocaleString()}</strong>
+                  <span className="result-label">Cleaned</span>
+                  <strong>{pipelineStats.cleaned.toLocaleString()}</strong>
                 </div>
                 <div className="result-card">
                   <Flag size={16} />
-                  <span className="result-label">Negative</span>
-                  <strong>{stats.negative.toLocaleString()}</strong>
+                  <span className="result-label">Saved</span>
+                  <strong>{pipelineStats.saved.toLocaleString()}</strong>
+                </div>
+              </div>
+
+              <div className="source-mini-list" style={{ marginTop: '16px' }}>
+                <div className="mini-list-title">Live article quality</div>
+                <div className="mini-list-row">
+                  <span>Positive</span>
+                  <strong style={{ color: '#2ed573' }}>{stats.positive.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
+                  <span>Negative</span>
+                  <strong style={{ color: '#ff6b6b' }}>{stats.negative.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
+                  <span>Neutral</span>
+                  <strong style={{ color: '#9aa0aa' }}>{stats.neutral.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
+                  <span>Unique Sources</span>
+                  <strong style={{ color: 'var(--secondary-color)' }}>{stats.sources.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
+                  <span>Average Relevance</span>
+                  <strong style={{ color: 'var(--primary-color)' }}>{stats.avg} / 10</strong>
                 </div>
               </div>
 

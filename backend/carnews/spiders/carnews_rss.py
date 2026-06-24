@@ -11,6 +11,8 @@ title/date/text generically, so one spider covers every publisher.
 """
 
 import json
+import os
+import time
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
@@ -19,6 +21,9 @@ import trafilatura
 from trafilatura.feeds import find_feed_urls
 
 from config import load_source_records
+from pipeline_runs import update_pipeline_run
+
+PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 
 
 class CarNewsRssSpider(scrapy.Spider):
@@ -37,6 +42,33 @@ class CarNewsRssSpider(scrapy.Spider):
         ),
         "RETRY_TIMES": 2,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._progress_pages = 0
+        self._progress_articles = 0
+        self._progress_last_update = 0.0
+
+    def _push_progress(self, force=False):
+        if not PIPELINE_RUN_ID:
+            return
+
+        now = time.monotonic()
+        if not force and self._progress_pages and (now - self._progress_last_update) < 2.0:
+            return
+
+        self._progress_last_update = now
+        try:
+            update_pipeline_run(
+                PIPELINE_RUN_ID,
+                status="running",
+                stage="scrape",
+                message="Scraping configured sources...",
+                crawl_pages=self._progress_pages,
+                articles_scraped=self._progress_articles,
+            )
+        except Exception as exc:
+            self.logger.debug("Progress update failed: %s", exc)
 
     async def start(self):
         for record in load_source_records():
@@ -60,6 +92,7 @@ class CarNewsRssSpider(scrapy.Spider):
                     "source_name": record.get("name") or url,
                 },
             )
+        self._push_progress(force=True)
 
     def start_requests(self):
         # Scrapy 2.16 with AsyncCrawlerProcess prefers `start()`. Keep the old
@@ -95,6 +128,8 @@ class CarNewsRssSpider(scrapy.Spider):
 
     def parse_feed(self, response):
         """Parse RSS/Atom XML and follow each article link."""
+        self._progress_pages += 1
+        self._push_progress()
         response.selector.remove_namespaces()
         # RSS uses <item><link>text</link>, Atom uses <entry><link href="">
         links = response.xpath("//item/link/text()").getall()
@@ -130,6 +165,8 @@ class CarNewsRssSpider(scrapy.Spider):
 
     def parse_page(self, response, follow_links=False):
         """Extract a page directly, optionally following same-domain links."""
+        self._progress_pages += 1
+        self._push_progress()
         self.logger.info("Page %s -> extracting%s", response.url, " and following links" if follow_links else "")
 
         yield from self._yield_article(response)
@@ -195,6 +232,8 @@ class CarNewsRssSpider(scrapy.Spider):
             "text": text,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+        self._progress_articles += 1
+        self._push_progress()
 
     def parse_article(self, response):
         """Extract clean text + metadata with trafilatura (no per-site selectors)."""

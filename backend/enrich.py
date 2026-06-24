@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 
 import config
+from pipeline_runs import update_pipeline_run
 from store import save_articles
 
 DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
@@ -218,6 +219,23 @@ def write_pipeline_stats(stats):
     print(f"Wrote pipeline stats to {PIPELINE_STATS_FILE.name}")
 
 
+def push_run_progress(stats, stage, message, final=False):
+    if not PIPELINE_RUN_ID:
+        return
+    try:
+        update_pipeline_run(
+            PIPELINE_RUN_ID,
+            status="success" if final else "running",
+            stage=stage,
+            message=message,
+            articles_scraped=int(stats.get("articles_scraped") or 0),
+            articles_cleaned=int(stats.get("articles_cleaned") or 0),
+            articles_saved=int(stats.get("articles_saved") or 0),
+        )
+    except Exception as e:
+        print(f"Pipeline progress update failed: {e}")
+
+
 def main():
     print(f"Loading articles from {INPUT_FILE}...")
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
@@ -230,6 +248,12 @@ def main():
         "articles_enriched": 0,
         "articles_saved": 0,
     }
+
+    push_run_progress(
+        stats,
+        stage="enrich",
+        message="Scrape complete. Cleaning articles...",
+    )
 
     if not articles:
         print("No articles to process after cleaning.")
@@ -256,12 +280,24 @@ def main():
     stats["articles_enriched"] = len(enriched)
     print(f"\nEnriched {len(enriched)} articles successfully.")
 
+    push_run_progress(
+        stats,
+        stage="enrich",
+        message="Enrichment complete. Saving articles...",
+    )
+
     write_output(enriched)
 
     if enriched:
         print("Uploading to Supabase...")
         stats["articles_saved"] = save_articles(enriched)
         print("Done.")
+        push_run_progress(
+            stats,
+            stage="done",
+            message="Pipeline complete.",
+            final=True,
+        )
 
     write_pipeline_stats(stats)
 
