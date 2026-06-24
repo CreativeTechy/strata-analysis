@@ -1,29 +1,22 @@
 import React from 'react';
-import { Activity, MessageSquare, TrendingUp, Database } from 'lucide-react';
+import { Activity, TrendingUp, Database } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 
 const COLORS = ['#2ed573', '#ff4757', '#747d8c'];
 
-export default function StatsOverview({ articles, crawlCount = null }) {
-  const total = articles.length;
-  
-  const sentimentCounts = articles.reduce((acc, curr) => {
-    const s = curr.sentiment?.toLowerCase() || 'neutral';
-    if (s.includes('positive')) acc.positive++;
-    else if (s.includes('negative')) acc.negative++;
-    else acc.neutral++;
-    return acc;
-  }, { positive: 0, negative: 0, neutral: 0 });
+export default function StatsOverview({ stats = {}, crawlCount = null }) {
+  const total = Number(stats.total) || 0;
+  const positive = Number(stats.positive) || 0;
+  const negative = Number(stats.negative) || 0;
+  const neutral = Number(stats.neutral) || 0;
+  const balance = positive - negative;
 
   const data = [
-    { name: 'Positive', value: sentimentCounts.positive },
-    { name: 'Negative', value: sentimentCounts.negative },
-    { name: 'Neutral', value: sentimentCounts.neutral },
+    { name: 'Positive', value: positive },
+    { name: 'Negative', value: negative },
+    { name: 'Neutral', value: neutral },
   ];
-
-  const avgRelevance = articles.length ? 
-    (articles.reduce((acc, curr) => acc + (curr.relevance_score || 0), 0) / total).toFixed(1) : 0;
 
   return (
     <div className="stats-grid">
@@ -33,7 +26,7 @@ export default function StatsOverview({ articles, crawlCount = null }) {
         </div>
         <div className="stat-info">
           <h4>Curated Articles</h4>
-          <p>{total}</p>
+          <p>{total.toLocaleString()}</p>
         </div>
       </motion.div>
 
@@ -43,8 +36,8 @@ export default function StatsOverview({ articles, crawlCount = null }) {
         </div>
         <div className="stat-info">
           <h4>Crawl Corpus</h4>
-          <p>{crawlCount == null ? '—' : crawlCount.toLocaleString()}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>spider pages → Spark</span>
+          <p>{crawlCount == null ? '-' : crawlCount.toLocaleString()}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>spider pages to Spark</span>
         </div>
       </motion.div>
 
@@ -53,8 +46,11 @@ export default function StatsOverview({ articles, crawlCount = null }) {
           <TrendingUp size={24} />
         </div>
         <div className="stat-info">
-          <h4>Avg Relevance Score</h4>
-          <p>{avgRelevance} / 10</p>
+          <h4>Sentiment Balance</h4>
+          <p>{balance > 0 ? '+' : ''}{balance.toLocaleString()}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+            +{positive} / -{negative} / {neutral} neutral
+          </span>
         </div>
       </motion.div>
 
@@ -62,9 +58,9 @@ export default function StatsOverview({ articles, crawlCount = null }) {
         <div className="stat-info">
           <h4>Sentiment Mix</h4>
           <div style={{ display: 'flex', gap: '10px', marginTop: '5px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
-            <span style={{ color: '#2ed573' }}>● {sentimentCounts.positive}</span>
-            <span style={{ color: '#ff4757' }}>● {sentimentCounts.negative}</span>
-            <span style={{ color: '#747d8c' }}>● {sentimentCounts.neutral}</span>
+            <span style={{ color: '#2ed573' }}>- {positive}</span>
+            <span style={{ color: '#ff4757' }}>- {negative}</span>
+            <span style={{ color: '#747d8c' }}>- {neutral}</span>
           </div>
         </div>
         <div style={{ width: '80px', height: '80px' }}>

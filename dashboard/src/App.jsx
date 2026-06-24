@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
-import FeedView from './components/FeedView';
 import FeedsPage from './components/FeedsPage';
 import IntelligencePage from './components/IntelligencePage';
 import WorkflowPage from './components/WorkflowPage';
+import PipelineRunsPage from './components/PipelineRunsPage';
 import SpiderPage from './components/SpiderPage';
 import BrandSentimentPage from './components/BrandSentimentPage';
-import { RefreshCw, MessageSquare, GitMerge, Bug, BarChart3, Rss } from 'lucide-react';
+import ArticlesPage from './components/ArticlesPage';
+import { RefreshCw, MessageSquare, GitMerge, Rss, Newspaper } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { supabase } from './supabaseClient';
 
@@ -26,13 +27,16 @@ function RouteShell({ children, backTo, backLabel, backStyle }) {
 }
 
 export default function App() {
-  const [articles, setArticles] = useState([]);
+  const location = useLocation();
+  const pathname = location.pathname;
+
+  const [reportStats, setReportStats] = useState({ total: 0, positive: 0, negative: 0, neutral: 0 });
+  const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
   const [feeds, setFeeds] = useState([]);
   const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [crawlCount, setCrawlCount] = useState(null);
-  const [pipelineRuns, setPipelineRuns] = useState([]);
   const pollIntervalRef = useRef(null);
 
   const feedUrls = useMemo(() => feeds.map((feed) => feed.url).filter(Boolean), [feeds]);
@@ -71,38 +75,55 @@ export default function App() {
     }
   };
 
-  const loadArticles = async () => {
+  const loadReportStats = async () => {
     try {
-      const { data, error } = await supabase
-        .from('articles')
-        .select('*')
-        .order('published', { ascending: false });
-
-      if (error) throw error;
-      if (data) setArticles(data);
-    } catch (e) {
-      console.error('Failed to load articles', e);
+      const res = await fetch('/api/articles/stats');
+      if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
+      const data = await res.json();
+      setReportStats({
+        total: Number(data?.total) || 0,
+        positive: Number(data?.positive) || 0,
+        negative: Number(data?.negative) || 0,
+        neutral: Number(data?.neutral) || 0,
+      });
+    } catch (error) {
+      console.error('Failed to load report stats', error);
+      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0 });
     }
   };
 
-  const loadPipelineRuns = async () => {
+  const loadWorkflowArticles = async () => {
     try {
-      const res = await fetch('/api/pipeline-runs?limit=6');
-      if (!res.ok) return;
+      const params = new URLSearchParams({
+        limit: '100',
+        offset: '0',
+        sort: 'published.desc',
+      });
+      const res = await fetch(`/api/articles?${params.toString()}`);
+      if (!res.ok) throw new Error(`Articles request failed: ${res.status}`);
       const data = await res.json();
-      setPipelineRuns(Array.isArray(data?.runs) ? data.runs : []);
-    } catch {
-      setPipelineRuns([]);
+      setWorkflowArticles(Array.isArray(data?.articles) ? data.articles : []);
+    } catch (error) {
+      console.error('Failed to load workflow articles', error);
+      setWorkflowArticles([]);
     }
   };
 
   useEffect(() => {
-    loadArticles();
     refreshFeeds();
     loadCrawlCount();
-    loadPipelineRuns();
     return () => stopPolling();
   }, []);
+
+  useEffect(() => {
+    if (pathname === '/dashboard' || pathname === '/') {
+      loadReportStats();
+    }
+
+    if (pathname === '/workflow') {
+      loadWorkflowArticles();
+    }
+  }, [pathname]);
 
   const runScraper = async () => {
     stopPolling();
@@ -111,14 +132,13 @@ export default function App() {
       const res = await fetch('/scrape', { method: 'POST' });
       if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
       await res.json().catch(() => ({}));
-      await loadPipelineRuns();
 
       let polls = 0;
       const maxPolls = 30;
       pollIntervalRef.current = setInterval(async () => {
         polls += 1;
-        await loadArticles();
-        await loadPipelineRuns();
+        await loadWorkflowArticles();
+        await loadReportStats();
         if (polls >= maxPolls) {
           stopPolling();
           setIsScraping(false);
@@ -187,20 +207,20 @@ export default function App() {
       <div className="bg-pattern"></div>
 
       <Sidebar
-        feeds={feeds}
         onToggleFeed={(feed) => updateFeed(feed.id, { ...feed, enabled: !feed.enabled })}
-        onRunScraper={runScraper}
-        isScraping={isScraping}
       />
 
       <main className="main-content">
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '10px', gap: '15px', flexWrap: 'wrap' }}>
           <div>
-            <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Data Feed</h2>
-            <p className="subtitle">Real-time automotive insights and sentiment</p>
+            <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
+            <p className="subtitle">Overview metrics and pipeline health</p>
           </div>
 
           <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+            <Link to="/articles" className="btn-secondary" style={dashboardHeaderButtonStyle}>
+              <Newspaper size={16} /> Open Articles
+            </Link>
             <Link to="/feeds" className="btn-secondary" style={dashboardHeaderButtonStyle}>
               <Rss size={16} /> Manage Feeds
             </Link>
@@ -210,15 +230,14 @@ export default function App() {
             <Link to="/intelligence" className="btn-primary" style={dashboardHeaderButtonStyle}>
               <MessageSquare size={16} /> Open Intelligence Copilot
             </Link>
-            <button className="btn-secondary" onClick={loadArticles}>
-              <RefreshCw size={16} /> Refresh Feeds
+            <button className="btn-secondary" onClick={loadReportStats}>
+              <RefreshCw size={16} /> Refresh Reports
             </button>
           </div>
         </header>
 
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <StatsOverview articles={articles} crawlCount={crawlCount} />
-          <FeedView articles={articles} isScraping={isScraping} />
+          <StatsOverview stats={reportStats} crawlCount={crawlCount} />
         </motion.div>
       </main>
     </div>
@@ -233,11 +252,10 @@ export default function App() {
       </div>
 
       <WorkflowPage
-        articles={articles}
+        articles={workflowArticles}
         isScraping={isScraping}
         onRunScraper={runScraper}
         feeds={feedUrls}
-        pipelineRuns={pipelineRuns}
       />
     </div>
   );
@@ -259,6 +277,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={renderDashboardView()} />
+      <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage /></RouteShell>} />
+      <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
       <Route path="/feeds" element={renderFeedsRoute()} />
       <Route path="/workflow" element={renderWorkflowRoute()} />
       <Route
