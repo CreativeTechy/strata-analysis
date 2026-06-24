@@ -335,3 +335,139 @@ h1, h2, h3 {
   font-weight: 700;
   color: var(--text-dark);
 }
+
+.sentiment-report {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 28px;
+  align-items: center;
+}
+
+.sentiment-report-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sentiment-chart-shell {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  margin: 0 auto;
+}
+
+.sentiment-center-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+  pointer-events: none;
+}
+
+.sentiment-center-copy strong {
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--text-dark);
+}
+
+.sentiment-center-copy span {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sentiment-report-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+
+.sentiment-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.sentiment-row-top,
+.sentiment-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sentiment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.sentiment-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.sentiment-bar-track {
+  height: 10px;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sentiment-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.sentiment-row-meta {
+  font-size: 0.72rem;
+  color: var(--text-light);
+}
+
+.sentiment-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 159, 67, 0.10), rgba(46, 134, 222, 0.08));
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 960px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sentiment-report {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .sentiment-report-breakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .sentiment-chart-shell {
+    width: 200px;
+    height: 200px;
+  }
+}

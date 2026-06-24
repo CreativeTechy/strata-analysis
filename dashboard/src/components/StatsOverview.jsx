@@ -1,4 +1,3 @@
-import React from 'react';
 import { Activity, TrendingUp, Database } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
@@ -11,6 +10,14 @@ export default function StatsOverview({ stats = {}, crawlCount = null }) {
   const negative = Number(stats.negative) || 0;
   const neutral = Number(stats.neutral) || 0;
   const balance = positive - negative;
+  const positivePct = total ? Math.round((positive / total) * 100) : 0;
+  const negativePct = total ? Math.round((negative / total) * 100) : 0;
+  const neutralPct = total ? Math.round((neutral / total) * 100) : 0;
+  const dominant = total ? [
+    { label: 'Positive', value: positive, pct: positivePct, color: '#2ed573' },
+    { label: 'Negative', value: negative, pct: negativePct, color: '#ff4757' },
+    { label: 'Neutral', value: neutral, pct: neutralPct, color: '#747d8c' },
+  ].sort((a, b) => b.value - a.value)[0] : { label: 'Positive', pct: 0 };
 
   const data = [
     { name: 'Positive', value: positive },
@@ -54,26 +61,90 @@ export default function StatsOverview({ stats = {}, crawlCount = null }) {
         </div>
       </motion.div>
 
-      <motion.div className="glass-card stat-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-        <div className="stat-info">
-          <h4>Sentiment Mix</h4>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '5px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
-            <span style={{ color: '#2ed573' }}>- {positive}</span>
-            <span style={{ color: '#ff4757' }}>- {negative}</span>
-            <span style={{ color: '#747d8c' }}>- {neutral}</span>
+      <motion.div
+        className="glass-card stat-card sentiment-report"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <div className="sentiment-report-chart">
+          <div className="sentiment-report-head">
+            <div className="stat-info">
+              <h4>Sentiment Mix</h4>
+              <p>{total.toLocaleString()}</p>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+                {dominant.label} leads with {dominant.pct}% of the current set
+              </span>
+            </div>
           </div>
-        </div>
-        <div style={{ width: '80px', height: '80px' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={data} innerRadius={25} outerRadius={35} paddingAngle={5} dataKey="value" stroke="none">
-                {data.map((entry, index) => (
+
+          <div className="sentiment-chart-shell">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={data}
+                  innerRadius={58}
+                  outerRadius={82}
+                  paddingAngle={4}
+                  dataKey="value"
+                  stroke="none"
+                >
+                {data.map((_, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={{ borderRadius: '10px', border: 'none', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }} />
-            </PieChart>
-          </ResponsiveContainer>
+                <Tooltip
+                  formatter={(value, name) => [`${Number(value).toLocaleString()} articles`, name]}
+                  contentStyle={{
+                    borderRadius: '10px',
+                    border: 'none',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+
+            <div className="sentiment-center-copy">
+              <strong>{total.toLocaleString()}</strong>
+              <span>articles</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="sentiment-report-breakdown">
+          {[
+            { label: 'Positive', value: positive, pct: positivePct, color: '#2ed573' },
+            { label: 'Negative', value: negative, pct: negativePct, color: '#ff4757' },
+            { label: 'Neutral', value: neutral, pct: neutralPct, color: '#747d8c' },
+          ].map((item) => (
+            <div key={item.label} className="sentiment-row">
+              <div className="sentiment-row-top">
+                <span className="sentiment-label">
+                  <span className="sentiment-dot" style={{ background: item.color }} />
+                  {item.label}
+                </span>
+                <strong style={{ color: item.color }}>
+                  {item.value.toLocaleString()}
+                </strong>
+              </div>
+              <div className="sentiment-bar-track">
+                <div
+                  className="sentiment-bar-fill"
+                  style={{ width: `${item.pct}%`, background: item.color }}
+                />
+              </div>
+              <div className="sentiment-row-meta">
+                <span>{item.pct}% of articles</span>
+              </div>
+            </div>
+          ))}
+
+          <div className="sentiment-footer">
+            <span>Net balance</span>
+            <strong style={{ color: balance > 0 ? '#2ed573' : balance < 0 ? '#ff4757' : '#747d8c' }}>
+              {balance > 0 ? '+' : ''}{balance.toLocaleString()}
+            </strong>
+          </div>
         </div>
       </motion.div>
     </div>
