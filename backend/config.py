@@ -8,6 +8,7 @@ a one-place change.
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from trafilatura.feeds import find_feed_urls
@@ -65,6 +66,48 @@ def _looks_like_feed_url(url: str) -> bool:
     )
 
 
+def _looks_like_social_url(url: str) -> bool:
+    host = urlparse((url or "").strip()).netloc.lower()
+    return any(
+        domain in host
+        for domain in (
+            "x.com",
+            "twitter.com",
+            "facebook.com",
+            "instagram.com",
+            "tiktok.com",
+            "linkedin.com",
+            "youtube.com",
+            "reddit.com",
+            "threads.net",
+        )
+    )
+
+
+def _infer_source_type(url: str) -> str:
+    if _looks_like_feed_url(url):
+        return "rss"
+    if _looks_like_social_url(url):
+        return "social"
+    return "web"
+
+
+def _normalize_source_record(row):
+    url = (row.get("url") or "").strip()
+    name = (row.get("name") or "").strip()
+    return {
+        "id": row.get("id"),
+        "url": url,
+        "name": name,
+        "enabled": bool(row.get("enabled", True)),
+        "source_type": (row.get("source_type") or _infer_source_type(url) or "rss").strip() or "rss",
+        "category": (row.get("category") or "").strip(),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "source": row.get("source", "supabase"),
+    }
+
+
 @lru_cache(maxsize=256)
 def _discover_feed_urls(url: str):
     """Return discovered feed URLs for a homepage, or [] if none are found."""
@@ -110,7 +153,32 @@ def load_feed_records():
     rows = _load_feed_records_from_supabase()
     if rows is None:
         return []
-    return rows
+    return [_normalize_source_record(row) for row in rows]
+
+
+def load_source_records():
+    """Return configured source records with source_type preserved."""
+    env_feeds = os.environ.get("FEEDS", "").strip()
+    if env_feeds:
+        raw_urls = [u.strip() for u in env_feeds.split(",") if u.strip()]
+        return [
+            _normalize_source_record(
+                {
+                    "url": url,
+                    "name": urlparse(url).netloc or url,
+                    "enabled": True,
+                    "source_type": _infer_source_type(url),
+                    "category": "",
+                    "source": "env",
+                }
+            )
+            for url in raw_urls
+        ]
+
+    records = _load_feed_records_from_supabase()
+    if records is None:
+        return []
+    return [_normalize_source_record(row) for row in records]
 
 
 def load_feeds():
@@ -120,26 +188,19 @@ def load_feeds():
     1. FEEDS env var override
     2. Supabase feeds table
     """
-    env_feeds = os.environ.get("FEEDS", "").strip()
-    if env_feeds:
-        raw_urls = [u.strip() for u in env_feeds.split(",") if u.strip()]
-    else:
-        records = _load_feed_records_from_supabase()
-        if records is not None:
-            raw_urls = [
-                r.get("url", "").strip()
-                for r in records
-                if r.get("enabled", True) and r.get("url")
-            ]
-        else:
-            raw_urls = []
-
     normalized = []
     seen = set()
-    for url in raw_urls:
-        candidate_urls = [url] if _looks_like_feed_url(url) else _discover_feed_urls(url)
-        if not candidate_urls:
-            candidate_urls = [url]
+    for record in load_source_records():
+        if not record.get("enabled", True):
+            continue
+        url = (record.get("url") or "").strip()
+        source_type = (record.get("source_type") or "rss").strip().lower()
+        if not url:
+            continue
+
+        candidate_urls = [url]
+        if source_type == "rss" and not _looks_like_feed_url(url):
+            candidate_urls = _discover_feed_urls(url) or [url]
 
         for candidate in candidate_urls:
             candidate = (candidate or "").strip()

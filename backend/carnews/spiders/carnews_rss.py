@@ -1,5 +1,5 @@
 """
-Car-news spider: RSS discovery -> article fetch -> trafilatura extraction.
+Car-news spider: RSS discovery -> web/social page fetch -> trafilatura extraction.
 
 Run from the backend/ directory:
     scrapy crawl carnews_rss -O <output-file>
@@ -18,7 +18,7 @@ import scrapy
 import trafilatura
 from trafilatura.feeds import find_feed_urls
 
-from config import load_feeds
+from config import load_source_records
 
 
 class CarNewsRssSpider(scrapy.Spider):
@@ -38,10 +38,43 @@ class CarNewsRssSpider(scrapy.Spider):
         "RETRY_TIMES": 2,
     }
 
-    start_urls = load_feeds()
+    async def start(self):
+        for record in load_source_records():
+            if not record.get("enabled", True):
+                continue
+            url = (record.get("url") or "").strip()
+            if not url:
+                continue
+            self.logger.info(
+                "Seed %s (%s) -> %s",
+                record.get("name") or url,
+                (record.get("source_type") or "rss").strip().lower(),
+                url,
+            )
+            yield scrapy.Request(
+                url,
+                callback=self.parse_source,
+                meta={
+                    "feed": url,
+                    "source_type": (record.get("source_type") or "rss").strip().lower(),
+                    "source_name": record.get("name") or url,
+                },
+            )
 
-    def parse(self, response):
+    def start_requests(self):
+        # Scrapy 2.16 with AsyncCrawlerProcess prefers `start()`. Keep the old
+        # hook as a compatibility fallback for older runners.
+        yield from ()
+
+    def parse_source(self, response):
+        source_type = (response.meta.get("source_type") or "rss").strip().lower()
         content_type = (response.headers.get(b"Content-Type") or b"").decode("utf-8", "ignore").lower()
+        self.logger.info(
+            "Response %s [%s] from %s",
+            response.url,
+            source_type,
+            content_type or "unknown content-type",
+        )
         is_feed_like = (
             "xml" in content_type
             or response.xpath("local-name(/*)").get() in {"rss", "feed"}
@@ -49,11 +82,16 @@ class CarNewsRssSpider(scrapy.Spider):
             or response.xpath("//entry").get()
         )
 
-        if is_feed_like:
+        if source_type == "rss" and is_feed_like:
             yield from self.parse_feed(response)
             return
 
-        yield from self.parse_homepage(response)
+        if source_type == "rss":
+            yield from self.parse_homepage(response)
+            return
+
+        follow_links = source_type == "web"
+        yield from self.parse_page(response, follow_links=follow_links)
 
     def parse_feed(self, response):
         """Parse RSS/Atom XML and follow each article link."""
@@ -74,7 +112,7 @@ class CarNewsRssSpider(scrapy.Spider):
                 )
 
     def parse_homepage(self, response):
-        """Fallback for homepage URLs that do not expose a feed directly."""
+        """Fallback for RSS homepage URLs that do not expose a feed directly."""
         self.logger.info("Homepage %s -> discovering feeds/articles", response.url)
 
         discovered_feeds = []
@@ -88,33 +126,50 @@ class CarNewsRssSpider(scrapy.Spider):
                 yield response.follow(feed_url, callback=self.parse_feed, meta={"feed": feed_url})
             return
 
+        yield from self.parse_page(response, follow_links=True)
+
+    def parse_page(self, response, follow_links=False):
+        """Extract a page directly, optionally following same-domain links."""
+        self.logger.info("Page %s -> extracting%s", response.url, " and following links" if follow_links else "")
+
+        yield from self._yield_article(response)
+
+        if not follow_links:
+            return
+
+        seen = set()
+        max_links = 120
         article_links = []
         selectors = [
             'a[href*="/20"]::attr(href)',
             'article a::attr(href)',
+            'h1 a::attr(href)',
             'h2 a::attr(href)',
             'h3 a::attr(href)',
             'main a::attr(href)',
+            'a::attr(href)',
         ]
         for selector in selectors:
             article_links.extend(response.css(selector).getall())
 
-        seen = set()
         for href in article_links:
+            if len(seen) >= max_links:
+                break
             link = urljoin(response.url, href.split("#")[0].strip())
             if not link or link in seen:
                 continue
             seen.add(link)
             if urlparse(link).netloc != urlparse(response.url).netloc:
                 continue
+            if "javascript:" in link.lower() or "mailto:" in link.lower() or "tel:" in link.lower():
+                continue
             yield response.follow(
                 link,
                 callback=self.parse_article,
-                meta={"feed": response.url},
+                meta={"feed": response.url, "source_type": "web"},
             )
 
-    def parse_article(self, response):
-        """Extract clean text + metadata with trafilatura (no per-site selectors)."""
+    def _yield_article(self, response):
         extracted = trafilatura.extract(
             response.text,
             url=response.url,
@@ -123,7 +178,6 @@ class CarNewsRssSpider(scrapy.Spider):
             include_comments=False,
         )
         if not extracted:
-            self.logger.debug("No extractable content: %s", response.url)
             return
 
         doc = json.loads(extracted)
@@ -141,3 +195,7 @@ class CarNewsRssSpider(scrapy.Spider):
             "text": text,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def parse_article(self, response):
+        """Extract clean text + metadata with trafilatura (no per-site selectors)."""
+        yield from self._yield_article(response)

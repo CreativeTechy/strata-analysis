@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
 const CATEGORIES = ['all', 'review', 'event', 'recall', 'auction', 'race', 'tech', 'industry', 'other'];
@@ -33,6 +33,8 @@ export default function ArticlesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -45,7 +47,6 @@ export default function ArticlesPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function loadArticles() {
       setLoading(true);
       setError('');
@@ -79,7 +80,7 @@ export default function ArticlesPage() {
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, limit, offset, sort]);
+  }, [search, sentiment, category, limit, offset, sort, reloadToken]);
 
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + articles.length, total);
@@ -87,6 +88,34 @@ export default function ArticlesPage() {
   const hasNext = offset + limit < total;
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
+
+  const handleDeleteAll = async () => {
+    if (deletingAll) return;
+    const confirmed = window.confirm(
+      'Delete all articles from Supabase? This will remove every row in the articles table and cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    setDeletingAll(true);
+    setError('');
+      try {
+        const res = await fetch('/api/articles', { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.error) {
+          throw new Error(data?.detail || data?.error || `Failed to delete articles (${res.status})`);
+        }
+        setSearchInput('');
+        setSearch('');
+        setSentiment('all');
+        setCategory('all');
+        setOffset(0);
+        setReloadToken((value) => value + 1);
+      } catch (err) {
+        setError(err?.message || 'Failed to delete articles.');
+      } finally {
+        setDeletingAll(false);
+      }
+  };
 
   return (
     <div style={{ minHeight: '100vh', padding: '32px 28px 40px' }}>
@@ -102,9 +131,20 @@ export default function ArticlesPage() {
             </p>
           </div>
 
-          <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
-            Back to Dashboard
-          </Link>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              className="btn-secondary"
+              onClick={handleDeleteAll}
+              disabled={loading || deletingAll}
+              style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+            >
+              <Trash2 size={16} />
+              {deletingAll ? 'Deleting...' : 'Delete All Articles'}
+            </button>
+            <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
+              Back to Dashboard
+            </Link>
+          </div>
         </div>
 
         <div className="glass-card" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.2fr) repeat(4, minmax(160px, 1fr))', gap: 12, alignItems: 'center', marginBottom: 18 }}>

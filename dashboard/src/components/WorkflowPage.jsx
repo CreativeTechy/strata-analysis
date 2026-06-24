@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe,
@@ -136,10 +137,6 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
     }
   };
 
-  const addRow = () => {
-    setRows([...rows, { id: Date.now(), platform: 'web', type: 'keywords', value: '' }]);
-  };
-
   const updateRow = (id, field, value) => {
     setRows(rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   };
@@ -220,9 +217,13 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
                 </AnimatePresence>
               </div>
 
-              <button className="add-row-btn" onClick={addRow}>
+              <Link
+                to="/feeds"
+                className="add-row-btn"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}
+              >
                 <Plus size={18} /> Add Source
-              </button>
+              </Link>
 
               <button
                 className="btn-primary"
@@ -232,9 +233,6 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
               >
                 {isScraping ? (<><RefreshCw size={16} className="spin" /> Running...</>) : 'Run Extractor'}
               </button>
-              <p style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: '8px', textAlign: 'center' }}>
-                Sources are managed in Supabase. Editing rows here is a preview.
-              </p>
             </motion.div>
 
             <div className="workflow-arrow">

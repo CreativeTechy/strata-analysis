@@ -84,3 +84,26 @@ def save_articles(articles, batch_size=50):
         except Exception as e:
             print(f"  Supabase upload error for batch {i // batch_size + 1}: {e}")
     return sent
+
+
+def delete_all_articles():
+    """Delete all rows from the Supabase `articles` table."""
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        print("Supabase credentials not set, skipping article delete.")
+        return 0
+
+    headers = {
+        "apikey": config.SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        "Accept": "application/json",
+        "Prefer": "return=minimal",
+    }
+    endpoint = f"{config.SUPABASE_URL}/rest/v1/articles"
+
+    try:
+        resp = requests.delete(endpoint, headers=headers, params={"id": "gte.0"}, timeout=30)
+        resp.raise_for_status()
+        return 1
+    except Exception as e:
+        print(f"  article delete error: {e}")
+        return 0

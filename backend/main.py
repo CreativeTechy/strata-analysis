@@ -78,7 +78,7 @@ def run_scraper_pipeline(run_id: str):
 
         try:
             update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
-            print("1. Scraping (carnews_rss)...")
+            print("1. Scraping configured sources...")
             subprocess.run(
                 ["scrapy", "crawl", "carnews_rss", "-O", str(raw_file)],
                 cwd=BASE_DIR,
@@ -285,6 +285,21 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.delete("/api/articles")
+def delete_articles():
+    """Delete all stored articles from Supabase."""
+    from store import delete_all_articles
+
+    deleted = delete_all_articles()
+    if not deleted:
+        detail = "Check Supabase credentials and URL."
+        return {
+            "error": "Unable to delete articles.",
+            "detail": detail,
+        }
+    return {"ok": True}
 
 
 @app.post("/api/chat")
