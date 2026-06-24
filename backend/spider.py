@@ -30,6 +30,35 @@ from parsel import Selector
 
 MIN_ARTICLE_WORDS = 120  # below this, a page is a link/nav node, not an article
 CONCURRENCY = 12
+
+# Listing/nav/index pages routinely clear MIN_ARTICLE_WORDS on word count alone
+# (they're stuffed with article teasers), which made "articles" track the page
+# count. So an article must ALSO have an article-shaped URL: not the homepage,
+# not a known listing segment, and with a real slug in the final path segment.
+_NON_ARTICLE_SEG = re.compile(
+    r"^(category|categories|tag|tags|topic|topics|author|authors|page|pages|"
+    r"section|sections|search|archive|archives|feed|rss|about|contact|"
+    r"privacy|terms|login|register|subscribe)$",
+    re.I,
+)
+# A real article slug: a date (2024/06), several hyphenated words, or a long id.
+_ARTICLE_SLUG = re.compile(r"(\d{4}/\d{2})|([a-z0-9]+-[a-z0-9]+-[a-z0-9]+)|(\d{5,})", re.I)
+
+
+def _looks_like_article_url(url):
+    path = urlparse(url).path.strip("/")
+    if not path:  # homepage
+        return False
+    segs = path.split("/")
+    if any(_NON_ARTICLE_SEG.match(s) for s in segs):
+        return False
+    last = segs[-1]
+    return bool(_ARTICLE_SLUG.search(last)) or (len(segs) >= 2 and len(last) > 12)
+
+
+def _is_article(url, word_count):
+    """A page is an article only if it's long enough AND its URL looks like one."""
+    return word_count >= MIN_ARTICLE_WORDS and _looks_like_article_url(url)
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -148,7 +177,7 @@ async def _native_stream(seed, max_depth, max_pages):
 
                 extracted = trafilatura.extract(html) or ""
                 wcount = len(extracted.split())
-                is_article = wcount >= MIN_ARTICLE_WORDS
+                is_article = _is_article(url, wcount)
                 if is_article:
                     articles += 1
                     words += wcount
@@ -229,7 +258,7 @@ async def _crawl4ai_stream(seed, max_depth, max_pages):
             depth = int(meta.get("depth", 0) or 0)
             text = _markdown_text(result)
             wcount = len(text.split())
-            is_article = bool(result.success) and wcount >= MIN_ARTICLE_WORDS
+            is_article = bool(result.success) and _is_article(result.url, wcount)
             source = urlparse(result.url).netloc
 
             pages += 1
