@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import config
+from articles_store import get_article_stats, list_articles
 from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
 from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
@@ -142,6 +143,33 @@ def get_feeds():
 @app.get("/api/pipeline-runs")
 def get_pipeline_runs(limit: int = 10):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+
+
+@app.get("/api/articles")
+def get_articles(
+    search: str | None = None,
+    sentiment: str | None = None,
+    category: str | None = None,
+    limit: int = 24,
+    offset: int = 0,
+    sort: str = "published.desc",
+):
+    return list_articles(
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+
+
+@app.get("/api/articles/stats")
+def get_articles_stats(
+    search: str | None = None,
+    category: str | None = None,
+):
+    return get_article_stats(search=search, category=category)
 
 
 @app.post("/api/feeds")
