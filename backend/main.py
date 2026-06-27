@@ -19,12 +19,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import config
 from articles_store import get_article_stats, list_articles
+from events_store import (
+    create_event,
+    delete_event,
+    diagnose_event_setup,
+    list_events,
+    list_feeds_for_event,
+    set_event_feeds,
+    update_event,
+)
 from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
 from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
@@ -62,10 +71,12 @@ def _load_pipeline_stats(stats_file: Path):
         return {}
 
 
-def run_scraper_pipeline(run_id: str):
+def run_scraper_pipeline(run_id: str, event_id: int | None = None):
     """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
+    if event_id is not None:
+        env["PIPELINE_EVENT_ID"] = str(event_id)
     with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
         run_path = Path(run_dir)
         raw_file = run_path / "articles.raw.json"
@@ -75,6 +86,25 @@ def run_scraper_pipeline(run_id: str):
         env["PIPELINE_RAW_FILE"] = str(raw_file)
         env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
         env["PIPELINE_STATS_FILE"] = str(stats_file)
+
+        if event_id is not None:
+            try:
+                feeds = list_feeds_for_event(event_id)
+                feed_urls = [feed.get("url") for feed in feeds if feed.get("url")]
+                if feed_urls:
+                    env["FEEDS"] = ",".join(feed_urls)
+                else:
+                    update_pipeline_run(
+                        run_id,
+                        status="failed",
+                        stage="error",
+                        message="Selected event has no feeds assigned.",
+                        error="No feeds assigned to the selected event.",
+                        finished_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    return
+            except Exception:
+                pass
 
         try:
             update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
@@ -140,6 +170,46 @@ def get_feeds():
     return {"feeds": feeds, "source": source}
 
 
+@app.get("/api/events")
+def get_events():
+    return {"events": list_events()}
+
+
+@app.post("/api/events")
+def add_event(payload: dict):
+    event = create_event(payload or {})
+    if not event:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to create event. Check Supabase credentials and URL.",
+            "detail": detail or "The event request did not return a row.",
+        }
+    return {"event": event}
+
+
+@app.put("/api/events/{event_id}")
+def edit_event(event_id: int, payload: dict):
+    event = update_event(event_id, payload or {})
+    if not event:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to update event. Check Supabase credentials and URL.",
+            "detail": detail or "The update request did not return a row.",
+        }
+    return {"event": event}
+
+
+@app.delete("/api/events/{event_id}")
+def remove_event(event_id: int):
+    if not delete_event(event_id):
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to delete event. Check Supabase credentials and URL.",
+            "detail": detail or "The delete request failed.",
+        }
+    return {"ok": True}
+
+
 @app.get("/api/pipeline-runs")
 def get_pipeline_runs(limit: int = 10):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
@@ -150,6 +220,7 @@ def get_articles(
     search: str | None = None,
     sentiment: str | None = None,
     category: str | None = None,
+    event_id: int | None = None,
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
@@ -158,6 +229,7 @@ def get_articles(
         search=search,
         sentiment=sentiment,
         category=category,
+        event_id=event_id,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -168,8 +240,9 @@ def get_articles(
 def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
+    event_id: int | None = None,
 ):
-    return get_article_stats(search=search, category=category)
+    return get_article_stats(search=search, category=category, event_id=event_id)
 
 
 @app.post("/api/feeds")
@@ -210,14 +283,40 @@ def remove_feed(feed_id: int):
     return {"ok": True}
 
 
+@app.post("/api/events/{event_id}/feeds")
+def replace_event_feeds(event_id: int, payload: dict):
+    feed_ids = payload.get("feed_ids") if isinstance(payload, dict) else []
+    assigned = set_event_feeds(event_id, feed_ids or [])
+    return {"event_id": event_id, "feed_ids": assigned}
+
+
 @app.post("/scrape")
-def trigger_scrape(background_tasks: BackgroundTasks):
-    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.")
+def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None):
+    payload = payload or {}
+    event_id = payload.get("event_id")
+    try:
+        event_id = int(event_id) if event_id is not None else None
+    except Exception:
+        event_id = None
+    if event_id is None:
+        events = list_events()
+        if len(events) == 1:
+            event_id = events[0].get("id")
+        elif not events:
+            raise HTTPException(status_code=400, detail="Create an event before running the scraper.")
+        else:
+            raise HTTPException(status_code=400, detail="Select an event before running the scraper.")
+
+    if not list_feeds_for_event(event_id):
+        raise HTTPException(status_code=400, detail="Assign at least one feed to the selected event before scraping.")
+
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", event_id=event_id)
     run_id = run["id"] if run else uuid.uuid4().hex
-    background_tasks.add_task(run_scraper_pipeline, run_id)
+    background_tasks.add_task(run_scraper_pipeline, run_id, event_id)
     return {
         "message": "Scraper pipeline triggered. It will upload to Supabase when finished.",
         "run_id": run_id,
+        "event_id": event_id,
     }
 
 

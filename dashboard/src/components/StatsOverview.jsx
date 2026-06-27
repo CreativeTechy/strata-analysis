@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 
 const COLORS = ['#2ed573', '#ff4757', '#747d8c'];
 
-export default function StatsOverview({ stats = {}, crawlCount = null }) {
+export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabel = 'Current event' }) {
   const total = Number(stats.total) || 0;
   const positive = Number(stats.positive) || 0;
   const negative = Number(stats.negative) || 0;
@@ -34,6 +34,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null }) {
         <div className="stat-info">
           <h4>Curated Articles</h4>
           <p>{total.toLocaleString()}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
         </div>
       </motion.div>
 

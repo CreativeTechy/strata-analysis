@@ -10,6 +10,7 @@ from __future__ import annotations
 import requests
 
 import config
+from events_store import list_article_ids_for_event
 
 ARTICLES_SELECT = (
     "id,url,source,feed,title,author,published,text,fetched_at,summary,"
@@ -127,7 +128,7 @@ def _apply_search(params: dict, search: str | None):
     )
 
 
-def _apply_filters(params: dict, search=None, sentiment=None, category=None):
+def _apply_filters(params: dict, search=None, sentiment=None, category=None, event_id=None):
     _apply_search(params, search)
 
     sentiment_value = _normalize_sentiment(sentiment)
@@ -137,6 +138,13 @@ def _apply_filters(params: dict, search=None, sentiment=None, category=None):
     category_value = _normalize_category(category)
     if category_value and category_value != "all":
         params["category"] = f"eq.{category_value}"
+
+    if event_id is not None:
+        article_ids = list_article_ids_for_event(event_id)
+        if not article_ids:
+            params["id"] = "eq.-1"
+            return
+        params["id"] = f"in.({','.join(str(article_id) for article_id in article_ids)})"
 
 
 def _fetch_articles(params: dict):
@@ -163,7 +171,7 @@ def _fetch_articles(params: dict):
         return [], 0
 
 
-def list_articles(search=None, sentiment=None, category=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT):
+def list_articles(search=None, sentiment=None, category=None, event_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -174,7 +182,7 @@ def list_articles(search=None, sentiment=None, category=None, limit=DEFAULT_LIMI
         "offset": str(offset),
         "order": f"{field}.{direction}",
     }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category)
+    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
     rows, total = _fetch_articles(params)
     return {
         "articles": rows,
@@ -185,21 +193,21 @@ def list_articles(search=None, sentiment=None, category=None, limit=DEFAULT_LIMI
     }
 
 
-def _count_articles(search=None, sentiment=None, category=None):
+def _count_articles(search=None, sentiment=None, category=None, event_id=None):
     params = {
         "select": "id",
         "limit": "1",
     }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category)
+    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
     _, total = _fetch_articles(params)
     return total
 
 
-def get_article_stats(search=None, category=None):
-    total = _count_articles(search=search, category=category)
-    positive = _count_articles(search=search, sentiment="positive", category=category)
-    negative = _count_articles(search=search, sentiment="negative", category=category)
-    neutral = _count_articles(search=search, sentiment="neutral", category=category)
+def get_article_stats(search=None, category=None, event_id=None):
+    total = _count_articles(search=search, category=category, event_id=event_id)
+    positive = _count_articles(search=search, sentiment="positive", category=category, event_id=event_id)
+    negative = _count_articles(search=search, sentiment="negative", category=category, event_id=event_id)
+    neutral = _count_articles(search=search, sentiment="neutral", category=category, event_id=event_id)
 
     return {
         "total": total,

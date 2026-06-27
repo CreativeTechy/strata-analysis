@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 
 import config
+from events_store import list_feed_event_ids, set_feed_events
 
 
 def _headers():
@@ -31,7 +32,7 @@ def _response_error(resp):
     return f"HTTP {resp.status_code}"
 
 
-def _normalize_record(row):
+def _normalize_record(row, include_event_ids=False):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
     inferred_type = config._infer_source_type(url)
@@ -48,6 +49,7 @@ def _normalize_record(row):
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source": row.get("source", "supabase"),
+        "event_ids": list_feed_event_ids(row.get("id")) if include_event_ids and row.get("id") else [],
     }
 
 
@@ -179,6 +181,7 @@ def create_feed(feed):
         return None
 
     payload = _upsert_payload(feed)
+    event_ids = feed.get("event_ids") or []
     if not payload["url"]:
         return None
 
@@ -197,8 +200,12 @@ def create_feed(feed):
         if isinstance(rows, list) and rows:
             return _normalize_record({**rows[0], "source": "supabase"})
         if isinstance(rows, dict) and rows:
-            return _normalize_record({**rows, "source": "supabase"})
-        return _fetch_feed_by_url(payload["url"])
+            record = _normalize_record({**rows, "source": "supabase"})
+        else:
+            record = _fetch_feed_by_url(payload["url"])
+        if record and event_ids is not None:
+            record["event_ids"] = set_feed_events(record["id"], event_ids)
+        return record
     except Exception:
         return None
 
@@ -210,6 +217,7 @@ def update_feed(feed_id, feed):
         return None
 
     payload = _upsert_payload(feed)
+    event_ids = feed.get("event_ids")
 
     try:
         resp = requests.patch(
@@ -227,8 +235,12 @@ def update_feed(feed_id, feed):
         if isinstance(rows, list) and rows:
             return _normalize_record({**rows[0], "source": "supabase"})
         if isinstance(rows, dict) and rows:
-            return _normalize_record({**rows, "source": "supabase"})
-        return _fetch_feed_by_id(feed_id)
+            record = _normalize_record({**rows, "source": "supabase"})
+        else:
+            record = _fetch_feed_by_id(feed_id)
+        if record and event_ids is not None:
+            record["event_ids"] = set_feed_events(record["id"], event_ids)
+        return record
     except Exception:
         return None
 

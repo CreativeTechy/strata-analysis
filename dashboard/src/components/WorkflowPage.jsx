@@ -51,7 +51,7 @@ function statusTone(status) {
   return 'muted';
 }
 
-export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [] }) {
+export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [], event = null }) {
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
       id: i + 1,
@@ -124,6 +124,7 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
 
   const hasData = articles.length > 0;
   const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
+  const eventLabel = event?.name || 'all events';
 
   const stats = useMemo(() => {
     const total = articles.length;
@@ -202,6 +203,9 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
             <div>
               <div className="panel-kicker"><Clock3 size={14} /> Live stopwatch</div>
               <h2>Workflow elapsed time</h2>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 6 }}>
+                Running scope: {eventLabel}
+              </div>
             </div>
             <span className={`panel-pill ${isScraping ? 'warning' : workflowStartedAt ? 'success' : 'neutral'}`}>
               {isScraping ? 'running' : workflowStartedAt ? 'stopped' : 'idle'}
@@ -303,10 +307,10 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
               <button
                 className="btn-primary"
                 style={{ marginTop: '15px', opacity: isScraping ? 0.7 : 1 }}
-                onClick={onRunScraper}
-                disabled={isScraping}
+                onClick={() => onRunScraper?.()}
+                disabled={isScraping || !event}
               >
-                {isScraping ? (<><RefreshCw size={16} className="spin" /> Running...</>) : 'Run Extractor'}
+                {isScraping ? (<><RefreshCw size={16} className="spin" /> Running...</>) : event ? 'Run Extractor for Event' : 'Select an Event to Run'}
               </button>
             </motion.div>
 
