@@ -21,7 +21,7 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
-export default function ArticlesPage() {
+export default function ArticlesPage({ event = null, eventId = null }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sentiment, setSentiment] = useState('all');
@@ -43,7 +43,7 @@ export default function ArticlesPage() {
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, category, limit, sort]);
+  }, [search, sentiment, category, limit, sort, eventId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -55,6 +55,7 @@ export default function ArticlesPage() {
         if (search) params.set('search', search);
         if (sentiment !== 'all') params.set('sentiment', sentiment);
         if (category !== 'all') params.set('category', category);
+        if (eventId != null) params.set('event_id', String(eventId));
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -80,7 +81,7 @@ export default function ArticlesPage() {
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, limit, offset, sort, reloadToken]);
+  }, [search, sentiment, category, limit, offset, sort, reloadToken, eventId]);
 
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + articles.length, total);
@@ -126,9 +127,10 @@ export default function ArticlesPage() {
               <SlidersHorizontal size={26} color="#ff6b35" />
               <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: 0 }}>Articles</h1>
             </div>
-            <p style={{ color: 'var(--text-light)', margin: 0 }}>
+          <p style={{ color: 'var(--text-light)', margin: 0 }}>
               Server-side search, sentiment, category, sort, and pagination powered by the API.
-            </p>
+              {event ? ` Current event: ${event.name}.` : ' Showing all events.'}
+          </p>
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

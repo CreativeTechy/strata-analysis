@@ -1,70 +1,66 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import React, { useEffect, useState } from 'react';
 import '../styles/Intelligence.css';
 import { Send, Bot, User, X, FileText, ChevronRight, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-export default function IntelligencePage() {
+export default function IntelligencePage({ event = null, eventId = null }) {
   const [articles, setArticles] = useState([]);
   const [filteredArticles, setFilteredArticles] = useState([]);
 
-  // Filters
   const [selectedSites, setSelectedSites] = useState([]);
   const [selectedSentiments, setSelectedSentiments] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
 
-  // Chat
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [chatHistory, setChatHistory] = useState([
     {
       role: 'bot',
-      text: "Hello! I am your Intelligence Copilot. I've indexed the latest scraped articles. Use the filters on the left to narrow the set, then ask me to analyze them, summarize key themes, or draft a concise brief.",
+      text: 'Hello! I am your Intelligence Copilot. Select an event or browse all events, then ask me to summarize or analyze the articles.',
     },
   ]);
 
-  // Article preview
   const [selectedArticle, setSelectedArticle] = useState(null);
 
-  // Fetch BOTH datasets so the Copilot reasons over the curated feed AND the
-  // spider's crawl volume. Interleaved so any context slice gets a mix of both.
+  useEffect(() => {
+    setSelectedArticle(null);
+    setChatHistory([
+      {
+        role: 'bot',
+        text: 'Hello! I am your Intelligence Copilot. Select an event or browse all events, then ask me to summarize or analyze the articles.',
+      },
+    ]);
+  }, [eventId]);
+
   useEffect(() => {
     async function fetchData() {
       try {
-        const [arts, crawl] = await Promise.all([
-          supabase.from('articles').select('*').order('published', { ascending: false }),
-          supabase.from('crawl_pages').select('url,source,title,text').order('created_at', { ascending: false }).limit(400),
-        ]);
-
-        const curated = (arts.data || []).map((a) => ({ ...a, origin: 'curated' }));
-        const crawled = (crawl.data || []).map((c) => ({
-          url: c.url,
-          source: c.source,
-          title: c.title,
-          text: c.text,
-          summary: (c.text || '').slice(0, 280),
-          sentiment: null,
-          category: 'crawl',
-          relevance_score: null,
-          origin: 'crawl',
-        }));
-
-        const combined = [];
-        for (let i = 0; i < Math.max(curated.length, crawled.length); i++) {
-          if (curated[i]) combined.push(curated[i]);
-          if (crawled[i]) combined.push(crawled[i]);
+        const params = new URLSearchParams({
+          limit: '100',
+          offset: '0',
+          sort: 'published.desc',
+        });
+        if (eventId != null) {
+          params.set('event_id', String(eventId));
         }
-        setArticles(combined);
+        const res = await fetch(`/api/articles?${params.toString()}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || `Failed to load articles (${res.status})`);
+        }
+
+        const curated = (data.articles || []).map((a) => ({ ...a, origin: 'curated' }));
+        setArticles(curated);
       } catch (e) {
         console.error(e);
+        setArticles([]);
       }
     }
     fetchData();
-  }, []);
+  }, [eventId]);
 
-  // Filter logic
   useEffect(() => {
     let result = articles;
     if (selectedSites.length > 0) {
@@ -79,7 +75,6 @@ export default function IntelligencePage() {
     setFilteredArticles(result);
   }, [articles, selectedSites, selectedSentiments, selectedCategories]);
 
-  // Derived filter options
   const sites = [...new Set(articles.map((a) => a.source).filter(Boolean))];
   const categories = [...new Set(articles.map((a) => a.category).filter(Boolean))];
   const sentiments = ['positive', 'negative', 'neutral'];
@@ -137,11 +132,14 @@ export default function IntelligencePage() {
     <div className="intelligence-layout">
       <div className="bg-pattern"></div>
 
-      {/* LEFT: Filters */}
       <div className="intell-sidebar">
         <h2 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Filter size={18} /> Filters
         </h2>
+
+        <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginBottom: '12px' }}>
+          {event ? `Current event: ${event.name}` : 'Showing all events.'}
+        </div>
 
         <div className="filter-group">
           <h4>By Site</h4>
@@ -186,7 +184,6 @@ export default function IntelligencePage() {
         </div>
       </div>
 
-      {/* MIDDLE: AI Chat */}
       <div className="intell-chat">
         <div
           style={{
@@ -200,8 +197,8 @@ export default function IntelligencePage() {
             Strata Intelligence Copilot
           </h2>
           <p className="subtitle" style={{ fontSize: '0.9rem' }}>
-            Chatting over {filteredArticles.length} items -{' '}
-            {filteredArticles.filter((a) => a.origin !== 'crawl').length} curated + {filteredArticles.filter((a) => a.origin === 'crawl').length} crawled
+            Chatting over {filteredArticles.length} articles
+            {event ? ` - ${event.name}` : ' - all events'}
           </p>
         </div>
 
@@ -245,11 +242,11 @@ export default function IntelligencePage() {
               type="text"
               placeholder={isThinking ? 'Thinking...' : `Ask about the ${filteredArticles.length} filtered articles...`}
               value={chatInput}
-              disabled={isThinking}
+              disabled={isThinking || filteredArticles.length === 0}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
             />
-            <button className="chat-send-btn" onClick={() => handleSendMessage()} disabled={isThinking}>
+            <button className="chat-send-btn" onClick={() => handleSendMessage()} disabled={isThinking || filteredArticles.length === 0}>
               <Send size={18} />
             </button>
           </div>
@@ -257,7 +254,7 @@ export default function IntelligencePage() {
             <button
               className="btn-secondary"
               style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}
-              disabled={isThinking}
+              disabled={isThinking || filteredArticles.length === 0}
               onClick={() => handleSendMessage('Summarize the overall sentiment and the key themes across these articles.')}
             >
               Summarize Themes
@@ -265,7 +262,7 @@ export default function IntelligencePage() {
             <button
               className="btn-secondary"
               style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}
-              disabled={isThinking}
+              disabled={isThinking || filteredArticles.length === 0}
               onClick={() => handleSendMessage('Draft a short executive brief highlighting the most important signals in these articles.')}
             >
               Draft Brief
@@ -274,7 +271,6 @@ export default function IntelligencePage() {
         </div>
       </div>
 
-      {/* RIGHT: Previews */}
       <div className="intell-preview">
         <h3 style={{ fontSize: '1.1rem', marginBottom: '10px', color: 'var(--text-light)' }}>
           Matches ({filteredArticles.length})
@@ -296,7 +292,6 @@ export default function IntelligencePage() {
         ))}
       </div>
 
-      {/* Full Details Overlay */}
       <AnimatePresence>
         {selectedArticle && (
           <motion.div

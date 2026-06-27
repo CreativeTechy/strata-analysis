@@ -8,6 +8,7 @@ re-seeing an article from a feed updates it in place instead of duplicating.
 import requests
 
 import config
+from events_store import set_article_events
 
 ARTICLE_COLUMNS = (
     "url", "source", "feed", "title", "author", "published", "text",
@@ -40,7 +41,7 @@ def save_crawl_pages(rows, batch_size=50):
         "apikey": config.SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
+        "Prefer": "resolution=merge-duplicates,return=representation",
     }
     endpoint = f"{config.SUPABASE_URL}/rest/v1/crawl_pages?on_conflict=url"
 
@@ -74,15 +75,36 @@ def save_articles(articles, batch_size=50):
     endpoint = f"{config.SUPABASE_URL}/rest/v1/articles?on_conflict=url"
 
     sent = 0
+    linked_ids = []
+    event_id = None
+    try:
+        from os import environ
+
+        raw_event_id = (environ.get("PIPELINE_EVENT_ID") or "").strip()
+        if raw_event_id:
+            event_id = int(raw_event_id)
+    except Exception:
+        event_id = None
+
     for i in range(0, len(articles), batch_size):
         batch = [_row(a) for a in articles[i:i + batch_size]]
         try:
             resp = requests.post(endpoint, headers=headers, json=batch, timeout=30)
             resp.raise_for_status()
             sent += len(batch)
+            if event_id is not None:
+                rows = resp.json() if resp.content else []
+                if isinstance(rows, list):
+                    linked_ids.extend(
+                        [row.get("id") for row in rows if isinstance(row, dict) and row.get("id") is not None]
+                    )
             print(f"  Uploaded batch {i // batch_size + 1} ({len(batch)} articles)")
         except Exception as e:
             print(f"  Supabase upload error for batch {i // batch_size + 1}: {e}")
+
+    if event_id is not None and linked_ids:
+        set_article_events(linked_ids, event_id)
+
     return sent
 
 

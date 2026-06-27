@@ -24,6 +24,7 @@ def _normalize(row):
     return {
         "id": row.get("id"),
         "pipeline": row.get("pipeline") or "scrape",
+        "event_id": row.get("event_id"),
         "status": row.get("status") or "queued",
         "stage": row.get("stage") or "queued",
         "message": row.get("message") or "",
@@ -44,7 +45,7 @@ def _fetch_by_id(run_id):
         _endpoint(),
         headers=_headers(),
         params={
-            "select": "id,pipeline,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
+            "select": "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
             "id": f"eq.{run_id}",
             "limit": 1,
         },
@@ -66,7 +67,7 @@ def list_pipeline_runs(limit=10):
             _endpoint(),
             headers=_headers(),
             params={
-                "select": "id,pipeline,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
+                "select": "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
                 "order": "created_at.desc",
                 "limit": str(limit),
             },
@@ -81,7 +82,7 @@ def list_pipeline_runs(limit=10):
     return []
 
 
-def create_pipeline_run(run_id=None, pipeline="scrape", status="queued", stage="queued", message=""):
+def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="queued", stage="queued", message=""):
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return None
 
@@ -89,6 +90,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", status="queued", stage="
     payload = {
         "id": run_id,
         "pipeline": pipeline,
+        "event_id": event_id,
         "status": status,
         "stage": stage,
         "message": message,

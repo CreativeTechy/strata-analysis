@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, GitMerge, Bug, BarChart3, MessageSquare, Rss, Play, Newspaper, Database } from 'lucide-react';
+import { LayoutDashboard, GitMerge, Bug, BarChart3, MessageSquare, Rss, Play, Newspaper, Database, CalendarDays } from 'lucide-react';
 import { NavLink, Link } from 'react-router-dom';
 
 export default function Sidebar({
@@ -30,6 +30,9 @@ export default function Sidebar({
         </NavLink>
         <NavLink to="/feeds" className="btn-secondary" style={navStyle}>
           <Rss size={18} /> Feeds
+        </NavLink>
+        <NavLink to="/events" className="btn-secondary" style={navStyle}>
+          <CalendarDays size={18} /> Events
         </NavLink>
         <NavLink to="/workflow" className="btn-secondary" style={navStyle}>
           <GitMerge size={18} /> Workflow
