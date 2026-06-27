@@ -39,6 +39,7 @@ export default function App() {
   const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
   const [selectedEventId, setSelectedEventId] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
     return stored ? Number(stored) : null;
@@ -112,6 +113,7 @@ export default function App() {
   };
 
   const loadReportStats = async (eventId = selectedEventId) => {
+    setIsLoadingReportStats(true);
     try {
       const params = new URLSearchParams();
       if (eventId != null) {
@@ -129,6 +131,8 @@ export default function App() {
     } catch (error) {
       console.error('Failed to load report stats', error);
       setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0 });
+    } finally {
+      setIsLoadingReportStats(false);
     }
   };
 
@@ -381,8 +385,24 @@ export default function App() {
           </div>
         </header>
 
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          {(isLoadingReportStats || isLoadingEvents || isLoadingFeeds) ? (
+            <span className="panel-chip warning">
+              <RefreshCw size={12} className="spin" />
+              Loading dashboard
+            </span>
+          ) : (
+            <span className="panel-chip success">Dashboard ready</span>
+          )}
+        </div>
+
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <StatsOverview stats={reportStats} crawlCount={crawlCount} scopeLabel={selectedEvent ? selectedEvent.name : 'all events'} />
+          <StatsOverview
+            stats={reportStats}
+            crawlCount={crawlCount}
+            scopeLabel={selectedEvent ? selectedEvent.name : 'all events'}
+            loading={isLoadingReportStats || crawlCount == null}
+          />
         </motion.div>
       </main>
     </div>
@@ -437,7 +457,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={renderDashboardView()} />
-      <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} /></RouteShell>} />
+      <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
       <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
       <Route path="/feeds" element={renderFeedsRoute()} />
       <Route path="/events" element={renderEventsRoute()} />

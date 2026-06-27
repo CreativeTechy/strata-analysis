@@ -4,7 +4,20 @@ import { motion } from 'framer-motion';
 
 const COLORS = ['#2ed573', '#ff4757', '#747d8c'];
 
-export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabel = 'Current event' }) {
+function StatSkeleton() {
+  return (
+    <div className="glass-card stat-card stat-card-skeleton" aria-hidden="true">
+      <div className="stat-icon skeleton-shimmer" />
+      <div className="stat-info">
+        <div className="skeleton-line skeleton-shimmer stat-skeleton-title" />
+        <div className="skeleton-line skeleton-shimmer stat-skeleton-value" />
+        <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" />
+      </div>
+    </div>
+  );
+}
+
+export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabel = 'Current event', loading = false }) {
   const total = Number(stats.total) || 0;
   const positive = Number(stats.positive) || 0;
   const negative = Number(stats.negative) || 0;
@@ -24,6 +37,50 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
     { name: 'Negative', value: negative },
     { name: 'Neutral', value: neutral },
   ];
+
+  if (loading) {
+    return (
+      <div className="stats-grid">
+        <StatSkeleton />
+        <StatSkeleton />
+        <StatSkeleton />
+        <div className="glass-card stat-card sentiment-report stat-report-skeleton" aria-hidden="true">
+          <div className="sentiment-report-chart">
+            <div className="skeleton-line skeleton-shimmer stat-skeleton-title" style={{ width: '48%' }} />
+            <div className="skeleton-line skeleton-shimmer stat-skeleton-value" style={{ width: '36%' }} />
+            <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" style={{ width: '72%' }} />
+            <div className="sentiment-chart-shell">
+              <div className="sentiment-chart-skeleton skeleton-shimmer" />
+              <div className="sentiment-center-copy">
+                <div className="skeleton-line skeleton-shimmer" style={{ width: '38%', height: 24 }} />
+                <div className="skeleton-line skeleton-shimmer" style={{ width: '26%', height: 12, marginTop: 8 }} />
+              </div>
+            </div>
+          </div>
+
+          <div className="sentiment-report-breakdown">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="sentiment-row">
+                <div className="sentiment-row-top">
+                  <div className="skeleton-line skeleton-shimmer" style={{ width: '42%', height: 14 }} />
+                  <div className="skeleton-line skeleton-shimmer" style={{ width: '18%', height: 14 }} />
+                </div>
+                <div className="sentiment-bar-track">
+                  <div className="sentiment-bar-fill skeleton-shimmer" style={{ width: '72%' }} />
+                </div>
+                <div className="skeleton-line skeleton-shimmer" style={{ width: '28%', height: 12 }} />
+              </div>
+            ))}
+
+            <div className="sentiment-footer">
+              <div className="skeleton-line skeleton-shimmer" style={{ width: '22%', height: 14 }} />
+              <div className="skeleton-line skeleton-shimmer" style={{ width: '16%', height: 14 }} />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="stats-grid">

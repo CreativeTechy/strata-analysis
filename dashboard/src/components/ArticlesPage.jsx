@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter } from 'lucide-react';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
 const CATEGORIES = ['all', 'review', 'event', 'recall', 'auction', 'race', 'tech', 'industry', 'other'];
@@ -21,11 +21,34 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
-export default function ArticlesPage({ event = null, eventId = null }) {
+function SkeletonArticleCard() {
+  return (
+    <div className="glass-card article-card article-skeleton" aria-hidden="true">
+      <div className="skeleton-row">
+        <div className="skeleton-pill skeleton-shimmer" />
+        <div className="skeleton-pill skeleton-shimmer" style={{ width: '62%' }} />
+      </div>
+      <div className="skeleton-title skeleton-shimmer" />
+      <div className="skeleton-line skeleton-shimmer" />
+      <div className="skeleton-line skeleton-shimmer" style={{ width: '88%' }} />
+      <div className="skeleton-tags">
+        <div className="skeleton-chip skeleton-shimmer" />
+        <div className="skeleton-chip skeleton-shimmer" style={{ width: 92 }} />
+      </div>
+      <div className="skeleton-footer">
+        <div className="skeleton-line skeleton-shimmer" style={{ width: '38%' }} />
+        <div className="skeleton-line skeleton-shimmer" style={{ width: '28%' }} />
+      </div>
+    </div>
+  );
+}
+
+export default function ArticlesPage({ event = null, eventId = null, events = [] }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sentiment, setSentiment] = useState('all');
   const [category, setCategory] = useState('all');
+  const [eventFilter, setEventFilter] = useState(() => (eventId != null ? String(eventId) : 'all'));
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -35,6 +58,7 @@ export default function ArticlesPage({ event = null, eventId = null }) {
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const hasArticlesRef = useRef(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -43,7 +67,12 @@ export default function ArticlesPage({ event = null, eventId = null }) {
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, category, limit, sort, eventId]);
+  }, [search, sentiment, category, eventFilter, limit, sort]);
+
+  const activeEvent = useMemo(() => {
+    if (eventFilter === 'all') return null;
+    return events.find((item) => String(item.id) === String(eventFilter)) || null;
+  }, [events, eventFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -55,7 +84,7 @@ export default function ArticlesPage({ event = null, eventId = null }) {
         if (search) params.set('search', search);
         if (sentiment !== 'all') params.set('sentiment', sentiment);
         if (category !== 'all') params.set('category', category);
-        if (eventId != null) params.set('event_id', String(eventId));
+        if (eventFilter !== 'all') params.set('event_id', String(eventFilter));
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -71,8 +100,10 @@ export default function ArticlesPage({ event = null, eventId = null }) {
       } catch (err) {
         if (err?.name !== 'AbortError') {
           setError(err?.message || 'Failed to load articles.');
-          setArticles([]);
-          setTotal(0);
+          if (!hasArticlesRef.current) {
+            setArticles([]);
+            setTotal(0);
+          }
         }
       } finally {
         setLoading(false);
@@ -81,12 +112,19 @@ export default function ArticlesPage({ event = null, eventId = null }) {
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, limit, offset, sort, reloadToken, eventId]);
+  }, [search, sentiment, category, eventFilter, limit, offset, sort, reloadToken]);
+
+  useEffect(() => {
+    hasArticlesRef.current = articles.length > 0;
+  }, [articles.length]);
 
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + articles.length, total);
   const hasPrev = offset > 0;
   const hasNext = offset + limit < total;
+  const isInitialLoading = loading && articles.length === 0;
+  const isRefreshing = loading && articles.length > 0;
+  const scopeLabel = eventFilter === 'all' ? 'All events' : (activeEvent?.name || 'Selected event');
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
 
@@ -99,23 +137,24 @@ export default function ArticlesPage({ event = null, eventId = null }) {
 
     setDeletingAll(true);
     setError('');
-      try {
-        const res = await fetch('/api/articles', { method: 'DELETE' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.error) {
-          throw new Error(data?.detail || data?.error || `Failed to delete articles (${res.status})`);
-        }
-        setSearchInput('');
-        setSearch('');
-        setSentiment('all');
-        setCategory('all');
-        setOffset(0);
-        setReloadToken((value) => value + 1);
-      } catch (err) {
-        setError(err?.message || 'Failed to delete articles.');
-      } finally {
-        setDeletingAll(false);
+    try {
+      const res = await fetch('/api/articles', { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        throw new Error(data?.detail || data?.error || `Failed to delete articles (${res.status})`);
       }
+      setSearchInput('');
+      setSearch('');
+      setSentiment('all');
+      setCategory('all');
+      setEventFilter(eventId != null ? String(eventId) : 'all');
+      setOffset(0);
+      setReloadToken((value) => value + 1);
+    } catch (err) {
+      setError(err?.message || 'Failed to delete articles.');
+    } finally {
+      setDeletingAll(false);
+    }
   };
 
   return (
@@ -127,10 +166,10 @@ export default function ArticlesPage({ event = null, eventId = null }) {
               <SlidersHorizontal size={26} color="#ff6b35" />
               <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: 0 }}>Articles</h1>
             </div>
-          <p style={{ color: 'var(--text-light)', margin: 0 }}>
-              Server-side search, sentiment, category, sort, and pagination powered by the API.
-              {event ? ` Current event: ${event.name}.` : ' Showing all events.'}
-          </p>
+            <p style={{ color: 'var(--text-light)', margin: 0, lineHeight: 1.6 }}>
+              Server-side search, sentiment, category, event, sort, and pagination powered by the API.
+              {event ? ` Dashboard event: ${event.name}.` : ' Showing all events.'}
+            </p>
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -149,8 +188,8 @@ export default function ArticlesPage({ event = null, eventId = null }) {
           </div>
         </div>
 
-        <div className="glass-card" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.2fr) repeat(4, minmax(160px, 1fr))', gap: 12, alignItems: 'center', marginBottom: 18 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.55)' }}>
+        <div className="glass-card articles-toolbar">
+          <label className="articles-search">
             <Search size={18} color="var(--text-light)" />
             <input
               type="text"
@@ -160,6 +199,15 @@ export default function ArticlesPage({ event = null, eventId = null }) {
               style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem' }}
             />
           </label>
+
+          <select className="filter-select" value={eventFilter} onChange={(e) => setEventFilter(e.target.value)}>
+            <option value="all">All events</option>
+            {events.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} ({item.status || 'draft'})
+              </option>
+            ))}
+          </select>
 
           <select className="filter-select" value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
             {SENTIMENTS.map((value) => (
@@ -195,8 +243,12 @@ export default function ArticlesPage({ event = null, eventId = null }) {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
-          <div style={{ color: 'var(--text-light)' }}>
-            {loading ? 'Loading articles...' : `${total.toLocaleString()} articles total, showing ${visibleRange}`}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexWrap: 'wrap' }}>
+            <span>{loading ? 'Loading articles...' : `${total.toLocaleString()} articles total, showing ${visibleRange}`}</span>
+            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+              <Filter size={12} />
+              {scopeLabel}
+            </span>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
@@ -214,14 +266,26 @@ export default function ArticlesPage({ event = null, eventId = null }) {
           </div>
         ) : null}
 
-        {loading ? (
+        {isInitialLoading ? (
           <div className="articles-grid">
             {Array.from({ length: Math.min(limit, 12) }).map((_, i) => (
-              <div key={i} className="glass-card" style={{ minHeight: 240, opacity: 0.7, animation: 'pulse 1.3s infinite' }} />
+              <SkeletonArticleCard key={i} />
             ))}
           </div>
         ) : (
           <>
+            {isRefreshing && (
+              <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, padding: '14px 18px' }}>
+                <div className="loading-spinner" />
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Refreshing results</div>
+                  <div style={{ color: 'var(--text-light)', fontSize: '0.9rem' }}>
+                    Keeping the current list visible while the new filter set loads.
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="articles-grid">
               <AnimatePresence>
                 {articles.map((article, i) => (
@@ -233,6 +297,7 @@ export default function ArticlesPage({ event = null, eventId = null }) {
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={{ duration: 0.25, delay: Math.min((i % 12) * 0.03, 0.4) }}
                     className="glass-card article-card"
+                    style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
                   >
                     <div className="article-header">
                       <div className="article-meta">
