@@ -292,7 +292,8 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add event (${res.status})`);
       await refreshEvents();
-      return data?.event ?? null;
+      await refreshFeeds();
+      return data ?? null;
     } catch (error) {
       console.error('Failed to add event:', error);
       throw error;
@@ -309,7 +310,8 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update event (${res.status})`);
       await refreshEvents();
-      return data?.event ?? null;
+      await refreshFeeds();
+      return data ?? null;
     } catch (error) {
       console.error('Failed to update event:', error);
       throw error;

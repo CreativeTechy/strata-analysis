@@ -584,7 +584,7 @@ h1, h2, h3 {
 
 .admin-split-layout {
   display: grid;
-  grid-template-columns: minmax(340px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(420px, 520px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }

@@ -103,6 +103,21 @@ export default function IntelligencePage({ event = null, eventId = null }) {
         body: JSON.stringify({
           question,
           total: filteredArticles.length,
+          event: event
+            ? {
+                id: event.id,
+                name: event.name,
+                status: event.status,
+                start_date: event.start_date,
+                end_date: event.end_date,
+                description: event.description,
+                location: event.location,
+                target_audience: event.target_audience,
+                hashtags: event.hashtags,
+                keywords: event.keywords,
+              }
+            : null,
+          event_id: eventId,
           articles: filteredArticles.map((a) => ({
             source: a.source,
             sentiment: a.sentiment,

@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 
 import config
+from events_store import get_event
 from pipeline_runs import update_pipeline_run
 from store import save_articles
 
@@ -29,6 +30,7 @@ VALID_CATEGORIES = {
 }
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
+PIPELINE_EVENT_ID = os.environ.get("PIPELINE_EVENT_ID", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
@@ -49,6 +51,53 @@ DEFAULT_ENRICHMENT = {
     "category": "other",
     "relevance_score": 0,
 }
+
+
+def _load_event_context():
+    if not PIPELINE_EVENT_ID:
+        return ""
+    try:
+        event = get_event(int(PIPELINE_EVENT_ID))
+    except Exception:
+        event = None
+    if not event:
+        return ""
+
+    parts = []
+    name = (event.get("name") or "").strip()
+    if name:
+        parts.append(f"Name: {name}")
+    status = (event.get("status") or "").strip()
+    if status:
+        parts.append(f"Status: {status}")
+    start_date = event.get("start_date")
+    if start_date:
+        parts.append(f"Start date: {start_date}")
+    end_date = event.get("end_date")
+    if end_date:
+        parts.append(f"End date: {end_date}")
+    location = (event.get("location") or "").strip()
+    if location:
+        parts.append(f"Location: {location}")
+    target_audience = (event.get("target_audience") or "").strip()
+    if target_audience:
+        parts.append(f"Target audience: {target_audience}")
+    hashtags = event.get("hashtags") or []
+    if isinstance(hashtags, str):
+        hashtags = [hashtags]
+    hashtags = [str(item).strip() for item in hashtags if str(item).strip()]
+    if hashtags:
+        parts.append(f"Hashtags: {', '.join(hashtags)}")
+    keywords = event.get("keywords") or []
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    keywords = [str(item).strip() for item in keywords if str(item).strip()]
+    if keywords:
+        parts.append(f"Keywords: {', '.join(keywords)}")
+    description = (event.get("description") or "").strip()
+    if description:
+        parts.append(f"Description: {description}")
+    return "\n".join(parts)
 
 
 def clean_articles(articles):
@@ -167,7 +216,7 @@ def _validate_enrichment(payload):
     }
 
 
-def enrich_article(article, api_key):
+def enrich_article(article, api_key, event_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:2000]
     prompt = (
@@ -175,6 +224,8 @@ def enrich_article(article, api_key):
         .replace("{title}", title)
         .replace("{text}", text)
     )
+    if event_context:
+        prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context to improve sentiment, relevance, and category judgments."
 
     try:
         response = requests.post(
@@ -261,6 +312,8 @@ def main():
         write_pipeline_stats(stats)
         return
 
+    event_context = _load_event_context()
+
     if not DEEPSEEK_API_KEY:
         print("DEEPSEEK_API_KEY not set - skipping AI enrichment, using defaults.")
 
@@ -269,7 +322,7 @@ def main():
         title = article.get("title", "")[:60]
         if DEEPSEEK_API_KEY:
             print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
-            enrichment = enrich_article(article, DEEPSEEK_API_KEY)
+            enrichment = enrich_article(article, DEEPSEEK_API_KEY, event_context=event_context)
             if enrichment is None:
                 enrichment = dict(DEFAULT_ENRICHMENT)
             time.sleep(0.5)
