@@ -77,31 +77,6 @@ def _fallback_records():
     return []
 
 
-def list_feeds():
-    """Return feed records from Supabase."""
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        return _fallback_records()
-
-    try:
-        resp = requests.get(
-            _feeds_endpoint(),
-            headers=_headers(),
-            params={
-                "select": "id,url,name,enabled,source_type,category,created_at,updated_at",
-                "order": "created_at.asc",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        rows = resp.json()
-        if isinstance(rows, list) and rows:
-            return [_normalize_record({**row, "source": "supabase"}) for row in rows]
-    except Exception:
-        pass
-
-    return _fallback_records()
-
-
 def list_feeds_page(limit=25, offset=0):
     """Return a paginated feed payload from Supabase."""
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:

@@ -1,4 +1,4 @@
-"""Central configuration for the car-news pipeline.
+"""Central configuration for the generic source pipeline.
 
 Single source of truth for the dynamic feed list and for the credentials each
 stage needs. Everything reads from here so swapping sources or rotating keys is
@@ -152,14 +152,6 @@ def _load_feed_records_from_supabase():
         return None
 
 
-def load_feed_records():
-    """Return feed records from Supabase, or an empty list if unavailable."""
-    rows = _load_feed_records_from_supabase()
-    if rows is None:
-        return []
-    return [_normalize_source_record(row) for row in rows]
-
-
 def load_source_records():
     """Return configured source records with source_type preserved."""
     env_feeds = os.environ.get("FEEDS", "").strip()
@@ -183,33 +175,3 @@ def load_source_records():
     if records is None:
         return []
     return [_normalize_source_record(row) for row in records]
-
-
-def load_feeds():
-    """Return the active feed URLs for the scraper.
-
-    Priority:
-    1. FEEDS env var override
-    2. Supabase feeds table
-    """
-    normalized = []
-    seen = set()
-    for record in load_source_records():
-        if not record.get("enabled", True):
-            continue
-        url = (record.get("url") or "").strip()
-        source_type = (record.get("source_type") or "rss").strip().lower()
-        if not url:
-            continue
-
-        candidate_urls = [url]
-        if source_type == "rss" and not _looks_like_feed_url(url):
-            candidate_urls = _discover_feed_urls(url) or [url]
-
-        for candidate in candidate_urls:
-            candidate = (candidate or "").strip()
-            if candidate and candidate not in seen:
-                seen.add(candidate)
-                normalized.append(candidate)
-
-    return normalized

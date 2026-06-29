@@ -1,7 +1,7 @@
 """FastAPI service that orchestrates the pipeline.
 
 The four stages live in their own modules:
-  scraper  -> carnews/spiders/carnews_rss.py (Scrapy)
+  scraper  -> scraper/spiders/source_rss.py (Scrapy)
   enricher -> enrich.py
   saver    -> store.py
 
@@ -162,7 +162,7 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
             update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
             print("1. Scraping configured sources...")
             subprocess.run(
-                ["scrapy", "crawl", "carnews_rss", "-O", str(raw_file)],
+                ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
                 cwd=BASE_DIR,
                 check=True,
                 env=env,

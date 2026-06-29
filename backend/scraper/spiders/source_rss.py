@@ -1,10 +1,10 @@
 """
-Car-news spider: RSS discovery -> web/social page fetch -> trafilatura extraction.
+Generic source spider: RSS discovery -> web/social page fetch -> trafilatura extraction.
 
 Run from the backend/ directory:
-    scrapy crawl carnews_rss -O <output-file>
+    scrapy crawl source_rss -O <output-file>
 
-Sources come from Supabase via config.load_feeds() (or the FEEDS env var
+Sources come from Supabase via config.load_source_records() (or the FEEDS env var
 override), so adding/removing a publisher does not require code changes. The
 spider never hand-writes CSS selectors per site -- trafilatura extracts
 title/date/text generically, so one spider covers every publisher.
@@ -29,8 +29,8 @@ PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
 
 
-class CarNewsRssSpider(scrapy.Spider):
-    name = "carnews_rss"
+class SourceRssSpider(scrapy.Spider):
+    name = "source_rss"
 
     custom_settings = {
         # Be polite; raise these later when you add proxies.
