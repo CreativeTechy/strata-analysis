@@ -53,6 +53,21 @@ def _clean_ids(values: Iterable) -> list[int]:
     return cleaned
 
 
+def _clean_terms(values: Iterable) -> list[str]:
+    cleaned = []
+    seen = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
 def _response_error(resp):
     body = (resp.text or "").strip()
     if body:
@@ -61,10 +76,21 @@ def _response_error(resp):
 
 
 def _normalize_event(row, feed_ids=None):
+    hashtags = row.get("hashtags") or []
+    keywords = row.get("keywords") or []
+    if isinstance(hashtags, str):
+        hashtags = [hashtags]
+    if isinstance(keywords, str):
+        keywords = [keywords]
     return {
         "id": row.get("id"),
         "name": (row.get("name") or "").strip(),
         "status": (row.get("status") or "draft").strip().lower() or "draft",
+        "description": (row.get("description") or "").strip(),
+        "location": (row.get("location") or "").strip(),
+        "target_audience": (row.get("target_audience") or "").strip(),
+        "hashtags": _clean_terms(hashtags),
+        "keywords": _clean_terms(keywords),
         "start_date": row.get("start_date"),
         "end_date": row.get("end_date"),
         "created_at": row.get("created_at"),
@@ -187,7 +213,7 @@ def list_events():
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
                 "order": "created_at.asc",
             },
         )
@@ -205,7 +231,7 @@ def get_event(event_id):
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
                 "id": f"eq.{int(event_id)}",
                 "limit": 1,
             },
@@ -221,9 +247,22 @@ def get_event(event_id):
 def _event_payload(event):
     if not isinstance(event, dict):
         event = {}
+
+    hashtags = event.get("hashtags")
+    keywords = event.get("keywords")
+    if isinstance(hashtags, str):
+        hashtags = [part.strip() for part in hashtags.replace("\n", ",").split(",")]
+    if isinstance(keywords, str):
+        keywords = [part.strip() for part in keywords.replace("\n", ",").split(",")]
+
     return {
         "name": (event.get("name") or "").strip(),
         "status": (event.get("status") or "draft").strip().lower() or "draft",
+        "description": (event.get("description") or "").strip() or None,
+        "location": (event.get("location") or "").strip() or None,
+        "target_audience": (event.get("target_audience") or "").strip() or None,
+        "hashtags": _clean_terms(hashtags or []),
+        "keywords": _clean_terms(keywords or []),
         "start_date": event.get("start_date") or None,
         "end_date": event.get("end_date") or None,
     }
