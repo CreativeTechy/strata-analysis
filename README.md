@@ -49,8 +49,25 @@ npm install
 npm run dev
 ```
 
+## Docker Deployment
+
+The repo now includes a three-service deployment stack:
+
+- `backend/` builds the FastAPI API image
+- `dashboard/` builds the React dashboard image
+- `nginx/` exposes a reverse proxy on port 80
+
+Run it with:
+
+```bash
+docker compose up --build
+```
+
+The public app is served from nginx on `http://localhost/`.
+API requests under `/api` and `/scrape` are forwarded to the backend
+container, and the dashboard keeps using same-origin fetches in production.
+
 ## Spider Mode
 
 Spider Mode is the separate deep-crawl view powered by `backend/spider.py` and
 `GET /api/spider/stream`.
-
