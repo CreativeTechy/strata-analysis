@@ -1,3 +1,0 @@
-pyspark>=3.5
-numpy>=1.24      # required by pyspark.ml (MinHashLSH)
-requests>=2.31

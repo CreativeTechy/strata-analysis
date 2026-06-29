@@ -81,7 +81,7 @@ manual dispatch). Required repo secrets: `DEEPSEEK_API_KEY`, `SUPABASE_URL`,
 
 A separate dashboard page (`Spider Mode`) that deep-crawls a seed URL with BFS
 fan-out and streams a live crawl graph + big-number counters (pages, articles,
-words harvested) — the volume layer that feeds the Spark sentiment work.
+words harvested) — the volume layer that feeds the downstream analytics work.
 
 - Backend: `backend/spider.py` + SSE endpoint `GET /api/spider/stream`.
 - Two engines, same output: a **native** engine (requests + parsel + trafilatura,
@@ -89,27 +89,6 @@ words harvested) — the volume layer that feeds the Spark sentiment work.
   `requirements-spider.txt`; needs Python ≤3.12). The page shows which ran.
 - Run locally: start the backend (`uvicorn main:app --port 8000`) + dashboard
   (`npm run dev`), open Spider Mode, set a seed + depth + max pages, Launch.
-
-## Deploy (Cloudflare — free, no separate backend host)
-
-The dashboard reads Supabase directly, so hosting is just static assets plus a
-tiny Worker that relays the "Run Extractor" button to GitHub Actions (Workers
-can't run the Python/Scrapy backend, but they can trigger the workflow).
-
-`worker/index.js` serves `dashboard/dist` and, on `POST /scrape`, calls the
-GitHub API to dispatch the pipeline. The GitHub token is a Worker secret.
-
-```bash
-# 1. Create a GitHub fine-grained PAT for this repo with:
-#       Repository permissions -> Actions: Read and write
-# 2. Build the dashboard and deploy the Worker (from repo root):
-cd dashboard && npm run build && cd ..
-npx wrangler secret put GITHUB_TOKEN     # paste the PAT
-npx wrangler deploy
-```
-
-Flow: button -> Worker -> GitHub Actions -> Supabase -> dashboard polls and
-shows new rows (~3 min). The cron also refreshes data every 12h on its own.
 
 ## Security
 Writes require the Supabase **service_role** key (env only — never committed).

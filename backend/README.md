@@ -20,4 +20,4 @@ Endpoints:
 - `GET /api/feeds`
 - `POST /api/chat`
 
-The Cloudflare-hosted dashboard points `VITE_SPIDER_URL` at this Space.
+The dashboard points `VITE_SPIDER_URL` at this Space.
