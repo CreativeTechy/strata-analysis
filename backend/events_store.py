@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Iterable
+from urllib.parse import unquote, urlparse, urlunparse
 
 import requests
 
@@ -37,6 +38,32 @@ def _article_events_endpoint():
 
 def _feeds_endpoint():
     return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/feeds"
+
+
+def _articles_endpoint():
+    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/articles"
+
+
+def _normalize_url(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    parsed = urlparse(text)
+    if parsed.scheme and parsed.netloc:
+        path = unquote(parsed.path or "").rstrip("/")
+        return urlunparse(
+            (
+                parsed.scheme.lower(),
+                parsed.netloc.lower(),
+                path,
+                parsed.params or "",
+                parsed.query or "",
+                parsed.fragment or "",
+            )
+        )
+
+    return text.rstrip("/")
 
 
 def _clean_ids(values: Iterable) -> list[int]:
@@ -169,6 +196,23 @@ def _fetch_feed_event_map():
         except Exception:
             continue
         mapping[feed_id].append(event_id)
+    return mapping
+
+
+def _fetch_feed_url_map():
+    rows = _fetch_rows(
+        _feeds_endpoint(),
+        {"select": "id,url", "order": "id.asc"},
+    )
+    mapping = defaultdict(list)
+    for row in rows:
+        try:
+            feed_id = int(row.get("id"))
+        except Exception:
+            continue
+        key = _normalize_url(row.get("url"))
+        if key:
+            mapping[key].append(feed_id)
     return mapping
 
 
@@ -557,7 +601,78 @@ def set_article_events(article_ids, event_id):
 def list_article_ids_for_event(event_id):
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return []
-    return _fetch_article_event_map(event_id)
+
+    ids = []
+    seen = set()
+
+    for article_id in _fetch_article_event_map(event_id):
+        if article_id in seen:
+            continue
+        seen.add(article_id)
+        ids.append(article_id)
+
+    feed_ids = list_event_feed_ids(event_id)
+    if not feed_ids:
+        return ids
+
+    feed_url_map = _fetch_feed_url_map()
+    feed_urls = []
+    for feed_id in feed_ids:
+        for feed_url, mapped_ids in feed_url_map.items():
+            if feed_id in mapped_ids and feed_url not in feed_urls:
+                feed_urls.append(feed_url)
+
+    if not feed_urls:
+        return ids
+
+    try:
+        rows = _fetch_rows(
+            _articles_endpoint(),
+            {
+                "select": "id,feed",
+                "feed": f"in.({','.join(feed_urls)})",
+                "order": "id.asc",
+            },
+        )
+    except Exception:
+        rows = []
+
+    for row in rows:
+        try:
+            article_id = int(row.get("id"))
+        except Exception:
+            continue
+        if article_id in seen:
+            continue
+        seen.add(article_id)
+        ids.append(article_id)
+
+    return ids
+
+
+def list_event_ids_for_feed_url(feed_url):
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return []
+
+    key = _normalize_url(feed_url)
+    if not key:
+        return []
+
+    feed_url_map = _fetch_feed_url_map()
+    feed_ids = feed_url_map.get(key, [])
+    if not feed_ids:
+        return []
+
+    feed_event_map = _fetch_feed_event_map()
+    ids = []
+    seen = set()
+    for feed_id in feed_ids:
+        for event_id in feed_event_map.get(feed_id, []):
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            ids.append(event_id)
+    return ids
 
 
 def diagnose_event_setup():

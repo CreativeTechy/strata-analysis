@@ -6,9 +6,10 @@ re-seeing an article from a feed updates it in place instead of duplicating.
 """
 
 import requests
+from collections import defaultdict
 
 import config
-from events_store import set_article_events
+from events_store import list_event_ids_for_feed_url, set_article_events
 
 ARTICLE_COLUMNS = (
     "url", "source", "feed", "title", "author", "published", "text",
@@ -70,12 +71,11 @@ def save_articles(articles, batch_size=50):
         "apikey": config.SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
+        "Prefer": "resolution=merge-duplicates,return=representation",
     }
     endpoint = f"{config.SUPABASE_URL}/rest/v1/articles?on_conflict=url"
 
     sent = 0
-    linked_ids = []
     event_id = None
     try:
         from os import environ
@@ -86,24 +86,48 @@ def save_articles(articles, batch_size=50):
     except Exception:
         event_id = None
 
+    feed_event_cache = {}
+    linked_articles = defaultdict(list)
+
     for i in range(0, len(articles), batch_size):
-        batch = [_row(a) for a in articles[i:i + batch_size]]
+        source_batch = articles[i:i + batch_size]
+        batch = [_row(a) for a in source_batch]
         try:
             resp = requests.post(endpoint, headers=headers, json=batch, timeout=30)
             resp.raise_for_status()
             sent += len(batch)
-            if event_id is not None:
-                rows = resp.json() if resp.content else []
-                if isinstance(rows, list):
-                    linked_ids.extend(
-                        [row.get("id") for row in rows if isinstance(row, dict) and row.get("id") is not None]
-                    )
+            rows = resp.json() if resp.content else []
+            if isinstance(rows, dict):
+                rows = [rows]
+            if not isinstance(rows, list):
+                rows = []
+            if rows:
+                for idx, row in enumerate(rows):
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        article_id = int(row.get("id"))
+                    except Exception:
+                        continue
+                    article = source_batch[idx] if idx < len(source_batch) else {}
+                    feed_url = (row.get("feed") or article.get("feed") or "").strip()
+                    if not feed_url:
+                        continue
+                    if feed_url not in feed_event_cache:
+                        feed_event_cache[feed_url] = list_event_ids_for_feed_url(feed_url)
+                    event_ids = list(feed_event_cache.get(feed_url) or [])
+                    if event_id is not None and event_id not in event_ids:
+                        event_ids.append(event_id)
+                    for linked_event_id in event_ids:
+                        if article_id not in linked_articles[linked_event_id]:
+                            linked_articles[linked_event_id].append(article_id)
             print(f"  Uploaded batch {i // batch_size + 1} ({len(batch)} articles)")
         except Exception as e:
             print(f"  Supabase upload error for batch {i // batch_size + 1}: {e}")
 
-    if event_id is not None and linked_ids:
-        set_article_events(linked_ids, event_id)
+    if linked_articles:
+        for linked_event_id, article_ids in linked_articles.items():
+            set_article_events(article_ids, linked_event_id)
 
     return sent
 
