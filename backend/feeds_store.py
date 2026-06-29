@@ -32,6 +32,19 @@ def _response_error(resp):
     return f"HTTP {resp.status_code}"
 
 
+def _parse_total_count(resp, fallback=0):
+    content_range = resp.headers.get("Content-Range") or resp.headers.get("content-range") or ""
+    if "/" in content_range:
+        total = content_range.split("/", 1)[1].strip()
+        if total == "*":
+            return fallback
+        try:
+            return int(total)
+        except Exception:
+            return fallback
+    return fallback
+
+
 def _normalize_record(row, include_event_ids=False):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
@@ -87,6 +100,41 @@ def list_feeds():
         pass
 
     return _fallback_records()
+
+
+def list_feeds_page(limit=25, offset=0):
+    """Return a paginated feed payload from Supabase."""
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return {"feeds": _fallback_records(), "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
+
+    limit = max(1, min(int(limit or 25), 100))
+    offset = max(0, int(offset or 0))
+
+    try:
+        resp = requests.get(
+            _feeds_endpoint(),
+            headers={**_headers(), "Prefer": "count=exact"},
+            params={
+                "select": "id,url,name,enabled,source_type,category,created_at,updated_at",
+                "order": "created_at.asc",
+                "limit": str(limit),
+                "offset": str(offset),
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        feeds = []
+        if isinstance(rows, list):
+            feeds = [_normalize_record({**row, "source": "supabase"}) for row in rows]
+        return {
+            "feeds": feeds,
+            "total": _parse_total_count(resp, fallback=len(feeds)),
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception:
+        return {"feeds": _fallback_records(), "total": 0, "limit": limit, "offset": offset}
 
 
 def _upsert_payload(feed):

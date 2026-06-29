@@ -16,6 +16,7 @@ const emptyDraft = {
 };
 
 const STATUS_OPTIONS = ['draft', 'active', 'archived'];
+const PAGE_SIZE = 10;
 
 function toDateInput(value) {
   if (!value) return '';
@@ -52,6 +53,8 @@ export default function EventsPage({
   const [statusFilter, setStatusFilter] = useState('all');
   const [isSaving, setIsSaving] = useState(false);
   const [lastDiscovery, setLastDiscovery] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [feedAssignQuery, setFeedAssignQuery] = useState('');
 
   const feedNameById = useMemo(() => {
     const map = new Map();
@@ -60,6 +63,40 @@ export default function EventsPage({
     });
     return map;
   }, [feeds]);
+
+  const feedEventsById = useMemo(() => {
+    const map = new Map();
+    events.forEach((event) => {
+      (event.feed_ids || []).forEach((feedId) => {
+        const id = Number(feedId);
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push(event);
+      });
+    });
+    return map;
+  }, [events]);
+
+  const visibleAssignableFeeds = useMemo(() => {
+    const needle = feedAssignQuery.trim().toLowerCase();
+    if (!needle) return feeds;
+
+    return feeds.filter((feed) => {
+      const searchable = [
+        feed.name,
+        feed.url,
+        feed.category,
+        feed.source_type,
+        feed.enabled ? 'enabled' : 'disabled',
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(needle));
+      return searchable;
+    });
+  }, [feeds, feedAssignQuery]);
+
+  const selectedFeedCount = draft.feed_ids.length;
+  const visibleSelectedCount = visibleAssignableFeeds.filter((feed) => draft.feed_ids.includes(Number(feed.id))).length;
+  const allVisibleSelected = visibleAssignableFeeds.length > 0 && visibleSelectedCount === visibleAssignableFeeds.length;
 
   const stats = useMemo(() => {
     const total = events.length;
@@ -97,6 +134,23 @@ export default function EventsPage({
     });
   }, [events, feedNameById, query, statusFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(visibleEvents.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedEvents = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return visibleEvents.slice(start, start + PAGE_SIZE);
+  }, [visibleEvents, safePage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, statusFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   useEffect(() => {
     if (!editingId) return;
     const current = events.find((event) => Number(event.id) === Number(editingId));
@@ -123,6 +177,7 @@ export default function EventsPage({
   const beginEdit = (event) => {
     setEditingId(event.id);
     setLastDiscovery(null);
+    setFeedAssignQuery('');
     setDraft({
       name: event.name || '',
       status: event.status || 'draft',
@@ -139,6 +194,7 @@ export default function EventsPage({
 
   const reset = () => {
     setEditingId(null);
+    setFeedAssignQuery('');
     setDraft(emptyDraft);
   };
 
@@ -149,6 +205,26 @@ export default function EventsPage({
       feed_ids: prev.feed_ids.includes(id)
         ? prev.feed_ids.filter((value) => value !== id)
         : [...prev.feed_ids, id],
+    }));
+  };
+
+  const selectAllVisibleFeeds = () => {
+    setDraft((prev) => ({
+      ...prev,
+      feed_ids: Array.from(
+        new Set([
+          ...prev.feed_ids,
+          ...visibleAssignableFeeds.map((feed) => Number(feed.id)),
+        ])
+      ),
+    }));
+  };
+
+  const clearVisibleFeeds = () => {
+    const visibleIds = new Set(visibleAssignableFeeds.map((feed) => Number(feed.id)));
+    setDraft((prev) => ({
+      ...prev,
+      feed_ids: prev.feed_ids.filter((id) => !visibleIds.has(Number(id))),
     }));
   };
 
@@ -358,32 +434,100 @@ export default function EventsPage({
               />
             </div>
 
-            <div style={{ padding: '10px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>
-              Assign feeds
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflow: 'auto' }}>
-              {feeds.length === 0 ? (
-                <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  No feeds yet. Add feeds first, then attach them to events.
+            <div className="assign-feeds-panel">
+              <div className="assign-feeds-header">
+                <div>
+                  <div className="assign-feeds-kicker">Assign feeds</div>
+                  <strong className="assign-feeds-title">Choose the sources that should power this event</strong>
                 </div>
-              ) : (
-                feeds.map((feed) => (
-                  <label
-                    key={feed.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}
+                <div className="assign-feeds-summary">
+                  <span className="panel-chip">{selectedFeedCount} selected</span>
+                  <span className="panel-chip muted">{visibleAssignableFeeds.length} shown</span>
+                </div>
+              </div>
+
+              <div className="assign-feeds-toolbar">
+                <label className="assign-feeds-search">
+                  <Search size={14} />
+                  <input
+                    type="text"
+                    value={feedAssignQuery}
+                    onChange={(e) => setFeedAssignQuery(e.target.value)}
+                    placeholder="Filter feeds by name, URL, or category"
+                    disabled={isSaving}
+                  />
+                </label>
+
+                <div className="assign-feeds-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={selectAllVisibleFeeds}
+                    disabled={isSaving || visibleAssignableFeeds.length === 0 || allVisibleSelected}
+                    style={{ padding: '8px 10px', fontSize: '0.78rem' }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={draft.feed_ids.includes(Number(feed.id))}
-                      onChange={() => toggleFeed(feed.id)}
-                      disabled={isSaving}
-                    />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {feed.name || feed.url}
-                    </span>
-                  </label>
-                ))
-              )}
+                    Select visible
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={clearVisibleFeeds}
+                    disabled={isSaving || visibleSelectedCount === 0}
+                    style={{ padding: '8px 10px', fontSize: '0.78rem' }}
+                  >
+                    Clear visible
+                  </button>
+                </div>
+              </div>
+
+              <div className="assign-feeds-list">
+                {feeds.length === 0 ? (
+                  <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    No feeds yet. Add feeds first, then attach them to events.
+                  </div>
+                ) : visibleAssignableFeeds.length === 0 ? (
+                  <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                    <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
+                      <Search size={16} />
+                    </div>
+                    <strong>No matching feeds</strong>
+                    <span>Try a different search term in this assignment box.</span>
+                  </div>
+                ) : (
+                  visibleAssignableFeeds.map((feed) => {
+                    const feedId = Number(feed.id);
+                    const isSelected = draft.feed_ids.includes(feedId);
+                    const eventCount = (feedEventsById.get(feedId) || []).length;
+                    return (
+                      <label
+                        key={feed.id}
+                        className={`assign-feed-item ${isSelected ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleFeed(feed.id)}
+                          disabled={isSaving}
+                        />
+                        <div className="assign-feed-copy">
+                          <div className="assign-feed-topline">
+                            <strong className="assign-feed-name">{feed.name || feed.url}</strong>
+                            <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
+                              {feed.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </div>
+                          <div className="assign-feed-url">{feed.url}</div>
+                          <div className="assign-feed-meta">
+                            <span>{feed.source_type || 'rss'}</span>
+                            {feed.category ? <span>{feed.category}</span> : null}
+                            <span>{eventCount} event{eventCount === 1 ? '' : 's'}</span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
             </div>
 
           <div className="admin-form-hint">
@@ -486,7 +630,7 @@ export default function EventsPage({
               </div>
             )}
 
-            {visibleEvents.map((event, index) => {
+            {pagedEvents.map((event, index) => {
               const assignedFeeds = (event.feed_ids || []).map((feedId) => feedNameById.get(Number(feedId))).filter(Boolean);
               const isActive = (event.status || '').toLowerCase() === 'active';
               return (
@@ -563,6 +707,46 @@ export default function EventsPage({
               </div>
             )}
           </div>
+
+          {visibleEvents.length > 0 && (
+            <div
+              style={{
+                marginTop: 14,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                flexWrap: 'wrap',
+                paddingTop: 12,
+                borderTop: '1px solid rgba(15, 23, 42, 0.08)',
+              }}
+            >
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleEvents.length)} of {visibleEvents.length}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
+                  disabled={safePage <= 1}
+                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+                >
+                  Previous
+                </button>
+                <span className="panel-chip">
+                  Page {safePage} of {totalPages}
+                </span>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={safePage >= totalPages}
+                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

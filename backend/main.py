@@ -31,11 +31,12 @@ from events_store import (
     delete_event,
     diagnose_event_setup,
     list_events,
+    list_events_page,
     list_feeds_for_event,
     set_event_feeds,
     update_event,
 )
-from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, update_feed
+from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, list_feeds_page, update_feed
 from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -214,16 +215,23 @@ def health_check():
 
 
 @app.get("/api/feeds")
-def get_feeds():
+def get_feeds(limit: int | None = None, offset: int = 0):
     """Configured sources for the dashboard sidebar."""
-    feeds = bootstrap_feeds()
-    source = feeds[0].get("source", "supabase") if feeds else "supabase"
-    return {"feeds": feeds, "source": source}
+    if limit is None:
+        feeds = bootstrap_feeds()
+        source = feeds[0].get("source", "supabase") if feeds else "supabase"
+        return {"feeds": feeds, "source": source}
+
+    page = list_feeds_page(limit=limit, offset=offset)
+    source = page["feeds"][0].get("source", "supabase") if page["feeds"] else "supabase"
+    return {**page, "source": source}
 
 
 @app.get("/api/events")
-def get_events():
-    return {"events": list_events()}
+def get_events(limit: int | None = None, offset: int = 0):
+    if limit is None:
+        return {"events": list_events()}
+    return list_events_page(limit=limit, offset=offset)
 
 
 def _default_discovery_result(event):

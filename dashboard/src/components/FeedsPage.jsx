@@ -11,6 +11,8 @@ const emptyDraft = {
   event_ids: [],
 };
 
+const PAGE_SIZE = 10;
+
 export default function FeedsPage({
   feeds = [],
   events = [],
@@ -24,6 +26,7 @@ export default function FeedsPage({
   const [editingId, setEditingId] = useState(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (!editingId) return;
@@ -72,6 +75,23 @@ export default function FeedsPage({
       return matchesQuery && matchesStatus;
     });
   }, [feeds, feedEventsById, query, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(visibleFeeds.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedFeeds = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return visibleFeeds.slice(start, start + PAGE_SIZE);
+  }, [visibleFeeds, safePage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, statusFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const beginEdit = (feed) => {
     setEditingId(feed.id);
@@ -316,7 +336,7 @@ export default function FeedsPage({
               </div>
             )}
 
-            {visibleFeeds.map((feed, index) => {
+            {pagedFeeds.map((feed, index) => {
               const feedEvents = feedEventsById.get(Number(feed.id)) || [];
               return (
                 <motion.div
@@ -381,6 +401,46 @@ export default function FeedsPage({
               </div>
             )}
           </div>
+
+          {visibleFeeds.length > 0 && (
+            <div
+              style={{
+                marginTop: 14,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                flexWrap: 'wrap',
+                paddingTop: 12,
+                borderTop: '1px solid rgba(15, 23, 42, 0.08)',
+              }}
+            >
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleFeeds.length)} of {visibleFeeds.length}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
+                  disabled={safePage <= 1}
+                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+                >
+                  Previous
+                </button>
+                <span className="panel-chip">
+                  Page {safePage} of {totalPages}
+                </span>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={safePage >= totalPages}
+                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

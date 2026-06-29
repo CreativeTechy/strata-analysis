@@ -75,6 +75,19 @@ def _response_error(resp):
     return f"HTTP {resp.status_code}"
 
 
+def _parse_total_count(resp, fallback=0):
+    content_range = resp.headers.get("Content-Range") or resp.headers.get("content-range") or ""
+    if "/" in content_range:
+        total = content_range.split("/", 1)[1].strip()
+        if total == "*":
+            return fallback
+        try:
+            return int(total)
+        except Exception:
+            return fallback
+    return fallback
+
+
 def _normalize_event(row, feed_ids=None):
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
@@ -221,6 +234,35 @@ def list_events():
         return [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows]
     except Exception:
         return []
+
+
+def list_events_page(limit=25, offset=0):
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return {"events": [], "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
+
+    limit = max(1, min(int(limit or 25), 100))
+    offset = max(0, int(offset or 0))
+
+    try:
+        resp = requests.get(
+            _endpoint(),
+            headers={**_headers(), "Prefer": "count=exact"},
+            params={
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
+                "order": "created_at.asc",
+                "limit": str(limit),
+                "offset": str(offset),
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        feed_map = _fetch_event_feed_map()
+        events = [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
+        total = _parse_total_count(resp, fallback=len(events))
+        return {"events": events, "total": total, "limit": limit, "offset": offset}
+    except Exception:
+        return {"events": [], "total": 0, "limit": limit, "offset": offset}
 
 
 def get_event(event_id):
