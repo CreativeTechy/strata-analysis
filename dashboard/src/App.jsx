@@ -30,6 +30,7 @@ function RouteShell({ children, backTo, backLabel, backStyle }) {
 export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
+  const workflowSelectionStorageKey = 'strata.workflowSelectedEventIds';
 
   const [events, setEvents] = useState([]);
   const [reportStats, setReportStats] = useState({ total: 0, positive: 0, negative: 0, neutral: 0 });
@@ -40,6 +41,22 @@ export default function App() {
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
+  const [workflowSelectedEventIds, setWorkflowSelectedEventIds] = useState(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const ids = parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+          if (ids.length) return [...new Set(ids)];
+        }
+      } catch {
+        // Ignore malformed localStorage and fall back to an empty selection.
+      }
+    }
+    const selected = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
+    return selected ? [Number(selected)] : [];
+  });
   const [selectedEventId, setSelectedEventId] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
     return stored ? Number(stored) : null;
@@ -63,6 +80,32 @@ export default function App() {
   );
 
   const feedUrls = useMemo(() => selectedEventFeeds.map((feed) => feed.url).filter(Boolean), [selectedEventFeeds]);
+
+  const workflowSelectedEvents = useMemo(() => {
+    const selectedIds = new Set(workflowSelectedEventIds.map((id) => Number(id)));
+    return events.filter((event) => selectedIds.has(Number(event.id)));
+  }, [events, workflowSelectedEventIds]);
+
+  const workflowSelectedFeedUrls = useMemo(() => {
+    const urls = new Set();
+    workflowSelectedEvents.forEach((event) => {
+      (event.feed_ids || []).forEach((feedId) => {
+        const feed = feeds.find((item) => Number(item.id) === Number(feedId));
+        if (feed?.url) urls.add(feed.url);
+      });
+    });
+    return [...urls];
+  }, [feeds, workflowSelectedEvents]);
+
+  const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
+
+  const normalizeWorkflowSelection = (ids, sourceEvents = events) => {
+    const availableIds = new Set(sourceEvents.map((event) => Number(event.id)));
+    const normalized = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && availableIds.has(id)))];
+    if (normalized.length) return normalized;
+    if (sourceEvents.length) return [Number(sourceEvents[0].id)];
+    return [];
+  };
 
   const stopPolling = () => {
     if (pollIntervalRef.current) {
@@ -138,18 +181,39 @@ export default function App() {
 
   const loadWorkflowArticles = async (eventId = selectedEventId) => {
     try {
+      const eventIds = Array.isArray(eventId) ? eventId : (eventId != null ? [eventId] : []);
+      if (eventIds.length === 0) {
+        setWorkflowArticles([]);
+        return;
+      }
+
       const params = new URLSearchParams({
         limit: '100',
         offset: '0',
         sort: 'published.desc',
       });
-      if (eventId != null) {
-        params.set('event_id', String(eventId));
-      }
-      const res = await fetch(`/api/articles${params.toString() ? `?${params.toString()}` : ''}`);
-      if (!res.ok) throw new Error(`Articles request failed: ${res.status}`);
-      const data = await res.json();
-      setWorkflowArticles(Array.isArray(data?.articles) ? data.articles : []);
+      const requests = eventIds.map(async (singleEventId) => {
+        const scopedParams = new URLSearchParams(params);
+        scopedParams.set('event_id', String(singleEventId));
+        const res = await fetch(`/api/articles?${scopedParams.toString()}`);
+        if (!res.ok) throw new Error(`Articles request failed: ${res.status}`);
+        const data = await res.json();
+        return Array.isArray(data?.articles) ? data.articles : [];
+      });
+      const results = await Promise.allSettled(requests);
+      const articles = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+      const seen = new Set();
+      const deduped = articles.filter((article) => {
+        const key = article?.url || article?.title || JSON.stringify(article);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).sort((a, b) => {
+        const left = new Date(a?.published || a?.created_at || a?.fetched_at || 0).getTime();
+        const right = new Date(b?.published || b?.created_at || b?.fetched_at || 0).getTime();
+        return right - left;
+      });
+      setWorkflowArticles(deduped);
     } catch (error) {
       console.error('Failed to load workflow articles', error);
       setWorkflowArticles([]);
@@ -168,6 +232,7 @@ export default function App() {
       if (selectedEventId != null) {
         setSelectedEventId(null);
       }
+      setWorkflowSelectedEventIds([]);
       return;
     }
 
@@ -175,6 +240,8 @@ export default function App() {
     if (selectedEventId != null && !currentExists) {
       setSelectedEventId(null);
     }
+
+    setWorkflowSelectedEventIds((current) => normalizeWorkflowSelection(current, events));
   }, [events, selectedEventId]);
 
   useEffect(() => {
@@ -188,34 +255,68 @@ export default function App() {
   }, [selectedEventId]);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (workflowSelectedEventIds.length === 0) {
+        window.localStorage.removeItem(workflowSelectionStorageKey);
+      } else {
+        window.localStorage.setItem(workflowSelectionStorageKey, JSON.stringify(workflowSelectedEventIds));
+      }
+    }
+  }, [workflowSelectedEventIds]);
+
+  useEffect(() => {
     if (pathname === '/dashboard' || pathname === '/') {
       loadReportStats(selectedEventId);
     }
 
     if (pathname === '/workflow') {
-      loadWorkflowArticles(selectedEventId);
+      loadWorkflowArticles(workflowSelectedEventIds);
     }
-  }, [pathname, selectedEventId]);
+  }, [pathname, selectedEventId, workflowSelectedEventIds]);
 
-  const runScraper = async (eventId = selectedEventId) => {
-    if (eventId == null) return;
+  const runScraper = async (eventIds = workflowSelectedEventIds) => {
+    const normalizedEventIds = normalizeWorkflowSelection(Array.isArray(eventIds) ? eventIds : [eventIds]);
+    if (normalizedEventIds.length === 0) return;
     stopPolling();
     setIsScraping(true);
     try {
-      const res = await fetch('/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: eventId }),
-      });
-      if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
-      await res.json().catch(() => ({}));
+      const runIds = [];
+      for (const eventId of normalizedEventIds) {
+        const res = await fetch('/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: eventId }),
+        });
+        if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        if (data?.run_id) {
+          runIds.push(String(data.run_id));
+        }
+      }
 
       let polls = 0;
-      const maxPolls = 30;
+      const maxPolls = 90;
       pollIntervalRef.current = setInterval(async () => {
         polls += 1;
-        await loadWorkflowArticles(eventId);
-        await loadReportStats(eventId);
+        try {
+          const res = await fetch('/api/pipeline-runs?limit=25');
+          const data = await res.json().catch(() => ({}));
+          const runs = Array.isArray(data?.runs) ? data.runs : [];
+          const trackedRuns = runIds.length
+            ? runs.filter((run) => runIds.includes(String(run.id)))
+            : runs.filter((run) => normalizedEventIds.includes(Number(run.event_id)));
+          const allDone = trackedRuns.length > 0 && trackedRuns.every((run) => isTerminalPipelineStatus(run.status));
+          if (allDone) {
+            stopPolling();
+            setIsScraping(false);
+            await loadWorkflowArticles(normalizedEventIds);
+            return;
+          }
+        } catch (error) {
+          console.error('Failed to poll pipeline runs:', error);
+        }
+
+        await loadWorkflowArticles(normalizedEventIds);
         if (polls >= maxPolls) {
           stopPolling();
           setIsScraping(false);
@@ -422,8 +523,11 @@ export default function App() {
         articles={workflowArticles}
         isScraping={isScraping}
         onRunScraper={runScraper}
-        feeds={feedUrls}
-        event={selectedEvent}
+        feeds={workflowSelectedFeedUrls}
+        events={events}
+        selectedEvents={workflowSelectedEvents}
+        selectedEventIds={workflowSelectedEventIds}
+        onChangeSelectedEventIds={setWorkflowSelectedEventIds}
       />
     </div>
   );

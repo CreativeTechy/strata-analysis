@@ -310,6 +310,12 @@ def main():
         print("No articles to process after cleaning.")
         write_output([])
         write_pipeline_stats(stats)
+        push_run_progress(
+            stats,
+            stage="done",
+            message="No articles left after cleaning.",
+            final=True,
+        )
         return
 
     event_context = _load_event_context()
@@ -320,6 +326,16 @@ def main():
     enriched = []
     for idx, article in enumerate(articles):
         title = article.get("title", "")[:60]
+        progress = {
+            **stats,
+            "articles_cleaned": idx + 1,
+            "articles_enriched": len(enriched),
+        }
+        push_run_progress(
+            progress,
+            stage="enrich",
+            message=f"Cleaning articles {idx + 1}/{len(articles)}...",
+        )
         if DEEPSEEK_API_KEY:
             print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
             enrichment = enrich_article(article, DEEPSEEK_API_KEY, event_context=event_context)

@@ -51,7 +51,16 @@ function statusTone(status) {
   return 'muted';
 }
 
-export default function WorkflowPage({ articles = [], isScraping = false, onRunScraper, feeds = [], event = null }) {
+export default function WorkflowPage({
+  articles = [],
+  isScraping = false,
+  onRunScraper,
+  feeds = [],
+  events = [],
+  selectedEvents = [],
+  selectedEventIds = [],
+  onChangeSelectedEventIds = () => {},
+}) {
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
       id: i + 1,
@@ -124,7 +133,17 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
 
   const hasData = articles.length > 0;
   const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
-  const eventLabel = event?.name || 'all events';
+  const selectedEventCount = selectedEventIds.length;
+  const eventLabel = useMemo(() => {
+    if (selectedEvents.length === 0) return events.length ? 'select one or more events' : 'no events available';
+    if (selectedEvents.length === 1) return selectedEvents[0].name || '1 event';
+    return `${selectedEvents.length} selected events`;
+  }, [events.length, selectedEvents]);
+  const selectedEventNames = useMemo(
+    () => selectedEvents.map((event) => event.name).filter(Boolean).slice(0, 4),
+    [selectedEvents]
+  );
+  const hasMultipleEvents = events.length > 1;
 
   const stats = useMemo(() => {
     const total = articles.length;
@@ -188,6 +207,55 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
     setRows(rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   };
 
+  const cleanupProgressLabel = useMemo(() => {
+    const scraped = Math.max(0, Number(currentRun?.articles_scraped) || 0);
+    const cleaned = Math.max(0, Number(currentRun?.articles_cleaned) || 0);
+    const saved = Math.max(0, Number(currentRun?.articles_saved) || 0);
+    if (!currentRun) return '';
+    if ((currentRun.status || '').toLowerCase() !== 'running') {
+      if ((currentRun.stage || '').toLowerCase() === 'done') {
+        return scraped > 0 ? `Enriched ${Math.min(cleaned || scraped, scraped)}/${scraped} articles` : 'Pipeline complete';
+      }
+      return currentRun.message || '';
+    }
+    if ((currentRun.stage || '').toLowerCase() === 'enrich') {
+      if (scraped > 0) return `Cleaning articles ${Math.min(Math.max(cleaned, 0), scraped)}/${scraped}`;
+      return 'Cleaning articles...';
+    }
+    if ((currentRun.stage || '').toLowerCase() === 'scrape') {
+      return scraped > 0 ? `Scraping sources ${Math.max(1, currentRun.crawl_pages || 0)} pages / ${scraped} articles` : 'Scraping sources...';
+    }
+    if ((currentRun.stage || '').toLowerCase() === 'done') {
+      return saved > 0 ? `Saved ${saved} articles` : 'Pipeline complete';
+    }
+    return currentRun.message || '';
+  }, [currentRun]);
+
+  const toggleSelectedEvent = (eventId) => {
+    const id = Number(eventId);
+    if (!Number.isFinite(id)) return;
+
+    const isSelected = selectedEventIds.includes(id);
+    if (isSelected && selectedEventIds.length === 1) {
+      return;
+    }
+
+    const nextIds = isSelected
+      ? selectedEventIds.filter((value) => Number(value) !== id)
+      : [...selectedEventIds, id];
+    onChangeSelectedEventIds([...new Set(nextIds)]);
+  };
+
+  const selectAllEvents = () => {
+    onChangeSelectedEventIds([...new Set(events.map((event) => Number(event.id)).filter((id) => Number.isFinite(id)))]);
+  };
+
+  const runLabel = selectedEventCount > 1
+    ? `Run Extractor for ${selectedEventCount} Events`
+    : selectedEventCount === 1
+      ? 'Run Extractor for Event'
+      : 'Select Events to Run';
+
   return (
     <div className="workflow-layout">
       <div className="bg-pattern"></div>
@@ -242,6 +310,84 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
                 </div>
                 <div className="block-title">Get Data</div>
               </div>
+
+              <div className="workflow-event-picker">
+                <div className="workflow-event-picker-header">
+                  <div>
+                    <div className="workflow-event-picker-kicker">Scope</div>
+                    <strong>Choose one or more events to extract</strong>
+                  </div>
+                  <div className="workflow-event-picker-summary">
+                    <span className="panel-chip">{selectedEventCount} selected</span>
+                    <span className="panel-chip muted">{events.length} total</span>
+                  </div>
+                </div>
+
+                <div className="workflow-event-picker-note">
+                  The extractor will run once for each selected event, then the results below will merge the latest articles into a single view.
+                </div>
+
+                {events.length === 0 ? (
+                  <div className="panel-empty" style={{ marginTop: 8 }}>
+                    <ShieldCheck size={16} />
+                    <span>No events yet. Create an event first, then come back to run the workflow.</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="workflow-event-picker-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={selectAllEvents}
+                        disabled={!hasMultipleEvents || selectedEventCount === events.length}
+                        style={{ padding: '8px 10px', fontSize: '0.78rem' }}
+                      >
+                        Select all
+                      </button>
+                    </div>
+
+                    <div className="workflow-event-list">
+                      {events.map((event) => {
+                        const isSelected = selectedEventIds.includes(Number(event.id));
+                        return (
+                          <label key={event.id} className={`workflow-event-item ${isSelected ? 'selected' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectedEvent(event.id)}
+                              disabled={isScraping}
+                            />
+                            <div className="workflow-event-copy">
+                              <div className="workflow-event-topline">
+                                <strong>{event.name}</strong>
+                                <span className={`panel-chip ${isSelected ? 'success' : 'muted'}`}>
+                                  {isSelected ? 'Selected' : 'Unselected'}
+                                </span>
+                              </div>
+                              <div className="workflow-event-meta">
+                                <span>{event.status || 'draft'}</span>
+                                {event.location ? <span>{event.location}</span> : null}
+                                {(event.feed_ids || []).length ? <span>{event.feed_ids.length} feed{event.feed_ids.length === 1 ? '' : 's'}</span> : <span>No feeds</span>}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {selectedEventNames.length ? (
+                <div className="workflow-event-pills">
+                  {selectedEventNames.map((name) => (
+                    <span key={name} className="workflow-event-pill">{name}</span>
+                  ))}
+                  {selectedEvents.length > selectedEventNames.length ? (
+                    <span className="workflow-event-pill muted">+{selectedEvents.length - selectedEventNames.length} more</span>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="get-rows">
                 <AnimatePresence>
@@ -307,10 +453,14 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
               <button
                 className="btn-primary"
                 style={{ marginTop: '15px', opacity: isScraping ? 0.7 : 1 }}
-                onClick={() => onRunScraper?.()}
-                disabled={isScraping || !event}
+                onClick={() => onRunScraper?.(selectedEventIds)}
+                disabled={isScraping || selectedEventCount === 0}
               >
-                {isScraping ? (<><RefreshCw size={16} className="spin" /> Running...</>) : event ? 'Run Extractor for Event' : 'Select an Event to Run'}
+                {isScraping ? (
+                  <><RefreshCw size={16} className="spin" /> Running...</>
+                ) : (
+                  runLabel
+                )}
               </button>
             </motion.div>
 
@@ -337,6 +487,12 @@ export default function WorkflowPage({ articles = [], isScraping = false, onRunS
               </div>
 
               <div className="cleanup-status">
+                {cleanupProgressLabel ? (
+                  <div className="cleanup-progress">
+                    {cleanupProgressLabel}
+                  </div>
+                ) : null}
+
                 {workflowState === 'idle' && (
                   <div style={{ textAlign: 'center', color: 'var(--text-light)' }}>
                     Waiting for extraction...
