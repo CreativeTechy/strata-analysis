@@ -1018,11 +1018,7 @@ h1, h2, h3 {
 }
 
 .sentiment-visuals {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  min-width: 0;
-  align-items: stretch;
+  display: contents;
 }
 
 .sentiment-visual {
@@ -1036,6 +1032,40 @@ h1, h2, h3 {
   box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.04);
   min-width: 0;
   height: 100%;
+}
+
+.sentiment-visual-mix {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 18px 24px;
+  align-items: start;
+  grid-column: 1 / -1;
+}
+
+.sentiment-visual-mix .sentiment-visual-head {
+  grid-column: 1 / -1;
+}
+
+.sentiment-visual-mix .sentiment-chart-shell {
+  width: 100%;
+  max-width: none;
+  height: 280px;
+  margin: 0;
+}
+
+.sentiment-visual-mix .sentiment-chip-row {
+  align-self: stretch;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.sentiment-visual-mix .sentiment-chip {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.sentiment-report-bottom {
+  display: contents;
 }
 
 .sentiment-visual-head {
@@ -1330,7 +1360,33 @@ h1, h2, h3 {
   }
 
   .sentiment-visuals {
-    grid-template-columns: 1fr;
+    display: contents;
+  }
+
+  .sentiment-visual-mix {
+    display: flex;
+    grid-template-columns: none;
+    gap: 14px;
+    grid-column: auto;
+  }
+
+  .sentiment-visual-mix .sentiment-visual-head,
+  .sentiment-visual-mix .sentiment-chart-shell,
+  .sentiment-visual-mix .sentiment-chip-row,
+  .sentiment-visual-mix .sentiment-chip {
+    grid-column: auto;
+    width: auto;
+    max-width: none;
+  }
+
+  .sentiment-visual-mix .sentiment-chart-shell {
+    height: 200px;
+  }
+
+  .sentiment-visual-mix .sentiment-chip-row {
+    flex-direction: row;
+    align-self: auto;
+    justify-content: flex-start;
   }
 
   .sentiment-report-breakdown {

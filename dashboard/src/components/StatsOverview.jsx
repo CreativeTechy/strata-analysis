@@ -223,7 +223,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
       >
         <div className="sentiment-report-layout">
           <div className="sentiment-visuals">
-            <article className="sentiment-visual">
+            <article className="sentiment-visual sentiment-visual-mix">
               <div className="sentiment-visual-head">
                 <div className="stat-info">
                   <h4>Sentiment Mix</h4>
