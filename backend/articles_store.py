@@ -187,7 +187,7 @@ def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000)
 
     while True:
         params = {
-            "select": "sentiment,category,article_category,insight_json,summary",
+            "select": "url,title,sentiment,category,article_category,insight_json,summary",
             "limit": str(page_size),
             "offset": str(offset),
             "order": "created_at.desc",
@@ -218,16 +218,32 @@ def _list_top_items(values, limit=6):
     cleaned = []
     counts = Counter()
     display = {}
+    sources = {}
     for value in values:
-        text = _normalize_text(value)
+        if isinstance(value, dict):
+            text = _normalize_text(value.get("text") or value.get("idea") or value.get("opinion") or value.get("feedback"))
+            source_url = _normalize_text(value.get("url"))
+            source_title = _normalize_text(value.get("title"))
+        else:
+            text = _normalize_text(value)
+            source_url = ""
+            source_title = ""
         if not text:
             continue
         key = text.lower()
         counts[key] += 1
         if key not in display:
             display[key] = text
+        if source_url or source_title:
+            sources.setdefault(key, [])
+            source_entry = {"url": source_url, "title": source_title or source_url}
+            if source_entry not in sources[key]:
+                sources[key].append(source_entry)
     for key, count in counts.most_common(limit):
-        cleaned.append({"text": display[key], "count": count})
+        item = {"text": display[key], "count": count}
+        if key in sources:
+            item["sources"] = sources[key]
+        cleaned.append(item)
     return cleaned
 
 
@@ -352,20 +368,36 @@ def _topic_summary(rows):
     topics = []
 
     for row in rows:
+        row_source = {
+            "url": _normalize_text(row.get("url")),
+            "title": _normalize_text(row.get("title")),
+        }
         insight = row.get("insight_json") if isinstance(row.get("insight_json"), dict) else {}
-        positive_feedback.extend(_normalize_feedback_list(insight.get("positive_feedback")))
-        negative_feedback.extend(_normalize_feedback_list(insight.get("negative_feedback")))
-        nice_to_have_features.extend(_normalize_feedback_list(insight.get("nice_to_have_features")))
-        complaints.extend(_normalize_feedback_list(insight.get("complaints")))
-        great_features.extend(_normalize_feedback_list(insight.get("great_features")))
-        comfort_issues.extend(_normalize_feedback_list(insight.get("comfort_issues")))
-        performance_feedback.extend(_normalize_feedback_list(insight.get("performance_feedback")))
-        price_value_feedback.extend(_normalize_feedback_list(insight.get("price_value_feedback")))
-        maintenance_reliability_feedback.extend(_normalize_feedback_list(insight.get("maintenance_reliability_feedback")))
-        technology_feedback.extend(_normalize_feedback_list(insight.get("technology_feedback")))
-        safety_feedback.extend(_normalize_feedback_list(insight.get("safety_feedback")))
+        for text in _normalize_feedback_list(insight.get("positive_feedback")):
+            positive_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("negative_feedback")):
+            negative_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("nice_to_have_features")):
+            nice_to_have_features.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("complaints")):
+            complaints.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("great_features")):
+            great_features.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("comfort_issues")):
+            comfort_issues.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("performance_feedback")):
+            performance_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("price_value_feedback")):
+            price_value_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("maintenance_reliability_feedback")):
+            maintenance_reliability_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("technology_feedback")):
+            technology_feedback.append({**row_source, "text": text})
+        for text in _normalize_feedback_list(insight.get("safety_feedback")):
+            safety_feedback.append({**row_source, "text": text})
         people_opinions.extend(_normalize_people_opinions(insight.get("people_opinions")))
-        frequent_ideas.extend(_normalize_frequent_ideas(insight.get("frequent_ideas")))
+        for item in _normalize_frequent_ideas(insight.get("frequent_ideas")):
+            frequent_ideas.append({**item, **row_source})
         topic = _normalize_text(insight.get("topic") or row.get("title"))
         if topic:
             topics.append(topic)
@@ -374,6 +406,7 @@ def _topic_summary(rows):
     idea_display = {}
     idea_type = {}
     idea_category = {}
+    idea_sources = {}
     for item in frequent_ideas:
         idea = _normalize_text(item.get("idea"))
         if not idea:
@@ -383,6 +416,14 @@ def _topic_summary(rows):
         idea_display.setdefault(key, idea)
         idea_type.setdefault(key, item.get("type") or "issue")
         idea_category.setdefault(key, item.get("category") or "")
+        if item.get("url") or item.get("title"):
+            idea_sources.setdefault(key, [])
+            source_entry = {
+                "url": _normalize_text(item.get("url")),
+                "title": _normalize_text(item.get("title")) or _normalize_text(item.get("url")),
+            }
+            if source_entry not in idea_sources[key]:
+                idea_sources[key].append(source_entry)
 
     frequent_ideas_rollup = [
         {
@@ -390,6 +431,7 @@ def _topic_summary(rows):
             "type": idea_type.get(key, "issue"),
             "category": idea_category.get(key, ""),
             "frequency_estimate": count,
+            **({"sources": idea_sources.get(key, [])} if idea_sources.get(key) else {}),
         }
         for key, count in idea_counts.most_common()
     ]

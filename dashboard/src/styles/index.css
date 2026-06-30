@@ -1003,22 +1003,27 @@ h1, h2, h3 {
 
 .sentiment-report {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(330px, 0.85fr);
+  display: flex;
+  flex-direction: column;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+  width: 100%;
 }
 
 .sentiment-report-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
   width: 100%;
 }
 
-.sentiment-visuals {
-  display: contents;
+.sentiment-report-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  width: 100%;
 }
 
 .sentiment-visual {
@@ -1036,10 +1041,10 @@ h1, h2, h3 {
 
 .sentiment-visual-mix {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 18px 24px;
   align-items: start;
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .sentiment-visual-mix .sentiment-visual-head {
@@ -1049,23 +1054,81 @@ h1, h2, h3 {
 .sentiment-visual-mix .sentiment-chart-shell {
   width: 100%;
   max-width: none;
-  height: 280px;
+  height: 320px;
   margin: 0;
 }
 
-.sentiment-visual-mix .sentiment-chip-row {
-  align-self: stretch;
+.sentiment-legend-panel {
+  display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.04);
+  min-width: 0;
+  align-self: stretch;
 }
 
-.sentiment-visual-mix .sentiment-chip {
-  width: 100%;
+.sentiment-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sentiment-legend-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.sentiment-legend-row + .sentiment-legend-row {
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.sentiment-legend-label {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.sentiment-legend-label > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sentiment-legend-label strong {
+  font-size: 0.93rem;
+  color: var(--text-dark);
+}
+
+.sentiment-legend-label span {
+  font-size: 0.78rem;
+  color: var(--text-light);
+}
+
+.sentiment-legend-track {
+  height: 10px;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sentiment-legend-fill {
+  height: 100%;
+  border-radius: inherit;
 }
 
 .sentiment-report-bottom {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
 }
 
 .sentiment-visual-head {
@@ -1128,9 +1191,10 @@ h1, h2, h3 {
 
 .sentiment-chart-shell {
   position: relative;
-  width: 200px;
-  height: 200px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  height: 320px;
+  margin: 0;
 }
 
 .sentiment-center-copy {
@@ -1304,6 +1368,33 @@ h1, h2, h3 {
   border-radius: inherit;
 }
 
+.mini-list-row-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mini-list-source-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  color: var(--secondary-color);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-list-source-link:hover {
+  background: rgba(37, 99, 235, 0.14);
+}
+
 .mini-empty {
   margin-top: 10px;
   padding: 14px;
@@ -1359,34 +1450,23 @@ h1, h2, h3 {
     grid-template-columns: 1fr;
   }
 
-  .sentiment-visuals {
-    display: contents;
+  .sentiment-report-top {
+    grid-template-columns: 1fr;
+    gap: 18px;
   }
 
   .sentiment-visual-mix {
-    display: flex;
-    grid-template-columns: none;
+    display: grid;
+    grid-template-columns: 1fr;
     gap: 14px;
     grid-column: auto;
   }
 
   .sentiment-visual-mix .sentiment-visual-head,
   .sentiment-visual-mix .sentiment-chart-shell,
-  .sentiment-visual-mix .sentiment-chip-row,
-  .sentiment-visual-mix .sentiment-chip {
-    grid-column: auto;
-    width: auto;
+  .sentiment-legend-panel {
+    width: 100%;
     max-width: none;
-  }
-
-  .sentiment-visual-mix .sentiment-chart-shell {
-    height: 200px;
-  }
-
-  .sentiment-visual-mix .sentiment-chip-row {
-    flex-direction: row;
-    align-self: auto;
-    justify-content: flex-start;
   }
 
   .sentiment-report-breakdown {
@@ -1398,13 +1478,17 @@ h1, h2, h3 {
   }
 
   .sentiment-chart-shell {
-    width: 200px;
-    height: 200px;
+    width: 100%;
+    height: 240px;
+  }
+
+  .sentiment-visual-mix .sentiment-chart-shell {
+    height: 240px;
   }
 
   .sentiment-chart-skeleton {
-    width: 200px;
-    height: 200px;
+    width: 100%;
+    height: 240px;
   }
 }
 

@@ -89,6 +89,27 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
               <div className="mini-list-row-track">
                 <div className="mini-list-row-fill" style={{ width: `${pct}%`, background: color }} />
               </div>
+              {Array.isArray(item.sources) && item.sources.length ? (
+                <div className="mini-list-row-sources">
+                  {item.sources.slice(0, 3).map((source) => {
+                    const href = source.url || '';
+                    const label = source.title || href;
+                    if (!href) return null;
+                    return (
+                      <a
+                        key={`${text}-${href}`}
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mini-list-source-link"
+                        title={label}
+                      >
+                        {label}
+                      </a>
+                    );
+                  })}
+                </div>
+              ) : null}
             </article>
           );
         })
@@ -106,7 +127,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
         <StatSkeleton />
         <div className="glass-card stat-card sentiment-report stat-report-skeleton" aria-hidden="true">
           <div className="sentiment-report-layout">
-            <div className="sentiment-visuals">
+            <div className="sentiment-report-top">
               <article className="sentiment-visual">
                 <div className="sentiment-visual-head">
                   <div>
@@ -149,7 +170,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
               </article>
             </div>
 
-            <aside className="sentiment-report-aside">
+            <aside className="sentiment-report-aside sentiment-report-bottom">
               <article className="sentiment-summary-card">
                 <div className="skeleton-line skeleton-shimmer stat-skeleton-title" style={{ width: '36%' }} />
                 <div className="skeleton-line skeleton-shimmer stat-skeleton-value" style={{ width: '88%', marginTop: 8 }} />
@@ -222,7 +243,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
         style={{ minHeight: 560 }}
       >
         <div className="sentiment-report-layout">
-          <div className="sentiment-visuals">
+          <div className="sentiment-report-top">
             <article className="sentiment-visual sentiment-visual-mix">
               <div className="sentiment-visual-head">
                 <div className="stat-info">
@@ -239,8 +260,8 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
                   <PieChart>
                     <Pie
                       data={data}
-                      innerRadius={58}
-                      outerRadius={82}
+                      innerRadius={68}
+                      outerRadius={96}
                       paddingAngle={4}
                       dataKey="value"
                       stroke="none"
@@ -266,19 +287,34 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
                 </div>
               </div>
 
-              <div className="sentiment-chip-row">
-                {[
-                  { label: 'Positive', pct: positivePct, color: '#16a34a' },
-                  { label: 'Negative', pct: negativePct, color: '#e11d48' },
-                  { label: 'Neutral', pct: neutralPct, color: '#64748b' },
-                ].map((item) => (
-                  <div key={item.label} className="sentiment-chip">
-                    <span className="sentiment-dot" style={{ background: item.color }} />
-                    <span>{item.label}</span>
-                    <strong>{item.pct}%</strong>
-                  </div>
-                ))}
-              </div>
+              <aside className="sentiment-legend-panel">
+                <div className="mini-list-title" style={{ margin: 0 }}>
+                  <Sparkles size={14} />
+                  <span>Legend & stats</span>
+                </div>
+
+                <div className="sentiment-legend-list">
+                  {[
+                    { label: 'Positive', pct: positivePct, value: positive, color: '#16a34a' },
+                    { label: 'Negative', pct: negativePct, value: negative, color: '#e11d48' },
+                    { label: 'Neutral', pct: neutralPct, value: neutral, color: '#64748b' },
+                  ].map((item) => (
+                    <div key={item.label} className="sentiment-legend-row">
+                      <div className="sentiment-legend-label">
+                        <span className="sentiment-dot" style={{ background: item.color }} />
+                        <div>
+                          <strong>{item.label}</strong>
+                          <span>{item.value.toLocaleString()} articles</span>
+                        </div>
+                      </div>
+                      <strong>{item.pct}%</strong>
+                      <div className="sentiment-legend-track">
+                        <div className="sentiment-legend-fill" style={{ width: `${Math.max(item.pct, 8)}%`, background: item.color }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
             </article>
 
             <article className="sentiment-visual">
@@ -306,7 +342,7 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
             </article>
           </div>
 
-          <aside className="sentiment-report-aside">
+          <aside className="sentiment-report-aside sentiment-report-bottom">
             <article className="sentiment-summary-card">
               <div className="panel-kicker" style={{ marginBottom: 10 }}>
                 <Sparkles size={14} /> Insight summary
