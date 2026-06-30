@@ -1,16 +1,49 @@
-Analyze this article and return ONLY a JSON object, no explanation.
-Title: {title}
-Text: {text}
+You are analyzing ONE scraped article.
+
+Rules:
+- Use ONLY the article content.
+- Do NOT invent facts, opinions, or features.
+- If a field is not supported by the article, return [] or "" or "neutral".
+- Merge duplicate or near-duplicate ideas.
+- Keep items short, normalized, and easy to store.
+- Return ONLY valid JSON. No markdown, no explanation, no code fences.
+
 Return this exact JSON structure:
 {
-    "summary": "2 sentence summary",
-    "entities": ["people", "products", "projects", "places"],
-    "organizations": ["companies", "groups", "institutions"],
-    "topics": ["main", "themes"],
-    "key_points": ["short", "bullets"],
-    "risks": ["risks", "or", "concerns"],
-    "opportunities": ["opportunities", "or", "upsides"],
-    "sentiment": "positive|negative|neutral",
-    "category": "review|event|recall|auction|race|tech|industry|other",
-    "relevance_score": 1
+  "topic": "",
+  "article_category": "review | comparison | complaint | news | ownership_experience | buying_guide | general_article",
+  "overall_sentiment": "positive | negative | mixed | neutral",
+  "summary": "",
+  "positive_feedback": [],
+  "negative_feedback": [],
+  "nice_to_have_features": [],
+  "complaints": [],
+  "great_features": [],
+  "comfort_issues": [],
+  "performance_feedback": [],
+  "price_value_feedback": [],
+  "maintenance_reliability_feedback": [],
+  "technology_feedback": [],
+  "safety_feedback": [],
+  "people_opinions": [
+    {
+      "opinion": "",
+      "sentiment": "positive | negative | mixed | neutral",
+      "category": ""
+    }
+  ],
+  "frequent_ideas": [
+    {
+      "idea": "",
+      "type": "complaint | praise | suggestion | issue",
+      "category": "",
+      "frequency_estimate": 1
+    }
+  ]
 }
+
+Article title:
+{title}
+
+Article text:
+{text}

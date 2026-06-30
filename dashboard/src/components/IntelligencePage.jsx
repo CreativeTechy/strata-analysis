@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import '../styles/Intelligence.css';
 import { Send, Bot, User, X, FileText, ChevronRight, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -122,8 +122,10 @@ export default function IntelligencePage({ event = null, eventId = null }) {
             source: a.source,
             sentiment: a.sentiment,
             category: a.category,
+            article_category: a.article_category,
             title: a.title,
             summary: a.summary,
+            insight_json: a.insight_json,
             relevance_score: a.relevance_score,
           })),
         }),
@@ -321,7 +323,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
 
             <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                <span className="badge category">{selectedArticle.category || 'Topic'}</span>
+                <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
                 <span className="badge score">Score: {selectedArticle.relevance_score}/10</span>
               </div>
@@ -345,7 +347,16 @@ export default function IntelligencePage({ event = null, eventId = null }) {
                 <h3 style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Bot size={18} /> AI Analysis
                 </h3>
-                <p style={{ lineHeight: '1.6' }}>{selectedArticle.summary}</p>
+                <p style={{ lineHeight: '1.6' }}>{selectedArticle.insight_json?.summary || selectedArticle.summary}</p>
+                {selectedArticle.insight_json?.frequent_ideas?.length ? (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
+                    {selectedArticle.insight_json.frequent_ideas.slice(0, 4).map((item) => (
+                      <span key={item.idea} className="badge score" style={{ textTransform: 'none' }}>
+                        {item.idea}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <h3 style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
