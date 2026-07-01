@@ -4,9 +4,8 @@ import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
 import {
   CalendarDays,
+  Eye,
   Plus,
-  Pencil,
-  Trash2,
   Check,
   X,
   Search,
@@ -24,6 +23,7 @@ const emptyDraft = {
   description: '',
   location: '',
   target_audience: '',
+  usernames: '',
   hashtags: '',
   keywords: '',
   start_date: '',
@@ -64,6 +64,7 @@ function normalizeDraftForCompare(value) {
     description: String(value?.description || '').trim(),
     location: String(value?.location || '').trim(),
     target_audience: String(value?.target_audience || '').trim(),
+    usernames: String(value?.usernames || '').trim(),
     hashtags: String(value?.hashtags || '').trim(),
     keywords: String(value?.keywords || '').trim(),
     start_date: String(value?.start_date || ''),
@@ -79,7 +80,6 @@ export default function EventsPage({
   feeds = [],
   onCreateEvent,
   onUpdateEvent,
-  onDeleteEvent,
   isLoadingEvents,
 }) {
   const location = useLocation();
@@ -104,19 +104,10 @@ export default function EventsPage({
   const [feedAssignQuery, setFeedAssignQuery] = useState('');
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
   const [wizardStep, setWizardStep] = useState(1);
   const [fillMode, setFillMode] = useState('');
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
   const [metadataError, setMetadataError] = useState('');
-
-  const feedNameById = useMemo(() => {
-    const map = new Map();
-    feeds.forEach((feed) => {
-      map.set(Number(feed.id), feed.name || feed.url || `Feed ${feed.id}`);
-    });
-    return map;
-  }, [feeds]);
 
   const feedEventsById = useMemo(() => {
     const map = new Map();
@@ -164,9 +155,9 @@ export default function EventsPage({
   const visibleEvents = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return events.filter((event) => {
-      const feedNames = (event.feed_ids || []).map((feedId) => feedNameById.get(Number(feedId))).filter(Boolean);
       const hashtagNames = (event.hashtags || []).map((value) => String(value).trim()).filter(Boolean);
       const keywordNames = (event.keywords || []).map((value) => String(value).trim()).filter(Boolean);
+      const usernameNames = (event.usernames || []).map((value) => String(value).trim()).filter(Boolean);
       const matchesQuery =
         !needle ||
         [
@@ -179,14 +170,14 @@ export default function EventsPage({
           event.end_date,
           ...hashtagNames,
           ...keywordNames,
-          ...feedNames,
+          ...usernameNames,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
       const matchesStatus = statusFilter === 'all' || (event.status || 'draft').toLowerCase() === statusFilter;
       return matchesQuery && matchesStatus;
     });
-  }, [events, feedNameById, query, statusFilter]);
+  }, [events, query, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleEvents.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -211,7 +202,6 @@ export default function EventsPage({
       setLastDiscovery(null);
       setInitialDraft(emptyDraft);
       setShowCancelModal(false);
-      setDeleteTarget(null);
       setWizardStep(1);
       setFillMode('');
       setIsGeneratingMetadata(false);
@@ -232,6 +222,7 @@ export default function EventsPage({
         description: currentEvent.description || '',
         location: currentEvent.location || '',
         target_audience: currentEvent.target_audience || '',
+        usernames: toListInput(currentEvent.usernames),
         hashtags: toListInput(currentEvent.hashtags),
         keywords: toListInput(currentEvent.keywords),
         start_date: toDateInput(currentEvent.start_date),
@@ -246,6 +237,7 @@ export default function EventsPage({
         description: currentEvent.description || '',
         location: currentEvent.location || '',
         target_audience: currentEvent.target_audience || '',
+        usernames: toListInput(currentEvent.usernames),
         hashtags: toListInput(currentEvent.hashtags),
         keywords: toListInput(currentEvent.keywords),
         start_date: toDateInput(currentEvent.start_date),
@@ -264,10 +256,6 @@ export default function EventsPage({
     setIsGeneratingMetadata(false);
     setMetadataError('');
   }, [currentEvent, isEditRoute, isFormRoute]);
-
-  const beginEdit = (event) => {
-    navigate(`/events/${event.id}/edit`);
-  };
 
   const discardChanges = () => {
     setShowCancelModal(false);
@@ -324,6 +312,7 @@ export default function EventsPage({
       setDraft((prev) => ({
         ...prev,
         target_audience: suggestions.target_audience || prev.target_audience,
+        usernames: Array.isArray(suggestions.usernames) ? suggestions.usernames.join(', ') : prev.usernames,
         hashtags: Array.isArray(suggestions.hashtags) ? suggestions.hashtags.join(', ') : prev.hashtags,
         keywords: Array.isArray(suggestions.keywords) ? suggestions.keywords.join(', ') : prev.keywords,
       }));
@@ -360,6 +349,7 @@ export default function EventsPage({
       description: draft.description.trim(),
       location: draft.location.trim(),
       target_audience: draft.target_audience.trim(),
+      usernames: parseListInput(draft.usernames),
       hashtags: parseListInput(draft.hashtags),
       keywords: parseListInput(draft.keywords),
       start_date: draft.start_date || null,
@@ -380,13 +370,6 @@ export default function EventsPage({
       navigate('/events');
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const remove = async (event) => {
-    await onDeleteEvent?.(event.id);
-    if (editingId === event.id) {
-      navigate('/events');
     }
   };
 
@@ -554,10 +537,10 @@ export default function EventsPage({
                   <Sparkles size={18} />
                 </div>
                 <strong>Choose a fill method</strong>
-                <span>AI will draft hashtags, keywords, and a target audience. Manual mode lets you enter them yourself.</span>
+                <span>AI will draft usernames, hashtags, keywords, and a target audience. Manual mode lets you enter them yourself.</span>
               </div>
             ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
+              <div style={{ display: 'grid', gap: 12 }}>
                 {metadataError && (
                   <div
                     style={{
@@ -573,37 +556,61 @@ export default function EventsPage({
                     {metadataError}
                   </div>
                 )}
-                <input
-                  type="text"
-                  className="feed-input"
-                  placeholder="Target audience"
-                  value={draft.target_audience}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
-                  disabled={isSaving || isGeneratingMetadata}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <textarea
+
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <label style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Target audience</label>
+                  <input
+                    type="text"
                     className="feed-input"
-                    placeholder="Hashtags, comma or newline separated"
-                    rows={4}
-                    value={draft.hashtags}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, hashtags: e.target.value }))}
-                    style={{ resize: 'vertical', minHeight: 108 }}
-                    disabled={isSaving || isGeneratingMetadata}
-                  />
-                  <textarea
-                    className="feed-input"
-                    placeholder="Keywords, comma or newline separated"
-                    rows={4}
-                    value={draft.keywords}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, keywords: e.target.value }))}
-                    style={{ resize: 'vertical', minHeight: 108 }}
+                    placeholder="Target audience"
+                    value={draft.target_audience}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
                     disabled={isSaving || isGeneratingMetadata}
                   />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
-                    You can edit every suggestion before creating the event.
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <label style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Usernames</label>
+                    <textarea
+                      className="feed-input"
+                      placeholder="Usernames, comma or newline separated"
+                      rows={4}
+                      value={draft.usernames}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, usernames: e.target.value }))}
+                      style={{ resize: 'vertical', minHeight: 108 }}
+                      disabled={isSaving || isGeneratingMetadata}
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <label style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Hashtags</label>
+                    <textarea
+                      className="feed-input"
+                      placeholder="Hashtags, comma or newline separated"
+                      rows={4}
+                      value={draft.hashtags}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, hashtags: e.target.value }))}
+                      style={{ resize: 'vertical', minHeight: 108 }}
+                      disabled={isSaving || isGeneratingMetadata}
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <label style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Keywords</label>
+                    <textarea
+                      className="feed-input"
+                      placeholder="Keywords, comma or newline separated"
+                      rows={4}
+                      value={draft.keywords}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, keywords: e.target.value }))}
+                      style={{ resize: 'vertical', minHeight: 108 }}
+                      disabled={isSaving || isGeneratingMetadata}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5, maxWidth: 480 }}>
+                    The AI step gives you a starting point. You can still reshape handles, tags, and keywords before creating the event.
                   </span>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <button
@@ -782,7 +789,7 @@ export default function EventsPage({
               </div>
 
               <div className="admin-form-hint">
-                Creating the event will automatically run the normal DeepSeek feed discovery flow using your final hashtags and keywords.
+                Creating the event will automatically run the normal DeepSeek feed discovery flow using your final usernames, hashtags, and keywords.
               </div>
 
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -837,7 +844,7 @@ export default function EventsPage({
             <p className="admin-page-subtitle">
               {isEditRoute
                 ? 'Update the event envelope, then keep the linked feeds and discovery terms in sync.'
-                : 'Create a new event scope, attach feeds, and let discovery suggest sources from hashtags and keywords.'}
+                : 'Create a new event scope, attach feeds, and let discovery suggest sources from usernames, hashtags, and keywords.'}
             </p>
           </div>
           <div className="admin-page-toolbar">
@@ -893,7 +900,16 @@ export default function EventsPage({
               disabled={isSaving}
             />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+            <textarea
+              className="feed-input"
+              placeholder="Usernames, comma or newline separated"
+              rows={3}
+              value={draft.usernames}
+              onChange={(e) => setDraft((prev) => ({ ...prev, usernames: e.target.value }))}
+              style={{ resize: 'vertical', minHeight: 92 }}
+              disabled={isSaving}
+            />
             <textarea
               className="feed-input"
               placeholder="Hashtags, comma or newline separated"
@@ -1039,7 +1055,7 @@ export default function EventsPage({
 
           <div className="admin-form-hint">
             Selected feeds stay reusable across events. This page only controls the event envelope.
-            {isSaving && (draft.hashtags.trim() || draft.keywords.trim()) ? ' Finding feeds from your hashtags and keywords...' : ''}
+            {isSaving && (draft.usernames.trim() || draft.hashtags.trim() || draft.keywords.trim()) ? ' Finding feeds from your usernames, hashtags, and keywords...' : ''}
           </div>
 
           {lastDiscovery && (
@@ -1086,7 +1102,7 @@ export default function EventsPage({
                 </div>
               ) : (
                 <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                  No valid URLs were resolved from the hashtags and keywords for this save.
+                  No valid URLs were resolved from the usernames, hashtags, and keywords for this save.
                 </div>
               )}
             </div>
@@ -1097,7 +1113,7 @@ export default function EventsPage({
               {isSaving ? (
                 <>
                   <RefreshCw size={18} className="spin" />
-                  {draft.hashtags.trim() || draft.keywords.trim() ? 'Finding feeds...' : 'Saving...'}
+                  {draft.usernames.trim() || draft.hashtags.trim() || draft.keywords.trim() ? 'Finding feeds...' : 'Saving...'}
                 </>
               ) : editingId ? (
                 <>
@@ -1240,7 +1256,7 @@ export default function EventsPage({
           )}
 
           {pagedEvents.map((event, index) => {
-            const assignedFeeds = (event.feed_ids || []).map((feedId) => feedNameById.get(Number(feedId))).filter(Boolean);
+            const assignedFeedCount = Array.isArray(event.feed_ids) ? event.feed_ids.length : 0;
             const isActive = (event.status || '').toLowerCase() === 'active';
             return (
               <motion.div
@@ -1261,57 +1277,23 @@ export default function EventsPage({
                     <div className="admin-item-meta">
                       <span>{event.start_date || 'No start date'}</span>
                       <span>{event.end_date || 'No end date'}</span>
-                      {event.location && <span>{event.location}</span>}
-                      {event.target_audience && <span>{event.target_audience}</span>}
                       <span>
-                        {assignedFeeds.length} feed{assignedFeeds.length === 1 ? '' : 's'}
+                        {assignedFeedCount} feed{assignedFeedCount === 1 ? '' : 's'}
                       </span>
                     </div>
-                    <div className="admin-item-chips">
-                      {(event.hashtags || []).slice(0, 4).map((tag) => (
-                        <span key={`hash-${tag}`} className="admin-tag">
-                          {tag}
-                        </span>
-                      ))}
-                      {(event.keywords || []).slice(0, 4).map((tag) => (
-                        <span key={`kw-${tag}`} className="admin-tag muted">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    {event.description && (
-                      <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                        {event.description}
-                      </div>
-                    )}
-                    <div className="admin-item-chips">
-                      {assignedFeeds.length ? (
-                        assignedFeeds.slice(0, 4).map((name) => (
-                          <span key={name} className="admin-tag">
-                            {name}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="admin-tag muted">No feeds assigned</span>
-                      )}
+                    <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                      {event.description || 'Open the event to see assigned feeds, tags, and metadata.'}
                     </div>
                   </div>
 
                   <div className="admin-item-actions">
                     <Link
                       className="btn-secondary"
-                      to={`/events/${event.id}/edit`}
+                      to={`/events/${event.id}`}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
-                      <Pencil size={14} /> Edit
+                      <Eye size={14} /> View
                     </Link>
-                    <button
-                      className="btn-secondary"
-                      onClick={() => setDeleteTarget(event)}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
-                    >
-                      <Trash2 size={14} /> Delete
-                    </button>
                   </div>
                 </div>
               </motion.div>
@@ -1369,24 +1351,6 @@ export default function EventsPage({
           </div>
         )}
 
-        <ConfirmModal
-          open={Boolean(deleteTarget)}
-          title={`Delete event "${deleteTarget?.name || ''}"?`}
-          message="This will permanently remove the event and detach it from any linked feeds."
-          confirmLabel="Delete event"
-          cancelLabel="Keep event"
-          confirmButtonStyle={{
-            background: 'linear-gradient(135deg, #ff4757, #e03131)',
-            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
-          }}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={async () => {
-            if (!deleteTarget) return;
-            const target = deleteTarget;
-            setDeleteTarget(null);
-            await remove(target);
-          }}
-        />
       </div>
     </div>
   );
