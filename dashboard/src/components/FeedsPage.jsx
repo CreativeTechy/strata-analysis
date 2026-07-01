@@ -26,7 +26,7 @@ const emptyDraft = {
   event_ids: [],
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 3;
 
 function normalizeDraftForCompare(value) {
   return {
@@ -201,13 +201,6 @@ export default function FeedsPage({
     navigate('/feeds');
   };
 
-  const toggle = async (feed) => {
-    await onUpdateFeed?.(feed.id, {
-      ...feed,
-      enabled: !feed.enabled,
-    });
-  };
-
   const toggleEvent = (eventId) => {
     const id = Number(eventId);
     setDraft((prev) => ({
@@ -304,14 +297,41 @@ export default function FeedsPage({
               onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}
             />
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}>
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(e) => setDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
-            />
-            Enabled
-          </label>
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: 14,
+              border: '1px solid rgba(15, 23, 42, 0.08)',
+              background: 'rgba(255, 255, 255, 0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Feed status</strong>
+              <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
+                Disable this feed to keep it in the library without using it in pipelines.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraft((prev) => ({ ...prev, enabled: !prev.enabled }))}
+              className={`btn-secondary ${draft.enabled ? 'active' : ''}`}
+              style={{
+                minWidth: 160,
+                justifyContent: 'center',
+                background: draft.enabled ? 'rgba(46, 213, 115, 0.12)' : 'rgba(116, 125, 140, 0.12)',
+                borderColor: draft.enabled ? 'rgba(46, 213, 115, 0.24)' : 'rgba(116, 125, 140, 0.16)',
+                color: draft.enabled ? '#1e9e57' : '#5f6b7a',
+              }}
+            >
+              {draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+              {draft.enabled ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
 
           <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>Assign to events</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
@@ -492,13 +512,6 @@ export default function FeedsPage({
                       <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
                         {feed.enabled ? 'Enabled' : 'Disabled'}
                       </span>
-                      <button
-                        onClick={() => toggle(feed)}
-                        className="admin-icon-btn"
-                        title={feed.enabled ? 'Disable feed' : 'Enable feed'}
-                      >
-                        {feed.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
-                      </button>
                     </div>
                     <div className="admin-item-url">{feed.url}</div>
                     <div className="admin-item-meta">

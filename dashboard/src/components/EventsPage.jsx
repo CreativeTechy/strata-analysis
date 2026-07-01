@@ -4,9 +4,8 @@ import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
 import {
   CalendarDays,
+  Eye,
   Plus,
-  Pencil,
-  Trash2,
   Check,
   X,
   Search,
@@ -81,7 +80,6 @@ export default function EventsPage({
   feeds = [],
   onCreateEvent,
   onUpdateEvent,
-  onDeleteEvent,
   isLoadingEvents,
 }) {
   const location = useLocation();
@@ -106,19 +104,10 @@ export default function EventsPage({
   const [feedAssignQuery, setFeedAssignQuery] = useState('');
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
   const [wizardStep, setWizardStep] = useState(1);
   const [fillMode, setFillMode] = useState('');
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
   const [metadataError, setMetadataError] = useState('');
-
-  const feedNameById = useMemo(() => {
-    const map = new Map();
-    feeds.forEach((feed) => {
-      map.set(Number(feed.id), feed.name || feed.url || `Feed ${feed.id}`);
-    });
-    return map;
-  }, [feeds]);
 
   const feedEventsById = useMemo(() => {
     const map = new Map();
@@ -166,7 +155,6 @@ export default function EventsPage({
   const visibleEvents = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return events.filter((event) => {
-      const feedNames = (event.feed_ids || []).map((feedId) => feedNameById.get(Number(feedId))).filter(Boolean);
       const hashtagNames = (event.hashtags || []).map((value) => String(value).trim()).filter(Boolean);
       const keywordNames = (event.keywords || []).map((value) => String(value).trim()).filter(Boolean);
       const usernameNames = (event.usernames || []).map((value) => String(value).trim()).filter(Boolean);
@@ -183,14 +171,13 @@ export default function EventsPage({
           ...hashtagNames,
           ...keywordNames,
           ...usernameNames,
-          ...feedNames,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
       const matchesStatus = statusFilter === 'all' || (event.status || 'draft').toLowerCase() === statusFilter;
       return matchesQuery && matchesStatus;
     });
-  }, [events, feedNameById, query, statusFilter]);
+  }, [events, query, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleEvents.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -215,7 +202,6 @@ export default function EventsPage({
       setLastDiscovery(null);
       setInitialDraft(emptyDraft);
       setShowCancelModal(false);
-      setDeleteTarget(null);
       setWizardStep(1);
       setFillMode('');
       setIsGeneratingMetadata(false);
@@ -270,10 +256,6 @@ export default function EventsPage({
     setIsGeneratingMetadata(false);
     setMetadataError('');
   }, [currentEvent, isEditRoute, isFormRoute]);
-
-  const beginEdit = (event) => {
-    navigate(`/events/${event.id}/edit`);
-  };
 
   const discardChanges = () => {
     setShowCancelModal(false);
@@ -388,13 +370,6 @@ export default function EventsPage({
       navigate('/events');
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const remove = async (event) => {
-    await onDeleteEvent?.(event.id);
-    if (editingId === event.id) {
-      navigate('/events');
     }
   };
 
@@ -1281,7 +1256,7 @@ export default function EventsPage({
           )}
 
           {pagedEvents.map((event, index) => {
-            const assignedFeeds = (event.feed_ids || []).map((feedId) => feedNameById.get(Number(feedId))).filter(Boolean);
+            const assignedFeedCount = Array.isArray(event.feed_ids) ? event.feed_ids.length : 0;
             const isActive = (event.status || '').toLowerCase() === 'active';
             return (
               <motion.div
@@ -1302,62 +1277,23 @@ export default function EventsPage({
                     <div className="admin-item-meta">
                       <span>{event.start_date || 'No start date'}</span>
                       <span>{event.end_date || 'No end date'}</span>
-                      {event.location && <span>{event.location}</span>}
-                      {event.target_audience && <span>{event.target_audience}</span>}
                       <span>
-                        {assignedFeeds.length} feed{assignedFeeds.length === 1 ? '' : 's'}
+                        {assignedFeedCount} feed{assignedFeedCount === 1 ? '' : 's'}
                       </span>
                     </div>
-                    <div className="admin-item-chips">
-                      {(event.hashtags || []).slice(0, 4).map((tag) => (
-                        <span key={`hash-${tag}`} className="admin-tag">
-                          {tag}
-                        </span>
-                      ))}
-                      {(event.usernames || []).slice(0, 4).map((tag) => (
-                        <span key={`user-${tag}`} className="admin-tag muted">
-                          {tag}
-                        </span>
-                      ))}
-                      {(event.keywords || []).slice(0, 4).map((tag) => (
-                        <span key={`kw-${tag}`} className="admin-tag muted">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    {event.description && (
-                      <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                        {event.description}
-                      </div>
-                    )}
-                    <div className="admin-item-chips">
-                      {assignedFeeds.length ? (
-                        assignedFeeds.slice(0, 4).map((name) => (
-                          <span key={name} className="admin-tag">
-                            {name}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="admin-tag muted">No feeds assigned</span>
-                      )}
+                    <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                      {event.description || 'Open the event to see assigned feeds, tags, and metadata.'}
                     </div>
                   </div>
 
                   <div className="admin-item-actions">
                     <Link
                       className="btn-secondary"
-                      to={`/events/${event.id}/edit`}
+                      to={`/events/${event.id}`}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
-                      <Pencil size={14} /> Edit
+                      <Eye size={14} /> View
                     </Link>
-                    <button
-                      className="btn-secondary"
-                      onClick={() => setDeleteTarget(event)}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
-                    >
-                      <Trash2 size={14} /> Delete
-                    </button>
                   </div>
                 </div>
               </motion.div>
@@ -1415,24 +1351,6 @@ export default function EventsPage({
           </div>
         )}
 
-        <ConfirmModal
-          open={Boolean(deleteTarget)}
-          title={`Delete event "${deleteTarget?.name || ''}"?`}
-          message="This will permanently remove the event and detach it from any linked feeds."
-          confirmLabel="Delete event"
-          cancelLabel="Keep event"
-          confirmButtonStyle={{
-            background: 'linear-gradient(135deg, #ff4757, #e03131)',
-            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
-          }}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={async () => {
-            if (!deleteTarget) return;
-            const target = deleteTarget;
-            setDeleteTarget(null);
-            await remove(target);
-          }}
-        />
       </div>
     </div>
   );

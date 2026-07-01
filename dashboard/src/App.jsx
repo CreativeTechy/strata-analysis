@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
 import FeedsPage from './components/FeedsPage';
 import EventsPage from './components/EventsPage';
+import EventDetailPage from './components/EventDetailPage';
 import IntelligencePage from './components/IntelligencePage';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
@@ -603,7 +604,6 @@ export default function App() {
               feeds={feeds}
               onCreateEvent={createEvent}
               onUpdateEvent={updateEvent}
-              onDeleteEvent={deleteEvent}
               isLoadingEvents={isLoadingEvents}
             />
           </RouteShell>
@@ -618,7 +618,6 @@ export default function App() {
               feeds={feeds}
               onCreateEvent={createEvent}
               onUpdateEvent={updateEvent}
-              onDeleteEvent={deleteEvent}
               isLoadingEvents={isLoadingEvents}
             />
           </RouteShell>
@@ -633,8 +632,19 @@ export default function App() {
               feeds={feeds}
               onCreateEvent={createEvent}
               onUpdateEvent={updateEvent}
-              onDeleteEvent={deleteEvent}
               isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events/:eventId"
+        element={(
+          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <EventDetailPage
+              events={events}
+              feeds={feeds}
+              onDeleteEvent={deleteEvent}
             />
           </RouteShell>
         )}

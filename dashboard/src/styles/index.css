@@ -1016,6 +1016,19 @@ h1, h2, h3 {
   background: rgba(0, 0, 0, 0.08);
 }
 
+.event-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.event-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1504,6 +1517,11 @@ h1, h2, h3 {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .event-detail-layout,
+  .event-detail-summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .stats-grid {
