@@ -118,10 +118,13 @@ def _parse_total_count(resp, fallback=0):
 def _normalize_event(row, feed_ids=None):
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
+    usernames = row.get("usernames") or []
     if isinstance(hashtags, str):
         hashtags = [hashtags]
     if isinstance(keywords, str):
         keywords = [keywords]
+    if isinstance(usernames, str):
+        usernames = [usernames]
     return {
         "id": row.get("id"),
         "name": (row.get("name") or "").strip(),
@@ -131,6 +134,7 @@ def _normalize_event(row, feed_ids=None):
         "target_audience": (row.get("target_audience") or "").strip(),
         "hashtags": _clean_terms(hashtags),
         "keywords": _clean_terms(keywords),
+        "usernames": _clean_terms(usernames),
         "start_date": row.get("start_date"),
         "end_date": row.get("end_date"),
         "created_at": row.get("created_at"),
@@ -270,7 +274,7 @@ def list_events():
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
                 "order": "created_at.asc",
             },
         )
@@ -292,7 +296,7 @@ def list_events_page(limit=25, offset=0):
             _endpoint(),
             headers={**_headers(), "Prefer": "count=exact"},
             params={
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
                 "order": "created_at.asc",
                 "limit": str(limit),
                 "offset": str(offset),
@@ -317,7 +321,7 @@ def get_event(event_id):
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
                 "id": f"eq.{int(event_id)}",
                 "limit": 1,
             },
@@ -336,10 +340,13 @@ def _event_payload(event):
 
     hashtags = event.get("hashtags")
     keywords = event.get("keywords")
+    usernames = event.get("usernames")
     if isinstance(hashtags, str):
         hashtags = [part.strip() for part in hashtags.replace("\n", ",").split(",")]
     if isinstance(keywords, str):
         keywords = [part.strip() for part in keywords.replace("\n", ",").split(",")]
+    if isinstance(usernames, str):
+        usernames = [part.strip() for part in usernames.replace("\n", ",").split(",")]
 
     return {
         "name": (event.get("name") or "").strip(),
@@ -349,6 +356,7 @@ def _event_payload(event):
         "target_audience": (event.get("target_audience") or "").strip() or None,
         "hashtags": _clean_terms(hashtags or []),
         "keywords": _clean_terms(keywords or []),
+        "usernames": _clean_terms(usernames or []),
         "start_date": event.get("start_date") or None,
         "end_date": event.get("end_date") or None,
     }

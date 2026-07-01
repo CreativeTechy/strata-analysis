@@ -1,4 +1,4 @@
-"""Event link discovery for hashtags and keywords.
+"""Event link discovery for hashtags, keywords, and usernames.
 
 DeepSeek proposes feed sources directly from the event terms, then we validate
 those URLs, resolve domains/RSS pages, and upsert the selected links as
@@ -85,7 +85,29 @@ def _event_context(event):
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
 
+    usernames = _clean_terms(event.get("usernames"))
+    if usernames:
+        parts.append(f"Usernames: {', '.join(usernames)}")
+
     return "\n".join(parts)
+
+
+def _normalize_username(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("@"):
+        text = text[1:].strip()
+    text = text.split("/", 1)[0].strip()
+    text = re.sub(r"[^A-Za-z0-9_]", "", text)
+    return text
+
+
+def _username_profile_url(value):
+    handle = _normalize_username(value)
+    if not handle:
+        return ""
+    return f"https://x.com/{handle}"
 
 
 def _normalize_url(url):
@@ -184,6 +206,7 @@ def _build_queries(event):
     terms = []
     terms.extend(_clean_terms(event.get("hashtags")))
     terms.extend(_clean_terms(event.get("keywords")))
+    terms.extend(_clean_terms(event.get("usernames")))
     name = str(event.get("name") or "").strip()
     description = str(event.get("description") or "").strip()
 
@@ -199,6 +222,9 @@ def _build_queries(event):
             combined.append(f"{query_term} {description[:80]}")
         combined.append(f"site:x.com {query_term}")
         combined.append(f"site:twitter.com {query_term}")
+        if not query_term.startswith("@"):
+            combined.append(f"site:x.com @{query_term}")
+            combined.append(f"site:twitter.com @{query_term}")
 
     if name and not combined:
         combined.append(name)
@@ -211,6 +237,7 @@ def _fallback_candidates(event):
     terms = []
     terms.extend(_clean_terms(event.get("hashtags")))
     terms.extend(_clean_terms(event.get("keywords")))
+    terms.extend(_clean_terms(event.get("usernames")))
     terms = [_search_term(term) for term in terms if _search_term(term)]
 
     candidates = []
@@ -276,7 +303,7 @@ def _deepseek_source_suggestions(event):
     event_context = _event_context(event)
     prompt = (
         "You are helping discover feed sources for an event.\n"
-        "Use only the event hashtags and keywords to propose likely feed sources.\n"
+        "Use only the event hashtags, keywords, and usernames to propose likely feed sources.\n"
         "Return ONLY JSON with this shape:\n"
         '{ "suggested_sources": [ { "kind": "url|domain|rss", "value": "https://...", "title": "...", "reason": "..." } ], "links": ["https://..."] }\n'
         "Return 5 to 10 suggestions when possible.\n"
@@ -480,6 +507,20 @@ def discover_event_links(event):
     suggestions = _deepseek_source_suggestions(event)
     resolved_sources = []
     seen_urls = set()
+    usernames = _clean_terms(event.get("usernames"))
+    for username in usernames:
+        profile_url = _username_profile_url(username)
+        if not profile_url or profile_url in seen_urls:
+            continue
+        seen_urls.add(profile_url)
+        resolved_sources.append(
+            {
+                "url": profile_url,
+                "title": f"@{_normalize_username(username)}",
+                "reason": "Resolved from event usernames.",
+                "source_type": "social",
+            }
+        )
     for item in suggestions:
         for resolved in _resolve_source(item):
             url = resolved.get("url")

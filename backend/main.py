@@ -117,6 +117,13 @@ def _format_event_context(event: dict | None) -> str:
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
 
+    usernames = event.get("usernames") or []
+    if isinstance(usernames, str):
+        usernames = [usernames]
+    usernames = [str(item).strip() for item in usernames if str(item).strip()]
+    if usernames:
+        parts.append(f"Usernames: {', '.join(usernames)}")
+
     description = (event.get("description") or "").strip()
     if description:
         parts.append(f"Description: {description}")
@@ -257,7 +264,7 @@ def _save_event_with_discovery(event):
 
     discovery = (
         discover_event_links(event)
-        if (event.get("hashtags") or event.get("keywords"))
+        if (event.get("hashtags") or event.get("keywords") or event.get("usernames"))
         else _default_discovery_result(event)
     )
     if discovery.get("feed_ids") is not None:
