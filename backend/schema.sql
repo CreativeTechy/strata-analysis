@@ -90,6 +90,11 @@ create table if not exists public.articles (
     sentiment       text,
     relevance_score numeric,
     category        text,
+    article_category text,
+    insight_json    jsonb default '{}'::jsonb,
+    analysis_model  text,
+    analysis_prompt_version text,
+    analyzed_at     timestamptz,
     organizations   jsonb default '[]'::jsonb,
     entities        jsonb default '[]'::jsonb,
     topics          jsonb default '[]'::jsonb,
@@ -130,6 +135,8 @@ create index if not exists crawl_pages_created_idx on public.crawl_pages (create
 
 create index if not exists articles_published_idx on public.articles (published desc);
 create index if not exists articles_sentiment_idx on public.articles (sentiment);
+create index if not exists articles_article_category_idx on public.articles (article_category);
+create index if not exists articles_analyzed_at_idx on public.articles (analyzed_at desc);
 
 create index if not exists event_feeds_event_idx on public.event_feeds (event_id);
 create index if not exists event_feeds_feed_idx on public.event_feeds (feed_id);

@@ -519,8 +519,8 @@ async def chat(payload: dict):
 
     context = "\n".join(
         f"{i + 1}. [{a.get('source', '?')} | {a.get('sentiment', 'neutral')} | "
-        f"{a.get('category', 'other')} | score {a.get('relevance_score', '?')}] "
-        f"{a.get('title', '')}\n   {a.get('summary', '')}"
+        f"{a.get('article_category') or a.get('category', 'general_article')} | score {a.get('relevance_score', '?')}] "
+        f"{a.get('title', '')}\n   {a.get('summary', '') or (a.get('insight_json') or {}).get('summary', '')}"
         for i, a in enumerate(articles)
     )
     user_prompt = (

@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter } from 'lucide-react';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
-const CATEGORIES = ['all', 'review', 'event', 'recall', 'auction', 'race', 'tech', 'industry', 'other'];
+const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
 const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },
   { value: 'published.asc', label: 'Oldest first' },
@@ -14,6 +14,12 @@ const SORT_OPTIONS = [
 ];
 
 const PAGE_SIZES = [12, 24, 48, 96];
+
+function prettyLabel(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 function articleDate(value) {
   if (!value) return 'Unknown date';
@@ -158,21 +164,22 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   };
 
   return (
-    <div style={{ minHeight: '100vh', padding: '32px 28px 40px' }}>
-      <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+    <div className="admin-page-shell">
+      <div className="content-shell">
+        <div className="admin-page-header">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+            <div className="admin-page-kicker" style={{ marginBottom: 10 }}>
               <SlidersHorizontal size={26} color="#ff6b35" />
-              <h1 style={{ fontSize: '1.9rem', fontWeight: 800, margin: 0 }}>Articles</h1>
+              <span>Article Library</span>
             </div>
-            <p style={{ color: 'var(--text-light)', margin: 0, lineHeight: 1.6 }}>
+            <h1 className="admin-page-title">Articles</h1>
+            <p className="admin-page-subtitle">
               Server-side search, sentiment, category, event, sort, and pagination powered by the API.
               {event ? ` Dashboard event: ${event.name}.` : ' Showing all events.'}
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div className="dashboard-hero-actions">
             <button
               className="btn-secondary"
               onClick={handleDeleteAll}
@@ -220,7 +227,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
           <select className="filter-select" value={category} onChange={(e) => setCategory(e.target.value)}>
             {CATEGORIES.map((value) => (
               <option key={value} value={value}>
-                {value === 'all' ? 'All categories' : value[0].toUpperCase() + value.slice(1)}
+                {value === 'all' ? 'All categories' : prettyLabel(value)}
               </option>
             ))}
           </select>
@@ -242,7 +249,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
           </select>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+        <div className="admin-toolbar-row" style={{ justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexWrap: 'wrap' }}>
             <span>{loading ? 'Loading articles...' : `${total.toLocaleString()} articles total, showing ${visibleRange}`}</span>
             <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
@@ -305,7 +312,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
                           {article.sentiment || 'Neutral'}
                         </span>
                         <span className="badge category">
-                          {article.category || 'News'}
+                          {prettyLabel(article.article_category || article.category || 'general_article')}
                         </span>
                         {article.relevance_score != null && (
                           <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
@@ -320,8 +327,18 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
                     </h3>
 
                     <p className="article-summary">
-                      {article.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.')}
+                      {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.')}
                     </p>
+
+                    {article.insight_json?.frequent_ideas?.length ? (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                        {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
+                          <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                            {item.idea}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
 
                     {(article.brands?.length > 0 || article.car_models?.length > 0) && (
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>

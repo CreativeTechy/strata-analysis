@@ -501,7 +501,7 @@ export default function WorkflowPage({
 
                 {(workflowState === 'cleaning' || workflowState === 'ready') && (
                   <>
-                    {['Parsing raw content', 'Validating AI JSON output', 'Extracting entities, topics, and sentiment'].map((label, i) => (
+                    {['Parsing raw content', 'Validating AI JSON output', 'Extracting structured article insights'].map((label, i) => (
                       <motion.div
                         key={label}
                         className="status-item"
@@ -749,6 +749,9 @@ export default function WorkflowPage({
                         </span>
                       </div>
                       <div className="article-preview-title">{article.title || article.url}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: 4 }}>
+                        {article.article_category || article.category || 'general_article'}
+                      </div>
                     </div>
                   ))
                 ) : (
