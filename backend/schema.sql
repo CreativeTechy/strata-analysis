@@ -20,6 +20,7 @@ create table if not exists public.events (
     target_audience text,
     hashtags     jsonb default '[]'::jsonb,
     keywords     jsonb default '[]'::jsonb,
+    usernames    jsonb default '[]'::jsonb,
     start_date   date,
     end_date     date,
     created_at   timestamptz default now(),
@@ -31,7 +32,8 @@ alter table public.events
     add column if not exists location text,
     add column if not exists target_audience text,
     add column if not exists hashtags jsonb default '[]'::jsonb,
-    add column if not exists keywords jsonb default '[]'::jsonb;
+    add column if not exists keywords jsonb default '[]'::jsonb,
+    add column if not exists usernames jsonb default '[]'::jsonb;
 
 create table if not exists public.feeds (
     id           bigint generated always as identity primary key,

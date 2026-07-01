@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import '../styles/Intelligence.css';
-import { Send, Bot, User, X, FileText, ChevronRight, Filter } from 'lucide-react';
+import { Send, Bot, User, X, FileText, ChevronRight, ChevronLeft, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+const MATCHES_PAGE_SIZE = 4;
+
 export default function IntelligencePage({ event = null, eventId = null }) {
   const [articles, setArticles] = useState([]);
-  const [filteredArticles, setFilteredArticles] = useState([]);
+  const [matchesPage, setMatchesPage] = useState(1);
 
   const [selectedSites, setSelectedSites] = useState([]);
   const [selectedSentiments, setSelectedSentiments] = useState([]);
@@ -23,16 +25,6 @@ export default function IntelligencePage({ event = null, eventId = null }) {
   ]);
 
   const [selectedArticle, setSelectedArticle] = useState(null);
-
-  useEffect(() => {
-    setSelectedArticle(null);
-    setChatHistory([
-      {
-        role: 'bot',
-        text: 'Hello! I am your Intelligence Copilot. Select an event or browse all events, then ask me to summarize or analyze the articles.',
-      },
-    ]);
-  }, [eventId]);
 
   useEffect(() => {
     async function fetchData() {
@@ -61,7 +53,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
     fetchData();
   }, [eventId]);
 
-  useEffect(() => {
+  const filteredArticles = useMemo(() => {
     let result = articles;
     if (selectedSites.length > 0) {
       result = result.filter((a) => selectedSites.includes(a.source));
@@ -72,8 +64,15 @@ export default function IntelligencePage({ event = null, eventId = null }) {
     if (selectedCategories.length > 0) {
       result = result.filter((a) => selectedCategories.includes(a.category));
     }
-    setFilteredArticles(result);
+    return result;
   }, [articles, selectedSites, selectedSentiments, selectedCategories]);
+
+  const totalMatchesPages = Math.max(1, Math.ceil(filteredArticles.length / MATCHES_PAGE_SIZE));
+  const safeMatchesPage = Math.min(matchesPage, totalMatchesPages);
+  const pagedArticles = useMemo(
+    () => filteredArticles.slice((safeMatchesPage - 1) * MATCHES_PAGE_SIZE, safeMatchesPage * MATCHES_PAGE_SIZE),
+    [filteredArticles, safeMatchesPage]
+  );
 
   const sites = [...new Set(articles.map((a) => a.source).filter(Boolean))];
   const categories = [...new Set(articles.map((a) => a.category).filter(Boolean))];
@@ -85,6 +84,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
     } else {
       setFn([...currentList, value]);
     }
+    setMatchesPage(1);
   };
 
   const handleSendMessage = async (presetText) => {
@@ -293,20 +293,55 @@ export default function IntelligencePage({ event = null, eventId = null }) {
           Matches ({filteredArticles.length})
         </h3>
 
-        {filteredArticles.map((article) => (
-          <motion.div key={article.url} layout className="preview-card" onClick={() => setSelectedArticle(article)}>
-            <div className="preview-meta">
-              <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{article.source}</span>
-              <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                {article.sentiment || 'Neutral'}
+        {pagedArticles.length === 0 ? (
+          <div className="preview-empty">No matching articles for the current filters.</div>
+        ) : (
+          pagedArticles.map((article) => (
+            <motion.div key={article.url} layout className="preview-card" onClick={() => setSelectedArticle(article)}>
+              <div className="preview-meta">
+                <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{article.source}</span>
+                <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
+                  {article.sentiment || 'Neutral'}
+                </span>
+              </div>
+              <div className="preview-title">{article.title}</div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.8rem', color: 'var(--primary-color)' }}>
+                View Details <ChevronRight size={14} />
+              </div>
+            </motion.div>
+          ))
+        )}
+
+        {filteredArticles.length > MATCHES_PAGE_SIZE && (
+          <div className="matches-pagination">
+            <div className="matches-pagination-meta">
+              Showing {(safeMatchesPage - 1) * MATCHES_PAGE_SIZE + 1}-{Math.min(safeMatchesPage * MATCHES_PAGE_SIZE, filteredArticles.length)} of {filteredArticles.length}
+            </div>
+            <div className="matches-pagination-controls">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setMatchesPage((value) => Math.max(1, value - 1))}
+                disabled={safeMatchesPage <= 1}
+                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+              >
+                <ChevronLeft size={14} /> Previous
+              </button>
+              <span className="matches-pagination-chip">
+                Page {safeMatchesPage} of {totalMatchesPages}
               </span>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setMatchesPage((value) => Math.min(totalMatchesPages, value + 1))}
+                disabled={safeMatchesPage >= totalMatchesPages}
+                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+              >
+                Next <ChevronRight size={14} />
+              </button>
             </div>
-            <div className="preview-title">{article.title}</div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.8rem', color: 'var(--primary-color)' }}>
-              View Details <ChevronRight size={14} />
-            </div>
-          </motion.div>
-        ))}
+          </div>
+        )}
       </div>
 
       <AnimatePresence>
