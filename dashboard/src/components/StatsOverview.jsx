@@ -77,14 +77,16 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
           const category = item.category ? prettyLabel(item.category) : '';
           return (
             <article key={`${title}-${text}`} className={`mini-list-row tone-${tone}`}>
-              <div className="mini-list-row-copy">
-                <span className="mini-list-row-text">{text}</span>
-                {category ? <span className="mini-list-row-subtle">{category}</span> : null}
-              </div>
-              <div className="mini-list-row-meta">
-                <span className="mini-list-row-badge" style={{ background: `${color}14`, color }}>
-                  {count}
-                </span>
+              <div className="mini-list-row-top">
+                <div className="mini-list-row-copy">
+                  <span className="mini-list-row-text">{text}</span>
+                  {category ? <span className="mini-list-row-subtle">{category}</span> : null}
+                </div>
+                <div className="mini-list-row-meta">
+                  <span className="mini-list-row-badge" style={{ background: `${color}14`, color }}>
+                    {count}
+                  </span>
+                </div>
               </div>
               <div className="mini-list-row-track">
                 <div className="mini-list-row-fill" style={{ width: `${pct}%`, background: color }} />

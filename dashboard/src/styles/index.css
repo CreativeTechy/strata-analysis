@@ -1318,11 +1318,19 @@ h1, h2, h3 {
   box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.03);
 }
 
-.mini-list-row-copy {
+.mini-list-row-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.mini-list-row-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .mini-list-row-text {
@@ -1344,6 +1352,7 @@ h1, h2, h3 {
 .mini-list-row-meta {
   display: flex;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .mini-list-row-badge {
