@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 
 import config
 from event_discovery import discover_event_links
+from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
 from events_store import (
     create_event,
@@ -288,6 +289,20 @@ def edit_event(event_id: int, payload: dict):
         }
     event, discovery = _save_event_with_discovery(event)
     return {"event": event, "discovery": discovery}
+
+
+@app.post("/api/events/suggest")
+def suggest_event(payload: dict):
+    if not isinstance(payload, dict):
+        payload = {}
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    if not name:
+        return {
+            "error": "Event name is required.",
+            "detail": "Provide the event name before requesting AI suggestions.",
+        }
+    return {"suggestions": suggest_event_metadata(name, description)}
 
 
 @app.delete("/api/events/{event_id}")

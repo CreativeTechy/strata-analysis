@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
 const CATEGORIES = ['all', 'review', 'event', 'recall', 'auction', 'race', 'tech', 'industry', 'other'];
@@ -58,6 +59,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const hasArticlesRef = useRef(false);
 
   useEffect(() => {
@@ -130,11 +132,6 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
 
   const handleDeleteAll = async () => {
     if (deletingAll) return;
-    const confirmed = window.confirm(
-      'Delete all articles from Supabase? This will remove every row in the articles table and cannot be undone.'
-    );
-    if (!confirmed) return;
-
     setDeletingAll(true);
     setError('');
     try {
@@ -175,7 +172,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button
               className="btn-secondary"
-              onClick={handleDeleteAll}
+              onClick={() => setShowDeleteAllModal(true)}
               disabled={loading || deletingAll}
               style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
             >
@@ -187,6 +184,26 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
             </Link>
           </div>
         </div>
+
+        <ConfirmModal
+          open={showDeleteAllModal}
+          title="Delete all articles?"
+          message="This will remove every row in the articles table and cannot be undone."
+          confirmLabel={deletingAll ? 'Deleting...' : 'Delete all articles'}
+          cancelLabel="Keep articles"
+          confirmButtonStyle={{
+            background: 'linear-gradient(135deg, #ff4757, #e03131)',
+            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
+          }}
+          onClose={() => {
+            if (!deletingAll) setShowDeleteAllModal(false);
+          }}
+          onConfirm={async () => {
+            if (deletingAll) return;
+            setShowDeleteAllModal(false);
+            await handleDeleteAll();
+          }}
+        />
 
         <div className="glass-card articles-toolbar">
           <label className="articles-search">

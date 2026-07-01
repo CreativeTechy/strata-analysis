@@ -532,41 +532,105 @@ export default function App() {
     </div>
   );
 
-  const renderFeedsRoute = () => (
-    <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-      <FeedsPage
-        feeds={feeds}
-        events={events}
-        feedsSource={feedSource}
-        onCreateFeed={createFeed}
-        onUpdateFeed={updateFeed}
-        onDeleteFeed={deleteFeed}
-        isLoadingFeeds={isLoadingFeeds}
-      />
-    </RouteShell>
-  );
-
-  const renderEventsRoute = () => (
-    <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-      <EventsPage
-        events={events}
-        feeds={feeds}
-        onCreateEvent={createEvent}
-        onUpdateEvent={updateEvent}
-        onDeleteEvent={deleteEvent}
-        isLoadingEvents={isLoadingEvents}
-      />
-    </RouteShell>
-  );
-
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={renderDashboardView()} />
       <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
       <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
-      <Route path="/feeds" element={renderFeedsRoute()} />
-      <Route path="/events" element={renderEventsRoute()} />
+      <Route
+        path="/feeds"
+        element={(
+          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/feeds/new"
+        element={(
+          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/feeds/:feedId/edit"
+        element={(
+          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events"
+        element={(
+          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events/new"
+        element={(
+          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events/:eventId/edit"
+        element={(
+          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
       <Route path="/workflow" element={renderWorkflowRoute()} />
       <Route
         path="/spider"
