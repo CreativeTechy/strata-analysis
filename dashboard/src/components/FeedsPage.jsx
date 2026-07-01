@@ -1,6 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Rss, Plus, Pencil, Trash2, Check, X, ToggleLeft, ToggleRight, Search, Link2, CheckCircle2, Layers3 } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
+import {
+  Rss,
+  Plus,
+  Pencil,
+  Trash2,
+  Check,
+  X,
+  ToggleLeft,
+  ToggleRight,
+  Search,
+  Link2,
+  CheckCircle2,
+  Layers3,
+} from 'lucide-react';
 
 const emptyDraft = {
   url: '',
@@ -13,6 +28,19 @@ const emptyDraft = {
 
 const PAGE_SIZE = 10;
 
+function normalizeDraftForCompare(value) {
+  return {
+    url: String(value?.url || '').trim(),
+    name: String(value?.name || '').trim(),
+    source_type: String(value?.source_type || 'rss').trim().toLowerCase(),
+    category: String(value?.category || '').trim(),
+    enabled: Boolean(value?.enabled),
+    event_ids: Array.isArray(value?.event_ids)
+      ? [...new Set(value.event_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
+      : [],
+  };
+}
+
 export default function FeedsPage({
   feeds = [],
   events = [],
@@ -22,20 +50,69 @@ export default function FeedsPage({
   onDeleteFeed,
   isLoadingFeeds,
 }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const params = useParams();
+  const pathname = location.pathname;
+  const isCreateRoute = pathname.endsWith('/new');
+  const isEditRoute = pathname.endsWith('/edit');
+  const isFormRoute = isCreateRoute || isEditRoute;
+  const editingId = isEditRoute ? Number(params.feedId) : null;
+  const currentFeed = useMemo(
+    () => (editingId != null ? feeds.find((feed) => Number(feed.id) === Number(editingId)) || null : null),
+    [editingId, feeds]
+  );
+
   const [draft, setDraft] = useState(emptyDraft);
-  const [editingId, setEditingId] = useState(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [initialDraft, setInitialDraft] = useState(emptyDraft);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
-    if (!editingId) return;
-    const current = feeds.find((feed) => feed.id === editingId);
-    if (!current) {
-      setEditingId(null);
+    if (!isFormRoute) {
       setDraft(emptyDraft);
+      setInitialDraft(emptyDraft);
+      setShowCancelModal(false);
+      setDeleteTarget(null);
+      return;
     }
-  }, [feeds, editingId]);
+
+    if (isEditRoute) {
+      if (!currentFeed) {
+        setDraft(emptyDraft);
+        setInitialDraft(emptyDraft);
+        return;
+      }
+
+      const assignedEventIds = events
+        .filter((event) => Array.isArray(event.feed_ids) && event.feed_ids.map(Number).includes(Number(currentFeed.id)))
+        .map((event) => Number(event.id));
+
+      setDraft({
+        url: currentFeed.url || '',
+        name: currentFeed.name || '',
+        source_type: currentFeed.source_type || 'rss',
+        category: currentFeed.category || '',
+        enabled: currentFeed.enabled ?? true,
+        event_ids: assignedEventIds,
+      });
+      setInitialDraft({
+        url: currentFeed.url || '',
+        name: currentFeed.name || '',
+        source_type: currentFeed.source_type || 'rss',
+        category: currentFeed.category || '',
+        enabled: currentFeed.enabled ?? true,
+        event_ids: assignedEventIds,
+      });
+      return;
+    }
+
+    setDraft(emptyDraft);
+    setInitialDraft(emptyDraft);
+  }, [currentFeed, events, isEditRoute, isFormRoute]);
 
   const feedEventsById = useMemo(() => {
     const map = new Map();
@@ -94,23 +171,13 @@ export default function FeedsPage({
   }, [currentPage, totalPages]);
 
   const beginEdit = (feed) => {
-    setEditingId(feed.id);
-    const assignedEventIds = events
-      .filter((event) => Array.isArray(event.feed_ids) && event.feed_ids.map(Number).includes(Number(feed.id)))
-      .map((event) => Number(event.id));
-    setDraft({
-      url: feed.url || '',
-      name: feed.name || '',
-      source_type: feed.source_type || 'rss',
-      category: feed.category || '',
-      enabled: feed.enabled ?? true,
-      event_ids: assignedEventIds,
-    });
+    navigate(`/feeds/${feed.id}/edit`);
   };
 
-  const reset = () => {
-    setEditingId(null);
+  const discardChanges = () => {
+    setShowCancelModal(false);
     setDraft(emptyDraft);
+    navigate('/feeds');
   };
 
   const submit = async () => {
@@ -130,7 +197,8 @@ export default function FeedsPage({
     } else {
       await onCreateFeed?.(payload);
     }
-    reset();
+
+    navigate('/feeds');
   };
 
   const toggle = async (feed) => {
@@ -151,11 +219,152 @@ export default function FeedsPage({
   };
 
   const remove = async (feed) => {
-    const confirmed = window.confirm(`Delete feed "${feed.name || feed.url}"?`);
-    if (!confirmed) return;
     await onDeleteFeed?.(feed.id);
-    if (editingId === feed.id) reset();
+    if (editingId === feed.id) {
+      navigate('/feeds');
+    }
   };
+
+  const isDirty = useMemo(() => {
+    return JSON.stringify(normalizeDraftForCompare(draft)) !== JSON.stringify(normalizeDraftForCompare(initialDraft));
+  }, [draft, initialDraft]);
+
+  const handleCancel = () => {
+    if (isDirty) {
+      setShowCancelModal(true);
+      return;
+    }
+    discardChanges();
+  };
+
+  if (isFormRoute) {
+    const heading = isEditRoute ? 'Edit Feed' : 'Create Feed';
+    const buttonLabel = isEditRoute ? 'Save Feed' : 'Create Feed';
+    return (
+      <div className="admin-page-shell">
+        <div className="admin-page-header">
+          <div>
+            <div className="admin-page-kicker">
+              <Rss size={14} /> Source library
+            </div>
+            <h1 className="admin-page-title">{heading}</h1>
+            <p className="admin-page-subtitle">
+              {isEditRoute
+                ? 'Update a tracked source and keep its event assignments in sync.'
+                : 'Add a new source, classify it, and assign it to the events it should power.'}
+            </p>
+          </div>
+          <div className="admin-page-toolbar">
+            <div className="admin-page-toolbar-meta">
+              <span>Mode</span>
+              <strong>{isEditRoute ? 'Editing' : 'Creating'}</strong>
+            </div>
+            <div className="admin-page-toolbar-meta">
+              <span>Events</span>
+              <strong>{draft.event_ids.length.toLocaleString()}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card admin-form-panel" style={{ maxWidth: 860, margin: '0 auto' }}>
+          <div className="panel-header-tight">
+            <strong style={{ fontSize: '1rem' }}>{heading}</strong>
+            <span className="panel-chip">{isEditRoute ? 'Updating existing source' : 'Create a new source'}</span>
+          </div>
+
+          <input
+            type="text"
+            className="feed-input"
+            placeholder="Feed URL"
+            value={draft.url}
+            onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
+          />
+          <input
+            type="text"
+            className="feed-input"
+            placeholder="Display name"
+            value={draft.name}
+            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <select
+              className="filter-select"
+              value={draft.source_type}
+              onChange={(e) => setDraft((prev) => ({ ...prev, source_type: e.target.value }))}
+            >
+              <option value="rss">RSS</option>
+              <option value="web">Web</option>
+              <option value="social">Social</option>
+            </select>
+            <input
+              type="text"
+              className="feed-input"
+              placeholder="Category"
+              value={draft.category}
+              onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}
+            />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}>
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(e) => setDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
+            />
+            Enabled
+          </label>
+
+          <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>Assign to events</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
+            {events.length === 0 ? (
+              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No events yet. Create an event first.</div>
+            ) : (
+              events.map((event) => (
+                <label
+                  key={event.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={draft.event_ids.includes(Number(event.id))}
+                    onChange={() => toggleEvent(event.id)}
+                  />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.name}</span>
+                </label>
+              ))
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button className="btn-primary" onClick={submit} style={{ flex: 1 }}>
+              {editingId ? (
+                <>
+                  <Check size={18} /> {buttonLabel}
+                </>
+              ) : (
+                <>
+                  <Plus size={18} /> {buttonLabel}
+                </>
+              )}
+            </button>
+            <button className="btn-secondary" type="button" onClick={handleCancel} style={{ flexShrink: 0 }}>
+              <X size={18} /> Cancel
+            </button>
+          </div>
+        </div>
+
+        <ConfirmModal
+          open={showCancelModal}
+          title="Discard changes?"
+          message="You have unsaved changes on this feed. If you cancel now, all edits on this page will be lost."
+          confirmLabel="Discard changes"
+          cancelLabel="Keep editing"
+          onClose={() => setShowCancelModal(false)}
+          onConfirm={discardChanges}
+        />
+
+      </div>
+    );
+  }
 
   return (
     <div className="admin-page-shell">
@@ -175,36 +384,47 @@ export default function FeedsPage({
             <strong>{feedsSource || 'supabase'}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Editing</span>
-            <strong>{editingId ? 'Active' : 'None'}</strong>
+            <span>Search</span>
+            <strong>{visibleFeeds.length.toLocaleString()} matches</strong>
           </div>
+          <Link to="/feeds/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+            <Plus size={16} /> Add Feed
+          </Link>
         </div>
       </div>
 
       <div className="admin-stats-grid">
         <div className="admin-stat-card">
-          <div className="admin-stat-icon"><Layers3 size={18} /></div>
+          <div className="admin-stat-icon">
+            <Layers3 size={18} />
+          </div>
           <div>
             <span>Total feeds</span>
             <strong>{stats.total.toLocaleString()}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-icon" style={{ background: 'rgba(46, 213, 115, 0.12)', color: '#2ed573' }}><CheckCircle2 size={18} /></div>
+          <div className="admin-stat-icon" style={{ background: 'rgba(46, 213, 115, 0.12)', color: '#2ed573' }}>
+            <CheckCircle2 size={18} />
+          </div>
           <div>
             <span>Enabled</span>
             <strong>{stats.enabled.toLocaleString()}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-icon" style={{ background: 'rgba(46, 134, 222, 0.12)', color: 'var(--secondary-color)' }}><Link2 size={18} /></div>
+          <div className="admin-stat-icon" style={{ background: 'rgba(46, 134, 222, 0.12)', color: 'var(--secondary-color)' }}>
+            <Link2 size={18} />
+          </div>
           <div>
             <span>Assigned</span>
             <strong>{stats.assigned.toLocaleString()}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-icon" style={{ background: 'rgba(255, 159, 67, 0.14)', color: 'var(--primary-color)' }}><Rss size={18} /></div>
+          <div className="admin-stat-icon" style={{ background: 'rgba(255, 159, 67, 0.14)', color: 'var(--primary-color)' }}>
+            <Rss size={18} />
+          </div>
           <div>
             <span>RSS feeds</span>
             <strong>{stats.rss.toLocaleString()}</strong>
@@ -232,216 +452,165 @@ export default function FeedsPage({
         </select>
       </div>
 
-      <div className="admin-split-layout">
-        <div className="glass-card admin-form-panel">
-          <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>{editingId ? 'Edit Feed' : 'Add Feed'}</strong>
-            <span className="panel-chip">{editingId ? 'Updating existing source' : 'Create a new source'}</span>
+      <div className="glass-card admin-list-panel">
+        <div className="panel-header-tight">
+          <strong style={{ fontSize: '1rem' }}>Tracked Feeds</strong>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {isLoadingFeeds && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
+            <span className="panel-chip">{visibleFeeds.length} visible</span>
           </div>
-            <input
-              type="text"
-              className="feed-input"
-              placeholder="Feed URL"
-              value={draft.url}
-              onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
-            />
-            <input
-              type="text"
-              className="feed-input"
-              placeholder="Display name"
-              value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <select
-                className="filter-select"
-                value={draft.source_type}
-                onChange={(e) => setDraft((prev) => ({ ...prev, source_type: e.target.value }))}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {feeds.length === 0 && !isLoadingFeeds && (
+            <div className="admin-empty-state">
+              <div className="admin-empty-state-icon">
+                <Rss size={18} />
+              </div>
+              <strong>No feeds yet</strong>
+              <span>Add your first source, then attach it to one or more events.</span>
+              <Link to="/feeds/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+                <Plus size={16} /> Add Feed
+              </Link>
+            </div>
+          )}
+
+          {pagedFeeds.map((feed, index) => {
+            const feedEvents = feedEventsById.get(Number(feed.id)) || [];
+            return (
+              <motion.div
+                key={feed.id ?? feed.url}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.03 }}
+                className="admin-item-card"
               >
-                <option value="rss">RSS</option>
-                <option value="web">Web</option>
-                <option value="social">Social</option>
-              </select>
-              <input
-                type="text"
-                className="feed-input"
-                placeholder="Category"
-                value={draft.category}
-                onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}
-              />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}>
-              <input
-                type="checkbox"
-                checked={draft.enabled}
-                onChange={(e) => setDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
-              />
-              Enabled
-            </label>
+                <div className="admin-item-top">
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <strong className="admin-item-title">{feed.name || feed.url?.replace('https://www.', '')}</strong>
+                      <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
+                        {feed.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                      <button
+                        onClick={() => toggle(feed)}
+                        className="admin-icon-btn"
+                        title={feed.enabled ? 'Disable feed' : 'Enable feed'}
+                      >
+                        {feed.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+                      </button>
+                    </div>
+                    <div className="admin-item-url">{feed.url}</div>
+                    <div className="admin-item-meta">
+                      <span>{feed.source_type || 'rss'}</span>
+                      {feed.category ? <span>{feed.category}</span> : null}
+                      <span>
+                        {feedEvents.length} event{feedEvents.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </div>
 
-            <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>
-              Assign to events
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
-              {events.length === 0 ? (
-                <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  No events yet. Create an event first.
+                  <div className="admin-item-actions">
+                    <Link
+                      className="btn-secondary"
+                      to={`/feeds/${feed.id}/edit`}
+                      style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
+                    >
+                      <Pencil size={14} /> Edit
+                    </Link>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => setDeleteTarget(feed)}
+                      style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                events.map((event) => (
-                  <label
-                    key={event.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={draft.event_ids.includes(Number(event.id))}
-                      onChange={() => toggleEvent(event.id)}
-                    />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {event.name}
-                    </span>
-                  </label>
-                ))
-              )}
-            </div>
+                <div className="admin-item-chips">
+                  {feedEvents.length ? (
+                    feedEvents.slice(0, 4).map((event) => (
+                      <span key={event.id} className="admin-tag">
+                        {event.name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="admin-tag muted">Unassigned</span>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })}
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn-primary" onClick={submit} style={{ flex: 1 }}>
-                {editingId ? <><Check size={18} /> Save</> : <><Plus size={18} /> Add</>}
-              </button>
-              {editingId && (
-                <button className="btn-secondary" onClick={reset} style={{ flexShrink: 0 }}>
-                  <X size={18} />
-                </button>
-              )}
-            </div>
-          </div>
-
-        <div className="glass-card admin-list-panel">
-          <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>Tracked Feeds</strong>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {isLoadingFeeds && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
-              <span className="panel-chip">{visibleFeeds.length} visible</span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {feeds.length === 0 && !isLoadingFeeds && (
-              <div className="admin-empty-state">
-                <div className="admin-empty-state-icon"><Rss size={18} /></div>
-                <strong>No feeds yet</strong>
-                <span>Add your first source on the left, then attach it to one or more events.</span>
+          {!isLoadingFeeds && visibleFeeds.length === 0 && feeds.length > 0 && (
+            <div className="admin-empty-state">
+              <div className="admin-empty-state-icon">
+                <Search size={18} />
               </div>
-            )}
-
-            {pagedFeeds.map((feed, index) => {
-              const feedEvents = feedEventsById.get(Number(feed.id)) || [];
-              return (
-                <motion.div
-                  key={feed.id ?? feed.url}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.03 }}
-                  className="admin-item-card"
-                >
-                  <div className="admin-item-top">
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                        <strong className="admin-item-title">{feed.name || feed.url?.replace('https://www.', '')}</strong>
-                        <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
-                          {feed.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                        <button
-                          onClick={() => toggle(feed)}
-                          className="admin-icon-btn"
-                          title={feed.enabled ? 'Disable feed' : 'Enable feed'}
-                        >
-                          {feed.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
-                        </button>
-                      </div>
-                      <div className="admin-item-url">{feed.url}</div>
-                      <div className="admin-item-meta">
-                        <span>{feed.source_type || 'rss'}</span>
-                        {feed.category ? <span>{feed.category}</span> : null}
-                        <span>{feedEvents.length} event{feedEvents.length === 1 ? '' : 's'}</span>
-                      </div>
-                    </div>
-
-                    <div className="admin-item-actions">
-                      <button className="btn-secondary" onClick={() => beginEdit(feed)} style={{ padding: '8px 10px', fontSize: '0.8rem' }}>
-                        <Pencil size={14} /> Edit
-                      </button>
-                      <button className="btn-secondary" onClick={() => remove(feed)} style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}>
-                        <Trash2 size={14} /> Delete
-                      </button>
-                    </div>
-                  </div>
-                  <div className="admin-item-chips">
-                    {feedEvents.length ? (
-                      feedEvents.slice(0, 4).map((event) => (
-                        <span key={event.id} className="admin-tag">
-                          {event.name}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="admin-tag muted">Unassigned</span>
-                    )}
-                  </div>
-                </motion.div>
-              );
-            })}
-
-            {!isLoadingFeeds && visibleFeeds.length === 0 && feeds.length > 0 && (
-              <div className="admin-empty-state">
-                <div className="admin-empty-state-icon"><Search size={18} /></div>
-                <strong>No matching feeds</strong>
-                <span>Try a different search term or status filter.</span>
-              </div>
-            )}
-          </div>
-
-          {visibleFeeds.length > 0 && (
-            <div
-              style={{
-                marginTop: 14,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 12,
-                flexWrap: 'wrap',
-                paddingTop: 12,
-                borderTop: '1px solid rgba(15, 23, 42, 0.08)',
-              }}
-            >
-              <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleFeeds.length)} of {visibleFeeds.length}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  className="btn-secondary"
-                  onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
-                  disabled={safePage <= 1}
-                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
-                >
-                  Previous
-                </button>
-                <span className="panel-chip">
-                  Page {safePage} of {totalPages}
-                </span>
-                <button
-                  className="btn-secondary"
-                  onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
-                  disabled={safePage >= totalPages}
-                  style={{ padding: '8px 10px', fontSize: '0.8rem' }}
-                >
-                  Next
-                </button>
-              </div>
+              <strong>No matching feeds</strong>
+              <span>Try a different search term or status filter.</span>
             </div>
           )}
         </div>
+
+        {visibleFeeds.length > 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+              paddingTop: 12,
+              borderTop: '1px solid rgba(15, 23, 42, 0.08)',
+            }}
+          >
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleFeeds.length)} of {visibleFeeds.length}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                className="btn-secondary"
+                onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
+                disabled={safePage <= 1}
+                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+              >
+                Previous
+              </button>
+              <span className="panel-chip">
+                Page {safePage} of {totalPages}
+              </span>
+              <button
+                className="btn-secondary"
+                onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
+                disabled={safePage >= totalPages}
+                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        <ConfirmModal
+          open={Boolean(deleteTarget)}
+          title={`Delete feed "${deleteTarget?.name || deleteTarget?.url || ''}"?`}
+          message="This will permanently remove the feed and detach it from any linked events."
+          confirmLabel="Delete feed"
+          cancelLabel="Keep feed"
+          confirmButtonStyle={{
+            background: 'linear-gradient(135deg, #ff4757, #e03131)',
+            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
+          }}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => {
+            if (!deleteTarget) return;
+            const target = deleteTarget;
+            setDeleteTarget(null);
+            await remove(target);
+          }}
+        />
       </div>
     </div>
   );

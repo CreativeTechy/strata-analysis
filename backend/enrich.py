@@ -6,6 +6,8 @@ enriched_articles.json, then upserts to Supabase.
 import json
 import os
 import time
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -17,16 +19,17 @@ from store import save_articles
 
 DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
 MIN_TEXT_LENGTH = 200
-VALID_SENTIMENTS = {"positive", "negative", "neutral"}
+PROMPT_VERSION = "2026-06-30"
+MODEL_NAME = "deepseek-chat"
+VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
     "review",
-    "event",
-    "recall",
-    "auction",
-    "race",
-    "tech",
-    "industry",
-    "other",
+    "comparison",
+    "complaint",
+    "news",
+    "ownership_experience",
+    "buying_guide",
+    "general_article",
 }
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
@@ -38,7 +41,23 @@ PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.envi
 # Used when no DeepSeek key is available, so the pipeline still produces
 # rows that satisfy the Supabase schema instead of crashing.
 DEFAULT_ENRICHMENT = {
+    "topic": "",
+    "article_category": "general_article",
+    "overall_sentiment": "neutral",
     "summary": "",
+    "positive_feedback": [],
+    "negative_feedback": [],
+    "nice_to_have_features": [],
+    "complaints": [],
+    "great_features": [],
+    "comfort_issues": [],
+    "performance_feedback": [],
+    "price_value_feedback": [],
+    "maintenance_reliability_feedback": [],
+    "technology_feedback": [],
+    "safety_feedback": [],
+    "people_opinions": [],
+    "frequent_ideas": [],
     "entities": [],
     "organizations": [],
     "topics": [],
@@ -48,8 +67,12 @@ DEFAULT_ENRICHMENT = {
     "car_models": [],
     "brands": [],
     "sentiment": "neutral",
-    "category": "other",
+    "category": "general_article",
     "relevance_score": 0,
+    "analysis_model": MODEL_NAME,
+    "analysis_prompt_version": PROMPT_VERSION,
+    "analyzed_at": "",
+    "insight_json": {},
 }
 
 
@@ -124,22 +147,10 @@ def _load_prompt_template():
         return prompt_file.read_text(encoding="utf-8")
     except Exception:
         return (
-            "Analyze this article and return ONLY a JSON object, no explanation.\n"
-            "Title: {title}\n"
-            "Text: {text}\n"
-            "Return this exact JSON structure:\n"
-            "{\n"
-            '    "summary": "2 sentence summary",\n'
-            '    "entities": ["people", "products", "projects", "places"],\n'
-            '    "organizations": ["companies", "groups", "institutions"],\n'
-            '    "topics": ["main", "themes"],\n'
-            '    "key_points": ["short", "bullets"],\n'
-            '    "risks": ["risks", "or", "concerns"],\n'
-            '    "opportunities": ["opportunities", "or", "upsides"],\n'
-            '    "sentiment": "positive|negative|neutral",\n'
-            '    "category": "review|event|recall|auction|race|tech|industry|other",\n'
-            '    "relevance_score": 1\n'
-            "}"
+            "You are analyzing ONE scraped article.\n"
+            "Use ONLY the article content.\n"
+            "Return ONLY valid JSON with the exact structure requested.\n"
+            "Article title:\n{title}\n\nArticle text:\n{text}"
         )
 
 
@@ -169,6 +180,99 @@ def _as_list(value):
     return cleaned
 
 
+def _as_text(value):
+    return str(value).strip() if value is not None else ""
+
+
+def _normalize_category(value):
+    category = _as_text(value).lower()
+    return category if category in VALID_CATEGORIES else "general_article"
+
+
+def _normalize_sentiment(value):
+    sentiment = _as_text(value).lower()
+    return sentiment if sentiment in VALID_SENTIMENTS else "neutral"
+
+
+def _normalize_feedback_list(value):
+    return _as_list(value)
+
+
+def _coerce_frequency_estimate(value):
+    try:
+        return max(1, int(float(value)))
+    except Exception:
+        return 1
+
+
+def _normalize_people_opinions(value):
+    opinions = []
+    if not isinstance(value, list):
+        return opinions
+    for item in value:
+        if not isinstance(item, dict):
+            text = _as_text(item)
+            if text:
+                opinions.append({
+                    "opinion": text,
+                    "sentiment": "neutral",
+                    "category": "",
+                })
+            continue
+        opinion = _as_text(item.get("opinion"))
+        if not opinion:
+            continue
+        opinions.append({
+            "opinion": opinion,
+            "sentiment": _normalize_sentiment(item.get("sentiment")),
+            "category": _as_text(item.get("category")),
+        })
+    deduped = []
+    seen = set()
+    for item in opinions:
+        key = (item["opinion"].lower(), item["sentiment"], item["category"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _normalize_frequent_ideas(value):
+    ideas = []
+    if not isinstance(value, list):
+        return ideas
+    for item in value:
+        if isinstance(item, dict):
+            idea = _as_text(item.get("idea"))
+            if not idea:
+                continue
+            ideas.append({
+                "idea": idea,
+                "type": _as_text(item.get("type")).lower() if _as_text(item.get("type")).lower() in {"complaint", "praise", "suggestion", "issue"} else "issue",
+                "category": _as_text(item.get("category")),
+                "frequency_estimate": _coerce_frequency_estimate(item.get("frequency_estimate", 1)),
+            })
+        else:
+            idea = _as_text(item)
+            if idea:
+                ideas.append({
+                    "idea": idea,
+                    "type": "issue",
+                    "category": "",
+                    "frequency_estimate": 1,
+                })
+    deduped = []
+    seen = set()
+    for item in ideas:
+        key = (item["idea"].lower(), item["type"], item["category"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def _normalize_relevance_score(value):
     try:
         score = float(value)
@@ -181,17 +285,14 @@ def _validate_enrichment(payload):
     if not isinstance(payload, dict):
         return None
 
-    summary = str(payload.get("summary", "")).strip()
+    summary = _as_text(payload.get("summary"))
     if not summary:
         return None
 
-    sentiment = str(payload.get("sentiment", "neutral")).strip().lower()
-    if sentiment not in VALID_SENTIMENTS:
-        sentiment = "neutral"
-
-    category = str(payload.get("category", "other")).strip().lower()
-    if category not in VALID_CATEGORIES:
-        category = "other"
+    article_category = _normalize_category(payload.get("article_category") or payload.get("category"))
+    sentiment = _normalize_sentiment(payload.get("overall_sentiment") or payload.get("sentiment"))
+    if sentiment == "neutral" and article_category in {"complaint"}:
+        sentiment = "negative"
 
     organizations = _as_list(payload.get("organizations") or payload.get("brands"))
     entities = _as_list(payload.get("entities") or payload.get("car_models"))
@@ -199,9 +300,64 @@ def _validate_enrichment(payload):
     key_points = _as_list(payload.get("key_points"))
     risks = _as_list(payload.get("risks"))
     opportunities = _as_list(payload.get("opportunities"))
+    positive_feedback = _normalize_feedback_list(payload.get("positive_feedback"))
+    negative_feedback = _normalize_feedback_list(payload.get("negative_feedback"))
+    nice_to_have_features = _normalize_feedback_list(payload.get("nice_to_have_features"))
+    complaints = _normalize_feedback_list(payload.get("complaints"))
+    great_features = _normalize_feedback_list(payload.get("great_features"))
+    comfort_issues = _normalize_feedback_list(payload.get("comfort_issues"))
+    performance_feedback = _normalize_feedback_list(payload.get("performance_feedback"))
+    price_value_feedback = _normalize_feedback_list(payload.get("price_value_feedback"))
+    maintenance_reliability_feedback = _normalize_feedback_list(payload.get("maintenance_reliability_feedback"))
+    technology_feedback = _normalize_feedback_list(payload.get("technology_feedback"))
+    safety_feedback = _normalize_feedback_list(payload.get("safety_feedback"))
+    people_opinions = _normalize_people_opinions(payload.get("people_opinions"))
+    frequent_ideas = _normalize_frequent_ideas(payload.get("frequent_ideas"))
+
+    insight_json = {
+        "topic": _as_text(payload.get("topic")),
+        "article_category": article_category,
+        "overall_sentiment": sentiment,
+        "summary": summary,
+        "positive_feedback": positive_feedback,
+        "negative_feedback": negative_feedback,
+        "nice_to_have_features": nice_to_have_features,
+        "complaints": complaints,
+        "great_features": great_features,
+        "comfort_issues": comfort_issues,
+        "performance_feedback": performance_feedback,
+        "price_value_feedback": price_value_feedback,
+        "maintenance_reliability_feedback": maintenance_reliability_feedback,
+        "technology_feedback": technology_feedback,
+        "safety_feedback": safety_feedback,
+        "people_opinions": people_opinions,
+        "frequent_ideas": frequent_ideas,
+    }
+
+    category = article_category
+
+    analyzed_at = _as_text(payload.get("analyzed_at"))
+    if not analyzed_at:
+        analyzed_at = datetime.now(timezone.utc).isoformat()
 
     return {
+        "topic": insight_json["topic"],
+        "article_category": article_category,
+        "overall_sentiment": sentiment,
         "summary": summary,
+        "positive_feedback": positive_feedback,
+        "negative_feedback": negative_feedback,
+        "nice_to_have_features": nice_to_have_features,
+        "complaints": complaints,
+        "great_features": great_features,
+        "comfort_issues": comfort_issues,
+        "performance_feedback": performance_feedback,
+        "price_value_feedback": price_value_feedback,
+        "maintenance_reliability_feedback": maintenance_reliability_feedback,
+        "technology_feedback": technology_feedback,
+        "safety_feedback": safety_feedback,
+        "people_opinions": people_opinions,
+        "frequent_ideas": frequent_ideas,
         "entities": entities,
         "organizations": organizations,
         "topics": topics,
@@ -213,19 +369,221 @@ def _validate_enrichment(payload):
         "sentiment": sentiment,
         "category": category,
         "relevance_score": _normalize_relevance_score(payload.get("relevance_score", 0)),
+        "analysis_model": _as_text(payload.get("analysis_model")) or MODEL_NAME,
+        "analysis_prompt_version": _as_text(payload.get("analysis_prompt_version")) or PROMPT_VERSION,
+        "analyzed_at": analyzed_at,
+        "insight_json": insight_json,
+    }
+
+
+def _dedupe_key(value):
+    return _as_text(value).strip().lower()
+
+
+def _merge_unique_texts(*lists):
+    merged = []
+    seen = set()
+    for values in lists:
+        for value in values or []:
+            text = _as_text(value)
+            if not text:
+                continue
+            key = _dedupe_key(text)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(text)
+    return merged
+
+
+def _merge_feedback_items(items_by_key):
+    merged = []
+    seen = set()
+    for item in items_by_key:
+        if not isinstance(item, dict):
+            continue
+        text = _as_text(item.get("idea") or item.get("opinion") or item.get("feedback") or item.get("text"))
+        if not text:
+            continue
+        category = _as_text(item.get("category"))
+        type_value = _as_text(item.get("type")).lower()
+        sentiment = _normalize_sentiment(item.get("sentiment"))
+        key = (_dedupe_key(text), category.lower(), type_value, sentiment)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "text": text,
+            "category": category,
+            "type": type_value,
+            "sentiment": sentiment,
+        })
+    return merged
+
+
+def build_topic_insight(articles, topic_name=""):
+    """Build a simple rollup from article-level insight JSON."""
+    if not articles:
+        return {
+            "topic": topic_name or "",
+            "overall_sentiment": "neutral",
+            "summary": "",
+            "article_category_breakdown": [],
+            "positive_feedback": [],
+            "negative_feedback": [],
+            "nice_to_have_features": [],
+            "complaints": [],
+            "great_features": [],
+            "comfort_issues": [],
+            "performance_feedback": [],
+            "price_value_feedback": [],
+            "maintenance_reliability_feedback": [],
+            "technology_feedback": [],
+            "safety_feedback": [],
+            "people_opinions": [],
+            "frequent_ideas": [],
+        }
+
+    category_counts = Counter()
+    sentiment_counts = Counter()
+    topic_counter = Counter()
+
+    positive_feedback = []
+    negative_feedback = []
+    nice_to_have_features = []
+    complaints = []
+    great_features = []
+    comfort_issues = []
+    performance_feedback = []
+    price_value_feedback = []
+    maintenance_reliability_feedback = []
+    technology_feedback = []
+    safety_feedback = []
+    people_opinions = []
+    frequent_ideas = []
+
+    for article in articles:
+        insight = article.get("insight_json")
+        if not isinstance(insight, dict):
+            insight = {}
+        article_category = _normalize_category(article.get("article_category") or insight.get("article_category") or article.get("category"))
+        category_counts[article_category] += 1
+        sentiment_counts[_normalize_sentiment(article.get("sentiment") or insight.get("overall_sentiment"))] += 1
+        topic = _as_text(article.get("topic") or insight.get("topic"))
+        if topic:
+            topic_counter[topic] += 1
+
+        positive_feedback.extend(_normalize_feedback_list(insight.get("positive_feedback")))
+        negative_feedback.extend(_normalize_feedback_list(insight.get("negative_feedback")))
+        nice_to_have_features.extend(_normalize_feedback_list(insight.get("nice_to_have_features")))
+        complaints.extend(_normalize_feedback_list(insight.get("complaints")))
+        great_features.extend(_normalize_feedback_list(insight.get("great_features")))
+        comfort_issues.extend(_normalize_feedback_list(insight.get("comfort_issues")))
+        performance_feedback.extend(_normalize_feedback_list(insight.get("performance_feedback")))
+        price_value_feedback.extend(_normalize_feedback_list(insight.get("price_value_feedback")))
+        maintenance_reliability_feedback.extend(_normalize_feedback_list(insight.get("maintenance_reliability_feedback")))
+        technology_feedback.extend(_normalize_feedback_list(insight.get("technology_feedback")))
+        safety_feedback.extend(_normalize_feedback_list(insight.get("safety_feedback")))
+        people_opinions.extend(_normalize_people_opinions(insight.get("people_opinions")))
+        frequent_ideas.extend(_normalize_frequent_ideas(insight.get("frequent_ideas")))
+
+    merged_feedback = _merge_feedback_items([])
+    idea_counts = Counter()
+    idea_meta = {}
+    for item in frequent_ideas:
+        idea = _as_text(item.get("idea"))
+        if not idea:
+            continue
+        key = _dedupe_key(idea)
+        idea_counts[key] += 1
+        if key not in idea_meta:
+            idea_meta[key] = {
+                "idea": idea,
+                "type": _as_text(item.get("type")).lower() if _as_text(item.get("type")).lower() in {"complaint", "praise", "suggestion", "issue"} else "issue",
+                "category": _as_text(item.get("category")),
+            }
+
+    frequent_ideas_rollup = [
+        {**idea_meta[key], "frequency_estimate": count}
+        for key, count in idea_counts.most_common()
+    ]
+
+    def _top_items(values, limit=6):
+        counts = Counter(_dedupe_key(value) for value in values if _as_text(value))
+        meta = {}
+        for value in values:
+            text = _as_text(value)
+            if not text:
+                continue
+            key = _dedupe_key(text)
+            if key not in meta:
+                meta[key] = text
+        return [
+            {"text": meta[key], "count": count}
+            for key, count in counts.most_common(limit)
+        ]
+
+    positive_items = _top_items(positive_feedback + great_features)
+    negative_items = _top_items(negative_feedback + complaints + comfort_issues)
+    request_items = _top_items(nice_to_have_features)
+
+    dominant_topic = topic_counter.most_common(1)[0][0] if topic_counter else topic_name
+    dominant_category = category_counts.most_common(1)[0][0] if category_counts else "general_article"
+    if sentiment_counts["negative"] > sentiment_counts["positive"] and sentiment_counts["negative"] >= sentiment_counts["neutral"]:
+        overall_sentiment = "negative"
+    elif sentiment_counts["positive"] > sentiment_counts["negative"] and sentiment_counts["positive"] >= sentiment_counts["neutral"]:
+        overall_sentiment = "positive"
+    elif sentiment_counts["positive"] and sentiment_counts["negative"]:
+        overall_sentiment = "mixed"
+    else:
+        overall_sentiment = "neutral"
+
+    summary_bits = []
+    if positive_items:
+        summary_bits.append(f"People like {positive_items[0]['text'].rstrip('.')}.")
+    if negative_items:
+        summary_bits.append(f"Common concerns include {negative_items[0]['text'].rstrip('.')}.")
+    if request_items:
+        summary_bits.append(f"Requested improvements center on {request_items[0]['text'].rstrip('.')}.")
+    if not summary_bits and frequent_ideas_rollup:
+        summary_bits.append(f"The most repeated idea is {frequent_ideas_rollup[0]['idea'].rstrip('.')}.")
+    summary = " ".join(summary_bits).strip()
+
+    return {
+        "topic": dominant_topic,
+        "article_category": dominant_category,
+        "overall_sentiment": overall_sentiment,
+        "summary": summary,
+        "article_category_breakdown": [
+            {"category": category, "count": count}
+            for category, count in category_counts.most_common()
+        ],
+        "positive_feedback": positive_items,
+        "negative_feedback": negative_items,
+        "nice_to_have_features": request_items,
+        "complaints": _top_items(complaints),
+        "great_features": _top_items(great_features),
+        "comfort_issues": _top_items(comfort_issues),
+        "performance_feedback": _top_items(performance_feedback),
+        "price_value_feedback": _top_items(price_value_feedback),
+        "maintenance_reliability_feedback": _top_items(maintenance_reliability_feedback),
+        "technology_feedback": _top_items(technology_feedback),
+        "safety_feedback": _top_items(safety_feedback),
+        "people_opinions": people_opinions[:10],
+        "frequent_ideas": frequent_ideas_rollup[:12],
     }
 
 
 def enrich_article(article, api_key, event_context=""):
     title = article.get("title", "")
-    text = article.get("text", "")[:2000]
+    text = article.get("text", "")[:5000]
     prompt = (
         _load_prompt_template()
         .replace("{title}", title)
         .replace("{text}", text)
     )
     if event_context:
-        prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context to improve sentiment, relevance, and category judgments."
+        prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context only to help interpret the article. Do not invent facts."
 
     try:
         response = requests.post(
@@ -235,10 +593,10 @@ def enrich_article(article, api_key, event_context=""):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "deepseek-chat",
+                "model": MODEL_NAME,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 400,
-                "temperature": 0.1,
+                "max_tokens": 900,
+                "temperature": 0.0,
             },
             timeout=30,
         )
@@ -319,6 +677,12 @@ def main():
         return
 
     event_context = _load_event_context()
+    event_name = ""
+    if event_context:
+        for line in event_context.splitlines():
+            if line.startswith("Name: "):
+                event_name = line.replace("Name: ", "", 1).strip()
+                break
 
     if not DEEPSEEK_API_KEY:
         print("DEEPSEEK_API_KEY not set - skipping AI enrichment, using defaults.")
@@ -344,10 +708,23 @@ def main():
             time.sleep(0.5)
         else:
             enrichment = dict(DEFAULT_ENRICHMENT)
+        if not enrichment.get("analyzed_at"):
+            enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched.append({**article, **enrichment})
+
+    topic_insight = build_topic_insight(enriched, topic_name=event_name or "general")
+    for article in enriched:
+        if not article.get("insight_json"):
+            article["insight_json"] = {
+                "topic": article.get("topic", ""),
+                "article_category": article.get("article_category", article.get("category", "general_article")),
+                "overall_sentiment": article.get("overall_sentiment", article.get("sentiment", "neutral")),
+                "summary": article.get("summary", ""),
+            }
 
     stats["articles_enriched"] = len(enriched)
     print(f"\nEnriched {len(enriched)} articles successfully.")
+    print(f"Topic insight summary: {topic_insight.get('summary', '')[:120]}")
 
     push_run_progress(
         stats,

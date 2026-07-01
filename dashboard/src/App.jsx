@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
@@ -33,7 +33,14 @@ export default function App() {
   const workflowSelectionStorageKey = 'strata.workflowSelectedEventIds';
 
   const [events, setEvents] = useState([]);
-  const [reportStats, setReportStats] = useState({ total: 0, positive: 0, negative: 0, neutral: 0 });
+  const [reportStats, setReportStats] = useState({
+    total: 0,
+    positive: 0,
+    negative: 0,
+    neutral: 0,
+    article_category_breakdown: [],
+    insights: {},
+  });
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
   const [feeds, setFeeds] = useState([]);
@@ -78,8 +85,6 @@ export default function App() {
     () => feeds.filter((feed) => selectedEventFeedIds.includes(Number(feed.id))),
     [feeds, selectedEventFeedIds]
   );
-
-  const feedUrls = useMemo(() => selectedEventFeeds.map((feed) => feed.url).filter(Boolean), [selectedEventFeeds]);
 
   const workflowSelectedEvents = useMemo(() => {
     const selectedIds = new Set(workflowSelectedEventIds.map((id) => Number(id)));
@@ -170,10 +175,12 @@ export default function App() {
         positive: Number(data?.positive) || 0,
         negative: Number(data?.negative) || 0,
         neutral: Number(data?.neutral) || 0,
+        article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
+        insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
       });
     } catch (error) {
       console.error('Failed to load report stats', error);
-      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0 });
+      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0, article_category_breakdown: [], insights: {} });
     } finally {
       setIsLoadingReportStats(false);
     }
@@ -444,69 +451,70 @@ export default function App() {
       />
 
       <main className="main-content">
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '10px', gap: '15px', flexWrap: 'wrap' }}>
-          <div>
-            <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
-            <p className="subtitle">
-              Overview metrics and pipeline health{selectedEvent ? ` for ${selectedEvent.name}` : ' - all events'}
-            </p>
+        <div className="content-shell">
+          <header className="dashboard-hero">
+            <div>
+              <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
+              <p className="subtitle">
+                Overview metrics and pipeline health{selectedEvent ? ` for ${selectedEvent.name}` : ' - all events'}
+              </p>
+            </div>
+
+            <div className="dashboard-hero-actions">
+              <select
+                className="filter-select"
+                value={selectedEventId ?? ''}
+                onChange={(e) => setSelectedEventId(e.target.value ? Number(e.target.value) : null)}
+                disabled={isLoadingEvents || events.length === 0}
+                style={{ minWidth: '220px' }}
+              >
+                <option value="">{events.length ? 'all events' : 'No events yet'}</option>
+                {events.map((event) => (
+                  <option key={event.id} value={event.id}>
+                    {event.name} ({event.status || 'draft'})
+                  </option>
+                ))}
+              </select>
+              <Link to="/articles" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
+                <Newspaper size={16} /> Open Articles
+              </Link>
+              <Link to="/feeds" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
+                <Rss size={16} /> Manage Feeds
+              </Link>
+              <Link to="/events" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
+                <CalendarDays size={16} /> Manage Events
+              </Link>
+              <Link to="/workflow" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
+                <GitMerge size={16} /> Open Workflow Board
+              </Link>
+              <Link to="/intelligence" className="btn-primary toolbar-button toolbar-button-primary" style={dashboardHeaderButtonStyle}>
+                <MessageSquare size={16} /> Open Intelligence Copilot
+              </Link>
+              <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
+                <RefreshCw size={16} /> Refresh Reports
+              </button>
+            </div>
+          </header>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+            {(isLoadingReportStats || isLoadingEvents || isLoadingFeeds) ? (
+              <span className="panel-chip warning">
+                <RefreshCw size={12} className="spin" />
+                Loading dashboard
+              </span>
+            ) : (
+              <span className="panel-chip success">Dashboard ready</span>
+            )}
           </div>
 
-          <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-            <select
-              className="filter-select"
-              value={selectedEventId ?? ''}
-              onChange={(e) => setSelectedEventId(e.target.value ? Number(e.target.value) : null)}
-              disabled={isLoadingEvents || events.length === 0}
-              style={{ minWidth: '220px' }}
-            >
-              <option value="">{events.length ? 'all events' : 'No events yet'}</option>
-              {events.map((event) => (
-                <option key={event.id} value={event.id}>
-                  {event.name} ({event.status || 'draft'})
-                </option>
-              ))}
-            </select>
-            <Link to="/articles" className="btn-secondary" style={dashboardHeaderButtonStyle}>
-              <Newspaper size={16} /> Open Articles
-            </Link>
-            <Link to="/feeds" className="btn-secondary" style={dashboardHeaderButtonStyle}>
-              <Rss size={16} /> Manage Feeds
-            </Link>
-            <Link to="/events" className="btn-secondary" style={dashboardHeaderButtonStyle}>
-              <CalendarDays size={16} /> Manage Events
-            </Link>
-            <Link to="/workflow" className="btn-secondary" style={dashboardHeaderButtonStyle}>
-              <GitMerge size={16} /> Open Workflow Board
-            </Link>
-            <Link to="/intelligence" className="btn-primary" style={dashboardHeaderButtonStyle}>
-              <MessageSquare size={16} /> Open Intelligence Copilot
-            </Link>
-            <button className="btn-secondary" onClick={loadReportStats}>
-              <RefreshCw size={16} /> Refresh Reports
-            </button>
-          </div>
-        </header>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-          {(isLoadingReportStats || isLoadingEvents || isLoadingFeeds) ? (
-            <span className="panel-chip warning">
-              <RefreshCw size={12} className="spin" />
-              Loading dashboard
-            </span>
-          ) : (
-            <span className="panel-chip success">Dashboard ready</span>
-          )}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            <StatsOverview
+              stats={reportStats}
+              crawlCount={crawlCount}
+              scopeLabel={selectedEvent ? selectedEvent.name : 'all events'}
+              loading={isLoadingReportStats || crawlCount == null}
+            />
+          </motion.div>
         </div>
-
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <StatsOverview
-            stats={reportStats}
-            crawlCount={crawlCount}
-            scopeLabel={selectedEvent ? selectedEvent.name : 'all events'}
-            loading={isLoadingReportStats || crawlCount == null}
-          />
-        </motion.div>
       </main>
     </div>
   );
@@ -532,41 +540,105 @@ export default function App() {
     </div>
   );
 
-  const renderFeedsRoute = () => (
-    <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-      <FeedsPage
-        feeds={feeds}
-        events={events}
-        feedsSource={feedSource}
-        onCreateFeed={createFeed}
-        onUpdateFeed={updateFeed}
-        onDeleteFeed={deleteFeed}
-        isLoadingFeeds={isLoadingFeeds}
-      />
-    </RouteShell>
-  );
-
-  const renderEventsRoute = () => (
-    <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-      <EventsPage
-        events={events}
-        feeds={feeds}
-        onCreateEvent={createEvent}
-        onUpdateEvent={updateEvent}
-        onDeleteEvent={deleteEvent}
-        isLoadingEvents={isLoadingEvents}
-      />
-    </RouteShell>
-  );
-
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={renderDashboardView()} />
       <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
       <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
-      <Route path="/feeds" element={renderFeedsRoute()} />
-      <Route path="/events" element={renderEventsRoute()} />
+      <Route
+        path="/feeds"
+        element={(
+          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/feeds/new"
+        element={(
+          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/feeds/:feedId/edit"
+        element={(
+          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+            <FeedsPage
+              feeds={feeds}
+              events={events}
+              feedsSource={feedSource}
+              onCreateFeed={createFeed}
+              onUpdateFeed={updateFeed}
+              onDeleteFeed={deleteFeed}
+              isLoadingFeeds={isLoadingFeeds}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events"
+        element={(
+          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events/new"
+        element={(
+          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
+      <Route
+        path="/events/:eventId/edit"
+        element={(
+          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <EventsPage
+              events={events}
+              feeds={feeds}
+              onCreateEvent={createEvent}
+              onUpdateEvent={updateEvent}
+              onDeleteEvent={deleteEvent}
+              isLoadingEvents={isLoadingEvents}
+            />
+          </RouteShell>
+        )}
+      />
       <Route path="/workflow" element={renderWorkflowRoute()} />
       <Route
         path="/spider"

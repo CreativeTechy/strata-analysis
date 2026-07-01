@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 
 import config
 from event_discovery import discover_event_links
+from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
 from events_store import (
     create_event,
@@ -290,6 +291,20 @@ def edit_event(event_id: int, payload: dict):
     return {"event": event, "discovery": discovery}
 
 
+@app.post("/api/events/suggest")
+def suggest_event(payload: dict):
+    if not isinstance(payload, dict):
+        payload = {}
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    if not name:
+        return {
+            "error": "Event name is required.",
+            "detail": "Provide the event name before requesting AI suggestions.",
+        }
+    return {"suggestions": suggest_event_metadata(name, description)}
+
+
 @app.delete("/api/events/{event_id}")
 def remove_event(event_id: int):
     if not delete_event(event_id):
@@ -519,8 +534,8 @@ async def chat(payload: dict):
 
     context = "\n".join(
         f"{i + 1}. [{a.get('source', '?')} | {a.get('sentiment', 'neutral')} | "
-        f"{a.get('category', 'other')} | score {a.get('relevance_score', '?')}] "
-        f"{a.get('title', '')}\n   {a.get('summary', '')}"
+        f"{a.get('article_category') or a.get('category', 'general_article')} | score {a.get('relevance_score', '?')}] "
+        f"{a.get('title', '')}\n   {a.get('summary', '') or (a.get('insight_json') or {}).get('summary', '')}"
         for i, a in enumerate(articles)
     )
     user_prompt = (
