@@ -22,6 +22,8 @@ import {
   FileText,
   TrendingUp,
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import '../styles/Workflow.css';
 
@@ -75,6 +77,7 @@ export default function WorkflowPage({
   const [runsError, setRunsError] = useState('');
   const [workflowStartedAt, setWorkflowStartedAt] = useState(null);
   const [workflowElapsed, setWorkflowElapsed] = useState(0);
+  const [isFeedListCollapsed, setIsFeedListCollapsed] = useState(false);
   const wasScrapingRef = useRef(false);
 
   useEffect(() => {
@@ -389,58 +392,102 @@ export default function WorkflowPage({
                 </div>
               ) : null}
 
-              <div className="get-rows">
-                <AnimatePresence>
-                  {rows.map((row) => (
-                    <motion.div
-                      key={row.id}
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="get-row"
-                    >
-                      <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
-                          <PlatformIcon platform={row.platform} />
-                        </div>
-                        <select
-                          value={row.platform}
-                          onChange={(e) => updateRow(row.id, 'platform', e.target.value)}
-                          style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
-                        >
-                          <option value="web">Web RSS</option>
-                          <option value="x">X (Twitter)</option>
-                          <option value="facebook">Facebook</option>
-                        </select>
-                      </div>
-
-                      <div className="row-input-wrapper">
-                        <input
-                          type="text"
-                          className="row-input"
-                          placeholder={row.type === 'link' ? 'Paste URL...' : 'Enter keywords...'}
-                          value={row.value}
-                          onChange={(e) => updateRow(row.id, 'value', e.target.value)}
-                        />
-                      </div>
-
-                      <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
-                          <TypeIcon type={row.type} />
-                        </div>
-                        <select
-                          value={row.type}
-                          onChange={(e) => updateRow(row.id, 'type', e.target.value)}
-                          style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
-                        >
-                          <option value="link">Link</option>
-                          <option value="keywords">Keywords</option>
-                        </select>
-                      </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
+              <div className="get-rows-header">
+                <div className="get-rows-header-copy">
+                  <strong>Feeds</strong>
+                  <span>Paste URLs here or switch a row to keywords</span>
+                </div>
+                <button
+                  type="button"
+                  className="workflow-event-toggle"
+                  onClick={() => setIsFeedListCollapsed((current) => !current)}
+                  aria-expanded={!isFeedListCollapsed}
+                  aria-controls="workflow-feed-list"
+                >
+                  {isFeedListCollapsed ? (
+                    <>
+                      Expand feeds <ChevronDown size={14} />
+                    </>
+                  ) : (
+                    <>
+                      Collapse feeds <ChevronUp size={14} />
+                    </>
+                  )}
+                </button>
               </div>
+
+              <AnimatePresence initial={false}>
+                {!isFeedListCollapsed ? (
+                  <motion.div
+                    key="workflow-feed-list"
+                    id="workflow-feed-list"
+                    className="get-rows"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {rows.map((row) => (
+                      <motion.div
+                        key={row.id}
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="get-row"
+                      >
+                        <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
+                            <PlatformIcon platform={row.platform} />
+                          </div>
+                          <select
+                            value={row.platform}
+                            onChange={(e) => updateRow(row.id, 'platform', e.target.value)}
+                            style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
+                          >
+                            <option value="web">Web RSS</option>
+                            <option value="x">X (Twitter)</option>
+                            <option value="facebook">Facebook</option>
+                          </select>
+                        </div>
+
+                        <div className="row-input-wrapper">
+                          <input
+                            type="text"
+                            className="row-input"
+                            placeholder={row.type === 'link' ? 'Paste URL...' : 'Enter keywords...'}
+                            value={row.value}
+                            onChange={(e) => updateRow(row.id, 'value', e.target.value)}
+                          />
+                        </div>
+
+                        <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <div style={{ position: 'absolute', pointerEvents: 'none', color: 'var(--text-light)' }}>
+                            <TypeIcon type={row.type} />
+                          </div>
+                          <select
+                            value={row.type}
+                            onChange={(e) => updateRow(row.id, 'type', e.target.value)}
+                            style={{ opacity: 0, width: '100%', height: '100%', cursor: 'pointer', position: 'absolute', left: 0, top: 0 }}
+                          >
+                            <option value="link">Link</option>
+                            <option value="keywords">Keywords</option>
+                          </select>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="workflow-feed-list-collapsed"
+                    className="workflow-event-list-collapsed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    Feed URLs are collapsed. Expand them to edit or review the source list.
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <Link
                 to="/feeds"
