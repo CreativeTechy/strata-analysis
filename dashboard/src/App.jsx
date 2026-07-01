@@ -670,7 +670,7 @@ export default function App() {
         path="/intelligence"
         element={(
           <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <IntelligencePage event={selectedEvent} eventId={selectedEventId} />
+            <IntelligencePage key={selectedEventId ?? 'all'} event={selectedEvent} eventId={selectedEventId} />
           </RouteShell>
         )}
       />
