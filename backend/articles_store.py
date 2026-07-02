@@ -11,13 +11,13 @@ import requests
 from collections import Counter
 
 import config
-from events_store import list_article_ids_for_event
+from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
 
 ARTICLES_SELECT = (
     "id,url,source,feed,title,author,published,text,fetched_at,summary,"
     "sentiment,relevance_score,category,article_category,insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
-    "risks,opportunities,brands,car_models,created_at"
+    "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
 )
 
 SORTABLE_COLUMNS = {
@@ -175,6 +175,24 @@ def _fetch_articles(params: dict):
         return rows, total
     except Exception:
         return [], 0
+
+
+def _attach_event_similarity_scores(rows, event_id):
+    if event_id is None or not rows:
+        return rows
+
+    scores = list_article_similarity_scores_for_event(event_id)
+    if not scores:
+        return rows
+
+    for row in rows:
+        try:
+            article_id = int(row.get("id"))
+        except Exception:
+            continue
+        if article_id in scores:
+            row["event_similarity_score"] = scores[article_id]
+    return rows
 
 
 def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000):
@@ -488,6 +506,7 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
     }
     _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
     rows, total = _fetch_articles(params)
+    rows = _attach_event_similarity_scores(rows, event_id)
     return {
         "articles": rows,
         "total": total,

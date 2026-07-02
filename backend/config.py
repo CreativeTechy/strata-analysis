@@ -48,6 +48,8 @@ SUPABASE_SERVICE_KEY = (
     or os.environ.get("SUPABASE_KEY", "")
 )
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
 
 def _looks_like_feed_url(url: str) -> bool:

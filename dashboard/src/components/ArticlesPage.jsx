@@ -28,6 +28,12 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
+function formatMatchScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return '';
+  return score.toFixed(2);
+}
+
 function SkeletonArticleCard() {
   return (
     <div className="glass-card article-card article-skeleton" aria-hidden="true">
@@ -333,6 +339,9 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
                         </span>
                         {article.relevance_score != null && (
                           <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
+                        )}
+                        {article.event_similarity_score != null && (
+                          <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
                         )}
                       </div>
                     </div>

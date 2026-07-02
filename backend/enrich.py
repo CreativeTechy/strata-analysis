@@ -13,6 +13,7 @@ from pathlib import Path
 import requests
 
 import config
+from embeddings import build_article_embedding_text, get_embedding
 from events_store import get_event
 from pipeline_runs import update_pipeline_run
 from store import save_articles
@@ -73,6 +74,10 @@ DEFAULT_ENRICHMENT = {
     "analysis_prompt_version": PROMPT_VERSION,
     "analyzed_at": "",
     "insight_json": {},
+    "embedding_json": [],
+    "embedding_model": "",
+    "embedding_source": "",
+    "embedded_at": "",
 }
 
 
@@ -373,6 +378,10 @@ def _validate_enrichment(payload):
         "analysis_prompt_version": _as_text(payload.get("analysis_prompt_version")) or PROMPT_VERSION,
         "analyzed_at": analyzed_at,
         "insight_json": insight_json,
+        "embedding_json": _as_list(payload.get("embedding_json")),
+        "embedding_model": _as_text(payload.get("embedding_model")),
+        "embedding_source": _as_text(payload.get("embedding_source")),
+        "embedded_at": _as_text(payload.get("embedded_at")),
     }
 
 
@@ -606,6 +615,10 @@ def enrich_article(article, api_key, event_context=""):
         validated = _validate_enrichment(parsed)
         if validated is None:
             raise ValueError("DeepSeek returned JSON that did not match the enrichment schema")
+        embedding_text = build_article_embedding_text(article, validated)
+        embedding = get_embedding(embedding_text)
+        if embedding:
+            validated.update(embedding)
         return validated
     except Exception as e:
         print(f"  Enrichment error for '{title[:50]}': {e}")
@@ -708,6 +721,11 @@ def main():
             time.sleep(0.5)
         else:
             enrichment = dict(DEFAULT_ENRICHMENT)
+        if not enrichment.get("embedding_json"):
+            embedding_text = build_article_embedding_text(article, enrichment)
+            embedding = get_embedding(embedding_text)
+            if embedding:
+                enrichment.update(embedding)
         if not enrichment.get("analyzed_at"):
             enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched.append({**article, **enrichment})

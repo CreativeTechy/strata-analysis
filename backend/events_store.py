@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse, urlunparse
 import requests
 
 import config
+from embeddings import build_event_embedding_text, get_embedding
 
 
 def _headers():
@@ -137,6 +138,10 @@ def _normalize_event(row, feed_ids=None):
         "usernames": _clean_terms(usernames),
         "start_date": row.get("start_date"),
         "end_date": row.get("end_date"),
+        "embedding_json": row.get("embedding_json") or [],
+        "embedding_model": (row.get("embedding_model") or "").strip(),
+        "embedding_source": (row.get("embedding_source") or "").strip(),
+        "embedded_at": row.get("embedded_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "feed_ids": _clean_ids(feed_ids or []),
@@ -266,6 +271,52 @@ def _upsert_rows(endpoint, rows, conflict_key, *, prefer="resolution=merge-dupli
     return []
 
 
+def _persist_event_embedding(event):
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return {}
+
+    text = build_event_embedding_text(event)
+    if not text:
+        return {}
+
+    embedding = get_embedding(text)
+    if not embedding:
+        return {}
+
+    try:
+        event_id = int(event.get("id"))
+    except Exception:
+        return {}
+
+    try:
+        resp = requests.patch(
+            _endpoint(),
+            headers={**_headers(), "Prefer": "return=representation"},
+            params={"id": f"eq.{event_id}"},
+            json=embedding,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json() if resp.content else None
+        if isinstance(rows, list) and rows:
+            row = rows[0]
+        elif isinstance(rows, dict) and rows:
+            row = rows
+        else:
+            row = None
+        if isinstance(row, dict):
+            return {
+                "embedding_json": row.get("embedding_json") or embedding.get("embedding_json") or [],
+                "embedding_model": (row.get("embedding_model") or embedding.get("embedding_model") or "").strip(),
+                "embedding_source": (row.get("embedding_source") or embedding.get("embedding_source") or "").strip(),
+                "embedded_at": row.get("embedded_at") or embedding.get("embedded_at"),
+            }
+    except Exception:
+        return embedding
+
+    return embedding
+
+
 def list_events():
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return []
@@ -274,7 +325,7 @@ def list_events():
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at",
                 "order": "created_at.asc",
             },
         )
@@ -296,7 +347,7 @@ def list_events_page(limit=25, offset=0):
             _endpoint(),
             headers={**_headers(), "Prefer": "count=exact"},
             params={
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at",
                 "order": "created_at.asc",
                 "limit": str(limit),
                 "offset": str(offset),
@@ -321,7 +372,7 @@ def get_event(event_id):
         rows = _fetch_rows(
             _endpoint(),
             {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
+                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at",
                 "id": f"eq.{int(event_id)}",
                 "limit": 1,
             },
@@ -389,6 +440,7 @@ def create_event(event):
         if row is None:
             return None
         created = _normalize_event(row)
+        created.update(_persist_event_embedding(created))
         if feed_ids:
             created["feed_ids"] = set_event_feeds(created["id"], feed_ids)
         else:
@@ -425,6 +477,7 @@ def update_event(event_id, event):
                 return None
             row = row.copy()
         normalized = _normalize_event(row)
+        normalized.update(_persist_event_embedding(normalized))
         if feed_ids is not None:
             normalized["feed_ids"] = set_event_feeds(event_id, feed_ids)
         else:
@@ -583,7 +636,7 @@ def list_feeds_for_event(event_id):
         return []
 
 
-def set_article_events(article_ids, event_id):
+def set_article_events(article_ids, event_id, similarity_scores=None):
     if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
         return 0
 
@@ -592,7 +645,24 @@ def set_article_events(article_ids, event_id):
         return 0
 
     event_id = int(event_id)
-    payload = [{"article_id": article_id, "event_id": event_id} for article_id in article_ids]
+    score_map = {}
+    if isinstance(similarity_scores, dict):
+        for key, value in similarity_scores.items():
+            try:
+                article_key = int(key)
+            except Exception:
+                continue
+            try:
+                score_map[article_key] = float(value)
+            except Exception:
+                continue
+
+    payload = []
+    for article_id in article_ids:
+        row = {"article_id": article_id, "event_id": event_id}
+        if article_id in score_map:
+            row["similarity_score"] = score_map[article_id]
+        payload.append(row)
 
     try:
         _upsert_rows(
@@ -604,6 +674,35 @@ def set_article_events(article_ids, event_id):
         return len(article_ids)
     except Exception:
         return 0
+
+
+def list_article_similarity_scores_for_event(event_id):
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return {}
+
+    try:
+        rows = _fetch_rows(
+            _article_events_endpoint(),
+            {
+                "select": "article_id,similarity_score",
+                "event_id": f"eq.{int(event_id)}",
+                "order": "article_id.asc",
+            },
+        )
+    except Exception:
+        return {}
+
+    scores = {}
+    for row in rows:
+        try:
+            article_id = int(row.get("article_id"))
+        except Exception:
+            continue
+        try:
+            scores[article_id] = float(row.get("similarity_score"))
+        except Exception:
+            continue
+    return scores
 
 
 def list_article_ids_for_event(event_id):

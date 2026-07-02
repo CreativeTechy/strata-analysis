@@ -10,14 +10,15 @@ from collections import defaultdict
 import json
 
 import config
-from events_store import list_event_ids_for_feed_url, set_article_events
+from embeddings import cosine_similarity
+from events_store import list_event_ids_for_feed_url, list_events, set_article_events
 
 ARTICLE_COLUMNS = (
     "url", "source", "feed", "title", "author", "published", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "article_category", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
-    "brands", "car_models",
+    "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
 )
 
 LEGACY_ARTICLE_COLUMNS = (
@@ -73,7 +74,7 @@ def _probe_article_schema():
     }
     endpoint = f"{config.SUPABASE_URL}/rest/v1/articles"
     params = {
-        "select": "article_category,insight_json,analysis_model,analysis_prompt_version,analyzed_at",
+        "select": "article_category,insight_json,analysis_model,analysis_prompt_version,analyzed_at,embedding_json,embedding_model,embedding_source,embedded_at",
         "limit": "1",
     }
 
@@ -161,7 +162,27 @@ def save_articles(articles, batch_size=50):
         event_id = None
 
     feed_event_cache = {}
-    linked_articles = defaultdict(list)
+    linked_articles = defaultdict(set)
+    linked_scores = defaultdict(dict)
+    event_embedding_cache = None
+    event_embedding_map = {}
+
+    def _load_event_embedding_map():
+        nonlocal event_embedding_cache, event_embedding_map
+        if event_embedding_cache is not None:
+            return event_embedding_map
+
+        event_embedding_cache = list_events()
+        event_embedding_map = {}
+        for event in event_embedding_cache or []:
+            try:
+                event_id_value = int(event.get("id"))
+            except Exception:
+                continue
+            embedding = event.get("embedding_json") or []
+            if isinstance(embedding, list) and embedding:
+                event_embedding_map[event_id_value] = embedding
+        return event_embedding_map
 
     for i in range(0, len(articles), batch_size):
         source_batch = articles[i:i + batch_size]
@@ -193,8 +214,21 @@ def save_articles(articles, batch_size=50):
                     if event_id is not None and event_id not in event_ids:
                         event_ids.append(event_id)
                     for linked_event_id in event_ids:
-                        if article_id not in linked_articles[linked_event_id]:
-                            linked_articles[linked_event_id].append(article_id)
+                        linked_articles[linked_event_id].add(article_id)
+
+                    article_embedding = article.get("embedding_json") or row.get("embedding_json") or []
+                    if isinstance(article_embedding, list) and article_embedding:
+                        event_embeddings = _load_event_embedding_map()
+                        best_event_id = None
+                        best_score = 0.0
+                        for candidate_event_id, candidate_embedding in event_embeddings.items():
+                            score = cosine_similarity(article_embedding, candidate_embedding)
+                            if score > best_score:
+                                best_score = score
+                                best_event_id = candidate_event_id
+                        if best_event_id is not None and best_score >= 0.78:
+                            linked_articles[best_event_id].add(article_id)
+                            linked_scores[best_event_id][article_id] = best_score
             print(f"  Uploaded batch {i // batch_size + 1} ({len(batch)} articles)")
         except Exception as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
@@ -215,7 +249,7 @@ def save_articles(articles, batch_size=50):
 
     if linked_articles:
         for linked_event_id, article_ids in linked_articles.items():
-            set_article_events(article_ids, linked_event_id)
+            set_article_events(sorted(article_ids), linked_event_id, similarity_scores=linked_scores.get(linked_event_id, {}))
 
     return sent
 
