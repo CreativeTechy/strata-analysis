@@ -128,7 +128,7 @@ def _load_model():
         return None
 
 
-def get_embedding(text: str) -> dict:
+def get_embedding(text: str, *, role: str = "passage") -> dict:
     text = _clean_text(text)
     if not text:
         return {}
@@ -140,7 +140,8 @@ def get_embedding(text: str) -> dict:
         prepared_text = text
         model_name = (config.EMBEDDING_MODEL or "").lower()
         if "e5" in model_name and not prepared_text.lower().startswith(("query:", "passage:")):
-            prepared_text = f"passage: {prepared_text}"
+            prefix = "query" if role == "query" else "passage"
+            prepared_text = f"{prefix}: {prepared_text}"
         embedding = model.encode(
             prepared_text,
             convert_to_numpy=True,

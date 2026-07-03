@@ -105,6 +105,17 @@ export default function App() {
 
   const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
 
+  const coerceEventId = (value) => {
+    if (value == null) return null;
+    if (Array.isArray(value)) return coerceEventId(value[0]);
+    if (typeof value === 'object') {
+      if ('id' in value) return coerceEventId(value.id);
+      return null;
+    }
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : null;
+  };
+
   const normalizeWorkflowSelection = (ids, sourceEvents = events) => {
     const availableIds = new Set(sourceEvents.map((event) => Number(event.id)));
     const normalized = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && availableIds.has(id)))];
@@ -162,11 +173,12 @@ export default function App() {
   };
 
   const loadReportStats = async (eventId = selectedEventId) => {
+    const scopedEventId = coerceEventId(eventId);
     setIsLoadingReportStats(true);
     try {
       const params = new URLSearchParams();
-      if (eventId != null) {
-        params.set('event_id', String(eventId));
+      if (scopedEventId != null) {
+        params.set('event_id', String(scopedEventId));
       }
       const scopedRes = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
       if (!scopedRes.ok) throw new Error(`Stats request failed: ${scopedRes.status}`);
@@ -189,7 +201,9 @@ export default function App() {
 
   const loadWorkflowArticles = async (eventId = selectedEventId) => {
     try {
-      const eventIds = Array.isArray(eventId) ? eventId : (eventId != null ? [eventId] : []);
+      const eventIds = (Array.isArray(eventId) ? eventId : [eventId])
+        .map((value) => coerceEventId(value))
+        .filter((value) => value != null);
       if (eventIds.length === 0) {
         setWorkflowArticles([]);
         return;

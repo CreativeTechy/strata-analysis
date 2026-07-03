@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import requests
 from collections import Counter
+import re
 
 import config
+from embeddings import cosine_similarity, get_embedding
 from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
 
 ARTICLES_SELECT = (
@@ -33,6 +35,8 @@ SORTABLE_COLUMNS = {
 MAX_LIMIT = 100
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
+SEARCH_SCAN_LIMIT = 1000
+SEARCH_MATCH_THRESHOLD = 0.28
 
 
 def _auth_headers():
@@ -177,6 +181,34 @@ def _fetch_articles(params: dict):
         return [], 0
 
 
+def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
+    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+        return []
+
+    rows = []
+    page_size = 200
+    offset = 0
+    limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
+
+    while len(rows) < limit:
+        params = {
+            "select": select,
+            "limit": str(min(page_size, limit - len(rows))),
+            "offset": str(offset),
+            "order": order,
+        }
+        _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
+        batch, _ = _fetch_articles(params)
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    return rows[:limit]
+
+
 def _attach_event_similarity_scores(rows, event_id):
     if event_id is None or not rows:
         return rows
@@ -193,6 +225,116 @@ def _attach_event_similarity_scores(rows, event_id):
         if article_id in scores:
             row["event_similarity_score"] = scores[article_id]
     return rows
+
+
+def _search_query_embedding(search: str):
+    text = _normalize_text(search)
+    if not text:
+        return []
+
+    embedding = get_embedding(text, role="query")
+    if not embedding:
+        return []
+    vector = embedding.get("embedding_json") or []
+    return vector if isinstance(vector, list) else []
+
+
+def _article_search_blob(row: dict) -> str:
+    insight = row.get("insight_json") if isinstance(row.get("insight_json"), dict) else {}
+    parts = [
+        row.get("title"),
+        row.get("summary"),
+        row.get("text"),
+        row.get("source"),
+        row.get("feed"),
+        row.get("author"),
+        insight.get("topic"),
+        insight.get("summary"),
+        row.get("article_category"),
+        row.get("category"),
+    ]
+    return " ".join(_normalize_text(value).lower() for value in parts if _normalize_text(value))
+
+
+def _score_search_row(row: dict, search: str, query_embedding: list[float] | None = None):
+    search_text = _normalize_text(search).lower()
+    if not search_text:
+        return 0.0, False
+
+    blob = _article_search_blob(row)
+    if not blob:
+        return 0.0, False
+
+    tokens = [token for token in re.split(r"\W+", search_text) if len(token) > 1]
+    keyword_hits = sum(1 for token in tokens if token in blob)
+    exact_phrase_hit = search_text in blob
+    keyword_score = 0.0
+    if tokens:
+        keyword_score = min(1.0, keyword_hits / len(tokens))
+    elif exact_phrase_hit:
+        keyword_score = 1.0
+
+    semantic_score = 0.0
+    if query_embedding:
+        candidate_embedding = row.get("embedding_json") or []
+        if isinstance(candidate_embedding, list) and candidate_embedding:
+            semantic_score = max(0.0, cosine_similarity(query_embedding, candidate_embedding))
+
+    score = max(keyword_score, semantic_score)
+    if exact_phrase_hit:
+        score = min(1.0, score + 0.1)
+    elif keyword_score and semantic_score:
+        score = min(1.0, (keyword_score * 0.45) + (semantic_score * 0.55))
+
+    matched = exact_phrase_hit or keyword_hits > 0 or semantic_score >= SEARCH_MATCH_THRESHOLD
+    return score, matched
+
+
+def _rank_search_rows(rows, search: str):
+    search_text = _normalize_text(search)
+    if not search_text or not rows:
+        return rows, []
+
+    query_embedding = _search_query_embedding(search_text)
+    ranked = []
+    matched_rows = []
+    for index, row in enumerate(rows):
+        score, matched = _score_search_row(row, search_text, query_embedding)
+        ranked.append((score, matched, index, row))
+        if matched:
+            matched_rows.append(row)
+
+    ranked_rows = [
+        row
+        for score, matched, index, row in sorted(
+            ranked,
+            key=lambda item: (
+                -item[0],
+                item[2],
+            ),
+        )
+        if matched or score > 0
+    ]
+    if not ranked_rows:
+        ranked_rows = [row for _, _, _, row in sorted(ranked, key=lambda item: (-item[0], item[2]))[:50]]
+        matched_rows = ranked_rows
+    return ranked_rows, matched_rows
+
+
+def _search_results(search=None, sentiment=None, category=None, event_id=None):
+    rows = _fetch_all_articles(
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        select=ARTICLES_SELECT,
+        order=DEFAULT_SORT,
+        limit=SEARCH_SCAN_LIMIT,
+    )
+    ranked_rows, matched_rows = _rank_search_rows(rows, search)
+    if _normalize_text(search):
+        visible_rows = ranked_rows
+        return visible_rows, len(visible_rows)
+    return ranked_rows, len(ranked_rows)
 
 
 def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000):
@@ -498,6 +640,24 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
 
+    search_text = _normalize_text(search)
+    if search_text:
+        rows, total = _search_results(
+            search=search_text,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+        )
+        rows = rows[offset:offset + limit]
+        rows = _attach_event_similarity_scores(rows, event_id)
+        return {
+            "articles": rows,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "sort": "semantic.desc",
+        }
+
     params = {
         "select": ARTICLES_SELECT,
         "limit": str(limit),
@@ -517,6 +677,16 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
 
 
 def _count_articles(search=None, sentiment=None, category=None, event_id=None):
+    search_text = _normalize_text(search)
+    if search_text:
+        _, total = _search_results(
+            search=search_text,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+        )
+        return total
+
     params = {
         "select": "id",
         "limit": "1",
@@ -531,7 +701,11 @@ def get_article_stats(search=None, category=None, event_id=None):
     positive = _count_articles(search=search, sentiment="positive", category=category, event_id=event_id)
     negative = _count_articles(search=search, sentiment="negative", category=category, event_id=event_id)
     neutral = _count_articles(search=search, sentiment="neutral", category=category, event_id=event_id)
-    rows = _fetch_rows_for_stats(search=search, category=category, event_id=event_id)
+    search_text = _normalize_text(search)
+    if search_text:
+        rows, _ = _search_results(search=search_text, category=category, event_id=event_id)
+    else:
+        rows = _fetch_rows_for_stats(search=search, category=category, event_id=event_id)
 
     return {
         "total": total,

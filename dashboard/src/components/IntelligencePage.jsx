@@ -8,6 +8,15 @@ import remarkGfm from 'remark-gfm';
 const MATCHES_PAGE_SIZE = 4;
 
 export default function IntelligencePage({ event = null, eventId = null }) {
+  const normalizedEventId = useMemo(() => {
+    if (eventId == null) return null;
+    if (typeof eventId === 'object') {
+      const nestedId = Number(eventId?.id);
+      return Number.isFinite(nestedId) ? nestedId : null;
+    }
+    const parsed = Number(eventId);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [eventId]);
   const [articles, setArticles] = useState([]);
   const [matchesPage, setMatchesPage] = useState(1);
 
@@ -40,8 +49,8 @@ export default function IntelligencePage({ event = null, eventId = null }) {
           offset: '0',
           sort: 'published.desc',
         });
-        if (eventId != null) {
-          params.set('event_id', String(eventId));
+        if (normalizedEventId != null) {
+          params.set('event_id', String(normalizedEventId));
         }
         const res = await fetch(`/api/articles?${params.toString()}`);
         const data = await res.json().catch(() => ({}));
@@ -57,7 +66,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
       }
     }
     fetchData();
-  }, [eventId]);
+  }, [normalizedEventId]);
 
   const filteredArticles = useMemo(() => {
     let result = articles;
