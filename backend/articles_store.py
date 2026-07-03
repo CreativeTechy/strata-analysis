@@ -1,23 +1,20 @@
-"""Read helpers for the articles table.
-
-These helpers keep the Supabase REST query shape in one place so the API can
-offer stable pagination and filtering without the dashboard talking to Supabase
-directly.
-"""
+"""Read helpers for the articles table."""
 
 from __future__ import annotations
 
-import requests
 from collections import Counter
+import re
 
 import config
-from events_store import list_article_ids_for_event
+import db
+from embeddings import cosine_similarity, get_embedding
+from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
 
 ARTICLES_SELECT = (
     "id,url,source,feed,title,author,published,text,fetched_at,summary,"
     "sentiment,relevance_score,category,article_category,insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
-    "risks,opportunities,brands,car_models,created_at"
+    "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
 )
 
 SORTABLE_COLUMNS = {
@@ -33,28 +30,8 @@ SORTABLE_COLUMNS = {
 MAX_LIMIT = 100
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
-
-
-def _auth_headers():
-    return {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Accept": "application/json",
-    }
-
-
-def _base_endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/articles"
-
-
-def _parse_total(content_range: str | None, fallback: int = 0) -> int:
-    if not content_range or "/" not in content_range:
-        return fallback
-    try:
-        total = content_range.rsplit("/", 1)[-1]
-        return int(total) if total != "*" else fallback
-    except Exception:
-        return fallback
+SEARCH_SCAN_LIMIT = 1000
+SEARCH_MATCH_THRESHOLD = 0.28
 
 
 def _normalize_text(value: str | None) -> str:
@@ -114,71 +91,239 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _apply_search(params: dict, search: str | None):
+def _where_parts(search=None, sentiment=None, category=None, event_id=None):
+    clauses = []
+    params = []
+
     term = _normalize_text(search)
-    if not term:
-        return
-
-    # Keep the search server-side with a Supabase/PostgREST OR clause.
-    escaped = term.replace(",", " ").replace("%", "").replace("*", "")
-    pattern = f"%{escaped}%"
-    params["or"] = ",".join(
-        [
-            f"title.ilike.{pattern}",
-            f"summary.ilike.{pattern}",
-            f"text.ilike.{pattern}",
-            f"source.ilike.{pattern}",
-            f"feed.ilike.{pattern}",
-            f"author.ilike.{pattern}",
-        ]
-    )
-
-
-def _apply_filters(params: dict, search=None, sentiment=None, category=None, event_id=None):
-    _apply_search(params, search)
+    if term:
+        escaped = term.replace(",", " ").replace("%", "").replace("*", "")
+        pattern = f"%{escaped}%"
+        clauses.append(
+            "("
+            "title ilike %s or summary ilike %s or text ilike %s or "
+            "source ilike %s or feed ilike %s or author ilike %s"
+            ")"
+        )
+        params.extend([pattern] * 6)
 
     sentiment_value = _normalize_sentiment(sentiment)
     if sentiment_value and sentiment_value != "all":
-        params["sentiment"] = f"eq.{sentiment_value}"
+        clauses.append("sentiment = %s")
+        params.append(sentiment_value)
 
     category_value = _normalize_category(category)
     if category_value and category_value != "all":
-        params["category"] = f"eq.{category_value}"
+        clauses.append("category = %s")
+        params.append(category_value)
 
     if event_id is not None:
         article_ids = list_article_ids_for_event(event_id)
         if not article_ids:
-            params["id"] = "eq.-1"
-            return
-        params["id"] = f"in.({','.join(str(article_id) for article_id in article_ids)})"
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(article_ids)
+
+    if clauses:
+        return " where " + " and ".join(clauses), params
+    return "", params
 
 
-def _fetch_articles(params: dict):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, event_id=None, order="published.desc", select=ARTICLES_SELECT):
+    if not config.DATABASE_URL:
         return [], 0
 
+    field, direction = _normalize_sort(order)
+    limit = _normalize_limit(limit)
+    offset = _normalize_offset(offset)
+    where_sql, params = _where_parts(search=search, sentiment=sentiment, category=category, event_id=event_id)
+
     try:
-        resp = requests.get(
-            _base_endpoint(),
-            headers={
-                **_auth_headers(),
-                "Prefer": "count=exact",
-            },
-            params=params,
-            timeout=30,
+        rows = db.fetch_all(
+            f"""
+            select {select}
+            from articles
+            {where_sql}
+            order by {field} {direction}
+            limit %s offset %s
+            """,
+            (*params, limit, offset),
         )
-        resp.raise_for_status()
-        rows = resp.json()
-        if not isinstance(rows, list):
-            rows = []
-        total = _parse_total(resp.headers.get("Content-Range"), fallback=len(rows))
+        count_row = db.fetch_one(
+            f"""
+            select count(*)::int as total
+            from articles
+            {where_sql}
+            """,
+            tuple(params),
+        )
+        total = int((count_row or {}).get("total") or len(rows))
         return rows, total
     except Exception:
         return [], 0
 
 
+def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
+    if not config.DATABASE_URL:
+        return []
+
+    rows = []
+    page_size = 200
+    offset = 0
+    limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
+
+    while len(rows) < limit:
+        batch, _ = _fetch_articles(
+            limit=min(page_size, limit - len(rows)),
+            offset=offset,
+            search=search,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+            order=order,
+            select=select,
+        )
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    return rows[:limit]
+
+
+def _attach_event_similarity_scores(rows, event_id):
+    if event_id is None or not rows:
+        return rows
+
+    scores = list_article_similarity_scores_for_event(event_id)
+    if not scores:
+        return rows
+
+    for row in rows:
+        try:
+            article_id = int(row.get("id"))
+        except Exception:
+            continue
+        if article_id in scores:
+            row["event_similarity_score"] = scores[article_id]
+    return rows
+
+
+def _search_query_embedding(search: str):
+    text = _normalize_text(search)
+    if not text:
+        return []
+
+    embedding = get_embedding(text, role="query")
+    if not embedding:
+        return []
+    vector = embedding.get("embedding_json") or []
+    return vector if isinstance(vector, list) else []
+
+
+def _article_search_blob(row: dict) -> str:
+    insight = row.get("insight_json") if isinstance(row.get("insight_json"), dict) else {}
+    parts = [
+        row.get("title"),
+        row.get("summary"),
+        row.get("text"),
+        row.get("source"),
+        row.get("feed"),
+        row.get("author"),
+        insight.get("topic"),
+        insight.get("summary"),
+        row.get("article_category"),
+        row.get("category"),
+    ]
+    return " ".join(_normalize_text(value).lower() for value in parts if _normalize_text(value))
+
+
+def _score_search_row(row: dict, search: str, query_embedding: list[float] | None = None):
+    search_text = _normalize_text(search).lower()
+    if not search_text:
+        return 0.0, False
+
+    blob = _article_search_blob(row)
+    if not blob:
+        return 0.0, False
+
+    tokens = [token for token in re.split(r"\W+", search_text) if len(token) > 1]
+    keyword_hits = sum(1 for token in tokens if token in blob)
+    exact_phrase_hit = search_text in blob
+    keyword_score = 0.0
+    if tokens:
+        keyword_score = min(1.0, keyword_hits / len(tokens))
+    elif exact_phrase_hit:
+        keyword_score = 1.0
+
+    semantic_score = 0.0
+    if query_embedding:
+        candidate_embedding = row.get("embedding_json") or []
+        if isinstance(candidate_embedding, list) and candidate_embedding:
+            semantic_score = max(0.0, cosine_similarity(query_embedding, candidate_embedding))
+
+    score = max(keyword_score, semantic_score)
+    if exact_phrase_hit:
+        score = min(1.0, score + 0.1)
+    elif keyword_score and semantic_score:
+        score = min(1.0, (keyword_score * 0.45) + (semantic_score * 0.55))
+
+    matched = exact_phrase_hit or keyword_hits > 0 or semantic_score >= SEARCH_MATCH_THRESHOLD
+    return score, matched
+
+
+def _rank_search_rows(rows, search: str):
+    search_text = _normalize_text(search)
+    if not search_text or not rows:
+        return rows, []
+
+    query_embedding = _search_query_embedding(search_text)
+    ranked = []
+    matched_rows = []
+    for index, row in enumerate(rows):
+        score, matched = _score_search_row(row, search_text, query_embedding)
+        ranked.append((score, matched, index, row))
+        if matched:
+            matched_rows.append(row)
+
+    ranked_rows = [
+        row
+        for score, matched, index, row in sorted(
+            ranked,
+            key=lambda item: (
+                -item[0],
+                item[2],
+            ),
+        )
+        if matched or score > 0
+    ]
+    if not ranked_rows:
+        ranked_rows = [row for _, _, _, row in sorted(ranked, key=lambda item: (-item[0], item[2]))[:50]]
+        matched_rows = ranked_rows
+    return ranked_rows, matched_rows
+
+
+def _search_results(search=None, sentiment=None, category=None, event_id=None):
+    rows = _fetch_all_articles(
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        select=ARTICLES_SELECT,
+        order=DEFAULT_SORT,
+        limit=SEARCH_SCAN_LIMIT,
+    )
+    ranked_rows, _ = _rank_search_rows(rows, search)
+    if _normalize_text(search):
+        visible_rows = ranked_rows
+        return visible_rows, len(visible_rows)
+    return ranked_rows, len(ranked_rows)
+
+
 def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     rows = []
@@ -186,30 +331,21 @@ def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000)
     offset = 0
 
     while True:
-        params = {
-            "select": "url,title,sentiment,category,article_category,insight_json,summary",
-            "limit": str(page_size),
-            "offset": str(offset),
-            "order": "created_at.desc",
-        }
-        _apply_filters(params, search=search, category=category, event_id=event_id)
-        try:
-            resp = requests.get(
-                _base_endpoint(),
-                headers=_auth_headers(),
-                params=params,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            batch = resp.json()
-            if not isinstance(batch, list) or not batch:
-                break
-            rows.extend(batch)
-            if len(batch) < page_size:
-                break
-            offset += page_size
-        except Exception:
+        batch, _ = _fetch_articles(
+            limit=page_size,
+            offset=offset,
+            search=search,
+            category=category,
+            event_id=event_id,
+            order="created_at.desc",
+            select="url,title,sentiment,category,article_category,insight_json,summary",
+        )
+        if not batch:
             break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
 
     return rows
 
@@ -480,14 +616,34 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
 
-    params = {
-        "select": ARTICLES_SELECT,
-        "limit": str(limit),
-        "offset": str(offset),
-        "order": f"{field}.{direction}",
-    }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
-    rows, total = _fetch_articles(params)
+    search_text = _normalize_text(search)
+    if search_text:
+        rows, total = _search_results(
+            search=search_text,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+        )
+        rows = rows[offset:offset + limit]
+        rows = _attach_event_similarity_scores(rows, event_id)
+        return {
+            "articles": rows,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "sort": "semantic.desc",
+        }
+
+    rows, total = _fetch_articles(
+        limit=limit,
+        offset=offset,
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        order=f"{field}.{direction}",
+    )
+    rows = _attach_event_similarity_scores(rows, event_id)
     return {
         "articles": rows,
         "total": total,
@@ -498,12 +654,26 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
 
 
 def _count_articles(search=None, sentiment=None, category=None, event_id=None):
-    params = {
-        "select": "id",
-        "limit": "1",
-    }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
-    _, total = _fetch_articles(params)
+    search_text = _normalize_text(search)
+    if search_text:
+        _, total = _search_results(
+            search=search_text,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+        )
+        return total
+
+    _, total = _fetch_articles(
+        limit=1,
+        offset=0,
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        order=DEFAULT_SORT,
+        select="id",
+    )
     return total
 
 
@@ -512,7 +682,11 @@ def get_article_stats(search=None, category=None, event_id=None):
     positive = _count_articles(search=search, sentiment="positive", category=category, event_id=event_id)
     negative = _count_articles(search=search, sentiment="negative", category=category, event_id=event_id)
     neutral = _count_articles(search=search, sentiment="neutral", category=category, event_id=event_id)
-    rows = _fetch_rows_for_stats(search=search, category=category, event_id=event_id)
+    search_text = _normalize_text(search)
+    if search_text:
+        rows, _ = _search_results(search=search_text, category=category, event_id=event_id)
+    else:
+        rows = _fetch_rows_for_stats(search=search, category=category, event_id=event_id)
 
     return {
         "total": total,
@@ -522,3 +696,51 @@ def get_article_stats(search=None, category=None, event_id=None):
         "article_category_breakdown": _article_category_counts(rows),
         "insights": _topic_summary(rows),
     }
+
+
+def get_brand_sentiment_rollup(limit=50):
+    if not config.DATABASE_URL:
+        return {"rows": [], "crawl_count": 0}
+
+    try:
+        rows = db.fetch_all(
+            """
+            select
+                brand,
+                count(*)::int as mentions,
+                avg(case sentiment when 'positive' then 1 when 'negative' then -1 else 0 end)::float as avg_sentiment,
+                sum(case when sentiment = 'positive' then 1 else 0 end)::int as positive,
+                sum(case when sentiment = 'negative' then 1 else 0 end)::int as negative,
+                sum(case when sentiment = 'neutral' then 1 else 0 end)::int as neutral
+            from articles a
+            inner join lateral jsonb_array_elements_text(coalesce(a.brands, '[]'::jsonb)) as brand on true
+            group by brand
+            order by mentions desc, brand asc
+            limit %s
+            """,
+            (max(1, min(int(limit or 50), 100)),),
+        )
+        crawl_row = db.fetch_one("select count(*)::int as crawl_count from crawl_pages")
+        payload = []
+        for row in rows:
+            mentions = int(row.get("mentions") or 0)
+            confidence = "low"
+            if mentions >= 20:
+                confidence = "high"
+            elif mentions >= 5:
+                confidence = "medium"
+            payload.append(
+                {
+                    "brand": row.get("brand"),
+                    "mentions": mentions,
+                    "avg_sentiment": float(row.get("avg_sentiment") or 0),
+                    "positive": int(row.get("positive") or 0),
+                    "negative": int(row.get("negative") or 0),
+                    "neutral": int(row.get("neutral") or 0),
+                    "confidence": confidence,
+                }
+            )
+        return {"rows": payload, "crawl_count": int((crawl_row or {}).get("crawl_count") or 0)}
+    except Exception:
+        return {"rows": [], "crawl_count": 0}
+

@@ -13,7 +13,6 @@ import BrandSentimentPage from './components/BrandSentimentPage';
 import ArticlesPage from './components/ArticlesPage';
 import { RefreshCw, MessageSquare, GitMerge, Rss, Newspaper, CalendarDays } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { supabase } from './supabaseClient';
 
 function RouteShell({ children, backTo, backLabel, backStyle }) {
   return (
@@ -122,10 +121,10 @@ export default function App() {
 
   const loadCrawlCount = async () => {
     try {
-      const { count } = await supabase
-        .from('crawl_pages')
-        .select('*', { count: 'exact', head: true });
-      setCrawlCount(count ?? 0);
+      const res = await fetch('/api/crawl-count');
+      if (!res.ok) throw new Error(`Crawl count request failed: ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      setCrawlCount(Number(data?.crawl_count) || 0);
     } catch {
       setCrawlCount(0);
     }
