@@ -1,11 +1,7 @@
-"""The SAVER stage: the single Supabase upsert path for enriched articles.
+"""The SAVER stage: direct Postgres upsert helpers for enriched articles."""
 
-Both the API (main.py) and the CI run go through here, so there is exactly one
-place that writes to the database. Upserts on `url` (merge-duplicates), so
-re-seeing an article from a feed updates it in place instead of duplicating.
-"""
+from __future__ import annotations
 
-import requests
 from collections import defaultdict
 import json
 
@@ -28,6 +24,10 @@ LEGACY_ARTICLE_COLUMNS = (
     "brands", "car_models",
 )
 
+CRAWL_COLUMNS = (
+    "crawl_id", "url", "source", "seed", "title", "text", "words", "depth", "fetched_at",
+)
+
 
 def _row(article):
     return {k: article.get(k) for k in ARTICLE_COLUMNS}
@@ -37,29 +37,17 @@ def _legacy_row(article):
     return {k: article.get(k) for k in LEGACY_ARTICLE_COLUMNS}
 
 
-def _response_snippet(resp, limit=500):
-    if resp is None:
-        return ""
+def _response_snippet(payload, limit=500):
     try:
-        payload = resp.json()
-        return json.dumps(payload, ensure_ascii=False)[:limit]
+        if isinstance(payload, (dict, list)):
+            return json.dumps(payload, ensure_ascii=False)[:limit]
+        return str(payload or "")[:limit]
     except Exception:
-        try:
-            return (resp.text or "")[:limit]
-        except Exception:
-            return ""
+        return ""
 
 
-def _log_supabase_error(prefix, error):
-    resp = getattr(error, "response", None)
-    status = getattr(resp, "status_code", None)
-    snippet = _response_snippet(resp)
-    if status is not None:
-        print(f"{prefix} HTTP {status}: {error}")
-    else:
-        print(f"{prefix}: {error}")
-    if snippet:
-        print(f"  response: {snippet}")
+def _log_db_error(prefix, error):
+    print(f"{prefix}: {error}")
 
 
 def _probe_article_schema():
@@ -99,56 +87,44 @@ CRAWL_COLUMNS = (
 
 
 def save_crawl_pages(rows, batch_size=50):
-    """Upsert raw spider pages into the `crawl_pages` table (on_conflict url).
-
-    Returns the number of rows sent. Runs synchronously (call via a thread from
-    async code). No-ops with a warning if creds are missing.
-    """
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        print("Supabase credentials not set, skipping crawl save.")
+    if not config.DATABASE_URL:
+        print("Database credentials not set, skipping crawl save.")
         return 0
-
-    headers = {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=representation",
-    }
-    endpoint = f"{config.SUPABASE_URL}/rest/v1/crawl_pages?on_conflict=url"
 
     sent = 0
     for i in range(0, len(rows), batch_size):
         batch = [{k: r.get(k) for k in CRAWL_COLUMNS} for r in rows[i:i + batch_size]]
         try:
-            resp = requests.post(endpoint, headers=headers, json=batch, timeout=30)
-            resp.raise_for_status()
+            for row in batch:
+                db.execute(
+                    """
+                    insert into crawl_pages (crawl_id, url, source, seed, title, text, words, depth, fetched_at)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (url) do update set
+                      crawl_id = excluded.crawl_id,
+                      source = excluded.source,
+                      seed = excluded.seed,
+                      title = excluded.title,
+                      text = excluded.text,
+                      words = excluded.words,
+                      depth = excluded.depth,
+                      fetched_at = excluded.fetched_at
+                    """,
+                    (
+                        row["crawl_id"], row["url"], row["source"], row["seed"], row["title"],
+                        row["text"], row["words"], row["depth"], row["fetched_at"],
+                    ),
+                )
             sent += len(batch)
         except Exception as e:
-            print(f"  crawl_pages upload error: {e}")
+            _log_db_error(f"  crawl_pages upload error for batch {i // batch_size + 1}", e)
     return sent
 
 
 def save_articles(articles, batch_size=50):
-    """Upsert articles into the Supabase `articles` table.
-
-    Returns the number of rows sent. No-ops with a warning if creds are missing.
-    """
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        print("Supabase credentials not set, skipping upload.")
+    if not config.DATABASE_URL:
+        print("Database credentials not set, skipping upload.")
         return 0
-
-    headers = {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=representation",
-    }
-    endpoint = f"{config.SUPABASE_URL}/rest/v1/articles?on_conflict=url"
-    schema_probe = _probe_article_schema()
-    if not schema_probe.get("ok"):
-        print(f"  articles schema probe: {schema_probe.get('reason')}")
-        if schema_probe.get("response"):
-            print(f"  articles schema probe response: {schema_probe.get('response')}")
 
     sent = 0
     event_id = None
@@ -186,7 +162,6 @@ def save_articles(articles, batch_size=50):
 
     for i in range(0, len(articles), batch_size):
         source_batch = articles[i:i + batch_size]
-        batch = [_row(a) for a in source_batch]
         try:
             resp = requests.post(endpoint, headers=headers, json=batch, timeout=30)
             resp.raise_for_status()
@@ -234,18 +209,36 @@ def save_articles(articles, batch_size=50):
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             if status_code == 400:
                 try:
-                    legacy_batch = [_legacy_row(a) for a in source_batch]
-                    resp = requests.post(endpoint, headers=headers, json=legacy_batch, timeout=30)
-                    resp.raise_for_status()
-                    sent += len(legacy_batch)
-                    print(
-                        f"  Uploaded batch {i // batch_size + 1} ({len(legacy_batch)} articles) using legacy article schema fallback"
-                    )
+                    article_id = int(row.get("id"))
+                except Exception:
                     continue
-                except Exception as legacy_error:
-                    _log_supabase_error(f"  Supabase upload error for batch {i // batch_size + 1}", legacy_error)
+                feed_url = (row.get("feed") or article.get("feed") or "").strip()
+                if not feed_url:
                     continue
-            _log_supabase_error(f"  Supabase upload error for batch {i // batch_size + 1}", e)
+                if feed_url not in feed_event_cache:
+                    feed_event_cache[feed_url] = list_event_ids_for_feed_url(feed_url)
+                event_ids = list(feed_event_cache.get(feed_url) or [])
+                if event_id is not None and event_id not in event_ids:
+                    event_ids.append(event_id)
+                for linked_event_id in event_ids:
+                    linked_articles[linked_event_id].add(article_id)
+
+                article_embedding = article.get("embedding_json") or row.get("embedding_json") or []
+                if isinstance(article_embedding, list) and article_embedding:
+                    event_embeddings = _load_event_embedding_map()
+                    best_event_id = None
+                    best_score = 0.0
+                    for candidate_event_id, candidate_embedding in event_embeddings.items():
+                        score = cosine_similarity(article_embedding, candidate_embedding)
+                        if score > best_score:
+                            best_score = score
+                            best_event_id = candidate_event_id
+                    if best_event_id is not None and best_score >= 0.78:
+                        linked_articles[best_event_id].add(article_id)
+                        linked_scores[best_event_id][article_id] = best_score
+            print(f"  Uploaded batch {i // batch_size + 1} ({len(source_batch)} articles)")
+        except Exception as e:
+            _log_db_error(f"  Database upload error for batch {i // batch_size + 1}", e)
 
     if linked_articles:
         for linked_event_id, article_ids in linked_articles.items():
@@ -255,23 +248,13 @@ def save_articles(articles, batch_size=50):
 
 
 def delete_all_articles():
-    """Delete all rows from the Supabase `articles` table."""
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        print("Supabase credentials not set, skipping article delete.")
+    if not config.DATABASE_URL:
+        print("Database credentials not set, skipping article delete.")
         return 0
 
-    headers = {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Accept": "application/json",
-        "Prefer": "return=minimal",
-    }
-    endpoint = f"{config.SUPABASE_URL}/rest/v1/articles"
-
     try:
-        resp = requests.delete(endpoint, headers=headers, params={"id": "gte.0"}, timeout=30)
-        resp.raise_for_status()
+        db.execute("delete from articles")
         return 1
     except Exception as e:
-        print(f"  article delete error: {e}")
+        _log_db_error("  article delete error", e)
         return 0

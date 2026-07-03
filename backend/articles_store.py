@@ -1,13 +1,7 @@
-"""Read helpers for the articles table.
-
-These helpers keep the Supabase REST query shape in one place so the API can
-offer stable pagination and filtering without the dashboard talking to Supabase
-directly.
-"""
+"""Read helpers for the articles table."""
 
 from __future__ import annotations
 
-import requests
 from collections import Counter
 import re
 
@@ -118,64 +112,74 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _apply_search(params: dict, search: str | None):
+def _where_parts(search=None, sentiment=None, category=None, event_id=None):
+    clauses = []
+    params = []
+
     term = _normalize_text(search)
-    if not term:
-        return
-
-    # Keep the search server-side with a Supabase/PostgREST OR clause.
-    escaped = term.replace(",", " ").replace("%", "").replace("*", "")
-    pattern = f"%{escaped}%"
-    params["or"] = ",".join(
-        [
-            f"title.ilike.{pattern}",
-            f"summary.ilike.{pattern}",
-            f"text.ilike.{pattern}",
-            f"source.ilike.{pattern}",
-            f"feed.ilike.{pattern}",
-            f"author.ilike.{pattern}",
-        ]
-    )
-
-
-def _apply_filters(params: dict, search=None, sentiment=None, category=None, event_id=None):
-    _apply_search(params, search)
+    if term:
+        escaped = term.replace(",", " ").replace("%", "").replace("*", "")
+        pattern = f"%{escaped}%"
+        clauses.append(
+            "("
+            "title ilike %s or summary ilike %s or text ilike %s or "
+            "source ilike %s or feed ilike %s or author ilike %s"
+            ")"
+        )
+        params.extend([pattern] * 6)
 
     sentiment_value = _normalize_sentiment(sentiment)
     if sentiment_value and sentiment_value != "all":
-        params["sentiment"] = f"eq.{sentiment_value}"
+        clauses.append("sentiment = %s")
+        params.append(sentiment_value)
 
     category_value = _normalize_category(category)
     if category_value and category_value != "all":
-        params["category"] = f"eq.{category_value}"
+        clauses.append("category = %s")
+        params.append(category_value)
 
     if event_id is not None:
         article_ids = list_article_ids_for_event(event_id)
         if not article_ids:
-            params["id"] = "eq.-1"
-            return
-        params["id"] = f"in.({','.join(str(article_id) for article_id in article_ids)})"
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(article_ids)
+
+    if clauses:
+        return " where " + " and ".join(clauses), params
+    return "", params
 
 
-def _fetch_articles(params: dict):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, event_id=None, order="published.desc", select=ARTICLES_SELECT):
+    if not config.DATABASE_URL:
         return [], 0
 
+    field, direction = _normalize_sort(order)
+    limit = _normalize_limit(limit)
+    offset = _normalize_offset(offset)
+    where_sql, params = _where_parts(search=search, sentiment=sentiment, category=category, event_id=event_id)
+
     try:
-        resp = requests.get(
-            _base_endpoint(),
-            headers={
-                **_auth_headers(),
-                "Prefer": "count=exact",
-            },
-            params=params,
-            timeout=30,
+        rows = db.fetch_all(
+            f"""
+            select {select}
+            from articles
+            {where_sql}
+            order by {field} {direction}
+            limit %s offset %s
+            """,
+            (*params, limit, offset),
         )
-        resp.raise_for_status()
-        rows = resp.json()
-        if not isinstance(rows, list):
-            rows = []
-        total = _parse_total(resp.headers.get("Content-Range"), fallback=len(rows))
+        count_row = db.fetch_one(
+            f"""
+            select count(*)::int as total
+            from articles
+            {where_sql}
+            """,
+            tuple(params),
+        )
+        total = int((count_row or {}).get("total") or len(rows))
         return rows, total
     except Exception:
         return [], 0
@@ -338,7 +342,7 @@ def _search_results(search=None, sentiment=None, category=None, event_id=None):
 
 
 def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     rows = []
@@ -346,30 +350,21 @@ def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000)
     offset = 0
 
     while True:
-        params = {
-            "select": "url,title,sentiment,category,article_category,insight_json,summary",
-            "limit": str(page_size),
-            "offset": str(offset),
-            "order": "created_at.desc",
-        }
-        _apply_filters(params, search=search, category=category, event_id=event_id)
-        try:
-            resp = requests.get(
-                _base_endpoint(),
-                headers=_auth_headers(),
-                params=params,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            batch = resp.json()
-            if not isinstance(batch, list) or not batch:
-                break
-            rows.extend(batch)
-            if len(batch) < page_size:
-                break
-            offset += page_size
-        except Exception:
+        batch, _ = _fetch_articles(
+            limit=page_size,
+            offset=offset,
+            search=search,
+            category=category,
+            event_id=event_id,
+            order="created_at.desc",
+            select="url,title,sentiment,category,article_category,insight_json,summary",
+        )
+        if not batch:
             break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
 
     return rows
 
@@ -715,3 +710,51 @@ def get_article_stats(search=None, category=None, event_id=None):
         "article_category_breakdown": _article_category_counts(rows),
         "insights": _topic_summary(rows),
     }
+
+
+def get_brand_sentiment_rollup(limit=50):
+    if not config.DATABASE_URL:
+        return {"rows": [], "crawl_count": 0}
+
+    try:
+        rows = db.fetch_all(
+            """
+            select
+                brand,
+                count(*)::int as mentions,
+                avg(case sentiment when 'positive' then 1 when 'negative' then -1 else 0 end)::float as avg_sentiment,
+                sum(case when sentiment = 'positive' then 1 else 0 end)::int as positive,
+                sum(case when sentiment = 'negative' then 1 else 0 end)::int as negative,
+                sum(case when sentiment = 'neutral' then 1 else 0 end)::int as neutral
+            from articles a
+            inner join lateral jsonb_array_elements_text(coalesce(a.brands, '[]'::jsonb)) as brand on true
+            group by brand
+            order by mentions desc, brand asc
+            limit %s
+            """,
+            (max(1, min(int(limit or 50), 100)),),
+        )
+        crawl_row = db.fetch_one("select count(*)::int as crawl_count from crawl_pages")
+        payload = []
+        for row in rows:
+            mentions = int(row.get("mentions") or 0)
+            confidence = "low"
+            if mentions >= 20:
+                confidence = "high"
+            elif mentions >= 5:
+                confidence = "medium"
+            payload.append(
+                {
+                    "brand": row.get("brand"),
+                    "mentions": mentions,
+                    "avg_sentiment": float(row.get("avg_sentiment") or 0),
+                    "positive": int(row.get("positive") or 0),
+                    "negative": int(row.get("negative") or 0),
+                    "neutral": int(row.get("neutral") or 0),
+                    "confidence": confidence,
+                }
+            )
+        return {"rows": payload, "crawl_count": int((crawl_row or {}).get("crawl_count") or 0)}
+    except Exception:
+        return {"rows": [], "crawl_count": 0}
+

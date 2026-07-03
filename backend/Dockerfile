@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app/backend
 
-# Build deps cover packages commonly used by Scrapy, lxml, trafilatura, and crawl4ai.
+# Build deps cover packages commonly used by Scrapy, lxml, trafilatura, and psycopg.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -20,9 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./requirements.txt
 
 RUN pip install --upgrade pip && pip install -r requirements.txt
-
-# If crawl4ai pulls in Playwright, install Chromium so Spider Mode can run in-container.
-RUN python -m playwright install --with-deps chromium || true
 
 COPY . .
 

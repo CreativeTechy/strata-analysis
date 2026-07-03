@@ -27,6 +27,7 @@ import config
 from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
+from articles_store import get_brand_sentiment_rollup
 from events_store import (
     create_event,
     delete_event,
@@ -132,7 +133,7 @@ def _format_event_context(event: dict | None) -> str:
 
 
 def run_scraper_pipeline(run_id: str, event_id: int | None = None):
-    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+    """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
     if event_id is not None:
@@ -227,11 +228,11 @@ def get_feeds(limit: int | None = None, offset: int = 0):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
         feeds = bootstrap_feeds()
-        source = feeds[0].get("source", "supabase") if feeds else "supabase"
+        source = feeds[0].get("source", "database") if feeds else "database"
         return {"feeds": feeds, "source": source}
 
     page = list_feeds_page(limit=limit, offset=offset)
-    source = page["feeds"][0].get("source", "supabase") if page["feeds"] else "supabase"
+    source = page["feeds"][0].get("source", "database") if page["feeds"] else "database"
     return {**page, "source": source}
 
 
@@ -278,7 +279,7 @@ def add_event(payload: dict):
     if not event:
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to create event. Check Supabase credentials and URL.",
+            "error": "Unable to create event. Check database connection settings.",
             "detail": detail or "The event request did not return a row.",
         }
     event, discovery = _save_event_with_discovery(event)
@@ -291,7 +292,7 @@ def edit_event(event_id: int, payload: dict):
     if not event:
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to update event. Check Supabase credentials and URL.",
+            "error": "Unable to update event. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
     event, discovery = _save_event_with_discovery(event)
@@ -317,7 +318,7 @@ def remove_event(event_id: int):
     if not delete_event(event_id):
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to delete event. Check Supabase credentials and URL.",
+            "error": "Unable to delete event. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
@@ -365,7 +366,7 @@ def add_feed(payload: dict):
     if not feed:
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to create feed. Check Supabase credentials and URL.",
+            "error": "Unable to create feed. Check database connection settings.",
             "detail": detail or "The feed request did not return a row.",
         }
     return {"feed": feed}
@@ -378,7 +379,7 @@ def edit_feed(feed_id: int, payload: dict):
     if not feed:
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to update feed. Check Supabase credentials and URL.",
+            "error": "Unable to update feed. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
     return {"feed": feed}
@@ -390,7 +391,7 @@ def remove_feed(feed_id: int):
     if not delete_feed(feed_id):
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to delete feed. Check Supabase credentials and URL.",
+            "error": "Unable to delete feed. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
@@ -501,17 +502,33 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
 
 @app.delete("/api/articles")
 def delete_articles():
-    """Delete all stored articles from Supabase."""
+    """Delete all stored articles from Postgres."""
     from store import delete_all_articles
 
     deleted = delete_all_articles()
     if not deleted:
-        detail = "Check Supabase credentials and URL."
+        detail = "Check database connection settings."
         return {
             "error": "Unable to delete articles.",
             "detail": detail,
         }
     return {"ok": True}
+
+
+@app.get("/api/crawl-count")
+def get_crawl_count():
+    try:
+        from db import fetch_one
+
+        row = fetch_one("select count(*)::int as crawl_count from crawl_pages")
+        return {"crawl_count": int((row or {}).get("crawl_count") or 0)}
+    except Exception:
+        return {"crawl_count": 0}
+
+
+@app.get("/api/brand-sentiment")
+def brand_sentiment(limit: int = 50):
+    return get_brand_sentiment_rollup(limit=limit)
 
 
 @app.post("/api/chat")
