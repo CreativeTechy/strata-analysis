@@ -297,8 +297,7 @@ def add_event(payload: dict):
             "error": "Unable to create event. Check database connection settings.",
             "detail": detail or "The event request did not return a row.",
         }
-    event, discovery = _save_event_with_discovery(event)
-    return {"event": event, "discovery": discovery}
+    return {"event": event}
 
 
 @app.put("/api/events/{event_id}")
