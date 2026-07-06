@@ -31,7 +31,6 @@ export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
   const workflowSelectionStorageKey = 'strata.workflowSelectedEventIds';
-  const startedAtRef = useRef(new Date());
 
   const [events, setEvents] = useState([]);
   const [reportStats, setReportStats] = useState({
@@ -44,6 +43,7 @@ export default function App() {
   });
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
+  const [pipelineRuns, setPipelineRuns] = useState([]);
   const [feeds, setFeeds] = useState([]);
   const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
@@ -72,6 +72,7 @@ export default function App() {
   const [crawlCount, setCrawlCount] = useState(null);
   const [appNow, setAppNow] = useState(() => new Date());
   const pollIntervalRef = useRef(null);
+  const pipelineRunsPollRef = useRef(null);
 
   const selectedEvent = useMemo(
     () => events.find((event) => Number(event.id) === Number(selectedEventId)) || null,
@@ -105,6 +106,11 @@ export default function App() {
   }, [feeds, workflowSelectedEvents]);
 
   const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
+  const activePipelineRun = useMemo(
+    () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
+    [pipelineRuns]
+  );
+  const activePipelineStartedAt = activePipelineRun?.started_at || activePipelineRun?.created_at || null;
 
   const coerceEventId = (value) => {
     if (value == null) return null;
@@ -132,6 +138,13 @@ export default function App() {
     }
   };
 
+  const stopPipelineRunsPolling = () => {
+    if (pipelineRunsPollRef.current) {
+      clearInterval(pipelineRunsPollRef.current);
+      pipelineRunsPollRef.current = null;
+    }
+  };
+
   const loadCrawlCount = async () => {
     try {
       const res = await fetch('/api/crawl-count');
@@ -140,6 +153,17 @@ export default function App() {
       setCrawlCount(Number(data?.crawl_count) || 0);
     } catch {
       setCrawlCount(0);
+    }
+  };
+
+  const loadPipelineRuns = async () => {
+    try {
+      const res = await fetch('/api/pipeline-runs?limit=25');
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setPipelineRuns(Array.isArray(data?.runs) ? data.runs : []);
+    } catch {
+      setPipelineRuns([]);
     }
   };
 
@@ -259,6 +283,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    loadPipelineRuns();
+    pipelineRunsPollRef.current = setInterval(loadPipelineRuns, 5000);
+    return () => stopPipelineRunsPolling();
+  }, []);
+
+  useEffect(() => {
     if (events.length === 0) {
       if (selectedEventId != null) {
         setSelectedEventId(null);
@@ -370,7 +400,10 @@ export default function App() {
   }, []);
 
   const formatElapsed = (startedAt, now) => {
-    const totalSeconds = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000));
+    if (!startedAt) return '00:00:00';
+    const started = new Date(startedAt);
+    if (Number.isNaN(started.getTime())) return '00:00:00';
+    const totalSeconds = Math.max(0, Math.floor((now.getTime() - started.getTime()) / 1000));
     const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
     const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
     const seconds = String(totalSeconds % 60).padStart(2, '0');
@@ -598,7 +631,7 @@ export default function App() {
         }}
       >
         <span style={{ opacity: 0.72, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live timer</span>
-        <strong>{formatElapsed(startedAtRef.current, appNow)}</strong>
+        <strong>{formatElapsed(activePipelineStartedAt, appNow)}</strong>
       </div>
 
       <Routes>
