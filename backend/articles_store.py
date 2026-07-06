@@ -34,6 +34,28 @@ SEARCH_SCAN_LIMIT = 1000
 SEARCH_MATCH_THRESHOLD = 0.28
 
 
+def _auth_headers():
+    return {
+        "apikey": config.SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        "Accept": "application/json",
+    }
+
+
+def _base_endpoint():
+    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/articles"
+
+
+def _parse_total(content_range: str | None, fallback: int = 0) -> int:
+    if not content_range or "/" not in content_range:
+        return fallback
+    try:
+        total = content_range.rsplit("/", 1)[-1]
+        return int(total) if total != "*" else fallback
+    except Exception:
+        return fallback
+
+
 def _normalize_text(value: str | None) -> str:
     return (value or "").strip()
 
@@ -315,7 +337,7 @@ def _search_results(search=None, sentiment=None, category=None, event_id=None):
         order=DEFAULT_SORT,
         limit=SEARCH_SCAN_LIMIT,
     )
-    ranked_rows, _ = _rank_search_rows(rows, search)
+    ranked_rows, matched_rows = _rank_search_rows(rows, search)
     if _normalize_text(search):
         visible_rows = ranked_rows
         return visible_rows, len(visible_rows)
@@ -642,6 +664,7 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
         category=category,
         event_id=event_id,
         order=f"{field}.{direction}",
+        select=ARTICLES_SELECT,
     )
     rows = _attach_event_similarity_scores(rows, event_id)
     return {

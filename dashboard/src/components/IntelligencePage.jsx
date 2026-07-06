@@ -8,6 +8,15 @@ import remarkGfm from 'remark-gfm';
 const MATCHES_PAGE_SIZE = 4;
 
 export default function IntelligencePage({ event = null, eventId = null }) {
+  const normalizedEventId = useMemo(() => {
+    if (eventId == null) return null;
+    if (typeof eventId === 'object') {
+      const nestedId = Number(eventId?.id);
+      return Number.isFinite(nestedId) ? nestedId : null;
+    }
+    const parsed = Number(eventId);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [eventId]);
   const [articles, setArticles] = useState([]);
   const [matchesPage, setMatchesPage] = useState(1);
 
@@ -26,6 +35,12 @@ export default function IntelligencePage({ event = null, eventId = null }) {
 
   const [selectedArticle, setSelectedArticle] = useState(null);
 
+  const formatMatchScore = (value) => {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return '';
+    return score.toFixed(2);
+  };
+
   useEffect(() => {
     async function fetchData() {
       try {
@@ -34,8 +49,8 @@ export default function IntelligencePage({ event = null, eventId = null }) {
           offset: '0',
           sort: 'published.desc',
         });
-        if (eventId != null) {
-          params.set('event_id', String(eventId));
+        if (normalizedEventId != null) {
+          params.set('event_id', String(normalizedEventId));
         }
         const res = await fetch(`/api/articles?${params.toString()}`);
         const data = await res.json().catch(() => ({}));
@@ -51,7 +66,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
       }
     }
     fetchData();
-  }, [eventId]);
+  }, [normalizedEventId]);
 
   const filteredArticles = useMemo(() => {
     let result = articles;
@@ -127,6 +142,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
             summary: a.summary,
             insight_json: a.insight_json,
             relevance_score: a.relevance_score,
+            event_similarity_score: a.event_similarity_score,
           })),
         }),
       });
@@ -303,6 +319,11 @@ export default function IntelligencePage({ event = null, eventId = null }) {
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
                   {article.sentiment || 'Neutral'}
                 </span>
+                {article.event_similarity_score != null && (
+                  <span className="badge score" style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
+                    Match: {formatMatchScore(article.event_similarity_score)}
+                  </span>
+                )}
               </div>
               <div className="preview-title">{article.title}</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.8rem', color: 'var(--primary-color)' }}>
@@ -361,6 +382,9 @@ export default function IntelligencePage({ event = null, eventId = null }) {
                 <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
                 <span className="badge score">Score: {selectedArticle.relevance_score}/10</span>
+                {selectedArticle.event_similarity_score != null && (
+                  <span className="badge score">Event match: {formatMatchScore(selectedArticle.event_similarity_score)}</span>
+                )}
               </div>
 
               <h1 style={{ fontSize: '2rem', marginBottom: '10px' }}>{selectedArticle.title}</h1>

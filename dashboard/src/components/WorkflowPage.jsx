@@ -148,6 +148,12 @@ export default function WorkflowPage({
   );
   const hasMultipleEvents = events.length > 1;
 
+  const formatMatchScore = (value) => {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return '';
+    return score.toFixed(2);
+  };
+
   const stats = useMemo(() => {
     const total = articles.length;
     const positive = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'positive').length;
@@ -789,12 +795,15 @@ export default function WorkflowPage({
                 {latestArticles.length ? (
                   latestArticles.map((article) => (
                     <div key={article.url} className="article-preview-row">
-                      <div className="article-preview-top">
-                        <span className="article-preview-source">{article.source || 'Unknown source'}</span>
-                        <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
-                          {article.sentiment || 'Neutral'}
-                        </span>
-                      </div>
+                    <div className="article-preview-top">
+                      <span className="article-preview-source">{article.source || 'Unknown source'}</span>
+                      <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
+                        {article.sentiment || 'Neutral'}
+                      </span>
+                      {article.event_similarity_score != null && (
+                        <span className="badge score">Match {formatMatchScore(article.event_similarity_score)}</span>
+                      )}
+                    </div>
                       <div className="article-preview-title">{article.title || article.url}</div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: 4 }}>
                         {article.article_category || article.category || 'general_article'}

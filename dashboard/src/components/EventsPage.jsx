@@ -107,6 +107,7 @@ export default function EventsPage({
   const [wizardStep, setWizardStep] = useState(1);
   const [fillMode, setFillMode] = useState('');
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
+  const [isDiscoveringFeeds, setIsDiscoveringFeeds] = useState(false);
   const [metadataError, setMetadataError] = useState('');
 
   const feedEventsById = useMemo(() => {
@@ -316,11 +317,58 @@ export default function EventsPage({
         hashtags: Array.isArray(suggestions.hashtags) ? suggestions.hashtags.join(', ') : prev.hashtags,
         keywords: Array.isArray(suggestions.keywords) ? suggestions.keywords.join(', ') : prev.keywords,
       }));
+      return suggestions;
     } catch (error) {
       setMetadataError(error?.message || 'Failed to generate AI suggestions.');
       throw error;
     } finally {
       setIsGeneratingMetadata(false);
+    }
+  };
+
+  const discoverFeedsFromDraft = async (nextDraft = draft) => {
+    const payload = {
+      name: nextDraft.name.trim(),
+      description: nextDraft.description.trim(),
+      location: nextDraft.location.trim(),
+      target_audience: nextDraft.target_audience.trim(),
+      usernames: parseListInput(nextDraft.usernames),
+      hashtags: parseListInput(nextDraft.hashtags),
+      keywords: parseListInput(nextDraft.keywords),
+      feed_ids: Array.isArray(nextDraft.feed_ids) ? nextDraft.feed_ids : [],
+    };
+
+    if (!payload.name) return null;
+
+    setIsDiscoveringFeeds(true);
+    try {
+      const res = await fetch('/api/events/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        throw new Error(data?.detail || data?.error || `Failed to discover feeds (${res.status})`);
+      }
+
+      const discovery = data?.discovery || {};
+      const discoveredFeedIds = Array.isArray(discovery.feed_ids)
+        ? [...new Set(discovery.feed_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value)))]
+        : [];
+      if (discoveredFeedIds.length) {
+        setDraft((prev) => ({
+          ...prev,
+          feed_ids: Array.from(new Set([...prev.feed_ids, ...discoveredFeedIds])),
+        }));
+      }
+      setLastDiscovery(discovery);
+      return discovery;
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to prefill feeds.');
+      return null;
+    } finally {
+      setIsDiscoveringFeeds(false);
     }
   };
 
@@ -334,13 +382,20 @@ export default function EventsPage({
     setFillMode('ai');
     setWizardStep(2);
     try {
-      await generateMetadataFromAi();
+      const suggestions = await generateMetadataFromAi();
+      await discoverFeedsFromDraft({
+        ...draft,
+        target_audience: suggestions?.target_audience || draft.target_audience,
+        usernames: Array.isArray(suggestions?.usernames) ? suggestions.usernames.join(', ') : draft.usernames,
+        hashtags: Array.isArray(suggestions?.hashtags) ? suggestions.hashtags.join(', ') : draft.hashtags,
+        keywords: Array.isArray(suggestions?.keywords) ? suggestions.keywords.join(', ') : draft.keywords,
+      });
     } catch {
       // The UI already stores the error state for the user.
     }
   };
 
-  const submit = async () => {
+  const submit = async (mode = 'save') => {
     if (isSaving) return;
 
     const payload = {
@@ -361,13 +416,22 @@ export default function EventsPage({
 
     setIsSaving(true);
     try {
+      let createdEvent = null;
       if (editingId) {
         await onUpdateEvent?.(editingId, payload);
       } else {
         const result = await onCreateEvent?.(payload);
-        setLastDiscovery(result?.discovery ?? null);
+        createdEvent = result?.event || null;
+        const discovery = result?.discovery ?? null;
+        setLastDiscovery(discovery);
       }
-      navigate('/events');
+      if (editingId) {
+        navigate(`/events/${editingId}`);
+      } else if (mode === 'find' && createdEvent?.id) {
+        navigate(`/events/${createdEvent.id}`);
+      } else {
+        navigate('/events');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -462,23 +526,29 @@ export default function EventsPage({
               <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
-              <input
-                type="text"
-                className="feed-input"
-                placeholder="Event name"
-                value={draft.name}
-                onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-                disabled={isSaving}
-              />
-              <textarea
-                className="feed-input"
-                placeholder="Event description"
-                rows={4}
-                value={draft.description}
-                onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
-                style={{ resize: 'vertical', minHeight: 110 }}
-                disabled={isSaving}
-              />
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Event name</span>
+                <input
+                  type="text"
+                  className="feed-input"
+                  placeholder="Event name"
+                  value={draft.name}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+                  disabled={isSaving}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
+                <textarea
+                  className="feed-input"
+                  placeholder="Event description"
+                  rows={4}
+                  value={draft.description}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
+                  style={{ resize: 'vertical', minHeight: 110 }}
+                  disabled={isSaving}
+                />
+              </label>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
                   Use a clear working title and a short description. We’ll use these to seed the AI suggestions and feed discovery.
@@ -521,15 +591,23 @@ export default function EventsPage({
               >
                 Fill manually
               </button>
-                <button
-                  type="button"
-                  className={`btn-secondary ${fillMode === 'ai' ? 'active' : ''}`}
-                  onClick={chooseAiFill}
-                  disabled={!step1Complete || isSaving}
-                >
-                  {isGeneratingMetadata ? 'Generating with AI...' : 'Fill by AI'}
-                </button>
-              </div>
+              <button
+                type="button"
+                className={`btn-secondary ${fillMode === 'ai' ? 'active' : ''}`}
+                onClick={chooseAiFill}
+                disabled={!step1Complete || isSaving || isGeneratingMetadata}
+              >
+                {isGeneratingMetadata ? 'Generating with AI...' : 'Fill by AI'}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => discoverFeedsFromDraft()}
+                disabled={!step1Complete || isSaving || isDiscoveringFeeds || isGeneratingMetadata}
+              >
+                {isDiscoveringFeeds ? 'Prefilling feeds...' : 'Prefill feeds with AI'}
+              </button>
+            </div>
 
             {!step2Complete ? (
               <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
@@ -655,42 +733,54 @@ export default function EventsPage({
 
             <div style={{ display: 'grid', gap: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <select
-                  className="filter-select"
-                  value={draft.status}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
-                  disabled={isSaving}
-                >
-                  {STATUS_OPTIONS.map((status) => (
-                    <option key={status} value={status}>
-                      {status[0].toUpperCase() + status.slice(1)}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  className="feed-input"
-                  placeholder="Location"
-                  value={draft.location}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-                  disabled={isSaving}
-                />
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
+                  <select
+                    className="filter-select"
+                    value={draft.status}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
+                    disabled={isSaving}
+                  >
+                    {STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {status[0].toUpperCase() + status.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
+                  <input
+                    type="text"
+                    className="feed-input"
+                    placeholder="Location"
+                    value={draft.location}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <input
-                  type="date"
-                  className="feed-input"
-                  value={draft.start_date}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
-                  disabled={isSaving}
-                />
-                <input
-                  type="date"
-                  className="feed-input"
-                  value={draft.end_date}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
-                  disabled={isSaving}
-                />
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
+                  <input
+                    type="date"
+                    className="feed-input"
+                    value={draft.start_date}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
+                  <input
+                    type="date"
+                    className="feed-input"
+                    value={draft.end_date}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
               </div>
 
               <div className="assign-feeds-panel">
@@ -832,7 +922,6 @@ export default function EventsPage({
 
   if (isFormRoute) {
     const heading = isEditRoute ? 'Edit Event' : 'Create Event';
-    const buttonLabel = isEditRoute ? 'Save Event' : 'Create Event';
     return (
       <div className="admin-page-shell">
         <div className="admin-page-header">
@@ -929,33 +1018,55 @@ export default function EventsPage({
               disabled={isSaving}
             />
           </div>
-          <select
-            className="filter-select"
-            value={draft.status}
-            onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
-            disabled={isSaving}
-          >
-            {STATUS_OPTIONS.map((status) => (
-              <option key={status} value={status}>
-                {status[0].toUpperCase() + status.slice(1)}
-              </option>
-            ))}
-          </select>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <input
-              type="date"
-              className="feed-input"
-              value={draft.start_date}
-              onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
-              disabled={isSaving}
-            />
-            <input
-              type="date"
-              className="feed-input"
-              value={draft.end_date}
-              onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
-              disabled={isSaving}
-            />
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
+              <select
+                className="filter-select"
+                value={draft.status}
+                onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
+                disabled={isSaving}
+              >
+                {STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {status[0].toUpperCase() + status.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
+              <input
+                type="text"
+                className="feed-input"
+                placeholder="Location"
+                value={draft.location}
+                onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
+                disabled={isSaving}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
+              <input
+                type="date"
+                className="feed-input"
+                value={draft.start_date}
+                onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
+                disabled={isSaving}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
+              <input
+                type="date"
+                className="feed-input"
+                value={draft.end_date}
+                onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
+                disabled={isSaving}
+              />
+            </label>
           </div>
 
           <div className="assign-feeds-panel">
@@ -1108,20 +1219,35 @@ export default function EventsPage({
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn-primary" onClick={submit} style={{ flex: 1 }} disabled={isSaving}>
+          <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+            <button className="btn-secondary" type="button" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ flexShrink: 0 }}>
+              Back
+            </button>
+            <button className="btn-primary" onClick={() => submit('save')} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || isDiscoveringFeeds}>
               {isSaving ? (
                 <>
-                  <RefreshCw size={18} className="spin" />
-                  {draft.usernames.trim() || draft.hashtags.trim() || draft.keywords.trim() ? 'Finding feeds...' : 'Saving...'}
-                </>
-              ) : editingId ? (
-                <>
-                  <Check size={18} /> {buttonLabel}
+                  <RefreshCw size={18} className="spin" /> Saving...
                 </>
               ) : (
                 <>
-                  <Plus size={18} /> {buttonLabel}
+                  <Plus size={18} /> Add Event
+                </>
+              )}
+            </button>
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() => submit('find')}
+              style={{ flex: 1, minWidth: 240 }}
+              disabled={isSaving || isDiscoveringFeeds}
+            >
+              {isSaving ? (
+                <>
+                  <RefreshCw size={18} className="spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={18} /> Add Event + Find Feeds
                 </>
               )}
             </button>

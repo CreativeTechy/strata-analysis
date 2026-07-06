@@ -1,87 +1,179 @@
-"""Lightweight embedding helpers used by the event and article pipeline."""
+"""Shared embedding helpers for articles and events."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import math
 from functools import lru_cache
-from math import sqrt
+from datetime import datetime, timezone
 
 import config
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - handled at runtime
+    SentenceTransformer = None
 
 
-@lru_cache(maxsize=2)
-def _load_model(model_name: str | None = None):
+def _clean_text(value) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _coerce_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [part.strip() for part in value.replace("\n", ",").split(",")]
+    return [value]
+
+
+def _dedupe_texts(values):
+    cleaned = []
+    seen = set()
+    for value in values or []:
+        text = _clean_text(value)
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
+def build_article_embedding_text(article: dict, enrichment: dict | None = None) -> str:
+    enrichment = enrichment or {}
+    parts = []
+    for value in (
+        article.get("title"),
+        enrichment.get("summary"),
+        article.get("summary"),
+        enrichment.get("topic"),
+        article.get("feed"),
+        article.get("source"),
+        article.get("author"),
+    ):
+        text = _clean_text(value)
+        if text:
+            parts.append(text)
+
+    list_fields = (
+        article.get("organizations"),
+        article.get("entities"),
+        article.get("topics"),
+        article.get("key_points"),
+        article.get("risks"),
+        article.get("opportunities"),
+        article.get("brands"),
+        article.get("car_models"),
+        enrichment.get("organizations"),
+        enrichment.get("entities"),
+        enrichment.get("topics"),
+        enrichment.get("key_points"),
+        enrichment.get("risks"),
+        enrichment.get("opportunities"),
+    )
+    for values in list_fields:
+        parts.extend(_dedupe_texts(_coerce_list(values)))
+
+    return "\n".join(part for part in parts if part)[:12000]
+
+
+def build_event_embedding_text(event: dict) -> str:
+    parts = []
+    for value in (
+        event.get("name"),
+        event.get("description"),
+        event.get("location"),
+        event.get("target_audience"),
+    ):
+        text = _clean_text(value)
+        if text:
+            parts.append(text)
+
+    list_fields = (
+        event.get("hashtags"),
+        event.get("keywords"),
+        event.get("usernames"),
+    )
+    for values in list_fields:
+        parts.extend(_dedupe_texts(_coerce_list(values)))
+
+    return "\n".join(part for part in parts if part)[:8000]
+
+
+def _normalize_vector(vector):
+    if not isinstance(vector, list):
+        return []
+    cleaned = []
+    for value in vector:
+        try:
+            cleaned.append(float(value))
+        except Exception:
+            continue
+    return cleaned
+
+
+@lru_cache(maxsize=1)
+def _load_model():
+    if SentenceTransformer is None:
+        return None
     try:
-        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer(
+            config.EMBEDDING_MODEL,
+            device=config.EMBEDDING_DEVICE or "cpu",
+        )
     except Exception:
         return None
 
-    resolved_name = model_name or config.EMBEDDING_MODEL
-    try:
-        return SentenceTransformer(resolved_name, device=config.EMBEDDING_DEVICE)
-    except Exception:
-        return None
 
-
-def cosine_similarity(left, right) -> float:
-    try:
-        left_values = [float(value) for value in left]
-        right_values = [float(value) for value in right]
-    except Exception:
-        return 0.0
-
-    if not left_values or not right_values or len(left_values) != len(right_values):
-        return 0.0
-
-    numerator = sum(l * r for l, r in zip(left_values, right_values))
-    left_norm = sqrt(sum(value * value for value in left_values))
-    right_norm = sqrt(sum(value * value for value in right_values))
-    if not left_norm or not right_norm:
-        return 0.0
-    return numerator / (left_norm * right_norm)
-
-
-def get_embedding(text: str, role: str | None = None):
-    payload = (text or "").strip()
-    if not payload:
-        return {}
-
-    model = _load_model()
-    if model is None:
+def get_embedding(text: str, *, role: str = "passage") -> dict:
+    text = _clean_text(text)
+    if not text:
         return {}
 
     try:
-        vector = model.encode(payload, normalize_embeddings=True)
-        if hasattr(vector, "tolist"):
-            vector = vector.tolist()
-        embedding_json = [float(value) for value in vector]
+        model = _load_model()
+        if model is None:
+            return {}
+        prepared_text = text
+        model_name = (config.EMBEDDING_MODEL or "").lower()
+        if "e5" in model_name and not prepared_text.lower().startswith(("query:", "passage:")):
+            prefix = "query" if role == "query" else "passage"
+            prepared_text = f"{prefix}: {prepared_text}"
+        embedding = model.encode(
+            prepared_text,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).tolist()
+        embedding = _normalize_vector(embedding)
+        if not embedding:
+            return {}
         return {
-            "embedding_json": embedding_json,
+            "embedding_json": embedding,
             "embedding_model": config.EMBEDDING_MODEL,
-            "embedding_source": role or "local",
+            "embedding_source": "sentence-transformers",
             "embedded_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
         return {}
 
 
-def build_event_embedding_text(event):
-    if not isinstance(event, dict):
-        return ""
+def cosine_similarity(a, b) -> float:
+    vector_a = _normalize_vector(a)
+    vector_b = _normalize_vector(b)
+    if not vector_a or not vector_b or len(vector_a) != len(vector_b):
+        return 0.0
 
-    parts = []
-    for key in ("name", "description", "location", "target_audience"):
-        value = str(event.get(key) or "").strip()
-        if value:
-            parts.append(value)
+    dot_product = sum(x * y for x, y in zip(vector_a, vector_b))
+    magnitude_a = math.sqrt(sum(x * x for x in vector_a))
+    magnitude_b = math.sqrt(sum(y * y for y in vector_b))
+    if not magnitude_a or not magnitude_b:
+        return 0.0
 
-    for key in ("hashtags", "keywords", "usernames"):
-        values = event.get(key) or []
-        if isinstance(values, str):
-            values = [values]
-        cleaned = [str(value).strip() for value in values if str(value).strip()]
-        if cleaned:
-            parts.append(" ".join(cleaned))
-
-    return "\n".join(parts).strip()
-
+    score = dot_product / (magnitude_a * magnitude_b)
+    if score != score:
+        return 0.0
+    return max(-1.0, min(1.0, score))

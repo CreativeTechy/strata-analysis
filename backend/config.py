@@ -40,8 +40,10 @@ def _load_dotenv():
 _load_dotenv()
 
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = db.get_database_url()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
 
 def _looks_like_feed_url(url: str) -> bool:

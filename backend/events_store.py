@@ -3,18 +3,87 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import lru_cache
 from typing import Iterable
 from urllib.parse import unquote, urlparse, urlunparse
 
 import config
 import db
 from embeddings import build_event_embedding_text, get_embedding
+from psycopg.types.json import Jsonb
 
 
 EVENT_SELECT = (
     "id,name,status,description,location,target_audience,hashtags,keywords,usernames,"
     "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at"
 )
+
+EVENT_SELECT_FIELDS = tuple(EVENT_SELECT.split(","))
+EVENT_MUTABLE_FIELDS = (
+    "name",
+    "status",
+    "description",
+    "location",
+    "target_audience",
+    "hashtags",
+    "keywords",
+    "usernames",
+    "start_date",
+    "end_date",
+)
+EVENT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
+
+
+@lru_cache(maxsize=1)
+def _event_table_columns():
+    if not config.DATABASE_URL:
+        return set()
+
+    try:
+        rows = db.fetch_all(
+            """
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'events'
+            """
+        )
+    except Exception:
+        return set()
+
+    columns = set()
+    for row in rows or []:
+        column_name = str((row or {}).get("column_name") or "").strip()
+        if column_name:
+            columns.add(column_name)
+    return columns
+
+
+def _event_columns():
+    columns = _event_table_columns()
+    if columns:
+        return columns
+    return set(EVENT_SELECT_FIELDS)
+
+
+def _event_select_sql():
+    columns = _event_columns()
+    selected = [field for field in EVENT_SELECT_FIELDS if field in columns]
+    return ",".join(selected or ["id", "name", "status", "start_date", "end_date", "created_at", "updated_at"])
+
+
+def _event_write_fields():
+    columns = _event_columns()
+    return [field for field in EVENT_MUTABLE_FIELDS if field in columns]
+
+
+def _event_embedding_fields():
+    columns = _event_columns()
+    return [field for field in EVENT_EMBEDDING_FIELDS if field in columns]
+
+
+def _jsonb_param(value):
+    return Jsonb(value if value is not None else [])
 
 
 def _normalize_url(value):
@@ -68,21 +137,8 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _response_error(resp):
-    body = (resp.text or "").strip()
-    if body:
-        return f"HTTP {resp.status_code}: {body}"
-    return f"HTTP {resp.status_code}"
-
-
-def _parse_total_count(row_count, fallback=0):
-    try:
-        return int(row_count)
-    except Exception:
-        return fallback
-
-
 def _normalize_event(row, feed_ids=None):
+    row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
     usernames = row.get("usernames") or []
@@ -204,6 +260,10 @@ def _persist_event_embedding(event):
     if not config.DATABASE_URL:
         return {}
 
+    embedding_fields = _event_embedding_fields()
+    if not embedding_fields:
+        return {}
+
     text = build_event_embedding_text(event)
     if not text:
         return {}
@@ -218,24 +278,32 @@ def _persist_event_embedding(event):
         return {}
 
     try:
+        assignments = []
+        params = []
+        if "embedding_json" in embedding_fields:
+            assignments.append("embedding_json = %s")
+            params.append(_jsonb_param(embedding.get("embedding_json") or []))
+        if "embedding_model" in embedding_fields:
+            assignments.append("embedding_model = %s")
+            params.append(embedding.get("embedding_model") or "")
+        if "embedding_source" in embedding_fields:
+            assignments.append("embedding_source = %s")
+            params.append(embedding.get("embedding_source") or "")
+        if "embedded_at" in embedding_fields:
+            assignments.append("embedded_at = %s")
+            params.append(embedding.get("embedded_at"))
+        if not assignments:
+            return {}
+        assignments.append("updated_at = now()")
+        params.append(event_id)
         row = db.fetch_one(
             f"""
             update events
-            set embedding_json = %s,
-                embedding_model = %s,
-                embedding_source = %s,
-                embedded_at = %s,
-                updated_at = now()
+            set {", ".join(assignments)}
             where id = %s
-            returning {EVENT_SELECT}
+            returning {_event_select_sql()}
             """,
-            (
-                embedding.get("embedding_json") or [],
-                embedding.get("embedding_model") or "",
-                embedding.get("embedding_source") or "",
-                embedding.get("embedded_at"),
-                event_id,
-            ),
+            params,
         )
         if isinstance(row, dict):
             return {
@@ -257,7 +325,7 @@ def list_events():
     try:
         rows = db.fetch_all(
             f"""
-            select {EVENT_SELECT}
+            select {_event_select_sql()}
             from events
             order by created_at asc
             """
@@ -278,7 +346,7 @@ def list_events_page(limit=25, offset=0):
     try:
         rows = db.fetch_all(
             f"""
-            select {EVENT_SELECT}
+            select {_event_select_sql()}
             from events
             order by created_at asc
             limit %s offset %s
@@ -301,7 +369,7 @@ def get_event(event_id):
     try:
         rows = db.fetch_all(
             f"""
-            select {EVENT_SELECT}
+            select {_event_select_sql()}
             from events
             where id = %s
             limit 1
@@ -373,33 +441,34 @@ def create_event(event):
 
     feed_ids = _clean_ids(event.get("feed_ids") or [])
     try:
+        write_fields = _event_write_fields()
+        if not write_fields:
+            return None
+        insert_columns = ", ".join(write_fields)
+        insert_values = ", ".join(["%s"] * len(write_fields))
+        params = [
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            for field in write_fields
+        ]
         row = db.fetch_one(
             f"""
-            insert into events (name, status, description, location, target_audience, hashtags, keywords, usernames, start_date, end_date)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            returning {EVENT_SELECT}
+            insert into events ({insert_columns})
+            values ({insert_values})
+            returning {_event_select_sql()}
             """,
-            (
-                payload["name"],
-                payload["status"],
-                payload["description"],
-                payload["location"],
-                payload["target_audience"],
-                payload["hashtags"],
-                payload["keywords"],
-                payload["usernames"],
-                payload["start_date"],
-                payload["end_date"],
-            ),
+            params,
         )
         if not row:
             return None
         created = _normalize_event(row)
         created.update(_persist_event_embedding(created))
-        created["feed_ids"] = _set_event_feeds(created["id"], feed_ids) if feed_ids else []
+        if feed_ids:
+            created["feed_ids"] = set_event_feeds(created["id"], feed_ids)
+        else:
+            created["feed_ids"] = []
         return created
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(f"Database request failed: {e}") from e
 
 
 def update_event(event_id, event):
@@ -409,36 +478,24 @@ def update_event(event_id, event):
     payload = _event_payload(event)
     feed_ids = event.get("feed_ids") if isinstance(event, dict) else None
     try:
+        write_fields = _event_write_fields()
+        if not write_fields:
+            return None
+        assignments = ", ".join(f"{field} = %s" for field in write_fields)
+        params = [
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            for field in write_fields
+        ]
+        params.append(int(event_id))
         row = db.fetch_one(
             f"""
             update events
-            set name = %s,
-                status = %s,
-                description = %s,
-                location = %s,
-                target_audience = %s,
-                hashtags = %s,
-                keywords = %s,
-                usernames = %s,
-                start_date = %s,
-                end_date = %s,
+            set {assignments},
                 updated_at = now()
             where id = %s
-            returning {EVENT_SELECT}
+            returning {_event_select_sql()}
             """,
-            (
-                payload["name"],
-                payload["status"],
-                payload["description"],
-                payload["location"],
-                payload["target_audience"],
-                payload["hashtags"],
-                payload["keywords"],
-                payload["usernames"],
-                payload["start_date"],
-                payload["end_date"],
-                int(event_id),
-            ),
+            params,
         )
         if not row:
             return None
@@ -449,8 +506,8 @@ def update_event(event_id, event):
         else:
             normalized["feed_ids"] = list_event_feed_ids(event_id)
         return normalized
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(f"Database request failed: {e}") from e
 
 
 def delete_event(event_id):
@@ -717,4 +774,3 @@ def diagnose_event_setup():
         return ""
     except Exception as e:
         return f"Database request failed: {e}"
-
