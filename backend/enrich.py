@@ -1,6 +1,6 @@
 """The ENRICHER stage: clean scraped articles, tag them with DeepSeek, and hand
 them to the saver (store.save_articles). Reads articles.json, writes
-enriched_articles.json, then upserts to Supabase.
+enriched_articles.json, then upserts to local PostgreSQL.
 """
 
 import json
@@ -40,7 +40,7 @@ OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.j
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
 # Used when no DeepSeek key is available, so the pipeline still produces
-# rows that satisfy the Supabase schema instead of crashing.
+# rows that satisfy the local PostgreSQL schema instead of crashing.
 DEFAULT_ENRICHMENT = {
     "topic": "",
     "article_category": "general_article",
@@ -753,7 +753,7 @@ def main():
     write_output(enriched)
 
     if enriched:
-        print("Uploading to Supabase...")
+        print("Saving to local PostgreSQL...")
         stats["articles_saved"] = save_articles(enriched)
         print("Done.")
         push_run_progress(

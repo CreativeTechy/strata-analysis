@@ -34,6 +34,12 @@ cp .env.example .env
 uvicorn main:app --port 8000
 ```
 
+If you need Spider Mode or local embeddings, also install the optional stack:
+
+```bash
+pip install -r requirements-optional.txt
+```
+
 Run the pipeline directly without the API:
 
 ```bash
@@ -56,6 +62,7 @@ The repo now includes a three-service deployment stack:
 - `backend/` builds the FastAPI API image
 - `dashboard/` builds the React dashboard image
 - `nginx/` exposes a reverse proxy on port 80
+- `adminer/` provides a simple web UI for browsing the local Postgres database
 
 Run it with:
 
@@ -66,6 +73,15 @@ docker compose up --build
 The public app is served from nginx on `http://localhost/`.
 API requests under `/api` and `/scrape` are forwarded to the backend
 container, and the dashboard keeps using same-origin fetches in production.
+
+To inspect the local Postgres data, open `http://localhost:8080/` and log in
+with:
+
+- System: `PostgreSQL`
+- Server: `db`
+- Username: `strata`
+- Password: `strata`
+- Database: `strata`
 
 ## Spider Mode
 

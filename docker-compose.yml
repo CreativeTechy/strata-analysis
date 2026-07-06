@@ -10,6 +10,16 @@ services:
       - ./backend/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     restart: unless-stopped
 
+  adminer:
+    image: adminer:4
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend

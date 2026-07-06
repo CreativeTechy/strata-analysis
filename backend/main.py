@@ -273,9 +273,24 @@ def _save_event_with_discovery(event):
     return event, discovery
 
 
+@app.post("/api/events/discover")
+def discover_event(payload: dict):
+    if not isinstance(payload, dict):
+        payload = {}
+    discovery = discover_event_links(payload)
+    return {"discovery": discovery}
+
+
 @app.post("/api/events")
 def add_event(payload: dict):
-    event = create_event(payload or {})
+    try:
+        event = create_event(payload or {})
+    except Exception as e:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to create event. Check database connection settings.",
+            "detail": detail or str(e),
+        }
     if not event:
         detail = diagnose_event_setup()
         return {
@@ -288,7 +303,14 @@ def add_event(payload: dict):
 
 @app.put("/api/events/{event_id}")
 def edit_event(event_id: int, payload: dict):
-    event = update_event(event_id, payload or {})
+    try:
+        event = update_event(event_id, payload or {})
+    except Exception as e:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to update event. Check database connection settings.",
+            "detail": detail or str(e),
+        }
     if not event:
         detail = diagnose_event_setup()
         return {
@@ -361,7 +383,7 @@ def get_articles_stats(
 
 @app.post("/api/feeds")
 def add_feed(payload: dict):
-    """Create or update a feed record in Supabase."""
+    """Create or update a feed record in local PostgreSQL."""
     feed = create_feed(payload or {})
     if not feed:
         detail = diagnose_feed_setup()
@@ -374,7 +396,7 @@ def add_feed(payload: dict):
 
 @app.put("/api/feeds/{feed_id}")
 def edit_feed(feed_id: int, payload: dict):
-    """Update a feed record in Supabase."""
+    """Update a feed record in local PostgreSQL."""
     feed = update_feed(feed_id, payload or {})
     if not feed:
         detail = diagnose_feed_setup()
@@ -387,7 +409,7 @@ def edit_feed(feed_id: int, payload: dict):
 
 @app.delete("/api/feeds/{feed_id}")
 def remove_feed(feed_id: int):
-    """Delete a feed record from Supabase."""
+    """Delete a feed record from local PostgreSQL."""
     if not delete_feed(feed_id):
         detail = diagnose_feed_setup()
         return {
@@ -428,7 +450,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
     run_id = run["id"] if run else uuid.uuid4().hex
     background_tasks.add_task(run_scraper_pipeline, run_id, event_id)
     return {
-        "message": "Scraper pipeline triggered. It will upload to Supabase when finished.",
+        "message": "Scraper pipeline triggered. It will save to local PostgreSQL when finished.",
         "run_id": run_id,
         "event_id": event_id,
     }

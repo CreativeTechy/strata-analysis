@@ -6,6 +6,7 @@ from collections import Counter
 import re
 
 import config
+import db
 from embeddings import cosine_similarity, get_embedding
 from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
 
@@ -186,7 +187,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
 
 
 def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     rows = []
@@ -195,14 +196,16 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=Non
     limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
 
     while len(rows) < limit:
-        params = {
-            "select": select,
-            "limit": str(min(page_size, limit - len(rows))),
-            "offset": str(offset),
-            "order": order,
-        }
-        _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
-        batch, _ = _fetch_articles(params)
+        batch, _ = _fetch_articles(
+            limit=min(page_size, limit - len(rows)),
+            offset=offset,
+            search=search,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+            order=order,
+            select=select,
+        )
         if not batch:
             break
         rows.extend(batch)
@@ -653,14 +656,16 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
             "sort": "semantic.desc",
         }
 
-    params = {
-        "select": ARTICLES_SELECT,
-        "limit": str(limit),
-        "offset": str(offset),
-        "order": f"{field}.{direction}",
-    }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
-    rows, total = _fetch_articles(params)
+    rows, total = _fetch_articles(
+        limit=limit,
+        offset=offset,
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        order=f"{field}.{direction}",
+        select=ARTICLES_SELECT,
+    )
     rows = _attach_event_similarity_scores(rows, event_id)
     return {
         "articles": rows,
@@ -682,12 +687,16 @@ def _count_articles(search=None, sentiment=None, category=None, event_id=None):
         )
         return total
 
-    params = {
-        "select": "id",
-        "limit": "1",
-    }
-    _apply_filters(params, search=search, sentiment=sentiment, category=category, event_id=event_id)
-    _, total = _fetch_articles(params)
+    _, total = _fetch_articles(
+        limit=1,
+        offset=0,
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        order=DEFAULT_SORT,
+        select="id",
+    )
     return total
 
 

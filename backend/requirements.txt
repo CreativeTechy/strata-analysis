@@ -4,5 +4,3 @@ requests>=2.31
 psycopg[binary]>=3.2
 fastapi>=0.110
 uvicorn[standard]>=0.29
-crawl4ai>=0.9
-sentence-transformers>=3.0.0
