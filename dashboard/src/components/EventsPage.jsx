@@ -341,6 +341,7 @@ export default function EventsPage({
     if (!payload.name) return null;
 
     setIsDiscoveringFeeds(true);
+    setMetadataError('');
     try {
       const res = await fetch('/api/events/discover', {
         method: 'POST',
@@ -382,20 +383,13 @@ export default function EventsPage({
     setFillMode('ai');
     setWizardStep(2);
     try {
-      const suggestions = await generateMetadataFromAi();
-      await discoverFeedsFromDraft({
-        ...draft,
-        target_audience: suggestions?.target_audience || draft.target_audience,
-        usernames: Array.isArray(suggestions?.usernames) ? suggestions.usernames.join(', ') : draft.usernames,
-        hashtags: Array.isArray(suggestions?.hashtags) ? suggestions.hashtags.join(', ') : draft.hashtags,
-        keywords: Array.isArray(suggestions?.keywords) ? suggestions.keywords.join(', ') : draft.keywords,
-      });
+      await generateMetadataFromAi();
     } catch {
       // The UI already stores the error state for the user.
     }
   };
 
-  const submit = async (mode = 'save') => {
+  const submit = async () => {
     if (isSaving) return;
 
     const payload = {
@@ -416,19 +410,14 @@ export default function EventsPage({
 
     setIsSaving(true);
     try {
-      let createdEvent = null;
       if (editingId) {
         await onUpdateEvent?.(editingId, payload);
       } else {
-        const result = await onCreateEvent?.(payload);
-        createdEvent = result?.event || null;
-        const discovery = result?.discovery ?? null;
-        setLastDiscovery(discovery);
+        await onCreateEvent?.(payload);
+        setLastDiscovery(null);
       }
       if (editingId) {
         navigate(`/events/${editingId}`);
-      } else if (mode === 'find' && createdEvent?.id) {
-        navigate(`/events/${createdEvent.id}`);
       } else {
         navigate('/events');
       }
@@ -598,14 +587,6 @@ export default function EventsPage({
                 disabled={!step1Complete || isSaving || isGeneratingMetadata}
               >
                 {isGeneratingMetadata ? 'Generating with AI...' : 'Fill by AI'}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => discoverFeedsFromDraft()}
-                disabled={!step1Complete || isSaving || isDiscoveringFeeds || isGeneratingMetadata}
-              >
-                {isDiscoveringFeeds ? 'Prefilling feeds...' : 'Prefill feeds with AI'}
               </button>
             </div>
 
@@ -878,15 +859,48 @@ export default function EventsPage({
                 </div>
               </div>
 
+              {metadataError && (
+                <div
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 14,
+                    background: 'rgba(255, 71, 87, 0.08)',
+                    border: '1px solid rgba(255, 71, 87, 0.16)',
+                    color: '#b42318',
+                    fontSize: '0.84rem',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {metadataError}
+                </div>
+              )}
+
               <div className="admin-form-hint">
-                Creating the event will automatically run the normal DeepSeek feed discovery flow using your final usernames, hashtags, and keywords.
+                Use AI to prefill feeds from the final usernames, hashtags, and keywords, then create the event row.
               </div>
 
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button className="btn-secondary" type="button" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ flexShrink: 0 }}>
                   Back
                 </button>
-                <button className="btn-primary" onClick={submit} style={{ flex: 1 }} disabled={isSaving || !step1Complete}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => discoverFeedsFromDraft()}
+                  disabled={!step1Complete || !step2Complete || isSaving || isDiscoveringFeeds || isGeneratingMetadata}
+                  style={{ flex: 1, minWidth: 220 }}
+                >
+                  {isDiscoveringFeeds ? (
+                    <>
+                      <RefreshCw size={18} className="spin" /> Prefilling feeds...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={18} /> Prefill feeds with AI
+                    </>
+                  )}
+                </button>
+                <button className="btn-primary" onClick={submit} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || !step1Complete}>
                   {isSaving ? (
                     <>
                       <RefreshCw size={18} className="spin" />
@@ -1223,31 +1237,14 @@ export default function EventsPage({
             <button className="btn-secondary" type="button" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ flexShrink: 0 }}>
               Back
             </button>
-            <button className="btn-primary" onClick={() => submit('save')} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || isDiscoveringFeeds}>
+            <button className="btn-primary" onClick={() => submit()} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || isDiscoveringFeeds}>
               {isSaving ? (
                 <>
                   <RefreshCw size={18} className="spin" /> Saving...
                 </>
               ) : (
                 <>
-                  <Plus size={18} /> Add Event
-                </>
-              )}
-            </button>
-            <button
-              className="btn-primary"
-              type="button"
-              onClick={() => submit('find')}
-              style={{ flex: 1, minWidth: 240 }}
-              disabled={isSaving || isDiscoveringFeeds}
-            >
-              {isSaving ? (
-                <>
-                  <RefreshCw size={18} className="spin" /> Saving...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} /> Add Event + Find Feeds
+                  <Plus size={18} /> {isEditRoute ? 'Update Event' : 'Create Event'}
                 </>
               )}
             </button>

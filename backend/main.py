@@ -168,7 +168,13 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
                 pass
 
         try:
-            update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
+            update_pipeline_run(
+                run_id,
+                status="running",
+                stage="scrape",
+                message="Starting scrape...",
+                started_at=datetime.now(timezone.utc).isoformat(),
+            )
             print("1. Scraping configured sources...")
             subprocess.run(
                 ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
@@ -297,8 +303,7 @@ def add_event(payload: dict):
             "error": "Unable to create event. Check database connection settings.",
             "detail": detail or "The event request did not return a row.",
         }
-    event, discovery = _save_event_with_discovery(event)
-    return {"event": event, "discovery": discovery}
+    return {"event": event}
 
 
 @app.put("/api/events/{event_id}")
