@@ -1,6 +1,6 @@
-"""The ENRICHER stage: clean scraped articles, tag them with DeepSeek, and hand
-them to the saver (store.save_articles). Reads articles.json, writes
-enriched_articles.json, then upserts to Supabase.
+"""The ENRICHER stage: clean scraped articles, tag them with the local LLM,
+and hand them to the saver (store.save_articles). Reads articles.json, writes
+enriched_articles.json, then upserts to local PostgreSQL.
 """
 
 import json
@@ -10,17 +10,16 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 import config
+from embeddings import build_article_embedding_text, get_embedding
 from events_store import get_event
+from llm_client import chat_completion
 from pipeline_runs import update_pipeline_run
 from store import save_articles
 
-DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
 MIN_TEXT_LENGTH = 200
 PROMPT_VERSION = "2026-06-30"
-MODEL_NAME = "deepseek-chat"
+MODEL_NAME = config.LOCAL_LLM_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
     "review",
@@ -38,8 +37,8 @@ INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
-# Used when no DeepSeek key is available, so the pipeline still produces
-# rows that satisfy the Supabase schema instead of crashing.
+# Used when the local LLM is unavailable so the pipeline still produces
+# rows that satisfy the local PostgreSQL schema instead of crashing.
 DEFAULT_ENRICHMENT = {
     "topic": "",
     "article_category": "general_article",
@@ -73,6 +72,10 @@ DEFAULT_ENRICHMENT = {
     "analysis_prompt_version": PROMPT_VERSION,
     "analyzed_at": "",
     "insight_json": {},
+    "embedding_json": [],
+    "embedding_model": "",
+    "embedding_source": "",
+    "embedded_at": "",
 }
 
 
@@ -373,6 +376,10 @@ def _validate_enrichment(payload):
         "analysis_prompt_version": _as_text(payload.get("analysis_prompt_version")) or PROMPT_VERSION,
         "analyzed_at": analyzed_at,
         "insight_json": insight_json,
+        "embedding_json": _as_list(payload.get("embedding_json")),
+        "embedding_model": _as_text(payload.get("embedding_model")),
+        "embedding_source": _as_text(payload.get("embedding_source")),
+        "embedded_at": _as_text(payload.get("embedded_at")),
     }
 
 
@@ -574,7 +581,7 @@ def build_topic_insight(articles, topic_name=""):
     }
 
 
-def enrich_article(article, api_key, event_context=""):
+def enrich_article(article, event_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:5000]
     prompt = (
@@ -586,26 +593,21 @@ def enrich_article(article, api_key, event_context=""):
         prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context only to help interpret the article. Do not invent facts."
 
     try:
-        response = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MODEL_NAME,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 900,
-                "temperature": 0.0,
-            },
+        raw = chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=MODEL_NAME,
+            temperature=0.0,
+            max_tokens=900,
             timeout=30,
         )
-        response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"]
         parsed = json.loads(_strip_code_fences(raw))
         validated = _validate_enrichment(parsed)
         if validated is None:
-            raise ValueError("DeepSeek returned JSON that did not match the enrichment schema")
+            raise ValueError("Local LLM returned JSON that did not match the enrichment schema")
+        embedding_text = build_article_embedding_text(article, validated)
+        embedding = get_embedding(embedding_text)
+        if embedding:
+            validated.update(embedding)
         return validated
     except Exception as e:
         print(f"  Enrichment error for '{title[:50]}': {e}")
@@ -684,9 +686,6 @@ def main():
                 event_name = line.replace("Name: ", "", 1).strip()
                 break
 
-    if not DEEPSEEK_API_KEY:
-        print("DEEPSEEK_API_KEY not set - skipping AI enrichment, using defaults.")
-
     enriched = []
     for idx, article in enumerate(articles):
         title = article.get("title", "")[:60]
@@ -700,14 +699,16 @@ def main():
             stage="enrich",
             message=f"Cleaning articles {idx + 1}/{len(articles)}...",
         )
-        if DEEPSEEK_API_KEY:
-            print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
-            enrichment = enrich_article(article, DEEPSEEK_API_KEY, event_context=event_context)
-            if enrichment is None:
-                enrichment = dict(DEFAULT_ENRICHMENT)
-            time.sleep(0.5)
-        else:
+        print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
+        enrichment = enrich_article(article, event_context=event_context)
+        if enrichment is None:
             enrichment = dict(DEFAULT_ENRICHMENT)
+        time.sleep(0.5)
+        if not enrichment.get("embedding_json"):
+            embedding_text = build_article_embedding_text(article, enrichment)
+            embedding = get_embedding(embedding_text)
+            if embedding:
+                enrichment.update(embedding)
         if not enrichment.get("analyzed_at"):
             enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched.append({**article, **enrichment})
@@ -735,7 +736,7 @@ def main():
     write_output(enriched)
 
     if enriched:
-        print("Uploading to Supabase...")
+        print("Saving to local PostgreSQL...")
         stats["articles_saved"] = save_articles(enriched)
         print("Done.")
         push_run_progress(

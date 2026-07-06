@@ -1,47 +1,89 @@
-"""Supabase-backed event helpers.
-
-Events group feeds and articles for a single scrape scope. Feeds can be shared
-across events, so memberships live in a join table.
-"""
+"""Postgres-backed event helpers."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import lru_cache
 from typing import Iterable
 from urllib.parse import unquote, urlparse, urlunparse
 
-import requests
-
 import config
+import db
+from embeddings import build_event_embedding_text, get_embedding
+from psycopg.types.json import Jsonb
 
 
-def _headers():
-    return {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+EVENT_SELECT = (
+    "id,name,status,description,location,target_audience,hashtags,keywords,usernames,"
+    "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at"
+)
+
+EVENT_SELECT_FIELDS = tuple(EVENT_SELECT.split(","))
+EVENT_MUTABLE_FIELDS = (
+    "name",
+    "status",
+    "description",
+    "location",
+    "target_audience",
+    "hashtags",
+    "keywords",
+    "usernames",
+    "start_date",
+    "end_date",
+)
+EVENT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
 
 
-def _endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/events"
+@lru_cache(maxsize=1)
+def _event_table_columns():
+    if not config.DATABASE_URL:
+        return set()
+
+    try:
+        rows = db.fetch_all(
+            """
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'events'
+            """
+        )
+    except Exception:
+        return set()
+
+    columns = set()
+    for row in rows or []:
+        column_name = str((row or {}).get("column_name") or "").strip()
+        if column_name:
+            columns.add(column_name)
+    return columns
 
 
-def _event_feeds_endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/event_feeds"
+def _event_columns():
+    columns = _event_table_columns()
+    if columns:
+        return columns
+    return set(EVENT_SELECT_FIELDS)
 
 
-def _article_events_endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/article_events"
+def _event_select_sql():
+    columns = _event_columns()
+    selected = [field for field in EVENT_SELECT_FIELDS if field in columns]
+    return ",".join(selected or ["id", "name", "status", "start_date", "end_date", "created_at", "updated_at"])
 
 
-def _feeds_endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/feeds"
+def _event_write_fields():
+    columns = _event_columns()
+    return [field for field in EVENT_MUTABLE_FIELDS if field in columns]
 
 
-def _articles_endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/articles"
+def _event_embedding_fields():
+    columns = _event_columns()
+    return [field for field in EVENT_EMBEDDING_FIELDS if field in columns]
+
+
+def _jsonb_param(value):
+    return Jsonb(value if value is not None else [])
 
 
 def _normalize_url(value):
@@ -95,27 +137,8 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _response_error(resp):
-    body = (resp.text or "").strip()
-    if body:
-        return f"HTTP {resp.status_code}: {body}"
-    return f"HTTP {resp.status_code}"
-
-
-def _parse_total_count(resp, fallback=0):
-    content_range = resp.headers.get("Content-Range") or resp.headers.get("content-range") or ""
-    if "/" in content_range:
-        total = content_range.split("/", 1)[1].strip()
-        if total == "*":
-            return fallback
-        try:
-            return int(total)
-        except Exception:
-            return fallback
-    return fallback
-
-
 def _normalize_event(row, feed_ids=None):
+    row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
     usernames = row.get("usernames") or []
@@ -137,6 +160,10 @@ def _normalize_event(row, feed_ids=None):
         "usernames": _clean_terms(usernames),
         "start_date": row.get("start_date"),
         "end_date": row.get("end_date"),
+        "embedding_json": row.get("embedding_json") or [],
+        "embedding_model": (row.get("embedding_model") or "").strip(),
+        "embedding_source": (row.get("embedding_source") or "").strip(),
+        "embedded_at": row.get("embedded_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "feed_ids": _clean_ids(feed_ids or []),
@@ -162,20 +189,17 @@ def _normalize_feed(row):
     }
 
 
-def _fetch_rows(endpoint, params):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+def _fetch_rows(query, params=None):
+    if not config.DATABASE_URL:
         return []
-    resp = requests.get(endpoint, headers=_headers(), params=params, timeout=30)
-    resp.raise_for_status()
-    rows = resp.json()
-    return rows if isinstance(rows, list) else []
+    try:
+        return db.fetch_all(query, params or ())
+    except Exception:
+        return []
 
 
 def _fetch_event_feed_map():
-    rows = _fetch_rows(
-        _event_feeds_endpoint(),
-        {"select": "event_id,feed_id", "order": "event_id.asc,feed_id.asc"},
-    )
+    rows = _fetch_rows("select event_id, feed_id from event_feeds order by event_id asc, feed_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
@@ -188,10 +212,7 @@ def _fetch_event_feed_map():
 
 
 def _fetch_feed_event_map():
-    rows = _fetch_rows(
-        _event_feeds_endpoint(),
-        {"select": "event_id,feed_id", "order": "feed_id.asc,event_id.asc"},
-    )
+    rows = _fetch_rows("select event_id, feed_id from event_feeds order by feed_id asc, event_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
@@ -204,10 +225,7 @@ def _fetch_feed_event_map():
 
 
 def _fetch_feed_url_map():
-    rows = _fetch_rows(
-        _feeds_endpoint(),
-        {"select": "id,url", "order": "id.asc"},
-    )
+    rows = _fetch_rows("select id, url from feeds order by id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
@@ -221,19 +239,10 @@ def _fetch_feed_url_map():
 
 
 def _fetch_article_event_map(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        return []
-    try:
-        rows = _fetch_rows(
-            _article_events_endpoint(),
-            {
-                "select": "article_id",
-                "event_id": f"eq.{int(event_id)}",
-                "order": "article_id.asc",
-            },
-        )
-    except Exception:
-        return []
+    rows = _fetch_rows(
+        "select article_id from article_events where event_id = %s order by article_id asc",
+        (int(event_id),),
+    )
     ids = []
     seen = set()
     for row in rows:
@@ -247,36 +256,79 @@ def _fetch_article_event_map(event_id):
     return ids
 
 
-def _upsert_rows(endpoint, rows, conflict_key, *, prefer="resolution=merge-duplicates,return=representation"):
-    if not rows or not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        return []
+def _persist_event_embedding(event):
+    if not config.DATABASE_URL:
+        return {}
 
-    resp = requests.post(
-        f"{endpoint}?on_conflict={conflict_key}",
-        headers={**_headers(), "Prefer": prefer},
-        json=rows,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json() if resp.content else None
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return [data]
-    return []
+    embedding_fields = _event_embedding_fields()
+    if not embedding_fields:
+        return {}
+
+    text = build_event_embedding_text(event)
+    if not text:
+        return {}
+
+    embedding = get_embedding(text)
+    if not embedding:
+        return {}
+
+    try:
+        event_id = int(event.get("id"))
+    except Exception:
+        return {}
+
+    try:
+        assignments = []
+        params = []
+        if "embedding_json" in embedding_fields:
+            assignments.append("embedding_json = %s")
+            params.append(_jsonb_param(embedding.get("embedding_json") or []))
+        if "embedding_model" in embedding_fields:
+            assignments.append("embedding_model = %s")
+            params.append(embedding.get("embedding_model") or "")
+        if "embedding_source" in embedding_fields:
+            assignments.append("embedding_source = %s")
+            params.append(embedding.get("embedding_source") or "")
+        if "embedded_at" in embedding_fields:
+            assignments.append("embedded_at = %s")
+            params.append(embedding.get("embedded_at"))
+        if not assignments:
+            return {}
+        assignments.append("updated_at = now()")
+        params.append(event_id)
+        row = db.fetch_one(
+            f"""
+            update events
+            set {", ".join(assignments)}
+            where id = %s
+            returning {_event_select_sql()}
+            """,
+            params,
+        )
+        if isinstance(row, dict):
+            return {
+                "embedding_json": row.get("embedding_json") or embedding.get("embedding_json") or [],
+                "embedding_model": (row.get("embedding_model") or embedding.get("embedding_model") or "").strip(),
+                "embedding_source": (row.get("embedding_source") or embedding.get("embedding_source") or "").strip(),
+                "embedded_at": row.get("embedded_at") or embedding.get("embedded_at"),
+            }
+    except Exception:
+        return embedding
+
+    return embedding
 
 
 def list_events():
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     try:
-        rows = _fetch_rows(
-            _endpoint(),
-            {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
-                "order": "created_at.asc",
-            },
+        rows = db.fetch_all(
+            f"""
+            select {_event_select_sql()}
+            from events
+            order by created_at asc
+            """
         )
         feed_map = _fetch_event_feed_map()
         return [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows]
@@ -285,46 +337,44 @@ def list_events():
 
 
 def list_events_page(limit=25, offset=0):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return {"events": [], "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
 
     limit = max(1, min(int(limit or 25), 100))
     offset = max(0, int(offset or 0))
 
     try:
-        resp = requests.get(
-            _endpoint(),
-            headers={**_headers(), "Prefer": "count=exact"},
-            params={
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
-                "order": "created_at.asc",
-                "limit": str(limit),
-                "offset": str(offset),
-            },
-            timeout=30,
+        rows = db.fetch_all(
+            f"""
+            select {_event_select_sql()}
+            from events
+            order by created_at asc
+            limit %s offset %s
+            """,
+            (limit, offset),
         )
-        resp.raise_for_status()
-        rows = resp.json()
+        total_row = db.fetch_one("select count(*)::int as total from events")
         feed_map = _fetch_event_feed_map()
         events = [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
-        total = _parse_total_count(resp, fallback=len(events))
+        total = int((total_row or {}).get("total") or len(events))
         return {"events": events, "total": total, "limit": limit, "offset": offset}
     except Exception:
         return {"events": [], "total": 0, "limit": limit, "offset": offset}
 
 
 def get_event(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return None
 
     try:
-        rows = _fetch_rows(
-            _endpoint(),
-            {
-                "select": "id,name,status,description,location,target_audience,hashtags,keywords,usernames,start_date,end_date,created_at,updated_at",
-                "id": f"eq.{int(event_id)}",
-                "limit": 1,
-            },
+        rows = db.fetch_all(
+            f"""
+            select {_event_select_sql()}
+            from events
+            where id = %s
+            limit 1
+            """,
+            (int(event_id),),
         )
         if not rows:
             return None
@@ -362,8 +412,27 @@ def _event_payload(event):
     }
 
 
+def _set_event_feeds(event_id, feed_ids):
+    event_id = int(event_id)
+    feed_ids = _clean_ids(feed_ids)
+    try:
+        db.execute("delete from event_feeds where event_id = %s", (event_id,))
+        for feed_id in feed_ids:
+            db.execute(
+                """
+                insert into event_feeds (event_id, feed_id)
+                values (%s, %s)
+                on conflict (event_id, feed_id) do nothing
+                """,
+                (event_id, feed_id),
+            )
+        return feed_ids
+    except Exception:
+        return []
+
+
 def create_event(event):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return None
 
     payload = _event_payload(event)
@@ -372,97 +441,94 @@ def create_event(event):
 
     feed_ids = _clean_ids(event.get("feed_ids") or [])
     try:
-        resp = requests.post(
-            _endpoint(),
-            headers={**_headers(), "Prefer": "return=representation"},
-            json=payload,
-            timeout=30,
+        write_fields = _event_write_fields()
+        if not write_fields:
+            return None
+        insert_columns = ", ".join(write_fields)
+        insert_values = ", ".join(["%s"] * len(write_fields))
+        params = [
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            for field in write_fields
+        ]
+        row = db.fetch_one(
+            f"""
+            insert into events ({insert_columns})
+            values ({insert_values})
+            returning {_event_select_sql()}
+            """,
+            params,
         )
-        resp.raise_for_status()
-        rows = resp.json() if resp.content else None
-        if isinstance(rows, list) and rows:
-            row = rows[0]
-        elif isinstance(rows, dict) and rows:
-            row = rows
-        else:
-            row = None
-        if row is None:
+        if not row:
             return None
         created = _normalize_event(row)
+        created.update(_persist_event_embedding(created))
         if feed_ids:
             created["feed_ids"] = set_event_feeds(created["id"], feed_ids)
         else:
             created["feed_ids"] = []
         return created
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(f"Database request failed: {e}") from e
 
 
 def update_event(event_id, event):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return None
 
     payload = _event_payload(event)
-    feed_ids = event.get("feed_ids")
+    feed_ids = event.get("feed_ids") if isinstance(event, dict) else None
     try:
-        resp = requests.patch(
-            _endpoint(),
-            headers={**_headers(), "Prefer": "return=representation"},
-            params={"id": f"eq.{int(event_id)}"},
-            json=payload,
-            timeout=30,
+        write_fields = _event_write_fields()
+        if not write_fields:
+            return None
+        assignments = ", ".join(f"{field} = %s" for field in write_fields)
+        params = [
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            for field in write_fields
+        ]
+        params.append(int(event_id))
+        row = db.fetch_one(
+            f"""
+            update events
+            set {assignments},
+                updated_at = now()
+            where id = %s
+            returning {_event_select_sql()}
+            """,
+            params,
         )
-        resp.raise_for_status()
-        rows = resp.json() if resp.content else None
-        row = None
-        if isinstance(rows, list) and rows:
-            row = rows[0]
-        elif isinstance(rows, dict) and rows:
-            row = rows
-        if row is None:
-            row = get_event(event_id)
-            if row is None:
-                return None
-            row = row.copy()
+        if not row:
+            return None
         normalized = _normalize_event(row)
+        normalized.update(_persist_event_embedding(normalized))
         if feed_ids is not None:
-            normalized["feed_ids"] = set_event_feeds(event_id, feed_ids)
+            normalized["feed_ids"] = _set_event_feeds(event_id, feed_ids)
         else:
             normalized["feed_ids"] = list_event_feed_ids(event_id)
         return normalized
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError(f"Database request failed: {e}") from e
 
 
 def delete_event(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return False
 
     try:
-        resp = requests.delete(
-            _endpoint(),
-            headers=_headers(),
-            params={"id": f"eq.{int(event_id)}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
+        db.execute("delete from events where id = %s", (int(event_id),))
         return True
     except Exception:
         return False
 
 
 def list_event_feed_ids(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            _event_feeds_endpoint(),
-            {
-                "select": "feed_id",
-                "event_id": f"eq.{int(event_id)}",
-                "order": "feed_id.asc",
-            },
+            "select feed_id from event_feeds where event_id = %s order by feed_id asc",
+            (int(event_id),),
         )
         ids = []
         seen = set()
@@ -480,17 +546,13 @@ def list_event_feed_ids(event_id):
 
 
 def list_feed_event_ids(feed_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            _event_feeds_endpoint(),
-            {
-                "select": "event_id",
-                "feed_id": f"eq.{int(feed_id)}",
-                "order": "event_id.asc",
-            },
+            "select event_id from event_feeds where feed_id = %s order by event_id asc",
+            (int(feed_id),),
         )
         ids = []
         seen = set()
@@ -508,83 +570,55 @@ def list_feed_event_ids(feed_id):
 
 
 def set_event_feeds(event_id, feed_ids):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
-
-    event_id = int(event_id)
-    feed_ids = _clean_ids(feed_ids)
-    try:
-        requests.delete(
-            _event_feeds_endpoint(),
-            headers=_headers(),
-            params={"event_id": f"eq.{event_id}"},
-            timeout=30,
-        ).raise_for_status()
-    except Exception:
-        return []
-
-    if not feed_ids:
-        return []
-
-    payload = [{"event_id": event_id, "feed_id": feed_id} for feed_id in feed_ids]
-    try:
-        _upsert_rows(_event_feeds_endpoint(), payload, "event_id,feed_id", prefer="resolution=ignore-duplicates,return=representation")
-        return feed_ids
-    except Exception:
-        return []
+    return _set_event_feeds(event_id, feed_ids)
 
 
 def set_feed_events(feed_id, event_ids):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     feed_id = int(feed_id)
     event_ids = _clean_ids(event_ids)
     try:
-        requests.delete(
-            _event_feeds_endpoint(),
-            headers=_headers(),
-            params={"feed_id": f"eq.{feed_id}"},
-            timeout=30,
-        ).raise_for_status()
-    except Exception:
-        return []
-
-    if not event_ids:
-        return []
-
-    payload = [{"event_id": event_id, "feed_id": feed_id} for event_id in event_ids]
-    try:
-        _upsert_rows(_event_feeds_endpoint(), payload, "event_id,feed_id", prefer="resolution=ignore-duplicates,return=representation")
+        db.execute("delete from event_feeds where feed_id = %s", (feed_id,))
+        for event_id in event_ids:
+            db.execute(
+                """
+                insert into event_feeds (event_id, feed_id)
+                values (%s, %s)
+                on conflict (event_id, feed_id) do nothing
+                """,
+                (event_id, feed_id),
+            )
         return event_ids
     except Exception:
         return []
 
 
 def list_feeds_for_event(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
-        return []
-
-    feed_ids = list_event_feed_ids(event_id)
-    if not feed_ids:
+    if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            _feeds_endpoint(),
-            {
-                "select": "id,url,name,enabled,source_type,category,created_at,updated_at",
-                "id": f"in.({','.join(str(feed_id) for feed_id in feed_ids)})",
-                "order": "created_at.asc",
-            },
+            """
+            select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.created_at, f.updated_at
+            from feeds f
+            inner join event_feeds ef on ef.feed_id = f.id
+            where ef.event_id = %s
+            order by f.created_at asc
+            """,
+            (int(event_id),),
         )
         return [_normalize_feed(row) for row in rows]
     except Exception:
         return []
 
 
-def set_article_events(article_ids, event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+def set_article_events(article_ids, event_id, similarity_scores=None):
+    if not config.DATABASE_URL:
         return 0
 
     article_ids = _clean_ids(article_ids)
@@ -592,22 +626,63 @@ def set_article_events(article_ids, event_id):
         return 0
 
     event_id = int(event_id)
-    payload = [{"article_id": article_id, "event_id": event_id} for article_id in article_ids]
+    score_map = {}
+    if isinstance(similarity_scores, dict):
+        for key, value in similarity_scores.items():
+            try:
+                article_key = int(key)
+            except Exception:
+                continue
+            try:
+                score_map[article_key] = float(value)
+            except Exception:
+                continue
 
     try:
-        _upsert_rows(
-            _article_events_endpoint(),
-            payload,
-            "article_id,event_id",
-            prefer="resolution=ignore-duplicates,return=representation",
-        )
+        db.execute("delete from article_events where event_id = %s and article_id = any(%s)", (event_id, article_ids))
+        for article_id in article_ids:
+            db.execute(
+                """
+                insert into article_events (article_id, event_id, similarity_score)
+                values (%s, %s, %s)
+                on conflict (article_id, event_id) do update
+                set similarity_score = excluded.similarity_score,
+                    created_at = article_events.created_at
+                """,
+                (article_id, event_id, score_map.get(article_id)),
+            )
         return len(article_ids)
     except Exception:
         return 0
 
 
+def list_article_similarity_scores_for_event(event_id):
+    if not config.DATABASE_URL:
+        return {}
+
+    try:
+        rows = _fetch_rows(
+            "select article_id, similarity_score from article_events where event_id = %s order by article_id asc",
+            (int(event_id),),
+        )
+    except Exception:
+        return {}
+
+    scores = {}
+    for row in rows:
+        try:
+            article_id = int(row.get("article_id"))
+        except Exception:
+            continue
+        try:
+            scores[article_id] = float(row.get("similarity_score"))
+        except Exception:
+            continue
+    return scores
+
+
 def list_article_ids_for_event(event_id):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     ids = []
@@ -623,24 +698,17 @@ def list_article_ids_for_event(event_id):
     if not feed_ids:
         return ids
 
-    feed_url_map = _fetch_feed_url_map()
-    feed_urls = []
-    for feed_id in feed_ids:
-        for feed_url, mapped_ids in feed_url_map.items():
-            if feed_id in mapped_ids and feed_url not in feed_urls:
-                feed_urls.append(feed_url)
-
-    if not feed_urls:
-        return ids
-
     try:
         rows = _fetch_rows(
-            _articles_endpoint(),
-            {
-                "select": "id,feed",
-                "feed": f"in.({','.join(feed_urls)})",
-                "order": "id.asc",
-            },
+            """
+            select a.id
+            from articles a
+            inner join feeds f on f.url = a.feed
+            inner join event_feeds ef on ef.feed_id = f.id
+            where ef.event_id = %s
+            order by a.id asc
+            """,
+            (int(event_id),),
         )
     except Exception:
         rows = []
@@ -659,45 +727,50 @@ def list_article_ids_for_event(event_id):
 
 
 def list_event_ids_for_feed_url(feed_url):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     key = _normalize_url(feed_url)
     if not key:
         return []
 
-    feed_url_map = _fetch_feed_url_map()
-    feed_ids = feed_url_map.get(key, [])
-    if not feed_ids:
+    try:
+        rows = _fetch_rows(
+            """
+            select e.id
+            from events e
+            inner join event_feeds ef on ef.event_id = e.id
+            inner join feeds f on f.id = ef.feed_id
+            where lower(f.url) = lower(%s)
+            order by e.id asc
+            """,
+            (key,),
+        )
+    except Exception:
         return []
 
-    feed_event_map = _fetch_feed_event_map()
     ids = []
     seen = set()
-    for feed_id in feed_ids:
-        for event_id in feed_event_map.get(feed_id, []):
-            if event_id in seen:
-                continue
-            seen.add(event_id)
-            ids.append(event_id)
+    for row in rows:
+        try:
+            event_id = int(row.get("id"))
+        except Exception:
+            continue
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        ids.append(event_id)
     return ids
 
 
 def diagnose_event_setup():
-    if not config.SUPABASE_URL:
-        return "SUPABASE_URL is missing."
-    if not config.SUPABASE_SERVICE_KEY:
-        return "SUPABASE_SERVICE_KEY is missing."
+    if not config.DATABASE_URL:
+        return "DATABASE_URL is missing."
 
     try:
-        resp = requests.get(
-            _endpoint(),
-            headers=_headers(),
-            params={"select": "id", "limit": 1},
-            timeout=15,
-        )
-        if not resp.ok:
-            return f"Supabase request failed: {_response_error(resp)}"
+        row = db.fetch_one("select 1 as ok")
+        if not row:
+            return "Database request failed."
         return ""
     except Exception as e:
-        return f"Supabase request failed: {e}"
+        return f"Database request failed: {e}"

@@ -1,23 +1,12 @@
-"""Pipeline run tracking helpers for Supabase-backed observability."""
+"""Postgres-backed pipeline run tracking helpers."""
 
 import uuid
 
-import requests
-
 import config
+import db
 
 
-def _headers():
-    return {
-        "apikey": config.SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-
-def _endpoint():
-    return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1/pipeline_runs"
+RUN_SELECT = "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at"
 
 
 def _normalize(row):
@@ -41,49 +30,31 @@ def _normalize(row):
 
 
 def _fetch_by_id(run_id):
-    resp = requests.get(
-        _endpoint(),
-        headers=_headers(),
-        params={
-            "select": "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
-            "id": f"eq.{run_id}",
-            "limit": 1,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    rows = resp.json()
-    if isinstance(rows, list) and rows:
-        return _normalize(rows[0])
-    return None
+    row = db.fetch_one(f"select {RUN_SELECT} from pipeline_runs where id = %s limit 1", (run_id,))
+    return _normalize(row) if row else None
 
 
 def list_pipeline_runs(limit=10):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return []
 
     try:
-        resp = requests.get(
-            _endpoint(),
-            headers=_headers(),
-            params={
-                "select": "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at",
-                "order": "created_at.desc",
-                "limit": str(limit),
-            },
-            timeout=15,
+        rows = db.fetch_all(
+            f"""
+            select {RUN_SELECT}
+            from pipeline_runs
+            order by created_at desc
+            limit %s
+            """,
+            (limit,),
         )
-        resp.raise_for_status()
-        rows = resp.json()
-        if isinstance(rows, list):
-            return [_normalize(row) for row in rows]
+        return [_normalize(row) for row in rows]
     except Exception:
         return []
-    return []
 
 
 def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="queued", stage="queued", message=""):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY:
+    if not config.DATABASE_URL:
         return None
 
     run_id = run_id or uuid.uuid4().hex
@@ -97,41 +68,70 @@ def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="q
     }
 
     try:
-        resp = requests.post(
-            _endpoint(),
-            headers={**_headers(), "Prefer": "return=representation"},
-            json=payload,
-            timeout=15,
+        row = db.fetch_one(
+            f"""
+            insert into pipeline_runs (id, pipeline, event_id, status, stage, message)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (id) do update set
+              pipeline = excluded.pipeline,
+              event_id = excluded.event_id,
+              status = excluded.status,
+              stage = excluded.stage,
+              message = excluded.message,
+              updated_at = now()
+            returning {RUN_SELECT}
+            """,
+            (
+                payload["id"],
+                payload["pipeline"],
+                payload["event_id"],
+                payload["status"],
+                payload["stage"],
+                payload["message"],
+            ),
         )
-        resp.raise_for_status()
-        rows = resp.json() if resp.content else None
-        if isinstance(rows, list) and rows:
-            return _normalize(rows[0])
-        if isinstance(rows, dict) and rows:
-            return _normalize(rows)
-        return _fetch_by_id(run_id)
+        return _normalize(row) if row else _fetch_by_id(run_id)
     except Exception:
         return None
 
 
 def update_pipeline_run(run_id, **fields):
-    if not config.SUPABASE_URL or not config.SUPABASE_SERVICE_KEY or not run_id:
+    if not config.DATABASE_URL or not run_id:
         return None
 
-    try:
-        resp = requests.patch(
-            _endpoint(),
-            headers={**_headers(), "Prefer": "return=representation"},
-            params={"id": f"eq.{run_id}"},
-            json=fields,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        rows = resp.json() if resp.content else None
-        if isinstance(rows, list) and rows:
-            return _normalize(rows[0])
-        if isinstance(rows, dict) and rows:
-            return _normalize(rows)
+    allowed = {
+        "pipeline",
+        "event_id",
+        "status",
+        "stage",
+        "message",
+        "articles_scraped",
+        "articles_cleaned",
+        "articles_saved",
+        "crawl_pages",
+        "error",
+        "started_at",
+        "finished_at",
+    }
+    keys = [key for key in fields.keys() if key in allowed]
+    if not keys:
         return _fetch_by_id(run_id)
+
+    assignments = ", ".join(f"{key} = %s" for key in keys)
+    params = [fields[key] for key in keys] + [run_id]
+
+    try:
+        row = db.fetch_one(
+            f"""
+            update pipeline_runs
+            set {assignments},
+                updated_at = now()
+            where id = %s
+            returning {RUN_SELECT}
+            """,
+            params,
+        )
+        return _normalize(row) if row else _fetch_by_id(run_id)
     except Exception:
         return None
+

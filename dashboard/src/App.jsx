@@ -13,7 +13,6 @@ import BrandSentimentPage from './components/BrandSentimentPage';
 import ArticlesPage from './components/ArticlesPage';
 import { RefreshCw, MessageSquare, GitMerge, Rss, Newspaper, CalendarDays } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { supabase } from './supabaseClient';
 
 function RouteShell({ children, backTo, backLabel, backStyle }) {
   return (
@@ -44,6 +43,7 @@ export default function App() {
   });
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
+  const [pipelineRuns, setPipelineRuns] = useState([]);
   const [feeds, setFeeds] = useState([]);
   const [feedSource, setFeedSource] = useState('supabase');
   const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
@@ -70,7 +70,9 @@ export default function App() {
     return stored ? Number(stored) : null;
   });
   const [crawlCount, setCrawlCount] = useState(null);
+  const [appNow, setAppNow] = useState(() => new Date());
   const pollIntervalRef = useRef(null);
+  const pipelineRunsPollRef = useRef(null);
 
   const selectedEvent = useMemo(
     () => events.find((event) => Number(event.id) === Number(selectedEventId)) || null,
@@ -104,6 +106,22 @@ export default function App() {
   }, [feeds, workflowSelectedEvents]);
 
   const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
+  const activePipelineRun = useMemo(
+    () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
+    [pipelineRuns]
+  );
+  const activePipelineStartedAt = activePipelineRun?.started_at || activePipelineRun?.created_at || null;
+
+  const coerceEventId = (value) => {
+    if (value == null) return null;
+    if (Array.isArray(value)) return coerceEventId(value[0]);
+    if (typeof value === 'object') {
+      if ('id' in value) return coerceEventId(value.id);
+      return null;
+    }
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : null;
+  };
 
   const normalizeWorkflowSelection = (ids, sourceEvents = events) => {
     const availableIds = new Set(sourceEvents.map((event) => Number(event.id)));
@@ -120,14 +138,32 @@ export default function App() {
     }
   };
 
+  const stopPipelineRunsPolling = () => {
+    if (pipelineRunsPollRef.current) {
+      clearInterval(pipelineRunsPollRef.current);
+      pipelineRunsPollRef.current = null;
+    }
+  };
+
   const loadCrawlCount = async () => {
     try {
-      const { count } = await supabase
-        .from('crawl_pages')
-        .select('*', { count: 'exact', head: true });
-      setCrawlCount(count ?? 0);
+      const res = await fetch('/api/crawl-count');
+      if (!res.ok) throw new Error(`Crawl count request failed: ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      setCrawlCount(Number(data?.crawl_count) || 0);
     } catch {
       setCrawlCount(0);
+    }
+  };
+
+  const loadPipelineRuns = async () => {
+    try {
+      const res = await fetch('/api/pipeline-runs?limit=25');
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setPipelineRuns(Array.isArray(data?.runs) ? data.runs : []);
+    } catch {
+      setPipelineRuns([]);
     }
   };
 
@@ -161,12 +197,21 @@ export default function App() {
     }
   };
 
+  const formatApiError = (data, fallback) => {
+    const parts = [data?.error, data?.detail].filter(Boolean);
+    if (parts.length > 0) {
+      return parts.join(' - ');
+    }
+    return fallback;
+  };
+
   const loadReportStats = async (eventId = selectedEventId) => {
+    const scopedEventId = coerceEventId(eventId);
     setIsLoadingReportStats(true);
     try {
       const params = new URLSearchParams();
-      if (eventId != null) {
-        params.set('event_id', String(eventId));
+      if (scopedEventId != null) {
+        params.set('event_id', String(scopedEventId));
       }
       const scopedRes = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
       if (!scopedRes.ok) throw new Error(`Stats request failed: ${scopedRes.status}`);
@@ -189,7 +234,9 @@ export default function App() {
 
   const loadWorkflowArticles = async (eventId = selectedEventId) => {
     try {
-      const eventIds = Array.isArray(eventId) ? eventId : (eventId != null ? [eventId] : []);
+      const eventIds = (Array.isArray(eventId) ? eventId : [eventId])
+        .map((value) => coerceEventId(value))
+        .filter((value) => value != null);
       if (eventIds.length === 0) {
         setWorkflowArticles([]);
         return;
@@ -233,6 +280,12 @@ export default function App() {
     refreshEvents();
     loadCrawlCount();
     return () => stopPolling();
+  }, []);
+
+  useEffect(() => {
+    loadPipelineRuns();
+    pipelineRunsPollRef.current = setInterval(loadPipelineRuns, 5000);
+    return () => stopPipelineRunsPolling();
   }, []);
 
   useEffect(() => {
@@ -341,6 +394,22 @@ export default function App() {
     textDecoration: 'none',
   };
 
+  useEffect(() => {
+    const timer = setInterval(() => setAppNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatElapsed = (startedAt, now) => {
+    if (!startedAt) return '00:00:00';
+    const started = new Date(startedAt);
+    if (Number.isNaN(started.getTime())) return '00:00:00';
+    const totalSeconds = Math.max(0, Math.floor((now.getTime() - started.getTime()) / 1000));
+    const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+    const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+  };
+
   const createFeed = async (payload) => {
     try {
       const res = await fetch('/api/feeds', {
@@ -381,7 +450,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/feeds/${feedId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to delete feed (${res.status})`);
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete feed (${res.status})`));
       await refreshFeeds();
       await refreshEvents();
       return true;
@@ -399,7 +468,7 @@ export default function App() {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add event (${res.status})`);
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add event (${res.status})`));
       await refreshEvents();
       await refreshFeeds();
       return data ?? null;
@@ -417,7 +486,7 @@ export default function App() {
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update event (${res.status})`);
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update event (${res.status})`));
       await refreshEvents();
       await refreshFeeds();
       return data ?? null;
@@ -431,7 +500,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/events/${eventId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to delete event (${res.status})`);
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete event (${res.status})`));
       await refreshEvents();
       if (Number(selectedEventId) === Number(eventId)) {
         setSelectedEventId(null);
@@ -542,139 +611,163 @@ export default function App() {
   );
 
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/dashboard" element={renderDashboardView()} />
-      <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
-      <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
-      <Route
-        path="/feeds"
-        element={(
-          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <FeedsPage
-              feeds={feeds}
-              events={events}
-              feedsSource={feedSource}
-              onCreateFeed={createFeed}
-              onUpdateFeed={updateFeed}
-              onDeleteFeed={deleteFeed}
-              isLoadingFeeds={isLoadingFeeds}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/feeds/new"
-        element={(
-          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
-            <FeedsPage
-              feeds={feeds}
-              events={events}
-              feedsSource={feedSource}
-              onCreateFeed={createFeed}
-              onUpdateFeed={updateFeed}
-              onDeleteFeed={deleteFeed}
-              isLoadingFeeds={isLoadingFeeds}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/feeds/:feedId/edit"
-        element={(
-          <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
-            <FeedsPage
-              feeds={feeds}
-              events={events}
-              feedsSource={feedSource}
-              onCreateFeed={createFeed}
-              onUpdateFeed={updateFeed}
-              onDeleteFeed={deleteFeed}
-              isLoadingFeeds={isLoadingFeeds}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/events"
-        element={(
-          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <EventsPage
-              events={events}
-              feeds={feeds}
-              onCreateEvent={createEvent}
-              onUpdateEvent={updateEvent}
-              isLoadingEvents={isLoadingEvents}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/events/new"
-        element={(
-          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-            <EventsPage
-              events={events}
-              feeds={feeds}
-              onCreateEvent={createEvent}
-              onUpdateEvent={updateEvent}
-              isLoadingEvents={isLoadingEvents}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/events/:eventId/edit"
-        element={(
-          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-            <EventsPage
-              events={events}
-              feeds={feeds}
-              onCreateEvent={createEvent}
-              onUpdateEvent={updateEvent}
-              isLoadingEvents={isLoadingEvents}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/events/:eventId"
-        element={(
-          <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-            <EventDetailPage
-              events={events}
-              feeds={feeds}
-              onDeleteEvent={deleteEvent}
-            />
-          </RouteShell>
-        )}
-      />
-      <Route path="/workflow" element={renderWorkflowRoute()} />
-      <Route
-        path="/spider"
-        element={(
-          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <SpiderPage />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/sentiment"
-        element={(
-          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <BrandSentimentPage />
-          </RouteShell>
-        )}
-      />
-      <Route
-        path="/intelligence"
-        element={(
-          <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-            <IntelligencePage key={selectedEventId ?? 'all'} event={selectedEvent} eventId={selectedEventId} />
-          </RouteShell>
-        )}
-      />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+    <div>
+      <div
+        style={{
+          position: 'fixed',
+          top: 14,
+          right: 14,
+          zIndex: 2000,
+          padding: '10px 14px',
+          borderRadius: 999,
+          background: 'rgba(15, 23, 42, 0.92)',
+          color: 'white',
+          boxShadow: '0 10px 24px rgba(15, 23, 42, 0.18)',
+          backdropFilter: 'blur(12px)',
+          fontSize: '0.8rem',
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+        }}
+      >
+        <span style={{ opacity: 0.72, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live timer</span>
+        <strong>{formatElapsed(activePipelineStartedAt, appNow)}</strong>
+      </div>
+
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={renderDashboardView()} />
+        <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
+        <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
+        <Route
+          path="/feeds"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <FeedsPage
+                feeds={feeds}
+                events={events}
+                feedsSource={feedSource}
+                onCreateFeed={createFeed}
+                onUpdateFeed={updateFeed}
+                onDeleteFeed={deleteFeed}
+                isLoadingFeeds={isLoadingFeeds}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/feeds/new"
+          element={(
+            <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+              <FeedsPage
+                feeds={feeds}
+                events={events}
+                feedsSource={feedSource}
+                onCreateFeed={createFeed}
+                onUpdateFeed={updateFeed}
+                onDeleteFeed={deleteFeed}
+                isLoadingFeeds={isLoadingFeeds}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/feeds/:feedId/edit"
+          element={(
+            <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
+              <FeedsPage
+                feeds={feeds}
+                events={events}
+                feedsSource={feedSource}
+                onCreateFeed={createFeed}
+                onUpdateFeed={updateFeed}
+                onDeleteFeed={deleteFeed}
+                isLoadingFeeds={isLoadingFeeds}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/events"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <EventsPage
+                events={events}
+                feeds={feeds}
+                onCreateEvent={createEvent}
+                onUpdateEvent={updateEvent}
+                isLoadingEvents={isLoadingEvents}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/events/new"
+          element={(
+            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+              <EventsPage
+                events={events}
+                feeds={feeds}
+                onCreateEvent={createEvent}
+                onUpdateEvent={updateEvent}
+                isLoadingEvents={isLoadingEvents}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/events/:eventId/edit"
+          element={(
+            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+              <EventsPage
+                events={events}
+                feeds={feeds}
+                onCreateEvent={createEvent}
+                onUpdateEvent={updateEvent}
+                isLoadingEvents={isLoadingEvents}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/events/:eventId"
+          element={(
+            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+              <EventDetailPage
+                events={events}
+                feeds={feeds}
+                onDeleteEvent={deleteEvent}
+              />
+            </RouteShell>
+          )}
+        />
+        <Route path="/workflow" element={renderWorkflowRoute()} />
+        <Route
+          path="/spider"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <SpiderPage />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/sentiment"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <BrandSentimentPage />
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/intelligence"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <IntelligencePage key={selectedEventId ?? 'all'} event={selectedEvent} eventId={selectedEventId} />
+            </RouteShell>
+          )}
+        />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </div>
   );
 }

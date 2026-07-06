@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
 import { motion } from 'framer-motion';
 import { BarChart3, TrendingUp, TrendingDown } from 'lucide-react';
 
@@ -12,15 +11,19 @@ export default function BrandSentimentPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from('sentiment_rollup')
-        .select('*')
-        .order('mentions', { ascending: false });
-      if (data) setRows(data);
-      const { count } = await supabase
-        .from('crawl_pages')
-        .select('*', { count: 'exact', head: true });
-      if (typeof count === 'number') setCrawlCount(count);
+      try {
+        const [rollupRes, countRes] = await Promise.all([
+          fetch('/api/brand-sentiment'),
+          fetch('/api/crawl-count'),
+        ]);
+        const rollupData = await rollupRes.json().catch(() => ({}));
+        const countData = await countRes.json().catch(() => ({}));
+        if (rollupRes.ok) setRows(Array.isArray(rollupData?.rows) ? rollupData.rows : []);
+        if (countRes.ok) setCrawlCount(Number(countData?.crawl_count) || 0);
+      } catch {
+        setRows([]);
+        setCrawlCount(0);
+      }
     })();
   }, []);
 

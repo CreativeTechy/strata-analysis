@@ -18,7 +18,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -27,6 +26,8 @@ import config
 from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
+from articles_store import get_brand_sentiment_rollup
+from llm_client import chat_completion
 from events_store import (
     create_event,
     delete_event,
@@ -132,7 +133,7 @@ def _format_event_context(event: dict | None) -> str:
 
 
 def run_scraper_pipeline(run_id: str, event_id: int | None = None):
-    """Scrape -> enrich -> save. enrich.py performs the Supabase upsert."""
+    """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
     if event_id is not None:
@@ -167,7 +168,13 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
                 pass
 
         try:
-            update_pipeline_run(run_id, status="running", stage="scrape", message="Starting scrape...")
+            update_pipeline_run(
+                run_id,
+                status="running",
+                stage="scrape",
+                message="Starting scrape...",
+                started_at=datetime.now(timezone.utc).isoformat(),
+            )
             print("1. Scraping configured sources...")
             subprocess.run(
                 ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
@@ -227,11 +234,11 @@ def get_feeds(limit: int | None = None, offset: int = 0):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
         feeds = bootstrap_feeds()
-        source = feeds[0].get("source", "supabase") if feeds else "supabase"
+        source = feeds[0].get("source", "database") if feeds else "database"
         return {"feeds": feeds, "source": source}
 
     page = list_feeds_page(limit=limit, offset=offset)
-    source = page["feeds"][0].get("source", "supabase") if page["feeds"] else "supabase"
+    source = page["feeds"][0].get("source", "database") if page["feeds"] else "database"
     return {**page, "source": source}
 
 
@@ -272,26 +279,47 @@ def _save_event_with_discovery(event):
     return event, discovery
 
 
+@app.post("/api/events/discover")
+def discover_event(payload: dict):
+    if not isinstance(payload, dict):
+        payload = {}
+    discovery = discover_event_links(payload)
+    return {"discovery": discovery}
+
+
 @app.post("/api/events")
 def add_event(payload: dict):
-    event = create_event(payload or {})
+    try:
+        event = create_event(payload or {})
+    except Exception as e:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to create event. Check database connection settings.",
+            "detail": detail or str(e),
+        }
     if not event:
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to create event. Check Supabase credentials and URL.",
+            "error": "Unable to create event. Check database connection settings.",
             "detail": detail or "The event request did not return a row.",
         }
-    event, discovery = _save_event_with_discovery(event)
-    return {"event": event, "discovery": discovery}
+    return {"event": event}
 
 
 @app.put("/api/events/{event_id}")
 def edit_event(event_id: int, payload: dict):
-    event = update_event(event_id, payload or {})
+    try:
+        event = update_event(event_id, payload or {})
+    except Exception as e:
+        detail = diagnose_event_setup()
+        return {
+            "error": "Unable to update event. Check database connection settings.",
+            "detail": detail or str(e),
+        }
     if not event:
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to update event. Check Supabase credentials and URL.",
+            "error": "Unable to update event. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
     event, discovery = _save_event_with_discovery(event)
@@ -317,7 +345,7 @@ def remove_event(event_id: int):
     if not delete_event(event_id):
         detail = diagnose_event_setup()
         return {
-            "error": "Unable to delete event. Check Supabase credentials and URL.",
+            "error": "Unable to delete event. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
@@ -360,12 +388,12 @@ def get_articles_stats(
 
 @app.post("/api/feeds")
 def add_feed(payload: dict):
-    """Create or update a feed record in Supabase."""
+    """Create or update a feed record in local PostgreSQL."""
     feed = create_feed(payload or {})
     if not feed:
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to create feed. Check Supabase credentials and URL.",
+            "error": "Unable to create feed. Check database connection settings.",
             "detail": detail or "The feed request did not return a row.",
         }
     return {"feed": feed}
@@ -373,12 +401,12 @@ def add_feed(payload: dict):
 
 @app.put("/api/feeds/{feed_id}")
 def edit_feed(feed_id: int, payload: dict):
-    """Update a feed record in Supabase."""
+    """Update a feed record in local PostgreSQL."""
     feed = update_feed(feed_id, payload or {})
     if not feed:
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to update feed. Check Supabase credentials and URL.",
+            "error": "Unable to update feed. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
     return {"feed": feed}
@@ -386,11 +414,11 @@ def edit_feed(feed_id: int, payload: dict):
 
 @app.delete("/api/feeds/{feed_id}")
 def remove_feed(feed_id: int):
-    """Delete a feed record from Supabase."""
+    """Delete a feed record from local PostgreSQL."""
     if not delete_feed(feed_id):
         detail = diagnose_feed_setup()
         return {
-            "error": "Unable to delete feed. Check Supabase credentials and URL.",
+            "error": "Unable to delete feed. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
@@ -427,7 +455,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
     run_id = run["id"] if run else uuid.uuid4().hex
     background_tasks.add_task(run_scraper_pipeline, run_id, event_id)
     return {
-        "message": "Scraper pipeline triggered. It will upload to Supabase when finished.",
+        "message": "Scraper pipeline triggered. It will save to local PostgreSQL when finished.",
         "run_id": run_id,
         "event_id": event_id,
     }
@@ -501,12 +529,12 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
 
 @app.delete("/api/articles")
 def delete_articles():
-    """Delete all stored articles from Supabase."""
+    """Delete all stored articles from Postgres."""
     from store import delete_all_articles
 
     deleted = delete_all_articles()
     if not deleted:
-        detail = "Check Supabase credentials and URL."
+        detail = "Check database connection settings."
         return {
             "error": "Unable to delete articles.",
             "detail": detail,
@@ -514,12 +542,25 @@ def delete_articles():
     return {"ok": True}
 
 
+@app.get("/api/crawl-count")
+def get_crawl_count():
+    try:
+        from db import fetch_one
+
+        row = fetch_one("select count(*)::int as crawl_count from crawl_pages")
+        return {"crawl_count": int((row or {}).get("crawl_count") or 0)}
+    except Exception:
+        return {"crawl_count": 0}
+
+
+@app.get("/api/brand-sentiment")
+def brand_sentiment(limit: int = 50):
+    return get_brand_sentiment_rollup(limit=limit)
+
+
 @app.post("/api/chat")
 async def chat(payload: dict):
-    """Intelligence Copilot -> DeepSeek over the filtered articles."""
-    if not config.DEEPSEEK_API_KEY:
-        return {"error": "DEEPSEEK_API_KEY not set"}
-
+    """Intelligence Copilot -> local LLM over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
@@ -553,21 +594,16 @@ async def chat(payload: dict):
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 700,
-            },
+        reply = chat_completion(
+            messages=[
+                {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            model=config.LOCAL_LLM_MODEL,
+            temperature=0.3,
+            max_tokens=700,
             timeout=60,
         )
-        resp.raise_for_status()
-        return {"reply": resp.json()["choices"][0]["message"]["content"].strip()}
+        return {"reply": reply}
     except Exception as e:
-        return {"error": f"DeepSeek request failed: {e}"}
+        return {"error": f"Local LLM request failed: {e}"}

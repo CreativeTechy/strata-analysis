@@ -9,6 +9,12 @@ export default function FeedView({ articles, isScraping }) {
 
   const categories = ['All', ...new Set(articles.map(a => a.category).filter(Boolean))];
 
+  const formatMatchScore = (value) => {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return '';
+    return score.toFixed(2);
+  };
+
   const filteredArticles = useMemo(() => {
     return articles.filter(article => {
       const matchSentiment = filterSentiment === 'All' || 
@@ -76,6 +82,9 @@ export default function FeedView({ articles, isScraping }) {
                   </span>
                   {article.relevance_score > 0 && (
                     <span className="badge score">Score: {article.relevance_score}/10</span>
+                  )}
+                  {article.event_similarity_score != null && (
+                    <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
                   )}
                 </div>
               </div>

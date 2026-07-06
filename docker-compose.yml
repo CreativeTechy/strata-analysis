@@ -1,9 +1,32 @@
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: strata
+      POSTGRES_USER: strata
+      POSTGRES_PASSWORD: strata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:4
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
     env_file:
       - ./backend/.env
+    depends_on:
+      - db
     expose:
       - "8000"
     volumes:
@@ -14,8 +37,6 @@ services:
     build:
       context: ./dashboard
       args:
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
         VITE_SPIDER_URL: ${VITE_SPIDER_URL:-}
         VITE_API_TARGET: ${VITE_API_TARGET:-}
     expose:
@@ -31,3 +52,6 @@ services:
     ports:
       - "80:80"
     restart: unless-stopped
+
+volumes:
+  pgdata:

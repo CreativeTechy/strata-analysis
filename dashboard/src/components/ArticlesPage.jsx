@@ -28,6 +28,12 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
+function formatMatchScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return '';
+  return score.toFixed(2);
+}
+
 function SkeletonArticleCard() {
   return (
     <div className="glass-card article-card article-skeleton" aria-hidden="true">
@@ -51,11 +57,20 @@ function SkeletonArticleCard() {
 }
 
 export default function ArticlesPage({ event = null, eventId = null, events = [] }) {
+  const normalizedEventId = useMemo(() => {
+    if (eventId == null) return null;
+    if (typeof eventId === 'object') {
+      const nestedId = Number(eventId?.id);
+      return Number.isFinite(nestedId) ? nestedId : null;
+    }
+    const parsed = Number(eventId);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [eventId]);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sentiment, setSentiment] = useState('all');
   const [category, setCategory] = useState('all');
-  const [eventFilter, setEventFilter] = useState(() => (eventId != null ? String(eventId) : 'all'));
+  const [eventFilter, setEventFilter] = useState(() => (normalizedEventId != null ? String(normalizedEventId) : 'all'));
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -150,7 +165,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
       setSearch('');
       setSentiment('all');
       setCategory('all');
-      setEventFilter(eventId != null ? String(eventId) : 'all');
+      setEventFilter(normalizedEventId != null ? String(normalizedEventId) : 'all');
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -333,6 +348,9 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
                         </span>
                         {article.relevance_score != null && (
                           <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
+                        )}
+                        {article.event_similarity_score != null && (
+                          <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
                         )}
                       </div>
                     </div>

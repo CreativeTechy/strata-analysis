@@ -10,8 +10,9 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
 from trafilatura.feeds import find_feed_urls
+
+import db
 
 BASE_DIR = Path(__file__).resolve().parent
 DOTENV_FILE = BASE_DIR / ".env"
@@ -39,15 +40,13 @@ def _load_dotenv():
 _load_dotenv()
 
 
-# --- Credentials (env-driven; never hardcode secrets) ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-# Writes must use the service_role key (bypasses RLS). Accept the legacy
-# SUPABASE_KEY name as a fallback so existing CI secrets keep working.
-SUPABASE_SERVICE_KEY = (
-    os.environ.get("SUPABASE_SERVICE_KEY")
-    or os.environ.get("SUPABASE_KEY", "")
-)
+DATABASE_URL = db.get_database_url()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:14b-instruct")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
 
 def _looks_like_feed_url(url: str) -> bool:
@@ -108,7 +107,7 @@ def _normalize_source_record(row):
         "category": (row.get("category") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "source": row.get("source", "supabase"),
+        "source": row.get("source", "database"),
     }
 
 
@@ -124,32 +123,6 @@ def _discover_feed_urls(url: str):
     except Exception:
         pass
     return []
-
-
-def _load_feed_records_from_supabase():
-    """Return Supabase feed rows, or None if Supabase is unavailable."""
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        return None
-
-    try:
-        resp = requests.get(
-            f"{SUPABASE_URL.rstrip('/')}/rest/v1/feeds",
-            headers={
-                "apikey": SUPABASE_SERVICE_KEY,
-                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-                "Accept": "application/json",
-            },
-            params={
-                "select": "id,url,name,enabled,source_type,category,created_at,updated_at",
-                "order": "created_at.asc",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        rows = resp.json()
-        return rows if isinstance(rows, list) else []
-    except Exception:
-        return None
 
 
 def load_source_records():
@@ -171,7 +144,18 @@ def load_source_records():
             for url in raw_urls
         ]
 
-    records = _load_feed_records_from_supabase()
-    if records is None:
+    if not DATABASE_URL:
         return []
-    return [_normalize_source_record(row) for row in records]
+
+    try:
+        records = db.fetch_all(
+            """
+            select id, url, name, enabled, source_type, category, created_at, updated_at
+            from feeds
+            order by created_at asc
+            """
+        )
+    except Exception:
+        return []
+
+    return [_normalize_source_record({**row, "source": "database"}) for row in records]

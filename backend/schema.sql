@@ -23,6 +23,10 @@ create table if not exists public.events (
     usernames    jsonb default '[]'::jsonb,
     start_date   date,
     end_date     date,
+    embedding_json jsonb default '[]'::jsonb,
+    embedding_model text,
+    embedding_source text,
+    embedded_at  timestamptz,
     created_at   timestamptz default now(),
     updated_at   timestamptz default now()
 );
@@ -33,7 +37,11 @@ alter table public.events
     add column if not exists target_audience text,
     add column if not exists hashtags jsonb default '[]'::jsonb,
     add column if not exists keywords jsonb default '[]'::jsonb,
-    add column if not exists usernames jsonb default '[]'::jsonb;
+    add column if not exists usernames jsonb default '[]'::jsonb,
+    add column if not exists embedding_json jsonb default '[]'::jsonb,
+    add column if not exists embedding_model text,
+    add column if not exists embedding_source text,
+    add column if not exists embedded_at timestamptz;
 
 create table if not exists public.feeds (
     id           bigint generated always as identity primary key,
@@ -105,8 +113,18 @@ create table if not exists public.articles (
     opportunities   jsonb default '[]'::jsonb,
     brands          jsonb default '[]'::jsonb,
     car_models      jsonb default '[]'::jsonb,
+    embedding_json  jsonb default '[]'::jsonb,
+    embedding_model text,
+    embedding_source text,
+    embedded_at     timestamptz,
     created_at      timestamptz default now()
 );
+
+alter table public.articles
+    add column if not exists embedding_json jsonb default '[]'::jsonb,
+    add column if not exists embedding_model text,
+    add column if not exists embedding_source text,
+    add column if not exists embedded_at timestamptz;
 
 create table if not exists public.event_feeds (
     event_id     bigint not null references public.events(id) on delete cascade,
@@ -118,6 +136,7 @@ create table if not exists public.event_feeds (
 create table if not exists public.article_events (
     article_id   bigint not null references public.articles(id) on delete cascade,
     event_id     bigint not null references public.events(id) on delete cascade,
+    similarity_score numeric,
     created_at   timestamptz default now(),
     primary key (article_id, event_id)
 );
@@ -145,6 +164,7 @@ create index if not exists event_feeds_feed_idx on public.event_feeds (feed_id);
 
 create index if not exists article_events_event_idx on public.article_events (event_id);
 create index if not exists article_events_article_idx on public.article_events (article_id);
+create index if not exists article_events_similarity_idx on public.article_events (similarity_score desc);
 
 drop trigger if exists set_events_updated_at on public.events;
 create trigger set_events_updated_at
