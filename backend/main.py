@@ -18,7 +18,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -28,6 +27,7 @@ from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
 from articles_store import get_brand_sentiment_rollup
+from llm_client import chat_completion
 from events_store import (
     create_event,
     delete_event,
@@ -560,10 +560,7 @@ def brand_sentiment(limit: int = 50):
 
 @app.post("/api/chat")
 async def chat(payload: dict):
-    """Intelligence Copilot -> DeepSeek over the filtered articles."""
-    if not config.DEEPSEEK_API_KEY:
-        return {"error": "DEEPSEEK_API_KEY not set"}
-
+    """Intelligence Copilot -> local LLM over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
@@ -597,21 +594,16 @@ async def chat(payload: dict):
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 700,
-            },
+        reply = chat_completion(
+            messages=[
+                {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            model=config.LOCAL_LLM_MODEL,
+            temperature=0.3,
+            max_tokens=700,
             timeout=60,
         )
-        resp.raise_for_status()
-        return {"reply": resp.json()["choices"][0]["message"]["content"].strip()}
+        return {"reply": reply}
     except Exception as e:
-        return {"error": f"DeepSeek request failed: {e}"}
+        return {"error": f"Local LLM request failed: {e}"}

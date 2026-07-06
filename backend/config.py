@@ -42,6 +42,9 @@ _load_dotenv()
 
 DATABASE_URL = db.get_database_url()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:14b-instruct")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
