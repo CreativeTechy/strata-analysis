@@ -10,6 +10,16 @@ services:
       - ./backend/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
   adminer:
     image: adminer:4
     depends_on:
@@ -17,7 +27,7 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: db
     ports:
-      - "8080:8080"
+      - "8082:8080"
     restart: unless-stopped
 
   backend:
@@ -27,11 +37,17 @@ services:
       - ./backend/.env
     depends_on:
       - db
+      - ollama
+    environment:
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://ollama:11434/v1}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:14b-instruct}
     expose:
       - "8000"
     volumes:
       - ./storage:/app/storage
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
@@ -50,8 +66,9 @@ services:
       - backend
       - frontend
     ports:
-      - "80:80"
+      - "8210:80"
     restart: unless-stopped
 
 volumes:
   pgdata:
+  ollama:
