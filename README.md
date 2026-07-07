@@ -66,17 +66,41 @@ For local article enrichment and Intelligence Copilot, this project defaults to:
 
 ### 3. Download a local model
 
-The recommended local setup is Ollama:
+The local LLM runs through Ollama. Pick a model size based on your available
+memory and how much latency you can tolerate.
 
-```bash
-ollama pull qwen2.5:14b-instruct
-```
+Rule of thumb, based on the hardware you have available:
 
-If your hardware is limited, use a smaller model:
+- `8 GB RAM` or a small laptop GPU: use a 3B model
+- `16 GB RAM`: use a 7B model
+- `32 GB RAM` or better: use a 14B model
 
-```bash
-ollama pull qwen2.5:7b-instruct
-```
+These are practical starting points, not hard limits. The exact fit depends on
+your quantization, context length, and whether the machine is also doing other
+work.
+
+Good default choices:
+
+- Fastest / lightest:
+
+  ```bash
+  ollama pull qwen2.5:3b-instruct
+  ```
+
+- Balanced:
+
+  ```bash
+  ollama pull qwen2.5:7b-instruct
+  ```
+
+- Higher quality:
+
+  ```bash
+  ollama pull qwen2.5:14b-instruct
+  ```
+
+If you are unsure, start with `qwen2.5:7b-instruct`. Move up to `14b` only if
+your machine has enough headroom and you want better output quality.
 
 ### 4. Run the backend locally
 
@@ -146,17 +170,21 @@ The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
 - `LOCAL_LLM_BASE_URL=http://ollama:11434/v1`
-- `LOCAL_LLM_MODEL=qwen2.5:14b-instruct`
+- `LOCAL_LLM_MODEL=qwen2.5:7b-instruct` for a safer default on modest hardware
 - `DEEPSEEK_API_KEY=...` if you want event/source discovery enabled
 
 The Docker stack already includes Ollama, so you do not need to install it on
 your machine for the containerized setup.
 
-To download the model into the Ollama container after the stack starts:
+To download the model into the Ollama container after the stack starts, use
+the model size that matches your machine:
 
 ```bash
-docker compose exec ollama ollama pull qwen2.5:14b-instruct
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
 ```
+
+If Ollama is unavailable or errors out, the backend will fall back to DeepSeek
+for chat and enrichment requests as long as `DEEPSEEK_API_KEY` is set.
 
 ### Adminer login
 

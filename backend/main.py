@@ -606,4 +606,4 @@ async def chat(payload: dict):
         )
         return {"reply": reply}
     except Exception as e:
-        return {"error": f"Local LLM request failed: {e}"}
+        return {"error": f"LLM request failed: {e}"}
