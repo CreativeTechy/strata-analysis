@@ -17,7 +17,7 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: db
     ports:
-      - "8080:8080"
+      - "8082:8080"
     restart: unless-stopped
 
   backend:
@@ -50,7 +50,7 @@ services:
       - backend
       - frontend
     ports:
-      - "80:80"
+      - "8210:80"
     restart: unless-stopped
 
 volumes:
