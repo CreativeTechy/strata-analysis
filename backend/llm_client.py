@@ -51,21 +51,17 @@ def _deepseek_chat_completions_url() -> str:
 
 
 def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60):
-    url = _chat_completions_url()
-    if not url:
-        local_error = ValueError("LOCAL_LLM_BASE_URL is not configured")
-        url = ""
-    else:
-        local_error = None
+    local_url = _chat_completions_url()
+    local_error = None
 
     headers = {"Content-Type": "application/json"}
     if config.LOCAL_LLM_API_KEY:
         headers["Authorization"] = f"Bearer {config.LOCAL_LLM_API_KEY}"
 
-    if url:
+    if local_url:
         try:
             return _post_chat_completion(
-                url=url,
+                url=local_url,
                 headers=headers,
                 messages=messages,
                 model=model or config.LOCAL_LLM_MODEL,
@@ -75,6 +71,8 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
             )
         except Exception as exc:
             local_error = exc
+    else:
+        local_error = ValueError("LOCAL_LLM_BASE_URL is not configured")
 
     deepseek_url = _deepseek_chat_completions_url()
     if config.DEEPSEEK_API_KEY and deepseek_url:
