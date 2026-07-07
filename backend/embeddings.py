@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from functools import lru_cache
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ try:
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - handled at runtime
     SentenceTransformer = None
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_text(value) -> str:
@@ -118,6 +121,10 @@ def _normalize_vector(vector):
 @lru_cache(maxsize=1)
 def _load_model():
     if SentenceTransformer is None:
+        logger.error(
+            "sentence-transformers is not installed; embeddings are disabled. "
+            "Install backend/requirements.txt in the runtime image."
+        )
         return None
     try:
         return SentenceTransformer(
@@ -125,6 +132,11 @@ def _load_model():
             device=config.EMBEDDING_DEVICE or "cpu",
         )
     except Exception:
+        logger.exception(
+            "Failed to load embedding model '%s' on device '%s'",
+            config.EMBEDDING_MODEL,
+            config.EMBEDDING_DEVICE or "cpu",
+        )
         return None
 
 
@@ -136,6 +148,12 @@ def get_embedding(text: str, *, role: str = "passage") -> dict:
     try:
         model = _load_model()
         if model is None:
+            logger.error(
+                "Skipping embedding generation because no embedding model could be loaded "
+                "(model=%s, device=%s).",
+                config.EMBEDDING_MODEL,
+                config.EMBEDDING_DEVICE or "cpu",
+            )
             return {}
         prepared_text = text
         model_name = (config.EMBEDDING_MODEL or "").lower()
@@ -150,6 +168,11 @@ def get_embedding(text: str, *, role: str = "passage") -> dict:
         ).tolist()
         embedding = _normalize_vector(embedding)
         if not embedding:
+            logger.error(
+                "Embedding model '%s' returned an empty vector for role '%s'.",
+                config.EMBEDDING_MODEL,
+                role,
+            )
             return {}
         return {
             "embedding_json": embedding,
@@ -158,6 +181,11 @@ def get_embedding(text: str, *, role: str = "passage") -> dict:
             "embedded_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
+        logger.exception(
+            "Embedding generation failed for model '%s' and role '%s'",
+            config.EMBEDDING_MODEL,
+            role,
+        )
         return {}
 
 
