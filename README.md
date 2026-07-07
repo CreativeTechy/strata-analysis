@@ -183,6 +183,9 @@ the model size that matches your machine:
 docker compose exec ollama ollama pull qwen2.5:7b-instruct
 ```
 
+If Ollama is unavailable or errors out, the backend will fall back to DeepSeek
+for chat and enrichment requests as long as `DEEPSEEK_API_KEY` is set.
+
 ### Adminer login
 
 Use these values to inspect the local database:
