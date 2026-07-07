@@ -121,6 +121,7 @@ python enrich.py
 This repo includes a full Docker stack:
 
 - `db` runs PostgreSQL 16
+- `ollama` runs the local model server in its own container
 - `backend` runs the FastAPI API
 - `frontend` builds the React dashboard
 - `nginx` exposes the public app on port 80
@@ -144,12 +145,18 @@ docker compose up --build
 The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- `LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1` if Ollama runs on the host
+- `LOCAL_LLM_BASE_URL=http://ollama:11434/v1`
 - `LOCAL_LLM_MODEL=qwen2.5:14b-instruct`
 - `DEEPSEEK_API_KEY=...` if you want event/source discovery enabled
 
-If you run Ollama in a separate container instead of on the host, point
-`LOCAL_LLM_BASE_URL` to that container's service name and port.
+The Docker stack already includes Ollama, so you do not need to install it on
+your machine for the containerized setup.
+
+To download the model into the Ollama container after the stack starts:
+
+```bash
+docker compose exec ollama ollama pull qwen2.5:14b-instruct
+```
 
 ### Adminer login
 
