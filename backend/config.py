@@ -42,6 +42,8 @@ _load_dotenv()
 
 DATABASE_URL = db.get_database_url()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_CHAT_BASE_URL = os.environ.get("DEEPSEEK_CHAT_BASE_URL", "https://api.deepseek.com/chat/completions")
+DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
 LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
 LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:14b-instruct")
