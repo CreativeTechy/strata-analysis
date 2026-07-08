@@ -7,7 +7,8 @@ import json
 import os
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import config
@@ -124,6 +125,76 @@ def _load_event_context():
     if description:
         parts.append(f"Description: {description}")
     return "\n".join(parts)
+
+
+def _load_event():
+    if not PIPELINE_EVENT_ID:
+        return None
+    try:
+        return get_event(int(PIPELINE_EVENT_ID))
+    except Exception:
+        return None
+
+
+def _coerce_date(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+
+    try:
+        return datetime.fromisoformat(text).date()
+    except Exception:
+        pass
+
+    try:
+        return parsedate_to_datetime(text).date()
+    except Exception:
+        pass
+
+    try:
+        return date.fromisoformat(text[:10])
+    except Exception:
+        return None
+
+
+def _article_published_date(article):
+    if not isinstance(article, dict):
+        return None
+
+    for key in ("published_at", "published"):
+        published = _coerce_date(article.get(key))
+        if published:
+            return published
+    return None
+
+
+def _event_date_window(event):
+    if not isinstance(event, dict):
+        return None, None
+    return _coerce_date(event.get("start_date")), _coerce_date(event.get("end_date"))
+
+
+def _article_matches_event_window(article, event):
+    article_date = _article_published_date(article)
+    if article_date is None:
+        return True
+
+    start_date, end_date = _event_date_window(event)
+    if start_date and article_date < start_date:
+        return False
+    if end_date and article_date > end_date:
+        return False
+    return True
 
 
 def clean_articles(articles):
@@ -678,6 +749,7 @@ def main():
         )
         return
 
+    event = _load_event()
     event_context = _load_event_context()
     event_name = ""
     if event_context:
@@ -685,6 +757,16 @@ def main():
             if line.startswith("Name: "):
                 event_name = line.replace("Name: ", "", 1).strip()
                 break
+
+    if event:
+        matching_articles = [article for article in articles if _article_matches_event_window(article, event)]
+    else:
+        matching_articles = articles
+
+    filtered_out = len(articles) - len(matching_articles)
+    if filtered_out:
+        print(f"Filtered out {filtered_out} articles outside the event date window.")
+    articles = matching_articles
 
     enriched = []
     for idx, article in enumerate(articles):
