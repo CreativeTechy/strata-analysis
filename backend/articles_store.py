@@ -676,6 +676,43 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
     }
 
 
+def export_articles(search=None, sentiment=None, category=None, event_id=None, sort=DEFAULT_SORT):
+    search_text = _normalize_text(search)
+    if search_text:
+        rows, _ = _search_results(
+            search=search_text,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+        )
+        return _attach_event_similarity_scores(rows, event_id)
+
+    rows = []
+    page_size = 200
+    offset = 0
+    field, direction = _normalize_sort(sort)
+
+    while True:
+        batch, _ = _fetch_articles(
+            limit=page_size,
+            offset=offset,
+            search=search,
+            sentiment=sentiment,
+            category=category,
+            event_id=event_id,
+            order=f"{field}.{direction}",
+            select=ARTICLES_SELECT,
+        )
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    return _attach_event_similarity_scores(rows, event_id)
+
+
 def _count_articles(search=None, sentiment=None, category=None, event_id=None):
     search_text = _normalize_text(search)
     if search_text:
