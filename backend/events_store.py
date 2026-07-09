@@ -431,7 +431,17 @@ def _set_event_feeds(event_id, feed_ids):
         return []
 
 
-def create_event(event):
+def persist_event_embedding_for_id(event_id):
+    if not config.DATABASE_URL:
+        return {}
+
+    event = get_event(event_id)
+    if not event:
+        return {}
+    return _persist_event_embedding(event)
+
+
+def create_event(event, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
@@ -461,7 +471,8 @@ def create_event(event):
         if not row:
             return None
         created = _normalize_event(row)
-        created.update(_persist_event_embedding(created))
+        if embed:
+            created.update(_persist_event_embedding(created))
         if feed_ids:
             created["feed_ids"] = set_event_feeds(created["id"], feed_ids)
         else:
@@ -471,7 +482,7 @@ def create_event(event):
         raise RuntimeError(f"Database request failed: {e}") from e
 
 
-def update_event(event_id, event):
+def update_event(event_id, event, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
@@ -500,7 +511,8 @@ def update_event(event_id, event):
         if not row:
             return None
         normalized = _normalize_event(row)
-        normalized.update(_persist_event_embedding(normalized))
+        if embed:
+            normalized.update(_persist_event_embedding(normalized))
         if feed_ids is not None:
             normalized["feed_ids"] = _set_event_feeds(event_id, feed_ids)
         else:
