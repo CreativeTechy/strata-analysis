@@ -16,15 +16,16 @@ it in Supabase, and surfaces it in the dashboard.
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
    Supabase `feeds` or the `FEEDS` env var override, discovers article links,
    and extracts clean title/date/text with trafilatura.
-2. Enricher - `backend/enrich.py`. Cleans and tags each article with the local
-   LLM, then falls back to neutral defaults when the local model is
-   unavailable.
+2. Enricher - `backend/enrich.py`. Cleans and tags each article with DeepSeek,
+   then falls back to neutral defaults if the request fails.
 3. Saver - `backend/store.py`. Upserts enriched articles into Supabase.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
    backend API.
 
-DeepSeek is still used in `backend/events_ai.py` and `backend/event_discovery.py`
-for hashtag, keyword, username, and feed discovery.
+DeepSeek is used everywhere in this app for AI: article enrichment
+(`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
+hashtag/keyword/username/feed discovery (`backend/events_ai.py` and
+`backend/event_discovery.py`).
 
 ## Clone And Run
 
@@ -55,54 +56,10 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 Set at minimum:
 
 - `DATABASE_URL`
-- `DEEPSEEK_API_KEY` if you want event/source discovery
-- `LOCAL_LLM_BASE_URL`
-- `LOCAL_LLM_MODEL`
+- `DEEPSEEK_API_KEY` - required for enrichment, Intelligence Copilot chat, and
+  event/source discovery
 
-For local article enrichment and Intelligence Copilot, this project defaults to:
-
-- `LOCAL_LLM_BASE_URL=http://localhost:11434/v1`
-- `LOCAL_LLM_MODEL=qwen2.5:14b-instruct`
-
-### 3. Download a local model
-
-The local LLM runs through Ollama. Pick a model size based on your available
-memory and how much latency you can tolerate.
-
-Rule of thumb, based on the hardware you have available:
-
-- `8 GB RAM` or a small laptop GPU: use a 3B model
-- `16 GB RAM`: use a 7B model
-- `32 GB RAM` or better: use a 14B model
-
-These are practical starting points, not hard limits. The exact fit depends on
-your quantization, context length, and whether the machine is also doing other
-work.
-
-Good default choices:
-
-- Fastest / lightest:
-
-  ```bash
-  ollama pull qwen2.5:3b-instruct
-  ```
-
-- Balanced:
-
-  ```bash
-  ollama pull qwen2.5:7b-instruct
-  ```
-
-- Higher quality:
-
-  ```bash
-  ollama pull qwen2.5:14b-instruct
-  ```
-
-If you are unsure, start with `qwen2.5:7b-instruct`. Move up to `14b` only if
-your machine has enough headroom and you want better output quality.
-
-### 4. Run the backend locally
+### 3. Run the backend locally
 
 ```bash
 python -m venv .venv
@@ -115,7 +72,7 @@ uvicorn main:app --port 8000
 If you only want the core API and not Spider Mode, you can skip the optional
 requirements file.
 
-### 5. Run the dashboard locally
+### 4. Run the dashboard locally
 
 Open a second terminal:
 
@@ -131,7 +88,7 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 The dashboard expects the backend on `http://localhost:8000` unless you set
 `VITE_API_TARGET`.
 
-### 6. Run the pipeline manually
+### 5. Run the pipeline manually
 
 You can run the scrape/enrich/save flow directly from the backend folder:
 
@@ -145,7 +102,6 @@ python enrich.py
 This repo includes a full Docker stack:
 
 - `db` runs PostgreSQL 16
-- `ollama` runs the local model server in its own container
 - `backend` runs the FastAPI API
 - `frontend` builds the React dashboard
 - `nginx` exposes the public app on port 80
@@ -169,22 +125,8 @@ docker compose up --build
 The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- `LOCAL_LLM_BASE_URL=http://ollama:11434/v1`
-- `LOCAL_LLM_MODEL=qwen2.5:7b-instruct` for a safer default on modest hardware
-- `DEEPSEEK_API_KEY=...` if you want event/source discovery enabled
-
-The Docker stack already includes Ollama, so you do not need to install it on
-your machine for the containerized setup.
-
-To download the model into the Ollama container after the stack starts, use
-the model size that matches your machine:
-
-```bash
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-```
-
-If Ollama is unavailable or errors out, the backend will fall back to DeepSeek
-for chat and enrichment requests as long as `DEEPSEEK_API_KEY` is set.
+- `DEEPSEEK_API_KEY=...` - required for enrichment, Intelligence Copilot chat,
+  and event/source discovery
 
 ### Adminer login
 
@@ -213,9 +155,7 @@ docker compose down -v
 For a production-style deployment, the important pieces are:
 
 - PostgreSQL must be reachable by the backend container
-- `backend/.env` must include the database URL and LLM settings
-- the local LLM endpoint must be reachable from the backend
-- `DEEPSEEK_API_KEY` is only needed if you want feed/source discovery enabled
+- `backend/.env` must include the database URL and `DEEPSEEK_API_KEY`
 
 The current Docker setup is suitable for a single-server deployment where the
 database, backend, frontend, and reverse proxy all run together.
