@@ -181,6 +181,7 @@ def _normalize_feed(row):
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
         "category": (row.get("category") or "").strip(),
+        "limited": bool(row.get("limited", False)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -613,7 +614,7 @@ def list_feeds_for_event(event_id):
     try:
         rows = _fetch_rows(
             """
-            select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.created_at, f.updated_at
+            select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.limited, f.created_at, f.updated_at
             from feeds f
             inner join event_feeds ef on ef.feed_id = f.id
             where ef.event_id = %s

@@ -23,6 +23,7 @@ const emptyDraft = {
   source_type: 'rss',
   category: '',
   enabled: true,
+  limited: false,
   event_ids: [],
 };
 
@@ -57,6 +58,7 @@ function normalizeDraftForCompare(value) {
     source_type: String(value?.source_type || 'rss').trim().toLowerCase(),
     category: String(value?.category || '').trim(),
     enabled: Boolean(value?.enabled),
+    limited: Boolean(value?.limited),
     event_ids: Array.isArray(value?.event_ids)
       ? [...new Set(value.event_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
       : [],
@@ -119,6 +121,7 @@ export default function FeedsPage({
         source_type: currentFeed.source_type || 'rss',
         category: currentFeed.category || '',
         enabled: currentFeed.enabled ?? true,
+        limited: currentFeed.limited ?? false,
         event_ids: assignedEventIds,
       });
       setInitialDraft({
@@ -127,6 +130,7 @@ export default function FeedsPage({
         source_type: currentFeed.source_type || 'rss',
         category: currentFeed.category || '',
         enabled: currentFeed.enabled ?? true,
+        limited: currentFeed.limited ?? false,
         event_ids: assignedEventIds,
       });
       return;
@@ -210,6 +214,7 @@ export default function FeedsPage({
       source_type: draft.source_type,
       category: draft.category.trim(),
       enabled: Boolean(draft.enabled),
+      limited: Boolean(draft.limited),
       event_ids: draft.event_ids,
     };
 
@@ -357,6 +362,42 @@ export default function FeedsPage({
             >
               {draft.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
               {draft.enabled ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
+
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: 14,
+              border: '1px solid rgba(15, 23, 42, 0.08)',
+              background: 'rgba(255, 255, 255, 0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Feed reach</strong>
+              <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
+                Limited feeds stay out of the assignable list on event create/edit pages unless already attached to that event.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraft((prev) => ({ ...prev, limited: !prev.limited }))}
+              className={`btn-secondary ${draft.limited ? 'active' : ''}`}
+              style={{
+                minWidth: 160,
+                justifyContent: 'center',
+                background: draft.limited ? 'rgba(255, 159, 67, 0.14)' : 'rgba(46, 134, 222, 0.1)',
+                borderColor: draft.limited ? 'rgba(255, 159, 67, 0.28)' : 'rgba(46, 134, 222, 0.24)',
+                color: draft.limited ? 'var(--primary-color)' : '#2e86de',
+              }}
+            >
+              {draft.limited ? <ToggleLeft size={18} /> : <ToggleRight size={18} />}
+              {draft.limited ? 'Limited' : 'Global'}
             </button>
           </div>
 
@@ -539,6 +580,7 @@ export default function FeedsPage({
                       <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
                         {feed.enabled ? 'Enabled' : 'Disabled'}
                       </span>
+                      {feed.limited && <span className="panel-chip warning">Limited</span>}
                     </div>
                     <div className="admin-item-url">{feed.url}</div>
                     <div className="admin-item-meta">

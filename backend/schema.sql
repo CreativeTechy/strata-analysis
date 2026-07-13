@@ -50,9 +50,13 @@ create table if not exists public.feeds (
     enabled      boolean not null default true,
     source_type  text not null default 'rss',
     category     text,
+    limited      boolean not null default false,
     created_at   timestamptz default now(),
     updated_at   timestamptz default now()
 );
+
+alter table public.feeds
+    add column if not exists limited boolean not null default false;
 
 create table if not exists public.pipeline_runs (
     id               text primary key,

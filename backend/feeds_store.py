@@ -10,7 +10,7 @@ import db
 from events_store import set_feed_events, list_feed_event_ids
 
 
-FEED_SELECT = "id,url,name,enabled,source_type,category,created_at,updated_at"
+FEED_SELECT = "id,url,name,enabled,source_type,category,limited,created_at,updated_at"
 
 TERM_SOURCE_TYPES = {"username", "hashtag", "keyword"}
 
@@ -50,6 +50,7 @@ def _normalize_record(row, include_event_ids=False):
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
         "category": row.get("category") or "",
+        "limited": bool(row.get("limited", False)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source": row.get("source", "database"),
@@ -78,6 +79,7 @@ def _upsert_payload(feed):
         "enabled": bool(feed.get("enabled", True)),
         "source_type": source_type,
         "category": (feed.get("category") or "").strip(),
+        "limited": bool(feed.get("limited", False)),
     }
 
 
@@ -156,13 +158,14 @@ def create_feed(feed):
     try:
         row = db.fetch_one(
             f"""
-            insert into feeds (url, name, enabled, source_type, category)
-            values (%s, %s, %s, %s, %s)
+            insert into feeds (url, name, enabled, source_type, category, limited)
+            values (%s, %s, %s, %s, %s, %s)
             on conflict (url) do update set
               name = excluded.name,
               enabled = excluded.enabled,
               source_type = excluded.source_type,
               category = excluded.category,
+              limited = excluded.limited,
               updated_at = now()
             returning {FEED_SELECT}
             """,
@@ -172,6 +175,7 @@ def create_feed(feed):
                 payload["enabled"],
                 payload["source_type"],
                 payload["category"],
+                payload["limited"],
             ),
         )
         if not row:
@@ -200,6 +204,7 @@ def update_feed(feed_id, feed):
                 enabled = %s,
                 source_type = %s,
                 category = %s,
+                limited = %s,
                 updated_at = now()
             where id = %s
             returning {FEED_SELECT}
@@ -210,6 +215,7 @@ def update_feed(feed_id, feed):
                 payload["enabled"],
                 payload["source_type"],
                 payload["category"],
+                payload["limited"],
                 feed_id,
             ),
         )

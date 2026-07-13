@@ -158,11 +158,16 @@ export default function EventsPage({
     return map;
   }, [events]);
 
+  const assignableFeeds = useMemo(() => {
+    const selected = new Set(draft.feed_ids.map((id) => Number(id)));
+    return feeds.filter((feed) => !feed.limited || selected.has(Number(feed.id)));
+  }, [feeds, draft.feed_ids]);
+
   const visibleAssignableFeeds = useMemo(() => {
     const needle = feedAssignQuery.trim().toLowerCase();
-    if (!needle) return feeds;
+    if (!needle) return assignableFeeds;
 
-    return feeds.filter((feed) => {
+    return assignableFeeds.filter((feed) => {
       const searchable = [
         feed.name,
         feed.url,
@@ -174,7 +179,7 @@ export default function EventsPage({
         .some((value) => String(value).toLowerCase().includes(needle));
       return searchable;
     });
-  }, [feeds, feedAssignQuery]);
+  }, [assignableFeeds, feedAssignQuery]);
 
   const selectedFeedCount = draft.feed_ids.length;
   const visibleSelectedCount = visibleAssignableFeeds.filter((feed) => draft.feed_ids.includes(Number(feed.id))).length;
@@ -1045,7 +1050,7 @@ export default function EventsPage({
                 )}
 
                 <div className="assign-feeds-list">
-                  {feeds.length === 0 ? (
+                  {assignableFeeds.length === 0 ? (
                     <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
                       No feeds yet. Add feeds first, then attach them to events.
                     </div>
@@ -1374,7 +1379,7 @@ export default function EventsPage({
             </div>
 
             <div className="assign-feeds-list">
-              {feeds.length === 0 ? (
+              {assignableFeeds.length === 0 ? (
                 <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
                   No feeds yet. Add feeds first, then attach them to events.
                 </div>
