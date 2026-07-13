@@ -22,7 +22,6 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-import config
 from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
 from articles_store import get_article_stats, list_articles
@@ -560,7 +559,7 @@ def brand_sentiment(limit: int = 50):
 
 @app.post("/api/chat")
 async def chat(payload: dict):
-    """Intelligence Copilot -> local LLM over the filtered articles."""
+    """Intelligence Copilot -> DeepSeek over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
@@ -599,7 +598,6 @@ async def chat(payload: dict):
                 {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            model=config.LOCAL_LLM_MODEL,
             temperature=0.3,
             max_tokens=700,
             timeout=60,
