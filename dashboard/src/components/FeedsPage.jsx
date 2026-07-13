@@ -90,6 +90,8 @@ export default function FeedsPage({
   const [draft, setDraft] = useState(emptyDraft);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [reachFilter, setReachFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -175,9 +177,14 @@ export default function FeedsPage({
         (statusFilter === 'disabled' && !feed.enabled) ||
         (statusFilter === 'assigned' && feedEvents.length > 0) ||
         (statusFilter === 'unassigned' && feedEvents.length === 0);
-      return matchesQuery && matchesStatus;
+      const matchesType = typeFilter === 'all' || (feed.source_type || 'rss') === typeFilter;
+      const matchesReach =
+        reachFilter === 'all' ||
+        (reachFilter === 'limited' && feed.limited) ||
+        (reachFilter === 'global' && !feed.limited);
+      return matchesQuery && matchesStatus && matchesType && matchesReach;
     });
-  }, [feeds, feedEventsById, query, statusFilter]);
+  }, [feeds, feedEventsById, query, statusFilter, typeFilter, reachFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleFeeds.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -188,7 +195,7 @@ export default function FeedsPage({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, statusFilter]);
+  }, [query, statusFilter, typeFilter, reachFilter]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -537,6 +544,21 @@ export default function FeedsPage({
           <option value="disabled">Disabled</option>
           <option value="assigned">Assigned</option>
           <option value="unassigned">Unassigned</option>
+        </select>
+
+        <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="all">All types</option>
+          {FEED_TYPE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+
+        <select className="filter-select" value={reachFilter} onChange={(e) => setReachFilter(e.target.value)}>
+          <option value="all">Global &amp; limited</option>
+          <option value="global">Global</option>
+          <option value="limited">Limited</option>
         </select>
       </div>
 
