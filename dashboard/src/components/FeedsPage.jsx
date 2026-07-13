@@ -26,6 +26,28 @@ const emptyDraft = {
   event_ids: [],
 };
 
+const FEED_TYPE_OPTIONS = [
+  { value: 'rss', label: 'RSS' },
+  { value: 'web', label: 'Web' },
+  { value: 'social', label: 'Social' },
+  { value: 'hashtag', label: 'Hashtag' },
+  { value: 'keyword', label: 'Keyword' },
+  { value: 'username', label: 'Username' },
+];
+
+const TERM_FEED_TYPES = new Set(['hashtag', 'keyword', 'username']);
+
+const TERM_FEED_PLACEHOLDERS = {
+  hashtag: 'Hashtag, without # (e.g. EVSummit)',
+  username: 'Username, without @ (e.g. elonmusk)',
+  keyword: 'Keyword or phrase (e.g. electric vehicles)',
+};
+
+function feedTypeLabel(sourceType) {
+  const match = FEED_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
+  return match ? match.label : (sourceType || 'RSS');
+}
+
 const PAGE_SIZE = 3;
 
 function normalizeDraftForCompare(value) {
@@ -181,8 +203,9 @@ export default function FeedsPage({
   };
 
   const submit = async () => {
+    const isTermType = TERM_FEED_TYPES.has(draft.source_type);
     const payload = {
-      url: draft.url.trim(),
+      url: isTermType ? '' : draft.url.trim(),
       name: draft.name.trim(),
       source_type: draft.source_type,
       category: draft.category.trim(),
@@ -190,7 +213,7 @@ export default function FeedsPage({
       event_ids: draft.event_ids,
     };
 
-    if (!payload.url) return;
+    if (isTermType ? !payload.name : !payload.url) return;
 
     if (editingId) {
       await onUpdateFeed?.(editingId, payload);
@@ -265,17 +288,19 @@ export default function FeedsPage({
             <span className="panel-chip">{isEditRoute ? 'Updating existing source' : 'Create a new source'}</span>
           </div>
 
+          {!TERM_FEED_TYPES.has(draft.source_type) && (
+            <input
+              type="text"
+              className="feed-input"
+              placeholder="Feed URL"
+              value={draft.url}
+              onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
+            />
+          )}
           <input
             type="text"
             className="feed-input"
-            placeholder="Feed URL"
-            value={draft.url}
-            onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
-          />
-          <input
-            type="text"
-            className="feed-input"
-            placeholder="Display name"
+            placeholder={TERM_FEED_PLACEHOLDERS[draft.source_type] || 'Display name'}
             value={draft.name}
             onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
           />
@@ -285,9 +310,11 @@ export default function FeedsPage({
               value={draft.source_type}
               onChange={(e) => setDraft((prev) => ({ ...prev, source_type: e.target.value }))}
             >
-              <option value="rss">RSS</option>
-              <option value="web">Web</option>
-              <option value="social">Social</option>
+              {FEED_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
             <input
               type="text"
@@ -515,7 +542,7 @@ export default function FeedsPage({
                     </div>
                     <div className="admin-item-url">{feed.url}</div>
                     <div className="admin-item-meta">
-                      <span>{feed.source_type || 'rss'}</span>
+                      <span>{feedTypeLabel(feed.source_type)}</span>
                       {feed.category ? <span>{feed.category}</span> : null}
                       <span>
                         {feedEvents.length} event{feedEvents.length === 1 ? '' : 's'}

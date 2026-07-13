@@ -518,7 +518,7 @@ def discover_event_links(event):
                 "url": profile_url,
                 "title": f"@{_normalize_username(username)}",
                 "reason": "Resolved from event usernames.",
-                "source_type": "social",
+                "source_type": "username",
             }
         )
     for item in suggestions:

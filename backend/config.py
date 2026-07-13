@@ -90,13 +90,30 @@ def _infer_source_type(url: str) -> str:
     return "web"
 
 
+KNOWN_SOURCE_TYPES = {"rss", "web", "social", "hashtag", "keyword", "username"}
+
+
+def _resolve_source_type(source_type_input: str, url: str) -> str:
+    """Pick the source_type to store, trusting an explicit known value.
+
+    Legacy rows stored as rss/web whose URL is actually a social profile get
+    upgraded to social, same as before this was centralized. hashtag/keyword/
+    username are never overridden even though their derived URLs live on
+    x.com/google.com (which would otherwise infer as social/web).
+    """
+    source_type_input = (source_type_input or "").strip().lower()
+    inferred_type = _infer_source_type(url)
+    if source_type_input in KNOWN_SOURCE_TYPES:
+        if source_type_input in {"rss", "web"} and inferred_type == "social":
+            return "social"
+        return source_type_input
+    return inferred_type or "rss"
+
+
 def _normalize_source_record(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip()
-    inferred_type = _infer_source_type(url)
-    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
-    if inferred_type == "social":
-        source_type = "social"
+    source_type = _resolve_source_type(row.get("source_type") or "", url)
     return {
         "id": row.get("id"),
         "url": url,

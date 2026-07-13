@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
+import re
+from urllib.parse import quote_plus, urlparse
 
 import config
 import db
@@ -10,6 +11,8 @@ from events_store import set_feed_events, list_feed_event_ids
 
 
 FEED_SELECT = "id,url,name,enabled,source_type,category,created_at,updated_at"
+
+TERM_SOURCE_TYPES = {"username", "hashtag", "keyword"}
 
 
 def _default_name(url):
@@ -19,13 +22,27 @@ def _default_name(url):
     return host.removeprefix("www.")
 
 
+def _derive_term_url(source_type, term):
+    text = (term or "").strip()
+    if not text:
+        return ""
+    if source_type == "username":
+        handle = text.lstrip("@").split("/", 1)[0].strip()
+        handle = re.sub(r"[^A-Za-z0-9_]", "", handle)
+        return f"https://x.com/{handle}" if handle else ""
+    if source_type == "hashtag":
+        tag = text.lstrip("#").strip()
+        tag = re.sub(r"[^A-Za-z0-9_]", "", tag)
+        return f"https://x.com/hashtag/{tag}" if tag else ""
+    if source_type == "keyword":
+        return f"https://news.google.com/search?q={quote_plus(text)}"
+    return ""
+
+
 def _normalize_record(row, include_event_ids=False):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
-    inferred_type = config._infer_source_type(url)
-    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
-    if inferred_type == "social":
-        source_type = "social"
+    source_type = config._resolve_source_type(row.get("source_type") or "", url)
     return {
         "id": row.get("id"),
         "url": url,
@@ -48,13 +65,16 @@ def _upsert_payload(feed):
 
     raw_url = feed.get("url") or feed.get("additionalProp1") or feed.get("value") or ""
     url = str(raw_url).strip()
-    inferred_type = config._infer_source_type(url)
-    source_type = (feed.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
-    if inferred_type == "social":
-        source_type = "social"
+    name = (feed.get("name") or "").strip()
+    source_type_input = str(feed.get("source_type") or "").strip().lower()
+
+    if not url and source_type_input in TERM_SOURCE_TYPES and name:
+        url = _derive_term_url(source_type_input, name)
+
+    source_type = config._resolve_source_type(source_type_input, url)
     return {
         "url": url,
-        "name": (feed.get("name") or "").strip() or _default_name(url),
+        "name": name or _default_name(url),
         "enabled": bool(feed.get("enabled", True)),
         "source_type": source_type,
         "category": (feed.get("category") or "").strip(),

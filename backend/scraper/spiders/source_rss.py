@@ -94,7 +94,7 @@ class SourceRssSpider(scrapy.Spider):
                     "feed": url,
                     "source_type": source_type,
                     "source_name": record.get("name") or url,
-                    "dont_obey_robotstxt": source_type == "social",
+                    "dont_obey_robotstxt": source_type in {"social", "username", "hashtag"},
                 },
             )
         self._push_progress(force=True)
@@ -128,11 +128,11 @@ class SourceRssSpider(scrapy.Spider):
             yield from self.parse_homepage(response)
             return
 
-        if source_type == "social":
+        if source_type in {"social", "username", "hashtag"}:
             yield from self.parse_social_page(response)
             return
 
-        follow_links = source_type == "web"
+        follow_links = source_type in {"web", "keyword"}
         yield from self.parse_page(response, follow_links=follow_links)
 
     def parse_feed(self, response):

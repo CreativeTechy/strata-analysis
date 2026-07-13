@@ -710,6 +710,7 @@ export default function App() {
                 feeds={feeds}
                 onCreateEvent={createEvent}
                 onUpdateEvent={updateEvent}
+                onCreateFeed={createFeed}
                 isLoadingEvents={isLoadingEvents}
               />
             </RouteShell>

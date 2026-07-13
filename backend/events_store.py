@@ -173,10 +173,7 @@ def _normalize_event(row, feed_ids=None):
 def _normalize_feed(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or url
-    inferred_type = config._infer_source_type(url)
-    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
-    if inferred_type == "social":
-        source_type = "social"
+    source_type = config._resolve_source_type(row.get("source_type") or "", url)
     return {
         "id": row.get("id"),
         "url": url,

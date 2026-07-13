@@ -15,7 +15,37 @@ import {
   Link2,
   RefreshCw,
   Sparkles,
+  Rss,
 } from 'lucide-react';
+
+const emptyNewFeedDraft = {
+  url: '',
+  name: '',
+  source_type: 'rss',
+  category: '',
+};
+
+const FEED_TYPE_OPTIONS = [
+  { value: 'rss', label: 'RSS' },
+  { value: 'web', label: 'Web' },
+  { value: 'social', label: 'Social' },
+  { value: 'hashtag', label: 'Hashtag' },
+  { value: 'keyword', label: 'Keyword' },
+  { value: 'username', label: 'Username' },
+];
+
+const TERM_FEED_TYPES = new Set(['hashtag', 'keyword', 'username']);
+
+const TERM_FEED_PLACEHOLDERS = {
+  hashtag: 'Hashtag, without # (e.g. EVSummit)',
+  username: 'Username, without @ (e.g. elonmusk)',
+  keyword: 'Keyword or phrase (e.g. electric vehicles)',
+};
+
+function feedTypeLabel(sourceType) {
+  const match = FEED_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
+  return match ? match.label : (sourceType || 'RSS');
+}
 
 const emptyDraft = {
   name: '',
@@ -80,6 +110,7 @@ export default function EventsPage({
   feeds = [],
   onCreateEvent,
   onUpdateEvent,
+  onCreateFeed,
   isLoadingEvents,
 }) {
   const location = useLocation();
@@ -109,6 +140,11 @@ export default function EventsPage({
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
   const [isDiscoveringFeeds, setIsDiscoveringFeeds] = useState(false);
   const [metadataError, setMetadataError] = useState('');
+  const [showNewFeedForm, setShowNewFeedForm] = useState(false);
+  const [newFeedDraft, setNewFeedDraft] = useState(emptyNewFeedDraft);
+  const [isCreatingFeed, setIsCreatingFeed] = useState(false);
+  const [newFeedError, setNewFeedError] = useState('');
+  const [isSyncingFeeds, setIsSyncingFeeds] = useState(false);
 
   const feedEventsById = useMemo(() => {
     const map = new Map();
@@ -207,6 +243,9 @@ export default function EventsPage({
       setFillMode('');
       setIsGeneratingMetadata(false);
       setMetadataError('');
+      setShowNewFeedForm(false);
+      setNewFeedDraft(emptyNewFeedDraft);
+      setNewFeedError('');
       return;
     }
 
@@ -256,6 +295,9 @@ export default function EventsPage({
     setFillMode('');
     setIsGeneratingMetadata(false);
     setMetadataError('');
+    setShowNewFeedForm(false);
+    setNewFeedDraft(emptyNewFeedDraft);
+    setNewFeedError('');
   }, [currentEvent, isEditRoute, isFormRoute]);
 
   const discardChanges = () => {
@@ -289,6 +331,70 @@ export default function EventsPage({
       ...prev,
       feed_ids: prev.feed_ids.filter((id) => !visibleIds.has(Number(id))),
     }));
+  };
+
+  const createFeedInline = async () => {
+    const isTermType = TERM_FEED_TYPES.has(newFeedDraft.source_type);
+    const payload = {
+      url: isTermType ? '' : newFeedDraft.url.trim(),
+      name: newFeedDraft.name.trim(),
+      source_type: newFeedDraft.source_type,
+      category: newFeedDraft.category.trim(),
+      enabled: true,
+      event_ids: [],
+    };
+
+    if (isCreatingFeed) return;
+    if (isTermType ? !payload.name : !payload.url) return;
+
+    setIsCreatingFeed(true);
+    setNewFeedError('');
+    try {
+      const created = await onCreateFeed?.(payload);
+      const createdId = Number(created?.id);
+      if (Number.isFinite(createdId)) {
+        setDraft((prev) => ({
+          ...prev,
+          feed_ids: Array.from(new Set([...prev.feed_ids, createdId])),
+        }));
+      }
+      setNewFeedDraft(emptyNewFeedDraft);
+      setShowNewFeedForm(false);
+    } catch (error) {
+      setNewFeedError(error?.message || 'Failed to create feed.');
+    } finally {
+      setIsCreatingFeed(false);
+    }
+  };
+
+  const syncTermFeedsToDraft = async () => {
+    const terms = [
+      ...parseListInput(draft.usernames).map((term) => ({ term, source_type: 'username' })),
+      ...parseListInput(draft.hashtags).map((term) => ({ term, source_type: 'hashtag' })),
+      ...parseListInput(draft.keywords).map((term) => ({ term, source_type: 'keyword' })),
+    ];
+    if (!terms.length || !onCreateFeed) return;
+
+    setIsSyncingFeeds(true);
+    try {
+      const created = await Promise.all(
+        terms.map(({ term, source_type }) =>
+          onCreateFeed({ name: term, source_type, category: '', enabled: true, event_ids: [] }).catch(() => null)
+        )
+      );
+      const ids = created
+        .filter(Boolean)
+        .map((feed) => Number(feed.id))
+        .filter((id) => Number.isFinite(id));
+      if (ids.length) {
+        setDraft((prev) => ({
+          ...prev,
+          feed_ids: Array.from(new Set([...prev.feed_ids, ...ids])),
+        }));
+      }
+    } finally {
+      setIsSyncingFeeds(false);
+    }
   };
 
   const generateMetadataFromAi = async () => {
@@ -684,11 +790,20 @@ export default function EventsPage({
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={() => setWizardStep(3)}
-                      disabled={!canContinueFromStep2 || isSaving}
+                      onClick={async () => {
+                        await syncTermFeedsToDraft();
+                        setWizardStep(3);
+                      }}
+                      disabled={!canContinueFromStep2 || isSaving || isSyncingFeeds}
                       style={{ minWidth: 180 }}
                     >
-                      Continue
+                      {isSyncingFeeds ? (
+                        <>
+                          <RefreshCw size={18} className="spin" /> Syncing feeds...
+                        </>
+                      ) : (
+                        'Continue'
+                      )}
                     </button>
                   </div>
                 </div>
@@ -807,8 +922,127 @@ export default function EventsPage({
                     >
                       Clear visible
                     </button>
+                    <button
+                      type="button"
+                      className={`btn-secondary ${showNewFeedForm ? 'active' : ''}`}
+                      onClick={() => {
+                        setNewFeedError('');
+                        setShowNewFeedForm((prev) => !prev);
+                      }}
+                      disabled={isSaving}
+                      style={{ padding: '8px 10px', fontSize: '0.78rem' }}
+                    >
+                      <Rss size={14} /> {showNewFeedForm ? 'Close' : 'New feed'}
+                    </button>
                   </div>
                 </div>
+
+                {showNewFeedForm && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: 10,
+                      padding: 14,
+                      marginBottom: 10,
+                      borderRadius: 14,
+                      border: '1px solid rgba(15, 23, 42, 0.08)',
+                      background: 'rgba(255,255,255,0.7)',
+                    }}
+                  >
+                    <strong style={{ fontSize: '0.86rem' }}>Create a new feed</strong>
+                    {!TERM_FEED_TYPES.has(newFeedDraft.source_type) && (
+                      <input
+                        type="text"
+                        className="feed-input"
+                        placeholder="Feed URL"
+                        value={newFeedDraft.url}
+                        onChange={(e) => setNewFeedDraft((prev) => ({ ...prev, url: e.target.value }))}
+                        disabled={isCreatingFeed}
+                      />
+                    )}
+                    <input
+                      type="text"
+                      className="feed-input"
+                      placeholder={TERM_FEED_PLACEHOLDERS[newFeedDraft.source_type] || 'Display name'}
+                      value={newFeedDraft.name}
+                      onChange={(e) => setNewFeedDraft((prev) => ({ ...prev, name: e.target.value }))}
+                      disabled={isCreatingFeed}
+                    />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <select
+                        className="filter-select"
+                        value={newFeedDraft.source_type}
+                        onChange={(e) => setNewFeedDraft((prev) => ({ ...prev, source_type: e.target.value }))}
+                        disabled={isCreatingFeed}
+                      >
+                        {FEED_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        className="feed-input"
+                        placeholder="Category"
+                        value={newFeedDraft.category}
+                        onChange={(e) => setNewFeedDraft((prev) => ({ ...prev, category: e.target.value }))}
+                        disabled={isCreatingFeed}
+                      />
+                    </div>
+                    {newFeedError && (
+                      <div
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 12,
+                          background: 'rgba(255, 71, 87, 0.08)',
+                          border: '1px solid rgba(255, 71, 87, 0.16)',
+                          color: '#b42318',
+                          fontSize: '0.82rem',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {newFeedError}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={createFeedInline}
+                        disabled={
+                          isCreatingFeed ||
+                          (TERM_FEED_TYPES.has(newFeedDraft.source_type)
+                            ? !newFeedDraft.name.trim()
+                            : !newFeedDraft.url.trim())
+                        }
+                        style={{ minWidth: 160 }}
+                      >
+                        {isCreatingFeed ? (
+                          <>
+                            <RefreshCw size={16} className="spin" /> Creating...
+                          </>
+                        ) : (
+                          <>
+                            <Plus size={16} /> Create feed
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          setShowNewFeedForm(false);
+                          setNewFeedDraft(emptyNewFeedDraft);
+                          setNewFeedError('');
+                        }}
+                        disabled={isCreatingFeed}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="assign-feeds-list">
                   {feeds.length === 0 ? (
@@ -845,7 +1079,7 @@ export default function EventsPage({
                             </div>
                             <div className="assign-feed-url">{feed.url}</div>
                             <div className="assign-feed-meta">
-                              <span>{feed.source_type || 'rss'}</span>
+                              <span>{feedTypeLabel(feed.source_type)}</span>
                               {feed.category ? <span>{feed.category}</span> : null}
                               <span>
                                 {eventCount} event{eventCount === 1 ? '' : 's'}
@@ -968,71 +1202,92 @@ export default function EventsPage({
             <span className="panel-chip">{isEditRoute ? 'Updating existing scope' : 'Create a fresh scope'}</span>
           </div>
 
-          <input
-            type="text"
-            className="feed-input"
-            placeholder="Event name"
-            value={draft.name}
-            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-            disabled={isSaving}
-          />
-          <textarea
-            className="feed-input"
-            placeholder="Event description"
-            rows={3}
-            value={draft.description}
-            onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
-            style={{ resize: 'vertical', minHeight: 92 }}
-            disabled={isSaving}
-          />
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Event name</span>
+            <input
+              type="text"
+              className="feed-input"
+              placeholder="Event name"
+              value={draft.name}
+              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+              disabled={isSaving}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
+            <textarea
+              className="feed-input"
+              placeholder="Event description"
+              rows={3}
+              value={draft.description}
+              onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
+              style={{ resize: 'vertical', minHeight: 92 }}
+              disabled={isSaving}
+            />
+          </label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <input
-              type="text"
-              className="feed-input"
-              placeholder="Location"
-              value={draft.location}
-              onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-              disabled={isSaving}
-            />
-            <input
-              type="text"
-              className="feed-input"
-              placeholder="Target audience"
-              value={draft.target_audience}
-              onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
-              disabled={isSaving}
-            />
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
+              <input
+                type="text"
+                className="feed-input"
+                placeholder="Location"
+                value={draft.location}
+                onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
+                disabled={isSaving}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Target audience</span>
+              <input
+                type="text"
+                className="feed-input"
+                placeholder="Target audience"
+                value={draft.target_audience}
+                onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
+                disabled={isSaving}
+              />
+            </label>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-            <textarea
-              className="feed-input"
-              placeholder="Usernames, comma or newline separated"
-              rows={3}
-              value={draft.usernames}
-              onChange={(e) => setDraft((prev) => ({ ...prev, usernames: e.target.value }))}
-              style={{ resize: 'vertical', minHeight: 92 }}
-              disabled={isSaving}
-            />
-            <textarea
-              className="feed-input"
-              placeholder="Hashtags, comma or newline separated"
-              rows={3}
-              value={draft.hashtags}
-              onChange={(e) => setDraft((prev) => ({ ...prev, hashtags: e.target.value }))}
-              style={{ resize: 'vertical', minHeight: 92 }}
-              disabled={isSaving}
-            />
-            <textarea
-              className="feed-input"
-              placeholder="Keywords, comma or newline separated"
-              rows={3}
-              value={draft.keywords}
-              onChange={(e) => setDraft((prev) => ({ ...prev, keywords: e.target.value }))}
-              style={{ resize: 'vertical', minHeight: 92 }}
-              disabled={isSaving}
-            />
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Usernames</span>
+              <textarea
+                className="feed-input"
+                placeholder="Usernames, comma or newline separated"
+                rows={3}
+                value={draft.usernames}
+                onChange={(e) => setDraft((prev) => ({ ...prev, usernames: e.target.value }))}
+                style={{ resize: 'vertical', minHeight: 92 }}
+                disabled={isSaving}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Hashtags</span>
+              <textarea
+                className="feed-input"
+                placeholder="Hashtags, comma or newline separated"
+                rows={3}
+                value={draft.hashtags}
+                onChange={(e) => setDraft((prev) => ({ ...prev, hashtags: e.target.value }))}
+                style={{ resize: 'vertical', minHeight: 92 }}
+                disabled={isSaving}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Keywords</span>
+              <textarea
+                className="feed-input"
+                placeholder="Keywords, comma or newline separated"
+                rows={3}
+                value={draft.keywords}
+                onChange={(e) => setDraft((prev) => ({ ...prev, keywords: e.target.value }))}
+                style={{ resize: 'vertical', minHeight: 92 }}
+                disabled={isSaving}
+              />
+            </label>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
               <select
@@ -1047,17 +1302,6 @@ export default function EventsPage({
                   </option>
                 ))}
               </select>
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
-              <input
-                type="text"
-                className="feed-input"
-                placeholder="Location"
-                value={draft.location}
-                onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-                disabled={isSaving}
-              />
             </label>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
