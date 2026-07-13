@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
@@ -79,6 +79,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const hasArticlesRef = useRef(false);
@@ -172,6 +173,41 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
       setError(err?.message || 'Failed to delete articles.');
     } finally {
       setDeletingAll(false);
+    }
+  };
+
+  const handleExportJsonl = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (sentiment !== 'all') params.set('sentiment', sentiment);
+      if (category !== 'all') params.set('category', category);
+      if (eventFilter !== 'all') params.set('event_id', String(eventFilter));
+      params.set('sort', sort);
+
+      const res = await fetch(`/api/articles/export?${params.toString()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || data?.error || `Failed to export articles (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      anchor.href = objectUrl;
+      anchor.download = `articles-${timestamp}.jsonl`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err?.message || 'Failed to export articles.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -290,6 +326,10 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
             </span>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button className="btn-secondary" onClick={handleExportJsonl} disabled={loading || exporting || deletingAll}>
+              <Download size={16} />
+              {exporting ? 'Exporting...' : 'Export JSONL'}
+            </button>
             <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
               <ChevronLeft size={16} /> Previous
             </button>

@@ -24,7 +24,7 @@ from fastapi.responses import StreamingResponse
 
 from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
-from articles_store import get_article_stats, list_articles
+from articles_store import export_articles, get_article_stats, list_articles
 from articles_store import get_brand_sentiment_rollup
 from llm_client import chat_completion
 from events_store import (
@@ -34,6 +34,7 @@ from events_store import (
     list_events,
     list_events_page,
     list_feeds_for_event,
+    persist_event_embedding_for_id,
     set_event_feeds,
     update_event,
 )
@@ -287,9 +288,9 @@ def discover_event(payload: dict):
 
 
 @app.post("/api/events")
-def add_event(payload: dict):
+def add_event(background_tasks: BackgroundTasks, payload: dict):
     try:
-        event = create_event(payload or {})
+        event = create_event(payload or {}, embed=False)
     except Exception as e:
         detail = diagnose_event_setup()
         return {
@@ -302,13 +303,14 @@ def add_event(payload: dict):
             "error": "Unable to create event. Check database connection settings.",
             "detail": detail or "The event request did not return a row.",
         }
+    background_tasks.add_task(persist_event_embedding_for_id, event.get("id"))
     return {"event": event}
 
 
 @app.put("/api/events/{event_id}")
-def edit_event(event_id: int, payload: dict):
+def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict):
     try:
-        event = update_event(event_id, payload or {})
+        event = update_event(event_id, payload or {}, embed=False)
     except Exception as e:
         detail = diagnose_event_setup()
         return {
@@ -321,6 +323,7 @@ def edit_event(event_id: int, payload: dict):
             "error": "Unable to update event. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
+    background_tasks.add_task(persist_event_embedding_for_id, event_id)
     event, discovery = _save_event_with_discovery(event)
     return {"event": event, "discovery": discovery}
 
@@ -383,6 +386,34 @@ def get_articles_stats(
     event_id: int | None = None,
 ):
     return get_article_stats(search=search, category=category, event_id=event_id)
+
+
+@app.get("/api/articles/export")
+def export_articles_jsonl(
+    search: str | None = None,
+    sentiment: str | None = None,
+    category: str | None = None,
+    event_id: int | None = None,
+    sort: str = "published.desc",
+):
+    rows = export_articles(
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        event_id=event_id,
+        sort=sort,
+    )
+
+    def line_stream():
+        for row in rows:
+            yield json.dumps(row, ensure_ascii=False, default=str) + "\n"
+
+    filename = "articles-export.jsonl"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+    }
+    return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
 
 
 @app.post("/api/feeds")
