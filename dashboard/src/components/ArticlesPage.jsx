@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import { useAuth } from '../auth/useAuth.js';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
 const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
@@ -83,6 +84,8 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const hasArticlesRef = useRef(false);
+  const { hasRole } = useAuth();
+  const canDeleteAll = hasRole('operator');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -228,15 +231,17 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
           </div>
 
           <div className="dashboard-hero-actions">
-            <button
-              className="btn-secondary"
-              onClick={() => setShowDeleteAllModal(true)}
-              disabled={loading || deletingAll}
-              style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
-            >
-              <Trash2 size={16} />
-              {deletingAll ? 'Deleting...' : 'Delete All Articles'}
-            </button>
+            {canDeleteAll && (
+              <button
+                className="btn-secondary"
+                onClick={() => setShowDeleteAllModal(true)}
+                disabled={loading || deletingAll}
+                style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+              >
+                <Trash2 size={16} />
+                {deletingAll ? 'Deleting...' : 'Delete All Articles'}
+              </button>
+            )}
             <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
               Back to Dashboard
             </Link>

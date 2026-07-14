@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
+import { useAuth } from '../auth/useAuth.js';
 import {
   ArrowLeft,
   CalendarDays,
@@ -45,6 +46,8 @@ export default function EventDetailPage({
 }) {
   const navigate = useNavigate();
   const params = useParams();
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('editor');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
 
@@ -122,17 +125,21 @@ export default function EventDetailPage({
             <span>Assigned sources</span>
             <strong>{assignedSources.length.toLocaleString()}</strong>
           </div>
-          <Link to={`/events/${event.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <Pencil size={16} /> Edit Event
-          </Link>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setDeleteOpen(true)}
-            style={{ color: '#ff4757' }}
-          >
-            <Trash2 size={16} /> Delete
-          </button>
+          {canEdit && (
+            <>
+              <Link to={`/events/${event.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
+                <Pencil size={16} /> Edit Event
+              </Link>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDeleteOpen(true)}
+                style={{ color: '#ff4757' }}
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            </>
+          )}
         </div>
       </div>
 

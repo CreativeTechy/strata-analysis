@@ -15,10 +15,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+import config
+import sessions_store
+import users_store
+from auth import clear_auth_cookies, get_current_user, require_role, set_auth_cookies
 from event_discovery import discover_event_links
 from events_ai import suggest_event_metadata
 from articles_store import export_articles, get_article_stats, list_articles
@@ -73,11 +77,19 @@ app = FastAPI(title="Strata Scraper API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    # Shape every raised HTTPException (401/403/404/...) like this API's
+    # existing ad hoc error bodies ({"error": ...}) so the dashboard's
+    # shared formatApiError() handles them without special-casing.
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
 
 
 def _format_event_context(event: dict | None) -> str:
@@ -138,6 +150,11 @@ def _format_event_context(event: dict | None) -> str:
 
 
 @app.on_event("startup")
+async def _bootstrap_admin():
+    users_store.bootstrap_admin()
+
+
+@app.on_event("startup")
 async def _start_scheduler():
     app.state.scheduler_task = asyncio.create_task(scheduler_loop())
 
@@ -161,8 +178,108 @@ def health_check():
     return {"status": "healthy", "service": "Strata Scraper API"}
 
 
+# --- Auth --------------------------------------------------------------
+
+
+def _public_user(user: dict) -> dict:
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "status": user.get("status"),
+    }
+
+
+@app.post("/api/auth/login")
+def login(payload: dict, response: Response):
+    payload = payload or {}
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+
+    row = users_store.get_user_by_login(username)
+    if not row or row.get("status") != "active" or not users_store.verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    raw_token, csrf_token, expires_at = sessions_store.create_session(row["id"])
+    users_store.record_login(row["id"])
+    set_auth_cookies(response, raw_token, csrf_token, expires_at)
+    return {"user": _public_user(row)}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response, user: dict = Depends(require_role())):
+    raw_token = request.cookies.get(config.SESSION_COOKIE_NAME)
+    sessions_store.delete_session(raw_token)
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = Depends(get_current_user)):
+    return {"user": _public_user(user)}
+
+
+# --- User management (admin only) ---------------------------------------
+
+
+@app.get("/api/users")
+def get_users(user: dict = Depends(require_role("admin"))):
+    return {"users": users_store.list_users()}
+
+
+@app.post("/api/users")
+def add_user(payload: dict, user: dict = Depends(require_role("admin"))):
+    payload = payload or {}
+    username = str(payload.get("username") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    password = str(payload.get("password") or "")
+    role = str(payload.get("role") or "viewer").strip().lower()
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if role not in users_store.ROLES:
+        raise HTTPException(status_code=400, detail=f"Role must be one of {', '.join(users_store.ROLES)}.")
+
+    try:
+        created = users_store.create_user(username, email, password, role)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to create user: {e}")
+    if not created:
+        raise HTTPException(status_code=409, detail="Unable to create user.")
+    return {"user": created}
+
+
+@app.patch("/api/users/{user_id}")
+def edit_user(user_id: int, payload: dict, user: dict = Depends(require_role("admin"))):
+    payload = payload or {}
+    role = payload.get("role")
+    status = payload.get("status")
+    if role is not None:
+        role = str(role).strip().lower()
+    if status is not None:
+        status = str(status).strip().lower()
+
+    if user_id == user["id"] and (role is not None or status == "disabled"):
+        raise HTTPException(status_code=400, detail="Admins cannot change their own role or disable themselves.")
+
+    try:
+        updated = users_store.update_user(user_id, role=role, status=status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if status == "disabled":
+        sessions_store.delete_sessions_for_user(user_id)
+    return {"user": updated}
+
+
 @app.get("/api/sources")
-def get_sources(limit: int | None = None, offset: int = 0):
+def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(require_role())):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
         sources = bootstrap_sources()
@@ -175,7 +292,7 @@ def get_sources(limit: int | None = None, offset: int = 0):
 
 
 @app.get("/api/events")
-def get_events(limit: int | None = None, offset: int = 0):
+def get_events(limit: int | None = None, offset: int = 0, user: dict = Depends(require_role())):
     if limit is None:
         return {"events": list_events()}
     return list_events_page(limit=limit, offset=offset)
@@ -212,7 +329,7 @@ def _save_event_with_discovery(event):
 
 
 @app.post("/api/events/discover")
-def discover_event(payload: dict):
+def discover_event(payload: dict, user: dict = Depends(require_role("editor"))):
     if not isinstance(payload, dict):
         payload = {}
     discovery = discover_event_links(payload)
@@ -220,7 +337,7 @@ def discover_event(payload: dict):
 
 
 @app.post("/api/events")
-def add_event(background_tasks: BackgroundTasks, payload: dict):
+def add_event(background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_role("editor"))):
     try:
         event = create_event(payload or {}, embed=False)
     except ValueError as e:
@@ -242,7 +359,7 @@ def add_event(background_tasks: BackgroundTasks, payload: dict):
 
 
 @app.put("/api/events/{event_id}")
-def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict):
+def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_role("editor"))):
     try:
         event = update_event(event_id, payload or {}, embed=False)
     except ValueError as e:
@@ -265,7 +382,7 @@ def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict):
 
 
 @app.post("/api/events/suggest")
-def suggest_event(payload: dict):
+def suggest_event(payload: dict, user: dict = Depends(require_role("editor"))):
     if not isinstance(payload, dict):
         payload = {}
     name = str(payload.get("name") or "").strip()
@@ -279,7 +396,7 @@ def suggest_event(payload: dict):
 
 
 @app.delete("/api/events/{event_id}")
-def remove_event(event_id: int):
+def remove_event(event_id: int, user: dict = Depends(require_role("editor"))):
     if not delete_event(event_id):
         detail = diagnose_event_setup()
         return {
@@ -290,12 +407,12 @@ def remove_event(event_id: int):
 
 
 @app.get("/api/pipeline-runs")
-def get_pipeline_runs(limit: int = 10):
+def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_role())):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")
-def stop_pipeline_run(run_id: str):
+def stop_pipeline_run(run_id: str, user: dict = Depends(require_role("operator"))):
     run = get_pipeline_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found.")
@@ -330,6 +447,7 @@ def get_articles(
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
+    user: dict = Depends(require_role()),
 ):
     return list_articles(
         search=search,
@@ -347,6 +465,7 @@ def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
     event_id: int | None = None,
+    user: dict = Depends(require_role()),
 ):
     return get_article_stats(search=search, category=category, event_id=event_id)
 
@@ -358,6 +477,7 @@ def export_articles_jsonl(
     category: str | None = None,
     event_id: int | None = None,
     sort: str = "published.desc",
+    user: dict = Depends(require_role()),
 ):
     rows = export_articles(
         search=search,
@@ -380,7 +500,7 @@ def export_articles_jsonl(
 
 
 @app.post("/api/sources")
-def add_source(payload: dict):
+def add_source(payload: dict, user: dict = Depends(require_role("editor"))):
     """Create or update a source record in local PostgreSQL."""
     source = create_source(payload or {})
     if not source:
@@ -393,7 +513,7 @@ def add_source(payload: dict):
 
 
 @app.put("/api/sources/{source_id}")
-def edit_source(source_id: int, payload: dict):
+def edit_source(source_id: int, payload: dict, user: dict = Depends(require_role("editor"))):
     """Update a source record in local PostgreSQL."""
     source = update_source(source_id, payload or {})
     if not source:
@@ -406,7 +526,7 @@ def edit_source(source_id: int, payload: dict):
 
 
 @app.delete("/api/sources/{source_id}")
-def remove_source(source_id: int):
+def remove_source(source_id: int, user: dict = Depends(require_role("editor"))):
     """Delete a source record from local PostgreSQL."""
     if not delete_source(source_id):
         detail = diagnose_source_setup()
@@ -418,14 +538,14 @@ def remove_source(source_id: int):
 
 
 @app.post("/api/events/{event_id}/sources")
-def replace_event_sources(event_id: int, payload: dict):
+def replace_event_sources(event_id: int, payload: dict, user: dict = Depends(require_role("editor"))):
     source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
     assigned = set_event_sources(event_id, source_ids or [])
     return {"event_id": event_id, "source_ids": assigned}
 
 
 @app.post("/scrape")
-def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None):
+def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None, user: dict = Depends(require_role("operator"))):
     payload = payload or {}
     event_id = payload.get("event_id")
     try:
@@ -463,7 +583,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
 
 
 @app.get("/api/spider/stream")
-async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int = 0):
+async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int = 0, user: dict = Depends(require_role("operator"))):
     """Server-Sent Events: live deep crawl for the Spider Mode page."""
     depth = max(1, min(int(depth), 4))
     pages = max(10, min(int(pages), 2000))
@@ -529,7 +649,7 @@ async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int =
 
 
 @app.delete("/api/articles")
-def delete_articles():
+def delete_articles(user: dict = Depends(require_role("operator"))):
     """Delete all stored articles from Postgres."""
     from store import delete_all_articles
 
@@ -544,7 +664,7 @@ def delete_articles():
 
 
 @app.get("/api/crawl-count")
-def get_crawl_count():
+def get_crawl_count(user: dict = Depends(require_role())):
     try:
         from db import fetch_one
 
@@ -555,12 +675,12 @@ def get_crawl_count():
 
 
 @app.get("/api/brand-sentiment")
-def brand_sentiment(limit: int = 50):
+def brand_sentiment(limit: int = 50, user: dict = Depends(require_role())):
     return get_brand_sentiment_rollup(limit=limit)
 
 
 @app.post("/api/chat")
-async def chat(payload: dict):
+async def chat(payload: dict, user: dict = Depends(require_role())):
     """Intelligence Copilot -> DeepSeek over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:

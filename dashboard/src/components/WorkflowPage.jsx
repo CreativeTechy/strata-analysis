@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../auth/useAuth.js';
 import {
   Globe,
   AtSign,
@@ -66,6 +67,9 @@ export default function WorkflowPage({
   activeRun = null,
   onStopRun = () => {},
 }) {
+  const { hasRole } = useAuth();
+  const canRunScraper = hasRole('operator');
+
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
       id: i + 1,
@@ -524,7 +528,8 @@ export default function WorkflowPage({
                   className="btn-primary"
                   style={{ opacity: isScraping ? 0.7 : 1, flex: 1 }}
                   onClick={() => onRunScraper?.(selectedEventIds)}
-                  disabled={isScraping || selectedEventCount === 0}
+                  disabled={isScraping || selectedEventCount === 0 || !canRunScraper}
+                  title={canRunScraper ? undefined : 'Requires the operator or admin role.'}
                 >
                   {isScraping ? (
                     <><RefreshCw size={16} className="spin" /> Running...</>
@@ -538,7 +543,8 @@ export default function WorkflowPage({
                     type="button"
                     className="btn-secondary"
                     onClick={handleStopRun}
-                    disabled={isStopping}
+                    disabled={isStopping || !canRunScraper}
+                    title={canRunScraper ? undefined : 'Requires the operator or admin role.'}
                   >
                     {isStopping ? (
                       <><RefreshCw size={16} className="spin" /> Stopping...</>

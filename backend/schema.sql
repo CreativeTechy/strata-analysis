@@ -148,6 +148,55 @@ alter table public.articles
     add column if not exists embedding_source text,
     add column if not exists embedded_at timestamptz;
 
+create table if not exists public.users (
+    id           bigint generated always as identity primary key,
+    username     text not null unique,
+    email        text unique,
+    password_hash text not null,
+    role         text not null default 'viewer',
+    status       text not null default 'active',
+    last_login_at timestamptz,
+    created_at   timestamptz default now(),
+    updated_at   timestamptz default now()
+);
+
+alter table public.users
+    drop constraint if exists users_role_check;
+alter table public.users
+    add constraint users_role_check
+    check (role in ('viewer', 'editor', 'operator', 'admin'));
+
+alter table public.users
+    drop constraint if exists users_status_check;
+alter table public.users
+    add constraint users_status_check
+    check (status in ('active', 'disabled'));
+
+create table if not exists public.sessions (
+    token_hash   text primary key,
+    user_id      bigint not null references public.users(id) on delete cascade,
+    csrf_token   text not null,
+    created_at   timestamptz default now(),
+    last_seen_at timestamptz default now(),
+    expires_at   timestamptz not null
+);
+
+create index if not exists sessions_user_idx on public.sessions (user_id);
+create index if not exists sessions_expires_idx on public.sessions (expires_at);
+
+drop trigger if exists set_users_updated_at on public.users;
+create trigger set_users_updated_at
+before update on public.users
+for each row
+execute function public.set_updated_at();
+
+-- users/sessions hold credentials: RLS is enabled with no policies, so the
+-- anon/authenticated PostgREST roles get nothing. The backend talks to this
+-- database directly as the table owner (psycopg), which bypasses RLS, so
+-- application access is unaffected.
+alter table public.users enable row level security;
+alter table public.sessions enable row level security;
+
 create table if not exists public.event_sources (
     event_id     bigint not null references public.events(id) on delete cascade,
     source_id    bigint not null references public.sources(id) on delete cascade,

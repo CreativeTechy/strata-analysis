@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
+import { useAuth } from '../auth/useAuth.js';
 import {
   Rss,
   Plus,
@@ -77,6 +78,8 @@ export default function SourcesPage({
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('editor');
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -492,9 +495,11 @@ export default function SourcesPage({
             <span>Search</span>
             <strong>{visibleSources.length.toLocaleString()} matches</strong>
           </div>
-          <Link to="/sources/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-            <Plus size={16} /> Add Source
-          </Link>
+          {canEdit && (
+            <Link to="/sources/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+              <Plus size={16} /> Add Source
+            </Link>
+          )}
         </div>
       </div>
 
@@ -589,9 +594,11 @@ export default function SourcesPage({
               </div>
               <strong>No sources yet</strong>
               <span>Add your first source, then attach it to one or more events.</span>
-              <Link to="/sources/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-                <Plus size={16} /> Add Source
-              </Link>
+              {canEdit && (
+                <Link to="/sources/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+                  <Plus size={16} /> Add Source
+                </Link>
+              )}
             </div>
           )}
 
@@ -624,22 +631,24 @@ export default function SourcesPage({
                     </div>
                   </div>
 
-                  <div className="admin-item-actions">
-                    <Link
-                      className="btn-secondary"
-                      to={`/sources/${source.id}/edit`}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
-                    >
-                      <Pencil size={14} /> Edit
-                    </Link>
-                    <button
-                      className="btn-secondary"
-                      onClick={() => setDeleteTarget(source)}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
-                    >
-                      <Trash2 size={14} /> Delete
-                    </button>
-                  </div>
+                  {canEdit && (
+                    <div className="admin-item-actions">
+                      <Link
+                        className="btn-secondary"
+                        to={`/sources/${source.id}/edit`}
+                        style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
+                      >
+                        <Pencil size={14} /> Edit
+                      </Link>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setDeleteTarget(source)}
+                        style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="admin-item-chips">
                   {sourceEvents.length ? (

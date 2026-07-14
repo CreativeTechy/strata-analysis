@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
+import { useAuth } from '../auth/useAuth.js';
 import {
   CalendarDays,
   Eye,
@@ -237,6 +238,8 @@ export default function EventsPage({
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('editor');
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -1906,9 +1909,11 @@ export default function EventsPage({
             <span>Search</span>
             <strong>{visibleEvents.length.toLocaleString()} matches</strong>
           </div>
-          <Link to="/events/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-            <Plus size={16} /> Add Event
-          </Link>
+          {canEdit && (
+            <Link to="/events/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+              <Plus size={16} /> Add Event
+            </Link>
+          )}
         </div>
       </div>
 
@@ -1989,9 +1994,11 @@ export default function EventsPage({
               </div>
               <strong>No events yet</strong>
               <span>Start by creating an event, then assign sources and run the scraper against that scope.</span>
-              <Link to="/events/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-                <Plus size={16} /> Add Event
-              </Link>
+              {canEdit && (
+                <Link to="/events/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+                  <Plus size={16} /> Add Event
+                </Link>
+              )}
             </div>
           )}
 

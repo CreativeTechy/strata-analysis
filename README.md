@@ -177,6 +177,29 @@ database, backend, frontend, and reverse proxy all run together.
 If you deploy the backend separately from the dashboard, keep the API base URL
 consistent with the frontend's `VITE_API_TARGET` setting.
 
+## Authentication & Roles
+
+The dashboard and API require a logged-in session (cookie-based, not tokens
+in localStorage). The first admin is created on backend startup from
+`ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD`
+in `backend/.env`, but only if the `users` table is still empty - it will not
+touch an existing account. Log in with either the username or the email.
+
+Every authenticated user, regardless of role, can view the dashboard, articles,
+sources, events, pipeline runs, brand sentiment, and the Intelligence Copilot
+chat. Roles add specific write/action permissions on top of that shared read
+access (`admin` is the only role that automatically satisfies every check
+below - `viewer`/`editor`/`operator` are otherwise independent, not a ladder):
+
+- **viewer** - read-only. No create, update, delete, or pipeline actions.
+- **editor** - create, update, and delete sources and events; link sources to
+  events; use AI event discovery/suggestions.
+- **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, use
+  Spider Mode, and delete all stored articles.
+- **admin** - everything above, plus user management: create users, change
+  roles, and enable/disable accounts (`/admin/users` in the dashboard, or the
+  `/api/users` endpoints).
+
 ## Spider Mode
 
 Spider Mode is the separate deep-crawl view powered by `backend/spider.py` and

@@ -51,6 +51,39 @@ SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 3
 SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- Auth -------------------------------------------------------------------
+SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "strata_session")
+CSRF_COOKIE_NAME = os.environ.get("CSRF_COOKIE_NAME", "strata_csrf")
+SESSION_TTL_HOURS = int(os.environ.get("SESSION_TTL_HOURS", "12") or 12)
+# Cookies default to Secure (HTTPS-only). Set COOKIE_SECURE=false for plain-http
+# local/dev deployments (e.g. this repo's docker-compose, which has no TLS
+# termination configured) - the browser silently drops Secure cookies over http.
+COOKIE_SECURE = _env_bool("COOKIE_SECURE", True)
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").strip().lower()
+
+# Comma-separated list of origins allowed to make credentialed cross-origin
+# requests. The dashboard is normally served same-origin behind nginx/Vite's
+# proxy, so this is mainly for local dev where the Vite dev server runs on a
+# different port than uvicorn.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
+# Bootstrap admin, created on startup if the users table is empty.
+ADMIN_BOOTSTRAP_USERNAME = os.environ.get("ADMIN_BOOTSTRAP_USERNAME", "").strip()
+ADMIN_BOOTSTRAP_EMAIL = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip()
+ADMIN_BOOTSTRAP_PASSWORD = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "").strip()
+
+
 def _looks_like_feed_url(url: str) -> bool:
     url = (url or "").strip().lower()
     return any(

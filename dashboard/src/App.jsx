@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
 import SourcesPage from './components/SourcesPage';
@@ -11,6 +11,9 @@ import PipelineRunsPage from './components/PipelineRunsPage';
 import SpiderPage from './components/SpiderPage';
 import BrandSentimentPage from './components/BrandSentimentPage';
 import ArticlesPage from './components/ArticlesPage';
+import LoginPage from './components/LoginPage';
+import UsersPage from './components/UsersPage';
+import { useAuth } from './auth/useAuth.js';
 import { RefreshCw, MessageSquare, GitMerge, Rss, Newspaper, CalendarDays } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -25,6 +28,35 @@ function RouteShell({ children, backTo, backLabel, backStyle }) {
       {children}
     </div>
   );
+}
+
+function RequireAuth() {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        Loading...
+      </div>
+    );
+  }
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  return <Outlet />;
+}
+
+function RequireRole({ roles, children }) {
+  const { hasRole } = useAuth();
+  if (!hasRole(...roles)) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        <h2>Access denied</h2>
+        <p className="subtitle">You don't have permission to view this page.</p>
+      </div>
+    );
+  }
+  return children;
 }
 
 export default function App() {
@@ -639,6 +671,8 @@ export default function App() {
       </div>
 
       <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route element={<RequireAuth />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={renderDashboardView()} />
         <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
@@ -663,15 +697,17 @@ export default function App() {
           path="/sources/new"
           element={(
             <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
-              <SourcesPage
-                sources={sources}
-                events={events}
-                sourcesSource={sourcesProvenance}
-                onCreateSource={createSource}
-                onUpdateSource={updateSource}
-                onDeleteSource={deleteSource}
-                isLoadingSources={isLoadingSources}
-              />
+              <RequireRole roles={['editor']}>
+                <SourcesPage
+                  sources={sources}
+                  events={events}
+                  sourcesSource={sourcesProvenance}
+                  onCreateSource={createSource}
+                  onUpdateSource={updateSource}
+                  onDeleteSource={deleteSource}
+                  isLoadingSources={isLoadingSources}
+                />
+              </RequireRole>
             </RouteShell>
           )}
         />
@@ -679,15 +715,17 @@ export default function App() {
           path="/sources/:sourceId/edit"
           element={(
             <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
-              <SourcesPage
-                sources={sources}
-                events={events}
-                sourcesSource={sourcesProvenance}
-                onCreateSource={createSource}
-                onUpdateSource={updateSource}
-                onDeleteSource={deleteSource}
-                isLoadingSources={isLoadingSources}
-              />
+              <RequireRole roles={['editor']}>
+                <SourcesPage
+                  sources={sources}
+                  events={events}
+                  sourcesSource={sourcesProvenance}
+                  onCreateSource={createSource}
+                  onUpdateSource={updateSource}
+                  onDeleteSource={deleteSource}
+                  isLoadingSources={isLoadingSources}
+                />
+              </RequireRole>
             </RouteShell>
           )}
         />
@@ -709,14 +747,16 @@ export default function App() {
           path="/events/new"
           element={(
             <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-              <EventsPage
-                events={events}
-                sources={sources}
-                onCreateEvent={createEvent}
-                onUpdateEvent={updateEvent}
-                onCreateSource={createSource}
-                isLoadingEvents={isLoadingEvents}
-              />
+              <RequireRole roles={['editor']}>
+                <EventsPage
+                  events={events}
+                  sources={sources}
+                  onCreateEvent={createEvent}
+                  onUpdateEvent={updateEvent}
+                  onCreateSource={createSource}
+                  isLoadingEvents={isLoadingEvents}
+                />
+              </RequireRole>
             </RouteShell>
           )}
         />
@@ -724,13 +764,15 @@ export default function App() {
           path="/events/:eventId/edit"
           element={(
             <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-              <EventsPage
-                events={events}
-                sources={sources}
-                onCreateEvent={createEvent}
-                onUpdateEvent={updateEvent}
-                isLoadingEvents={isLoadingEvents}
-              />
+              <RequireRole roles={['editor']}>
+                <EventsPage
+                  events={events}
+                  sources={sources}
+                  onCreateEvent={createEvent}
+                  onUpdateEvent={updateEvent}
+                  isLoadingEvents={isLoadingEvents}
+                />
+              </RequireRole>
             </RouteShell>
           )}
         />
@@ -751,7 +793,9 @@ export default function App() {
           path="/spider"
           element={(
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <SpiderPage />
+              <RequireRole roles={['operator']}>
+                <SpiderPage />
+              </RequireRole>
             </RouteShell>
           )}
         />
@@ -771,7 +815,18 @@ export default function App() {
             </RouteShell>
           )}
         />
+        <Route
+          path="/admin/users"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <RequireRole roles={['admin']}>
+                <UsersPage />
+              </RequireRole>
+            </RouteShell>
+          )}
+        />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
       </Routes>
     </div>
   );
