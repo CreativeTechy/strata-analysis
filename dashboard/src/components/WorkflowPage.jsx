@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Square,
 } from 'lucide-react';
 import '../styles/Workflow.css';
 
@@ -62,6 +63,8 @@ export default function WorkflowPage({
   selectedEvents = [],
   selectedEventIds = [],
   onChangeSelectedEventIds = () => {},
+  activeRun = null,
+  onStopRun = () => {},
 }) {
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
@@ -78,7 +81,20 @@ export default function WorkflowPage({
   const [workflowStartedAt, setWorkflowStartedAt] = useState(null);
   const [workflowElapsed, setWorkflowElapsed] = useState(0);
   const [isSourceListCollapsed, setIsSourceListCollapsed] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const wasScrapingRef = useRef(false);
+
+  const handleStopRun = async () => {
+    if (!activeRun?.id) return;
+    setIsStopping(true);
+    try {
+      await onStopRun(activeRun.id);
+    } catch (error) {
+      console.error('Failed to stop pipeline run:', error);
+    } finally {
+      setIsStopping(false);
+    }
+  };
 
   useEffect(() => {
     if (sources.length) setRows(seedRows(sources));
@@ -503,18 +519,35 @@ export default function WorkflowPage({
                 <Plus size={18} /> Add Source
               </Link>
 
-              <button
-                className="btn-primary"
-                style={{ marginTop: '15px', opacity: isScraping ? 0.7 : 1 }}
-                onClick={() => onRunScraper?.(selectedEventIds)}
-                disabled={isScraping || selectedEventCount === 0}
-              >
-                {isScraping ? (
-                  <><RefreshCw size={16} className="spin" /> Running...</>
-                ) : (
-                  runLabel
-                )}
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                <button
+                  className="btn-primary"
+                  style={{ opacity: isScraping ? 0.7 : 1, flex: 1 }}
+                  onClick={() => onRunScraper?.(selectedEventIds)}
+                  disabled={isScraping || selectedEventCount === 0}
+                >
+                  {isScraping ? (
+                    <><RefreshCw size={16} className="spin" /> Running...</>
+                  ) : (
+                    runLabel
+                  )}
+                </button>
+
+                {activeRun ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleStopRun}
+                    disabled={isStopping}
+                  >
+                    {isStopping ? (
+                      <><RefreshCw size={16} className="spin" /> Stopping...</>
+                    ) : (
+                      <><Square size={16} /> Stop</>
+                    )}
+                  </button>
+                ) : null}
+              </div>
             </motion.div>
 
             <div className="workflow-arrow">

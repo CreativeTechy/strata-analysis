@@ -32,6 +32,7 @@ from events_store import (
     list_events_page,
     list_sources_for_event,
     persist_event_embedding_for_id,
+    record_run_completion,
     set_event_sources,
     update_event,
 )
@@ -43,8 +44,15 @@ from sources_store import (
     list_sources_page,
     update_source,
 )
-from pipeline import run_scraper_pipeline
-from pipeline_runs import create_pipeline_run, get_active_run_for_event, list_pipeline_runs
+from pipeline import cancel_pipeline_run, run_scraper_pipeline
+from pipeline_runs import (
+    ACTIVE_STATUSES,
+    create_pipeline_run,
+    get_active_run_for_event,
+    get_pipeline_run,
+    list_pipeline_runs,
+    update_pipeline_run,
+)
 from scheduler import scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -284,6 +292,33 @@ def remove_event(event_id: int):
 @app.get("/api/pipeline-runs")
 def get_pipeline_runs(limit: int = 10):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+
+
+@app.post("/api/pipeline-runs/{run_id}/stop")
+def stop_pipeline_run(run_id: str):
+    run = get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found.")
+
+    if run["status"] not in ACTIVE_STATUSES:
+        return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
+
+    cancel_pipeline_run(run_id)
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated = update_pipeline_run(
+        run_id,
+        status="cancelled",
+        stage="cancelled",
+        message="Cancelled by user.",
+        cancel_requested_at=now,
+        cancelled_at=now,
+        finished_at=now,
+    )
+    if run.get("event_id") is not None:
+        record_run_completion(run["event_id"], status="cancelled", completed_at=datetime.now(timezone.utc))
+
+    return {"run": updated or run, "message": "Pipeline run cancelled."}
 
 
 @app.get("/api/articles")

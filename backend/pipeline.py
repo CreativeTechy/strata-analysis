@@ -6,9 +6,11 @@ single place that runs the pipeline and records its outcome.
 
 import json
 import os
+import platform
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +19,109 @@ from pipeline_runs import update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
+
+IS_WINDOWS = platform.system() == "Windows"
+
+# Tracks the live Popen for each run so a stop request can reach the actual
+# OS process, plus which run_ids have been asked to cancel (checked between
+# pipeline stages so a stop between scrape/enrich still lands on "cancelled").
+_active_processes = {}
+_cancel_requested = set()
+_registry_lock = threading.Lock()
+
+
+class PipelineCancelled(Exception):
+    """Raised internally when a run is stopped by the user."""
+
+
+def _register_process(run_id, proc):
+    with _registry_lock:
+        _active_processes[run_id] = proc
+
+
+def _unregister_process(run_id):
+    with _registry_lock:
+        _active_processes.pop(run_id, None)
+
+
+def _is_cancel_requested(run_id):
+    with _registry_lock:
+        return run_id in _cancel_requested
+
+
+def _clear_cancellation(run_id):
+    with _registry_lock:
+        _cancel_requested.discard(run_id)
+        _active_processes.pop(run_id, None)
+
+
+def _kill_process_tree(proc):
+    if proc.poll() is not None:
+        return
+    try:
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            import signal
+
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        pass
+
+
+def cancel_pipeline_run(run_id: str) -> bool:
+    """Request cancellation of a run and kill its live process tree, if any.
+
+    Returns True if a live process was found and terminated. Either way the
+    run_id is marked so the pipeline thread bails out at its next checkpoint
+    (e.g. if the stop arrives while queued or between stages).
+    """
+    with _registry_lock:
+        _cancel_requested.add(run_id)
+        proc = _active_processes.get(run_id)
+    if proc is not None:
+        _kill_process_tree(proc)
+        return True
+    return False
+
+
+def _popen(cmd, cwd, env):
+    kwargs = {}
+    if IS_WINDOWS:
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(cmd, cwd=cwd, env=env, **kwargs)
+
+
+def _run_step(run_id, cmd, cwd, env):
+    """Run one pipeline stage as a trackable subprocess.
+
+    Raises PipelineCancelled if the run was stopped before or during the
+    stage, or subprocess.CalledProcessError if it failed on its own.
+    """
+    if _is_cancel_requested(run_id):
+        raise PipelineCancelled()
+
+    proc = _popen(cmd, cwd, env)
+    _register_process(run_id, proc)
+    try:
+        returncode = proc.wait()
+    finally:
+        _unregister_process(run_id)
+
+    if _is_cancel_requested(run_id):
+        raise PipelineCancelled()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd)
 
 
 def _load_pipeline_stats(stats_file: Path):
@@ -37,6 +142,19 @@ def _finish_run(run_id, event_id, **fields):
 
 def run_scraper_pipeline(run_id: str, event_id: int | None = None):
     """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
+    if _is_cancel_requested(run_id):
+        _finish_run(
+            run_id,
+            event_id,
+            status="cancelled",
+            stage="cancelled",
+            message="Pipeline cancelled before it started.",
+            cancelled_at=datetime.now(timezone.utc).isoformat(),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _clear_cancellation(run_id)
+        return
+
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
     if event_id is not None:
@@ -80,15 +198,15 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
                 started_at=datetime.now(timezone.utc).isoformat(),
             )
             print("1. Scraping configured sources...")
-            subprocess.run(
-                ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
-                cwd=BASE_DIR,
-                check=True,
-                env=env,
-            )
+            _run_step(run_id, ["scrapy", "crawl", "source_rss", "-O", str(raw_file)], BASE_DIR, env)
+
             update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
             print("2. Enriching + saving...")
-            subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
+            _run_step(run_id, [sys.executable, "enrich.py"], BASE_DIR, env)
+
+            if _is_cancel_requested(run_id):
+                raise PipelineCancelled()
+
             stats = _load_pipeline_stats(stats_file)
             _finish_run(
                 run_id,
@@ -102,6 +220,17 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
             print("Pipeline complete!")
+        except PipelineCancelled:
+            _finish_run(
+                run_id,
+                event_id,
+                status="cancelled",
+                stage="cancelled",
+                message="Pipeline cancelled by user.",
+                cancelled_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"Pipeline {run_id} cancelled.")
         except subprocess.CalledProcessError as e:
             _finish_run(
                 run_id,
@@ -124,3 +253,5 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
             print(f"Pipeline crashed: {e}")
+        finally:
+            _clear_cancellation(run_id)

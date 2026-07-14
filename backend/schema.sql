@@ -84,9 +84,15 @@ create table if not exists public.pipeline_runs (
     event_id         bigint references public.events(id) on delete set null,
     started_at       timestamptz default now(),
     finished_at      timestamptz,
+    cancel_requested_at timestamptz,
+    cancelled_at     timestamptz,
     created_at       timestamptz default now(),
     updated_at       timestamptz default now()
 );
+
+alter table public.pipeline_runs
+    add column if not exists cancel_requested_at timestamptz,
+    add column if not exists cancelled_at timestamptz;
 
 create table if not exists public.crawl_pages (
     id          bigint generated always as identity primary key,
