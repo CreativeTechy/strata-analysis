@@ -34,6 +34,33 @@ def _fetch_by_id(run_id):
     return _normalize(row) if row else None
 
 
+def get_active_run_for_event(event_id):
+    """Return the in-flight run for this event, or None if it's free to start.
+
+    A run is "active" if it's queued/running and started recently enough to trust;
+    this keeps a crashed backend from permanently blocking future runs for the event.
+    """
+    if not config.DATABASE_URL or event_id is None:
+        return None
+
+    try:
+        row = db.fetch_one(
+            f"""
+            select {RUN_SELECT}
+            from pipeline_runs
+            where event_id = %s
+              and status in ('queued', 'running')
+              and created_at > now() - (%s || ' minutes')::interval
+            order by created_at desc
+            limit 1
+            """,
+            (int(event_id), config.SCHEDULER_STALE_RUN_MINUTES),
+        )
+        return _normalize(row) if row else None
+    except Exception:
+        return None
+
+
 def list_pipeline_runs(limit=10):
     if not config.DATABASE_URL:
         return []

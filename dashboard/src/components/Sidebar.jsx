@@ -3,7 +3,7 @@ import { LayoutDashboard, GitMerge, Bug, BarChart3, MessageSquare, Rss, Play, Ne
 import { NavLink, Link } from 'react-router-dom';
 
 export default function Sidebar({
-  onToggleFeed,
+  onToggleSource,
 }) {
   const navStyle = ({ isActive }) => ({
     background: isActive ? 'white' : 'rgba(255,255,255,0.45)',
@@ -28,8 +28,8 @@ export default function Sidebar({
         <NavLink to="/articles" className="btn-secondary" style={navStyle}>
           <Newspaper size={18} /> Articles
         </NavLink>
-        <NavLink to="/feeds" className="btn-secondary" style={navStyle}>
-          <Rss size={18} /> Feeds
+        <NavLink to="/sources" className="btn-secondary" style={navStyle}>
+          <Rss size={18} /> Sources
         </NavLink>
         <NavLink to="/events" className="btn-secondary" style={navStyle}>
           <CalendarDays size={18} /> Events

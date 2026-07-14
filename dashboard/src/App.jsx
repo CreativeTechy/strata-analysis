@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
-import FeedsPage from './components/FeedsPage';
+import SourcesPage from './components/SourcesPage';
 import EventsPage from './components/EventsPage';
 import EventDetailPage from './components/EventDetailPage';
 import IntelligencePage from './components/IntelligencePage';
@@ -44,9 +44,9 @@ export default function App() {
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState([]);
-  const [feeds, setFeeds] = useState([]);
-  const [feedSource, setFeedSource] = useState('supabase');
-  const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
+  const [sources, setSources] = useState([]);
+  const [sourcesProvenance, setSourcesProvenance] = useState('supabase');
+  const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
   const [workflowSelectedEventIds, setWorkflowSelectedEventIds] = useState(() => {
@@ -69,7 +69,6 @@ export default function App() {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
     return stored ? Number(stored) : null;
   });
-  const [crawlCount, setCrawlCount] = useState(null);
   const [appNow, setAppNow] = useState(() => new Date());
   const pollIntervalRef = useRef(null);
   const pipelineRunsPollRef = useRef(null);
@@ -79,14 +78,14 @@ export default function App() {
     [events, selectedEventId]
   );
 
-  const selectedEventFeedIds = useMemo(
-    () => (selectedEvent?.feed_ids || []).map(Number),
+  const selectedEventSourceIds = useMemo(
+    () => (selectedEvent?.source_ids || []).map(Number),
     [selectedEvent]
   );
 
-  const selectedEventFeeds = useMemo(
-    () => feeds.filter((feed) => selectedEventFeedIds.includes(Number(feed.id))),
-    [feeds, selectedEventFeedIds]
+  const selectedEventSources = useMemo(
+    () => sources.filter((source) => selectedEventSourceIds.includes(Number(source.id))),
+    [sources, selectedEventSourceIds]
   );
 
   const workflowSelectedEvents = useMemo(() => {
@@ -94,16 +93,16 @@ export default function App() {
     return events.filter((event) => selectedIds.has(Number(event.id)));
   }, [events, workflowSelectedEventIds]);
 
-  const workflowSelectedFeedUrls = useMemo(() => {
+  const workflowSelectedSourceUrls = useMemo(() => {
     const urls = new Set();
     workflowSelectedEvents.forEach((event) => {
-      (event.feed_ids || []).forEach((feedId) => {
-        const feed = feeds.find((item) => Number(item.id) === Number(feedId));
-        if (feed?.url) urls.add(feed.url);
+      (event.source_ids || []).forEach((sourceId) => {
+        const source = sources.find((item) => Number(item.id) === Number(sourceId));
+        if (source?.url) urls.add(source.url);
       });
     });
     return [...urls];
-  }, [feeds, workflowSelectedEvents]);
+  }, [sources, workflowSelectedEvents]);
 
   const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
   const activePipelineRun = useMemo(
@@ -145,17 +144,6 @@ export default function App() {
     }
   };
 
-  const loadCrawlCount = async () => {
-    try {
-      const res = await fetch('/api/crawl-count');
-      if (!res.ok) throw new Error(`Crawl count request failed: ${res.status}`);
-      const data = await res.json().catch(() => ({}));
-      setCrawlCount(Number(data?.crawl_count) || 0);
-    } catch {
-      setCrawlCount(0);
-    }
-  };
-
   const loadPipelineRuns = async () => {
     try {
       const res = await fetch('/api/pipeline-runs?limit=25');
@@ -181,19 +169,19 @@ export default function App() {
     }
   };
 
-  const refreshFeeds = async () => {
-    setIsLoadingFeeds(true);
+  const refreshSources = async () => {
+    setIsLoadingSources(true);
     try {
-      const res = await fetch('/api/feeds');
+      const res = await fetch('/api/sources');
       if (!res.ok) return;
       const data = await res.json();
-      setFeeds(Array.isArray(data?.feeds) ? data.feeds : []);
-      setFeedSource(data?.source || 'supabase');
+      setSources(Array.isArray(data?.sources) ? data.sources : []);
+      setSourcesProvenance(data?.source || 'supabase');
     } catch {
-      setFeeds([]);
-      setFeedSource('supabase');
+      setSources([]);
+      setSourcesProvenance('supabase');
     } finally {
-      setIsLoadingFeeds(false);
+      setIsLoadingSources(false);
     }
   };
 
@@ -276,9 +264,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshFeeds();
+    refreshSources();
     refreshEvents();
-    loadCrawlCount();
     return () => stopPolling();
   }, []);
 
@@ -410,52 +397,52 @@ export default function App() {
     return `${hours}:${minutes}:${seconds}`;
   };
 
-  const createFeed = async (payload) => {
+  const createSource = async (payload) => {
     try {
-      const res = await fetch('/api/feeds', {
+      const res = await fetch('/api/sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add feed (${res.status})`);
-      await refreshFeeds();
+      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add source (${res.status})`);
+      await refreshSources();
       await refreshEvents();
-      return data?.feed ?? null;
+      return data?.source ?? null;
     } catch (error) {
-      console.error('Failed to add feed:', error);
+      console.error('Failed to add source:', error);
       throw error;
     }
   };
 
-  const updateFeed = async (feedId, payload) => {
+  const updateSource = async (sourceId, payload) => {
     try {
-      const res = await fetch(`/api/feeds/${feedId}`, {
+      const res = await fetch(`/api/sources/${sourceId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update feed (${res.status})`);
-      await refreshFeeds();
+      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update source (${res.status})`);
+      await refreshSources();
       await refreshEvents();
-      return data?.feed ?? null;
+      return data?.source ?? null;
     } catch (error) {
-      console.error('Failed to update feed:', error);
+      console.error('Failed to update source:', error);
       throw error;
     }
   };
 
-  const deleteFeed = async (feedId) => {
+  const deleteSource = async (sourceId) => {
     try {
-      const res = await fetch(`/api/feeds/${feedId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/sources/${sourceId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete feed (${res.status})`));
-      await refreshFeeds();
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete source (${res.status})`));
+      await refreshSources();
       await refreshEvents();
       return true;
     } catch (error) {
-      console.error('Failed to remove feed:', error);
+      console.error('Failed to remove source:', error);
       throw error;
     }
   };
@@ -470,7 +457,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add event (${res.status})`));
       await refreshEvents();
-      await refreshFeeds();
+      await refreshSources();
       return data ?? null;
     } catch (error) {
       console.error('Failed to add event:', error);
@@ -488,7 +475,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update event (${res.status})`));
       await refreshEvents();
-      await refreshFeeds();
+      await refreshSources();
       return data ?? null;
     } catch (error) {
       console.error('Failed to update event:', error);
@@ -517,7 +504,7 @@ export default function App() {
       <div className="bg-pattern"></div>
 
       <Sidebar
-        onToggleFeed={(feed) => updateFeed(feed.id, { ...feed, enabled: !feed.enabled })}
+        onToggleSource={(source) => updateSource(source.id, { ...source, enabled: !source.enabled })}
       />
 
       <main className="main-content">
@@ -548,8 +535,8 @@ export default function App() {
               <Link to="/articles" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
                 <Newspaper size={16} /> Open Articles
               </Link>
-              <Link to="/feeds" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
-                <Rss size={16} /> Manage Feeds
+              <Link to="/sources" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
+                <Rss size={16} /> Manage Sources
               </Link>
               <Link to="/events" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
                 <CalendarDays size={16} /> Manage Events
@@ -566,7 +553,7 @@ export default function App() {
             </div>
           </header>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-            {(isLoadingReportStats || isLoadingEvents || isLoadingFeeds) ? (
+            {(isLoadingReportStats || isLoadingEvents || isLoadingSources) ? (
               <span className="panel-chip warning">
                 <RefreshCw size={12} className="spin" />
                 Loading dashboard
@@ -579,9 +566,8 @@ export default function App() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             <StatsOverview
               stats={reportStats}
-              crawlCount={crawlCount}
               scopeLabel={selectedEvent ? selectedEvent.name : 'all events'}
-              loading={isLoadingReportStats || crawlCount == null}
+              loading={isLoadingReportStats}
             />
           </motion.div>
         </div>
@@ -601,7 +587,7 @@ export default function App() {
         articles={workflowArticles}
         isScraping={isScraping}
         onRunScraper={runScraper}
-        feeds={workflowSelectedFeedUrls}
+        sources={workflowSelectedSourceUrls}
         events={events}
         selectedEvents={workflowSelectedEvents}
         selectedEventIds={workflowSelectedEventIds}
@@ -640,49 +626,49 @@ export default function App() {
         <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
         <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
         <Route
-          path="/feeds"
+          path="/sources"
           element={(
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <FeedsPage
-                feeds={feeds}
+              <SourcesPage
+                sources={sources}
                 events={events}
-                feedsSource={feedSource}
-                onCreateFeed={createFeed}
-                onUpdateFeed={updateFeed}
-                onDeleteFeed={deleteFeed}
-                isLoadingFeeds={isLoadingFeeds}
+                sourcesSource={sourcesProvenance}
+                onCreateSource={createSource}
+                onUpdateSource={updateSource}
+                onDeleteSource={deleteSource}
+                isLoadingSources={isLoadingSources}
               />
             </RouteShell>
           )}
         />
         <Route
-          path="/feeds/new"
+          path="/sources/new"
           element={(
-            <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
-              <FeedsPage
-                feeds={feeds}
+            <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
+              <SourcesPage
+                sources={sources}
                 events={events}
-                feedsSource={feedSource}
-                onCreateFeed={createFeed}
-                onUpdateFeed={updateFeed}
-                onDeleteFeed={deleteFeed}
-                isLoadingFeeds={isLoadingFeeds}
+                sourcesSource={sourcesProvenance}
+                onCreateSource={createSource}
+                onUpdateSource={updateSource}
+                onDeleteSource={deleteSource}
+                isLoadingSources={isLoadingSources}
               />
             </RouteShell>
           )}
         />
         <Route
-          path="/feeds/:feedId/edit"
+          path="/sources/:sourceId/edit"
           element={(
-            <RouteShell backTo="/feeds" backLabel="Back to Feeds" backStyle={{ background: 'white' }}>
-              <FeedsPage
-                feeds={feeds}
+            <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
+              <SourcesPage
+                sources={sources}
                 events={events}
-                feedsSource={feedSource}
-                onCreateFeed={createFeed}
-                onUpdateFeed={updateFeed}
-                onDeleteFeed={deleteFeed}
-                isLoadingFeeds={isLoadingFeeds}
+                sourcesSource={sourcesProvenance}
+                onCreateSource={createSource}
+                onUpdateSource={updateSource}
+                onDeleteSource={deleteSource}
+                isLoadingSources={isLoadingSources}
               />
             </RouteShell>
           )}
@@ -693,7 +679,7 @@ export default function App() {
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
               <EventsPage
                 events={events}
-                feeds={feeds}
+                sources={sources}
                 onCreateEvent={createEvent}
                 onUpdateEvent={updateEvent}
                 isLoadingEvents={isLoadingEvents}
@@ -707,10 +693,10 @@ export default function App() {
             <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
               <EventsPage
                 events={events}
-                feeds={feeds}
+                sources={sources}
                 onCreateEvent={createEvent}
                 onUpdateEvent={updateEvent}
-                onCreateFeed={createFeed}
+                onCreateSource={createSource}
                 isLoadingEvents={isLoadingEvents}
               />
             </RouteShell>
@@ -722,7 +708,7 @@ export default function App() {
             <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
               <EventsPage
                 events={events}
-                feeds={feeds}
+                sources={sources}
                 onCreateEvent={createEvent}
                 onUpdateEvent={updateEvent}
                 isLoadingEvents={isLoadingEvents}
@@ -736,7 +722,7 @@ export default function App() {
             <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
               <EventDetailPage
                 events={events}
-                feeds={feeds}
+                sources={sources}
                 onDeleteEvent={deleteEvent}
               />
             </RouteShell>

@@ -1,8 +1,8 @@
 """Event link discovery for hashtags, keywords, and usernames.
 
-DeepSeek proposes feed sources directly from the event terms, then we validate
+DeepSeek proposes sources directly from the event terms, then we validate
 those URLs, resolve domains/RSS pages, and upsert the selected links as
-reusable feed records.
+reusable source records.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import requests
 from parsel import Selector
 
 import config
-from feeds_store import create_feed
-from events_store import set_event_feeds
+from sources_store import create_source
+from events_store import set_event_sources
 
 SEARCH_HEADERS = {
     "User-Agent": (
@@ -302,8 +302,8 @@ def _deepseek_source_suggestions(event):
 
     event_context = _event_context(event)
     prompt = (
-        "You are helping discover feed sources for an event.\n"
-        "Use only the event hashtags, keywords, and usernames to propose likely feed sources.\n"
+        "You are helping discover sources for an event.\n"
+        "Use only the event hashtags, keywords, and usernames to propose likely sources.\n"
         "Return ONLY JSON with this shape:\n"
         '{ "suggested_sources": [ { "kind": "url|domain|rss", "value": "https://...", "title": "...", "reason": "..." } ], "links": ["https://..."] }\n'
         "Return 5 to 10 suggestions when possible.\n"
@@ -500,9 +500,9 @@ def _resolve_source(item):
 
 
 def discover_event_links(event):
-    """Ask DeepSeek for event sources, validate them, and create reusable feeds."""
+    """Ask DeepSeek for event sources, validate them, and create reusable source records."""
     if not isinstance(event, dict):
-        return {"suggested_sources": [], "feed_ids": [], "feeds": [], "resolved_urls": []}
+        return {"suggested_sources": [], "source_ids": [], "sources": [], "resolved_urls": []}
 
     suggestions = _deepseek_source_suggestions(event)
     resolved_sources = []
@@ -529,8 +529,8 @@ def discover_event_links(event):
             seen_urls.add(url)
             resolved_sources.append(resolved)
 
-    feed_ids = []
-    feeds = []
+    source_ids = []
+    sources = []
     for item in resolved_sources:
         url = (item.get("url") or "").strip()
         if not url:
@@ -542,30 +542,30 @@ def discover_event_links(event):
             "category": "discovered",
             "enabled": True,
         }
-        feed = create_feed(payload)
-        if feed and feed.get("id"):
-            feed_ids.append(int(feed["id"]))
-            feeds.append(feed)
+        source = create_source(payload)
+        if source and source.get("id"):
+            source_ids.append(int(source["id"]))
+            sources.append(source)
 
     merged_ids = []
     seen = set()
-    for value in list(event.get("feed_ids") or []) + feed_ids:
+    for value in list(event.get("source_ids") or []) + source_ids:
         try:
-            feed_id = int(value)
+            source_id = int(value)
         except Exception:
             continue
-        if feed_id in seen:
+        if source_id in seen:
             continue
-        seen.add(feed_id)
-        merged_ids.append(feed_id)
+        seen.add(source_id)
+        merged_ids.append(source_id)
 
     event_id = event.get("id")
     if event_id is not None and merged_ids:
-        set_event_feeds(event_id, merged_ids)
+        set_event_sources(event_id, merged_ids)
 
     return {
         "suggested_sources": suggestions,
         "resolved_urls": [item.get("url") for item in resolved_sources if item.get("url")],
-        "feed_ids": merged_ids,
-        "feeds": feeds,
+        "source_ids": merged_ids,
+        "sources": sources,
     }

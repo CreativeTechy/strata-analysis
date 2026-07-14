@@ -27,25 +27,25 @@ const emptyDraft = {
   event_ids: [],
 };
 
-const FEED_TYPE_OPTIONS = [
+const SOURCE_TYPE_OPTIONS = [
   { value: 'rss', label: 'RSS' },
   { value: 'web', label: 'Web' },
   { value: 'social', label: 'Social' },
   { value: 'hashtag', label: 'Hashtag' },
   { value: 'keyword', label: 'Keyword' },
-  { value: 'username', label: 'Username' },
+  { value: 'username', label: 'X Account' },
 ];
 
-const TERM_FEED_TYPES = new Set(['hashtag', 'keyword', 'username']);
+const TERM_SOURCE_TYPES = new Set(['hashtag', 'keyword', 'username']);
 
-const TERM_FEED_PLACEHOLDERS = {
+const TERM_SOURCE_PLACEHOLDERS = {
   hashtag: 'Hashtag, without # (e.g. EVSummit)',
-  username: 'Username, without @ (e.g. elonmusk)',
+  username: 'X account, without @ (e.g. elonmusk)',
   keyword: 'Keyword or phrase (e.g. electric vehicles)',
 };
 
-function feedTypeLabel(sourceType) {
-  const match = FEED_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
+function sourceTypeLabel(sourceType) {
+  const match = SOURCE_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
   return match ? match.label : (sourceType || 'RSS');
 }
 
@@ -65,14 +65,14 @@ function normalizeDraftForCompare(value) {
   };
 }
 
-export default function FeedsPage({
-  feeds = [],
+export default function SourcesPage({
+  sources = [],
   events = [],
-  feedsSource,
-  onCreateFeed,
-  onUpdateFeed,
-  onDeleteFeed,
-  isLoadingFeeds,
+  sourcesSource,
+  onCreateSource,
+  onUpdateSource,
+  onDeleteSource,
+  isLoadingSources,
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -81,10 +81,10 @@ export default function FeedsPage({
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
   const isFormRoute = isCreateRoute || isEditRoute;
-  const editingId = isEditRoute ? Number(params.feedId) : null;
-  const currentFeed = useMemo(
-    () => (editingId != null ? feeds.find((feed) => Number(feed.id) === Number(editingId)) || null : null),
-    [editingId, feeds]
+  const editingId = isEditRoute ? Number(params.sourceId) : null;
+  const currentSource = useMemo(
+    () => (editingId != null ? sources.find((source) => Number(source.id) === Number(editingId)) || null : null),
+    [editingId, sources]
   );
 
   const [draft, setDraft] = useState(emptyDraft);
@@ -107,32 +107,32 @@ export default function FeedsPage({
     }
 
     if (isEditRoute) {
-      if (!currentFeed) {
+      if (!currentSource) {
         setDraft(emptyDraft);
         setInitialDraft(emptyDraft);
         return;
       }
 
       const assignedEventIds = events
-        .filter((event) => Array.isArray(event.feed_ids) && event.feed_ids.map(Number).includes(Number(currentFeed.id)))
+        .filter((event) => Array.isArray(event.source_ids) && event.source_ids.map(Number).includes(Number(currentSource.id)))
         .map((event) => Number(event.id));
 
       setDraft({
-        url: currentFeed.url || '',
-        name: currentFeed.name || '',
-        source_type: currentFeed.source_type || 'rss',
-        category: currentFeed.category || '',
-        enabled: currentFeed.enabled ?? true,
-        limited: currentFeed.limited ?? false,
+        url: currentSource.url || '',
+        name: currentSource.name || '',
+        source_type: currentSource.source_type || 'rss',
+        category: currentSource.category || '',
+        enabled: currentSource.enabled ?? true,
+        limited: currentSource.limited ?? false,
         event_ids: assignedEventIds,
       });
       setInitialDraft({
-        url: currentFeed.url || '',
-        name: currentFeed.name || '',
-        source_type: currentFeed.source_type || 'rss',
-        category: currentFeed.category || '',
-        enabled: currentFeed.enabled ?? true,
-        limited: currentFeed.limited ?? false,
+        url: currentSource.url || '',
+        name: currentSource.name || '',
+        source_type: currentSource.source_type || 'rss',
+        category: currentSource.category || '',
+        enabled: currentSource.enabled ?? true,
+        limited: currentSource.limited ?? false,
         event_ids: assignedEventIds,
       });
       return;
@@ -140,13 +140,13 @@ export default function FeedsPage({
 
     setDraft(emptyDraft);
     setInitialDraft(emptyDraft);
-  }, [currentFeed, events, isEditRoute, isFormRoute]);
+  }, [currentSource, events, isEditRoute, isFormRoute]);
 
-  const feedEventsById = useMemo(() => {
+  const sourceEventsById = useMemo(() => {
     const map = new Map();
     events.forEach((event) => {
-      (event.feed_ids || []).forEach((feedId) => {
-        const id = Number(feedId);
+      (event.source_ids || []).forEach((sourceId) => {
+        const id = Number(sourceId);
         if (!map.has(id)) map.set(id, []);
         map.get(id).push(event);
       });
@@ -155,43 +155,43 @@ export default function FeedsPage({
   }, [events]);
 
   const stats = useMemo(() => {
-    const total = feeds.length;
-    const enabled = feeds.filter((feed) => feed.enabled).length;
-    const assigned = feeds.filter((feed) => (feedEventsById.get(Number(feed.id)) || []).length > 0).length;
-    const rss = feeds.filter((feed) => (feed.source_type || 'rss') === 'rss').length;
+    const total = sources.length;
+    const enabled = sources.filter((source) => source.enabled).length;
+    const assigned = sources.filter((source) => (sourceEventsById.get(Number(source.id)) || []).length > 0).length;
+    const rss = sources.filter((source) => (source.source_type || 'rss') === 'rss').length;
     return { total, enabled, assigned, rss };
-  }, [feeds, feedEventsById]);
+  }, [sources, sourceEventsById]);
 
-  const visibleFeeds = useMemo(() => {
+  const visibleSources = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return feeds.filter((feed) => {
-      const feedEvents = feedEventsById.get(Number(feed.id)) || [];
+    return sources.filter((source) => {
+      const sourceEvents = sourceEventsById.get(Number(source.id)) || [];
       const matchesQuery =
         !needle ||
-        [feed.name, feed.url, feed.category, feed.source_type, ...feedEvents.map((event) => event.name)]
+        [source.name, source.url, source.category, source.source_type, ...sourceEvents.map((event) => event.name)]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
       const matchesStatus =
         statusFilter === 'all' ||
-        (statusFilter === 'enabled' && feed.enabled) ||
-        (statusFilter === 'disabled' && !feed.enabled) ||
-        (statusFilter === 'assigned' && feedEvents.length > 0) ||
-        (statusFilter === 'unassigned' && feedEvents.length === 0);
-      const matchesType = typeFilter === 'all' || (feed.source_type || 'rss') === typeFilter;
+        (statusFilter === 'enabled' && source.enabled) ||
+        (statusFilter === 'disabled' && !source.enabled) ||
+        (statusFilter === 'assigned' && sourceEvents.length > 0) ||
+        (statusFilter === 'unassigned' && sourceEvents.length === 0);
+      const matchesType = typeFilter === 'all' || (source.source_type || 'rss') === typeFilter;
       const matchesReach =
         reachFilter === 'all' ||
-        (reachFilter === 'limited' && feed.limited) ||
-        (reachFilter === 'global' && !feed.limited);
+        (reachFilter === 'limited' && source.limited) ||
+        (reachFilter === 'global' && !source.limited);
       return matchesQuery && matchesStatus && matchesType && matchesReach;
     });
-  }, [feeds, feedEventsById, query, statusFilter, typeFilter, reachFilter]);
+  }, [sources, sourceEventsById, query, statusFilter, typeFilter, reachFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(visibleFeeds.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(visibleSources.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
-  const pagedFeeds = useMemo(() => {
+  const pagedSources = useMemo(() => {
     const start = (safePage - 1) * PAGE_SIZE;
-    return visibleFeeds.slice(start, start + PAGE_SIZE);
-  }, [visibleFeeds, safePage]);
+    return visibleSources.slice(start, start + PAGE_SIZE);
+  }, [visibleSources, safePage]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -203,18 +203,18 @@ export default function FeedsPage({
     }
   }, [currentPage, totalPages]);
 
-  const beginEdit = (feed) => {
-    navigate(`/feeds/${feed.id}/edit`);
+  const beginEdit = (source) => {
+    navigate(`/sources/${source.id}/edit`);
   };
 
   const discardChanges = () => {
     setShowCancelModal(false);
     setDraft(emptyDraft);
-    navigate('/feeds');
+    navigate('/sources');
   };
 
   const submit = async () => {
-    const isTermType = TERM_FEED_TYPES.has(draft.source_type);
+    const isTermType = TERM_SOURCE_TYPES.has(draft.source_type);
     const payload = {
       url: isTermType ? '' : draft.url.trim(),
       name: draft.name.trim(),
@@ -228,12 +228,12 @@ export default function FeedsPage({
     if (isTermType ? !payload.name : !payload.url) return;
 
     if (editingId) {
-      await onUpdateFeed?.(editingId, payload);
+      await onUpdateSource?.(editingId, payload);
     } else {
-      await onCreateFeed?.(payload);
+      await onCreateSource?.(payload);
     }
 
-    navigate('/feeds');
+    navigate('/sources');
   };
 
   const toggleEvent = (eventId) => {
@@ -246,10 +246,10 @@ export default function FeedsPage({
     }));
   };
 
-  const remove = async (feed) => {
-    await onDeleteFeed?.(feed.id);
-    if (editingId === feed.id) {
-      navigate('/feeds');
+  const remove = async (source) => {
+    await onDeleteSource?.(source.id);
+    if (editingId === source.id) {
+      navigate('/sources');
     }
   };
 
@@ -266,8 +266,8 @@ export default function FeedsPage({
   };
 
   if (isFormRoute) {
-    const heading = isEditRoute ? 'Edit Feed' : 'Create Feed';
-    const buttonLabel = isEditRoute ? 'Save Feed' : 'Create Feed';
+    const heading = isEditRoute ? 'Edit Source' : 'Create Source';
+    const buttonLabel = isEditRoute ? 'Save Source' : 'Create Source';
     return (
       <div className="admin-page-shell">
         <div className="admin-page-header">
@@ -300,42 +300,52 @@ export default function FeedsPage({
             <span className="panel-chip">{isEditRoute ? 'Updating existing source' : 'Create a new source'}</span>
           </div>
 
-          {!TERM_FEED_TYPES.has(draft.source_type) && (
-            <input
-              type="text"
-              className="feed-input"
-              placeholder="Feed URL"
-              value={draft.url}
-              onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
-            />
-          )}
-          <input
-            type="text"
-            className="feed-input"
-            placeholder={TERM_FEED_PLACEHOLDERS[draft.source_type] || 'Display name'}
-            value={draft.name}
-            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Source type</span>
             <select
               className="filter-select"
               value={draft.source_type}
               onChange={(e) => setDraft((prev) => ({ ...prev, source_type: e.target.value }))}
             >
-              {FEED_TYPE_OPTIONS.map((option) => (
+              {SOURCE_TYPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}
             </select>
+          </label>
+          {!TERM_SOURCE_TYPES.has(draft.source_type) && (
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Source URL</span>
+              <input
+                type="text"
+                className="source-input"
+                placeholder="Source URL"
+                value={draft.url}
+                onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
+              />
+            </label>
+          )}
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Display name</span>
             <input
               type="text"
-              className="feed-input"
+              className="source-input"
+              placeholder={TERM_SOURCE_PLACEHOLDERS[draft.source_type] || 'Display name'}
+              value={draft.name}
+              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Category</span>
+            <input
+              type="text"
+              className="source-input"
               placeholder="Category"
               value={draft.category}
               onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}
             />
-          </div>
+          </label>
           <div
             style={{
               padding: '14px 16px',
@@ -350,9 +360,9 @@ export default function FeedsPage({
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Feed status</strong>
+              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Source status</strong>
               <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
-                Disable this feed to keep it in the library without using it in pipelines.
+                Disable this source to keep it in the library without using it in pipelines.
               </span>
             </div>
             <button
@@ -386,9 +396,9 @@ export default function FeedsPage({
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Feed reach</strong>
+              <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Source reach</strong>
               <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
-                Limited feeds stay out of the assignable list on event create/edit pages unless already attached to that event.
+                Limited sources stay out of the assignable list on event create/edit pages unless already attached to that event.
               </span>
             </div>
             <button
@@ -450,7 +460,7 @@ export default function FeedsPage({
         <ConfirmModal
           open={showCancelModal}
           title="Discard changes?"
-          message="You have unsaved changes on this feed. If you cancel now, all edits on this page will be lost."
+          message="You have unsaved changes on this source. If you cancel now, all edits on this page will be lost."
           confirmLabel="Discard changes"
           cancelLabel="Keep editing"
           onClose={() => setShowCancelModal(false)}
@@ -468,22 +478,22 @@ export default function FeedsPage({
           <div className="admin-page-kicker">
             <Rss size={14} /> Source library
           </div>
-          <h1 className="admin-page-title">Feed Manager</h1>
+          <h1 className="admin-page-title">Source Manager</h1>
           <p className="admin-page-subtitle">
-            Curate the source pool, assign feeds to one or more events, and keep enabled sources easy to scan.
+            Curate the source pool, assign sources to one or more events, and keep enabled sources easy to scan.
           </p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
             <span>Source</span>
-            <strong>{feedsSource || 'supabase'}</strong>
+            <strong>{sourcesSource || 'supabase'}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
             <span>Search</span>
-            <strong>{visibleFeeds.length.toLocaleString()} matches</strong>
+            <strong>{visibleSources.length.toLocaleString()} matches</strong>
           </div>
-          <Link to="/feeds/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-            <Plus size={16} /> Add Feed
+          <Link to="/sources/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+            <Plus size={16} /> Add Source
           </Link>
         </div>
       </div>
@@ -494,7 +504,7 @@ export default function FeedsPage({
             <Layers3 size={18} />
           </div>
           <div>
-            <span>Total feeds</span>
+            <span>Total sources</span>
             <strong>{stats.total.toLocaleString()}</strong>
           </div>
         </div>
@@ -521,7 +531,7 @@ export default function FeedsPage({
             <Rss size={18} />
           </div>
           <div>
-            <span>RSS feeds</span>
+            <span>RSS sources</span>
             <strong>{stats.rss.toLocaleString()}</strong>
           </div>
         </div>
@@ -534,12 +544,12 @@ export default function FeedsPage({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search feeds, URLs, categories, or event names"
+            placeholder="Search sources, URLs, categories, or event names"
           />
         </label>
 
         <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">All feeds</option>
+          <option value="all">All sources</option>
           <option value="enabled">Enabled</option>
           <option value="disabled">Disabled</option>
           <option value="assigned">Assigned</option>
@@ -548,7 +558,7 @@ export default function FeedsPage({
 
         <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="all">All types</option>
-          {FEED_TYPE_OPTIONS.map((option) => (
+          {SOURCE_TYPE_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -564,32 +574,32 @@ export default function FeedsPage({
 
       <div className="glass-card admin-list-panel">
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Tracked Feeds</strong>
+          <strong style={{ fontSize: '1rem' }}>Tracked Sources</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isLoadingFeeds && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
-            <span className="panel-chip">{visibleFeeds.length} visible</span>
+            {isLoadingSources && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
+            <span className="panel-chip">{visibleSources.length} visible</span>
           </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {feeds.length === 0 && !isLoadingFeeds && (
+          {sources.length === 0 && !isLoadingSources && (
             <div className="admin-empty-state">
               <div className="admin-empty-state-icon">
                 <Rss size={18} />
               </div>
-              <strong>No feeds yet</strong>
+              <strong>No sources yet</strong>
               <span>Add your first source, then attach it to one or more events.</span>
-              <Link to="/feeds/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-                <Plus size={16} /> Add Feed
+              <Link to="/sources/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+                <Plus size={16} /> Add Source
               </Link>
             </div>
           )}
 
-          {pagedFeeds.map((feed, index) => {
-            const feedEvents = feedEventsById.get(Number(feed.id)) || [];
+          {pagedSources.map((source, index) => {
+            const sourceEvents = sourceEventsById.get(Number(source.id)) || [];
             return (
               <motion.div
-                key={feed.id ?? feed.url}
+                key={source.id ?? source.url}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.03 }}
@@ -598,18 +608,18 @@ export default function FeedsPage({
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title">{feed.name || feed.url?.replace('https://www.', '')}</strong>
-                      <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
-                        {feed.enabled ? 'Enabled' : 'Disabled'}
+                      <strong className="admin-item-title">{source.name || source.url?.replace('https://www.', '')}</strong>
+                      <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
+                        {source.enabled ? 'Enabled' : 'Disabled'}
                       </span>
-                      {feed.limited && <span className="panel-chip warning">Limited</span>}
+                      {source.limited && <span className="panel-chip warning">Limited</span>}
                     </div>
-                    <div className="admin-item-url">{feed.url}</div>
+                    <div className="admin-item-url">{source.url}</div>
                     <div className="admin-item-meta">
-                      <span>{feedTypeLabel(feed.source_type)}</span>
-                      {feed.category ? <span>{feed.category}</span> : null}
+                      <span>{sourceTypeLabel(source.source_type)}</span>
+                      {source.category ? <span>{source.category}</span> : null}
                       <span>
-                        {feedEvents.length} event{feedEvents.length === 1 ? '' : 's'}
+                        {sourceEvents.length} event{sourceEvents.length === 1 ? '' : 's'}
                       </span>
                     </div>
                   </div>
@@ -617,14 +627,14 @@ export default function FeedsPage({
                   <div className="admin-item-actions">
                     <Link
                       className="btn-secondary"
-                      to={`/feeds/${feed.id}/edit`}
+                      to={`/sources/${source.id}/edit`}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
                       <Pencil size={14} /> Edit
                     </Link>
                     <button
                       className="btn-secondary"
-                      onClick={() => setDeleteTarget(feed)}
+                      onClick={() => setDeleteTarget(source)}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#ff4757' }}
                     >
                       <Trash2 size={14} /> Delete
@@ -632,8 +642,8 @@ export default function FeedsPage({
                   </div>
                 </div>
                 <div className="admin-item-chips">
-                  {feedEvents.length ? (
-                    feedEvents.slice(0, 4).map((event) => (
+                  {sourceEvents.length ? (
+                    sourceEvents.slice(0, 4).map((event) => (
                       <span key={event.id} className="admin-tag">
                         {event.name}
                       </span>
@@ -646,18 +656,18 @@ export default function FeedsPage({
             );
           })}
 
-          {!isLoadingFeeds && visibleFeeds.length === 0 && feeds.length > 0 && (
+          {!isLoadingSources && visibleSources.length === 0 && sources.length > 0 && (
             <div className="admin-empty-state">
               <div className="admin-empty-state-icon">
                 <Search size={18} />
               </div>
-              <strong>No matching feeds</strong>
+              <strong>No matching sources</strong>
               <span>Try a different search term or status filter.</span>
             </div>
           )}
         </div>
 
-        {visibleFeeds.length > 0 && (
+        {visibleSources.length > 0 && (
           <div
             style={{
               marginTop: 14,
@@ -671,7 +681,7 @@ export default function FeedsPage({
             }}
           >
             <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleFeeds.length)} of {visibleFeeds.length}
+              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleSources.length)} of {visibleSources.length}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
@@ -699,10 +709,10 @@ export default function FeedsPage({
 
         <ConfirmModal
           open={Boolean(deleteTarget)}
-          title={`Delete feed "${deleteTarget?.name || deleteTarget?.url || ''}"?`}
-          message="This will permanently remove the feed and detach it from any linked events."
-          confirmLabel="Delete feed"
-          cancelLabel="Keep feed"
+          title={`Delete source "${deleteTarget?.name || deleteTarget?.url || ''}"?`}
+          message="This will permanently remove the source and detach it from any linked events."
+          confirmLabel="Delete source"
+          cancelLabel="Keep source"
           confirmButtonStyle={{
             background: 'linear-gradient(135deg, #ff4757, #e03131)',
             boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',

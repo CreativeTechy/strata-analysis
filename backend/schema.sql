@@ -41,9 +41,21 @@ alter table public.events
     add column if not exists embedding_json jsonb default '[]'::jsonb,
     add column if not exists embedding_model text,
     add column if not exists embedding_source text,
-    add column if not exists embedded_at timestamptz;
+    add column if not exists embedded_at timestamptz,
+    add column if not exists repeat_enabled boolean not null default false,
+    add column if not exists repeat_interval_value integer,
+    add column if not exists repeat_interval_unit text,
+    add column if not exists next_run_at timestamptz,
+    add column if not exists last_run_at timestamptz,
+    add column if not exists last_run_status text;
 
-create table if not exists public.feeds (
+alter table public.events
+    drop constraint if exists events_repeat_interval_unit_check;
+alter table public.events
+    add constraint events_repeat_interval_unit_check
+    check (repeat_interval_unit is null or repeat_interval_unit in ('minutes', 'hours', 'days'));
+
+create table if not exists public.sources (
     id           bigint generated always as identity primary key,
     url          text not null unique,
     name         text,
@@ -55,7 +67,7 @@ create table if not exists public.feeds (
     updated_at   timestamptz default now()
 );
 
-alter table public.feeds
+alter table public.sources
     add column if not exists limited boolean not null default false;
 
 create table if not exists public.pipeline_runs (
@@ -94,7 +106,7 @@ create table if not exists public.articles (
     id              bigint generated always as identity primary key,
     url             text not null unique,
     source          text,
-    feed            text,
+    source_url      text,
     title           text,
     author          text,
     published       text,
@@ -130,11 +142,11 @@ alter table public.articles
     add column if not exists embedding_source text,
     add column if not exists embedded_at timestamptz;
 
-create table if not exists public.event_feeds (
+create table if not exists public.event_sources (
     event_id     bigint not null references public.events(id) on delete cascade,
-    feed_id      bigint not null references public.feeds(id) on delete cascade,
+    source_id    bigint not null references public.sources(id) on delete cascade,
     created_at   timestamptz default now(),
-    primary key (event_id, feed_id)
+    primary key (event_id, source_id)
 );
 
 create table if not exists public.article_events (
@@ -147,9 +159,10 @@ create table if not exists public.article_events (
 
 create index if not exists events_status_idx on public.events (status);
 create index if not exists events_created_idx on public.events (created_at desc);
+create index if not exists events_next_run_idx on public.events (next_run_at) where repeat_enabled = true;
 
-create index if not exists feeds_enabled_idx on public.feeds (enabled);
-create index if not exists feeds_created_idx on public.feeds (created_at desc);
+create index if not exists sources_enabled_idx on public.sources (enabled);
+create index if not exists sources_created_idx on public.sources (created_at desc);
 
 create index if not exists pipeline_runs_created_idx on public.pipeline_runs (created_at desc);
 create index if not exists pipeline_runs_status_idx on public.pipeline_runs (status);
@@ -163,8 +176,8 @@ create index if not exists articles_sentiment_idx on public.articles (sentiment)
 create index if not exists articles_article_category_idx on public.articles (article_category);
 create index if not exists articles_analyzed_at_idx on public.articles (analyzed_at desc);
 
-create index if not exists event_feeds_event_idx on public.event_feeds (event_id);
-create index if not exists event_feeds_feed_idx on public.event_feeds (feed_id);
+create index if not exists event_sources_event_idx on public.event_sources (event_id);
+create index if not exists event_sources_source_idx on public.event_sources (source_id);
 
 create index if not exists article_events_event_idx on public.article_events (event_id);
 create index if not exists article_events_article_idx on public.article_events (article_id);
@@ -176,9 +189,9 @@ before update on public.events
 for each row
 execute function public.set_updated_at();
 
-drop trigger if exists set_feeds_updated_at on public.feeds;
-create trigger set_feeds_updated_at
-before update on public.feeds
+drop trigger if exists set_sources_updated_at on public.sources;
+create trigger set_sources_updated_at
+before update on public.sources
 for each row
 execute function public.set_updated_at();
 
@@ -189,11 +202,11 @@ for each row
 execute function public.set_updated_at();
 
 alter table public.events enable row level security;
-alter table public.feeds enable row level security;
+alter table public.sources enable row level security;
 alter table public.pipeline_runs enable row level security;
 alter table public.crawl_pages enable row level security;
 alter table public.articles enable row level security;
-alter table public.event_feeds enable row level security;
+alter table public.event_sources enable row level security;
 alter table public.article_events enable row level security;
 
 drop policy if exists "Public read access" on public.events;
@@ -203,9 +216,9 @@ for select
 to anon, authenticated
 using (true);
 
-drop policy if exists "Public read access" on public.feeds;
+drop policy if exists "Public read access" on public.sources;
 create policy "Public read access"
-on public.feeds
+on public.sources
 for select
 to anon, authenticated
 using (true);
@@ -231,9 +244,9 @@ for select
 to anon, authenticated
 using (true);
 
-drop policy if exists "Public read access" on public.event_feeds;
+drop policy if exists "Public read access" on public.event_sources;
 create policy "Public read access"
-on public.event_feeds
+on public.event_sources
 for select
 to anon, authenticated
 using (true);

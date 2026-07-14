@@ -1,4 +1,4 @@
-import { Activity, TrendingUp, Database, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3 } from 'lucide-react';
+import { Activity, TrendingUp, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { motion } from 'framer-motion';
 
@@ -21,7 +21,7 @@ function StatSkeleton() {
   );
 }
 
-export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabel = 'Current event', loading = false }) {
+export default function StatsOverview({ stats = {}, scopeLabel = 'Current event', loading = false }) {
   const total = Number(stats.total) || 0;
   const positive = Number(stats.positive) || 0;
   const negative = Number(stats.negative) || 0;
@@ -210,17 +210,6 @@ export default function StatsOverview({ stats = {}, crawlCount = null, scopeLabe
           <h4>Curated Articles</h4>
           <p>{total.toLocaleString()}</p>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
-        </div>
-      </motion.article>
-
-      <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
-        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(255,107,53,0.12), rgba(255,71,87,0.12))', color: '#e87d34' }}>
-          <Database size={24} />
-        </div>
-        <div className="stat-info">
-          <h4>Crawl Corpus</h4>
-          <p>{crawlCount == null ? '-' : crawlCount.toLocaleString()}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>spider pages to Spark</span>
         </div>
       </motion.article>
 

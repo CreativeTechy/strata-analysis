@@ -1,20 +1,20 @@
 # Strata Media - Source Intelligence
 
-Strata Media ingests content from configured feeds, enriches it with AI, stores
+Strata Media ingests content from configured sources, enriches it with AI, stores
 it in Supabase, and surfaces it in the dashboard.
 
 ## Pipeline
 
-- `backend/scraper/` - Scrapy project for feed and page extraction
+- `backend/scraper/` - Scrapy project for source and page extraction
 - `backend/enrich.py` - AI enrichment stage
 - `backend/store.py` - Supabase upsert layer
-- `backend/main.py` - FastAPI API for scraping, feeds, events, and chat
+- `backend/main.py` - FastAPI API for scraping, sources, events, and chat
 - `dashboard/` - React + Vite dashboard
 
 ## Stages
 
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
-   Supabase `feeds` or the `FEEDS` env var override, discovers article links,
+   Supabase `sources` or the `SOURCES` env var override, discovers article links,
    and extracts clean title/date/text with trafilatura.
 2. Enricher - `backend/enrich.py`. Cleans and tags each article with DeepSeek,
    then falls back to neutral defaults if the request fails.
@@ -24,7 +24,7 @@ it in Supabase, and surfaces it in the dashboard.
 
 DeepSeek is used everywhere in this app for AI: article enrichment
 (`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
-hashtag/keyword/username/feed discovery (`backend/events_ai.py` and
+hashtag/keyword/username/source discovery (`backend/events_ai.py` and
 `backend/event_discovery.py`).
 
 ## Clone And Run

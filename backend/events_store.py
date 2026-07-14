@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Iterable
 from urllib.parse import unquote, urlparse, urlunparse
@@ -15,7 +16,9 @@ from psycopg.types.json import Jsonb
 
 EVENT_SELECT = (
     "id,name,status,description,location,target_audience,hashtags,keywords,usernames,"
-    "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,created_at,updated_at"
+    "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,"
+    "repeat_enabled,repeat_interval_value,repeat_interval_unit,next_run_at,last_run_at,last_run_status,"
+    "created_at,updated_at"
 )
 
 EVENT_SELECT_FIELDS = tuple(EVENT_SELECT.split(","))
@@ -30,8 +33,14 @@ EVENT_MUTABLE_FIELDS = (
     "usernames",
     "start_date",
     "end_date",
+    "repeat_enabled",
+    "repeat_interval_value",
+    "repeat_interval_unit",
 )
 EVENT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
+EVENT_SCHEDULE_FIELDS = ("next_run_at", "last_run_at", "last_run_status")
+
+REPEAT_INTERVAL_UNITS = ("minutes", "hours", "days")
 
 
 @lru_cache(maxsize=1)
@@ -80,6 +89,11 @@ def _event_write_fields():
 def _event_embedding_fields():
     columns = _event_columns()
     return [field for field in EVENT_EMBEDDING_FIELDS if field in columns]
+
+
+def _event_schedule_fields():
+    columns = _event_columns()
+    return [field for field in EVENT_SCHEDULE_FIELDS if field in columns]
 
 
 def _jsonb_param(value):
@@ -137,7 +151,7 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _normalize_event(row, feed_ids=None):
+def _normalize_event(row, source_ids=None):
     row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
@@ -164,13 +178,19 @@ def _normalize_event(row, feed_ids=None):
         "embedding_model": (row.get("embedding_model") or "").strip(),
         "embedding_source": (row.get("embedding_source") or "").strip(),
         "embedded_at": row.get("embedded_at"),
+        "repeat_enabled": bool(row.get("repeat_enabled", False)),
+        "repeat_interval_value": row.get("repeat_interval_value"),
+        "repeat_interval_unit": (row.get("repeat_interval_unit") or "").strip().lower(),
+        "next_run_at": row.get("next_run_at"),
+        "last_run_at": row.get("last_run_at"),
+        "last_run_status": (row.get("last_run_status") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "feed_ids": _clean_ids(feed_ids or []),
+        "source_ids": _clean_ids(source_ids or []),
     }
 
 
-def _normalize_feed(row):
+def _normalize_source(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or url
     source_type = config._resolve_source_type(row.get("source_type") or "", url)
@@ -196,43 +216,43 @@ def _fetch_rows(query, params=None):
         return []
 
 
-def _fetch_event_feed_map():
-    rows = _fetch_rows("select event_id, feed_id from event_feeds order by event_id asc, feed_id asc")
+def _fetch_event_source_map():
+    rows = _fetch_rows("select event_id, source_id from event_sources order by event_id asc, source_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
             event_id = int(row.get("event_id"))
-            feed_id = int(row.get("feed_id"))
+            source_id = int(row.get("source_id"))
         except Exception:
             continue
-        mapping[event_id].append(feed_id)
+        mapping[event_id].append(source_id)
     return mapping
 
 
-def _fetch_feed_event_map():
-    rows = _fetch_rows("select event_id, feed_id from event_feeds order by feed_id asc, event_id asc")
+def _fetch_source_event_map():
+    rows = _fetch_rows("select event_id, source_id from event_sources order by source_id asc, event_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
             event_id = int(row.get("event_id"))
-            feed_id = int(row.get("feed_id"))
+            source_id = int(row.get("source_id"))
         except Exception:
             continue
-        mapping[feed_id].append(event_id)
+        mapping[source_id].append(event_id)
     return mapping
 
 
-def _fetch_feed_url_map():
-    rows = _fetch_rows("select id, url from feeds order by id asc")
+def _fetch_source_url_map():
+    rows = _fetch_rows("select id, url from sources order by id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
-            feed_id = int(row.get("id"))
+            source_id = int(row.get("id"))
         except Exception:
             continue
         key = _normalize_url(row.get("url"))
         if key:
-            mapping[key].append(feed_id)
+            mapping[key].append(source_id)
     return mapping
 
 
@@ -328,8 +348,8 @@ def list_events():
             order by created_at asc
             """
         )
-        feed_map = _fetch_event_feed_map()
-        return [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows]
+        source_map = _fetch_event_source_map()
+        return [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows]
     except Exception:
         return []
 
@@ -352,8 +372,8 @@ def list_events_page(limit=25, offset=0):
             (limit, offset),
         )
         total_row = db.fetch_one("select count(*)::int as total from events")
-        feed_map = _fetch_event_feed_map()
-        events = [_normalize_event(row, feed_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
+        source_map = _fetch_event_source_map()
+        events = [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
         total = int((total_row or {}).get("total") or len(events))
         return {"events": events, "total": total, "limit": limit, "offset": offset}
     except Exception:
@@ -376,10 +396,61 @@ def get_event(event_id):
         )
         if not rows:
             return None
-        feed_map = _fetch_event_feed_map()
-        return _normalize_event(rows[0], feed_map.get(rows[0].get("id"), []))
+        source_map = _fetch_event_source_map()
+        return _normalize_event(rows[0], source_map.get(rows[0].get("id"), []))
     except Exception:
         return None
+
+
+def _validate_repeat_fields(repeat_enabled, interval_value, interval_unit):
+    """Raise ValueError on bad input; return (value, unit) normalized for storage."""
+    unit = str(interval_unit or "").strip().lower()
+
+    if not repeat_enabled:
+        # Preserve a previously configured interval so re-enabling keeps the old cadence,
+        # but don't hard-fail on garbage input for a disabled schedule.
+        try:
+            value = int(interval_value) if interval_value not in (None, "") else None
+        except Exception:
+            value = None
+        if value is not None and value <= 0:
+            value = None
+        if unit and unit not in REPEAT_INTERVAL_UNITS:
+            unit = ""
+        return value, unit
+
+    try:
+        value = int(interval_value)
+    except Exception:
+        raise ValueError("repeat_interval_value must be a positive integer when repeat is enabled.")
+    if value <= 0:
+        raise ValueError("repeat_interval_value must be greater than 0 when repeat is enabled.")
+    if unit not in REPEAT_INTERVAL_UNITS:
+        raise ValueError(f"repeat_interval_unit must be one of {', '.join(REPEAT_INTERVAL_UNITS)}.")
+    return value, unit
+
+
+def _compute_next_run_at(base_time, value, unit):
+    if not value or unit not in REPEAT_INTERVAL_UNITS:
+        return None
+
+    if isinstance(base_time, str):
+        try:
+            base_time = datetime.fromisoformat(base_time.replace("Z", "+00:00"))
+        except Exception:
+            base_time = None
+    if not isinstance(base_time, datetime):
+        base_time = datetime.now(timezone.utc)
+    if base_time.tzinfo is None:
+        base_time = base_time.replace(tzinfo=timezone.utc)
+
+    if unit == "minutes":
+        delta = timedelta(minutes=value)
+    elif unit == "hours":
+        delta = timedelta(hours=value)
+    else:
+        delta = timedelta(days=value)
+    return base_time + delta
 
 
 def _event_payload(event):
@@ -396,6 +467,11 @@ def _event_payload(event):
     if isinstance(usernames, str):
         usernames = [part.strip() for part in usernames.replace("\n", ",").split(",")]
 
+    repeat_enabled = bool(event.get("repeat_enabled"))
+    repeat_interval_value, repeat_interval_unit = _validate_repeat_fields(
+        repeat_enabled, event.get("repeat_interval_value"), event.get("repeat_interval_unit")
+    )
+
     return {
         "name": (event.get("name") or "").strip(),
         "status": (event.get("status") or "draft").strip().lower() or "draft",
@@ -407,24 +483,148 @@ def _event_payload(event):
         "usernames": _clean_terms(usernames or []),
         "start_date": event.get("start_date") or None,
         "end_date": event.get("end_date") or None,
+        "repeat_enabled": repeat_enabled,
+        "repeat_interval_value": repeat_interval_value,
+        "repeat_interval_unit": repeat_interval_unit or None,
     }
 
 
-def _set_event_feeds(event_id, feed_ids):
-    event_id = int(event_id)
-    feed_ids = _clean_ids(feed_ids)
+def _apply_repeat_schedule(event_id, previous, payload):
+    """Recompute next_run_at when the repeat settings actually changed; system fields only."""
+    if "next_run_at" not in _event_schedule_fields():
+        return None
+
+    repeat_enabled = payload["repeat_enabled"]
+    interval_value = payload["repeat_interval_value"]
+    interval_unit = payload["repeat_interval_unit"]
+    previous = previous or {}
+
+    if not repeat_enabled:
+        if not previous.get("repeat_enabled") and previous.get("next_run_at") is None:
+            return None
+        next_run_at = None
+    else:
+        interval_changed = (
+            not previous.get("repeat_enabled")
+            or previous.get("repeat_interval_value") != interval_value
+            or (previous.get("repeat_interval_unit") or None) != interval_unit
+            or previous.get("next_run_at") is None
+        )
+        if not interval_changed:
+            return None
+        next_run_at = _compute_next_run_at(previous.get("last_run_at"), interval_value, interval_unit)
+
     try:
-        db.execute("delete from event_feeds where event_id = %s", (event_id,))
-        for feed_id in feed_ids:
+        row = db.fetch_one(
+            f"""
+            update events
+            set next_run_at = %s
+            where id = %s
+            returning {_event_select_sql()}
+            """,
+            (next_run_at, int(event_id)),
+        )
+        return _normalize_event(row) if row else None
+    except Exception:
+        return None
+
+
+def list_due_events():
+    """Events with repeat enabled whose next_run_at has passed."""
+    if not config.DATABASE_URL or "next_run_at" not in _event_schedule_fields():
+        return []
+
+    try:
+        rows = db.fetch_all(
+            f"""
+            select {_event_select_sql()}
+            from events
+            where repeat_enabled = true
+              and next_run_at is not null
+              and next_run_at <= now()
+            order by next_run_at asc
+            """
+        )
+        source_map = _fetch_event_source_map()
+        return [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows]
+    except Exception:
+        return []
+
+
+def claim_due_event(event_id):
+    """Atomically clear next_run_at so only one poller starts this event's run."""
+    if not config.DATABASE_URL:
+        return False
+
+    try:
+        row = db.fetch_one(
+            """
+            update events
+            set next_run_at = null
+            where id = %s
+              and repeat_enabled = true
+              and next_run_at is not null
+              and next_run_at <= now()
+            returning id
+            """,
+            (int(event_id),),
+        )
+        return bool(row)
+    except Exception:
+        return False
+
+
+def record_run_completion(event_id, *, status, completed_at=None):
+    """Stamp last_run_at/last_run_status and, if repeat is enabled, schedule the next run."""
+    if not config.DATABASE_URL or event_id is None:
+        return None
+
+    completed_at = completed_at or datetime.now(timezone.utc)
+    event = get_event(event_id)
+    if not event:
+        return None
+
+    assignments = ["last_run_at = %s", "last_run_status = %s"]
+    params = [completed_at, str(status or "").strip().lower()]
+
+    if event.get("repeat_enabled") and event.get("repeat_interval_value") and event.get("repeat_interval_unit"):
+        next_run_at = _compute_next_run_at(
+            completed_at, event.get("repeat_interval_value"), event.get("repeat_interval_unit")
+        )
+        assignments.append("next_run_at = %s")
+        params.append(next_run_at)
+
+    params.append(int(event_id))
+    try:
+        row = db.fetch_one(
+            f"""
+            update events
+            set {", ".join(assignments)}
+            where id = %s
+            returning {_event_select_sql()}
+            """,
+            params,
+        )
+        return _normalize_event(row) if row else None
+    except Exception:
+        return None
+
+
+def _set_event_sources(event_id, source_ids):
+    event_id = int(event_id)
+    source_ids = _clean_ids(source_ids)
+    try:
+        db.execute("delete from event_sources where event_id = %s", (event_id,))
+        for source_id in source_ids:
             db.execute(
                 """
-                insert into event_feeds (event_id, feed_id)
+                insert into event_sources (event_id, source_id)
                 values (%s, %s)
-                on conflict (event_id, feed_id) do nothing
+                on conflict (event_id, source_id) do nothing
                 """,
-                (event_id, feed_id),
+                (event_id, source_id),
             )
-        return feed_ids
+        return source_ids
     except Exception:
         return []
 
@@ -447,7 +647,7 @@ def create_event(event, *, embed=True):
     if not payload["name"]:
         return None
 
-    feed_ids = _clean_ids(event.get("feed_ids") or [])
+    source_ids = _clean_ids(event.get("source_ids") or [])
     try:
         write_fields = _event_write_fields()
         if not write_fields:
@@ -471,10 +671,13 @@ def create_event(event, *, embed=True):
         created = _normalize_event(row)
         if embed:
             created.update(_persist_event_embedding(created))
-        if feed_ids:
-            created["feed_ids"] = set_event_feeds(created["id"], feed_ids)
+        if source_ids:
+            created["source_ids"] = set_event_sources(created["id"], source_ids)
         else:
-            created["feed_ids"] = []
+            created["source_ids"] = []
+        schedule_update = _apply_repeat_schedule(created["id"], None, payload)
+        if schedule_update:
+            created["next_run_at"] = schedule_update.get("next_run_at")
         return created
     except Exception as e:
         raise RuntimeError(f"Database request failed: {e}") from e
@@ -484,8 +687,9 @@ def update_event(event_id, event, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
+    previous = get_event(event_id)
     payload = _event_payload(event)
-    feed_ids = event.get("feed_ids") if isinstance(event, dict) else None
+    source_ids = event.get("source_ids") if isinstance(event, dict) else None
     try:
         write_fields = _event_write_fields()
         if not write_fields:
@@ -511,10 +715,13 @@ def update_event(event_id, event, *, embed=True):
         normalized = _normalize_event(row)
         if embed:
             normalized.update(_persist_event_embedding(normalized))
-        if feed_ids is not None:
-            normalized["feed_ids"] = _set_event_feeds(event_id, feed_ids)
+        if source_ids is not None:
+            normalized["source_ids"] = _set_event_sources(event_id, source_ids)
         else:
-            normalized["feed_ids"] = list_event_feed_ids(event_id)
+            normalized["source_ids"] = list_event_source_ids(event_id)
+        schedule_update = _apply_repeat_schedule(event_id, previous, payload)
+        if schedule_update:
+            normalized["next_run_at"] = schedule_update.get("next_run_at")
         return normalized
     except Exception as e:
         raise RuntimeError(f"Database request failed: {e}") from e
@@ -531,38 +738,38 @@ def delete_event(event_id):
         return False
 
 
-def list_event_feed_ids(event_id):
+def list_event_source_ids(event_id):
     if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            "select feed_id from event_feeds where event_id = %s order by feed_id asc",
+            "select source_id from event_sources where event_id = %s order by source_id asc",
             (int(event_id),),
         )
         ids = []
         seen = set()
         for row in rows:
             try:
-                feed_id = int(row.get("feed_id"))
+                source_id = int(row.get("source_id"))
             except Exception:
                 continue
-            if feed_id not in seen:
-                seen.add(feed_id)
-                ids.append(feed_id)
+            if source_id not in seen:
+                seen.add(source_id)
+                ids.append(source_id)
         return ids
     except Exception:
         return []
 
 
-def list_feed_event_ids(feed_id):
+def list_source_event_ids(source_id):
     if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            "select event_id from event_feeds where feed_id = %s order by event_id asc",
-            (int(feed_id),),
+            "select event_id from event_sources where source_id = %s order by event_id asc",
+            (int(source_id),),
         )
         ids = []
         seen = set()
@@ -579,35 +786,35 @@ def list_feed_event_ids(feed_id):
         return []
 
 
-def set_event_feeds(event_id, feed_ids):
+def set_event_sources(event_id, source_ids):
     if not config.DATABASE_URL:
         return []
-    return _set_event_feeds(event_id, feed_ids)
+    return _set_event_sources(event_id, source_ids)
 
 
-def set_feed_events(feed_id, event_ids):
+def set_source_events(source_id, event_ids):
     if not config.DATABASE_URL:
         return []
 
-    feed_id = int(feed_id)
+    source_id = int(source_id)
     event_ids = _clean_ids(event_ids)
     try:
-        db.execute("delete from event_feeds where feed_id = %s", (feed_id,))
+        db.execute("delete from event_sources where source_id = %s", (source_id,))
         for event_id in event_ids:
             db.execute(
                 """
-                insert into event_feeds (event_id, feed_id)
+                insert into event_sources (event_id, source_id)
                 values (%s, %s)
-                on conflict (event_id, feed_id) do nothing
+                on conflict (event_id, source_id) do nothing
                 """,
-                (event_id, feed_id),
+                (event_id, source_id),
             )
         return event_ids
     except Exception:
         return []
 
 
-def list_feeds_for_event(event_id):
+def list_sources_for_event(event_id):
     if not config.DATABASE_URL:
         return []
 
@@ -615,14 +822,14 @@ def list_feeds_for_event(event_id):
         rows = _fetch_rows(
             """
             select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.limited, f.created_at, f.updated_at
-            from feeds f
-            inner join event_feeds ef on ef.feed_id = f.id
+            from sources f
+            inner join event_sources ef on ef.source_id = f.id
             where ef.event_id = %s
             order by f.created_at asc
             """,
             (int(event_id),),
         )
-        return [_normalize_feed(row) for row in rows]
+        return [_normalize_source(row) for row in rows]
     except Exception:
         return []
 
@@ -704,8 +911,8 @@ def list_article_ids_for_event(event_id):
         seen.add(article_id)
         ids.append(article_id)
 
-    feed_ids = list_event_feed_ids(event_id)
-    if not feed_ids:
+    source_ids = list_event_source_ids(event_id)
+    if not source_ids:
         return ids
 
     try:
@@ -713,8 +920,8 @@ def list_article_ids_for_event(event_id):
             """
             select a.id
             from articles a
-            inner join feeds f on f.url = a.feed
-            inner join event_feeds ef on ef.feed_id = f.id
+            inner join sources f on f.url = a.source_url
+            inner join event_sources ef on ef.source_id = f.id
             where ef.event_id = %s
             order by a.id asc
             """,
@@ -736,11 +943,11 @@ def list_article_ids_for_event(event_id):
     return ids
 
 
-def list_event_ids_for_feed_url(feed_url):
+def list_event_ids_for_source_url(source_url):
     if not config.DATABASE_URL:
         return []
 
-    key = _normalize_url(feed_url)
+    key = _normalize_url(source_url)
     if not key:
         return []
 
@@ -749,8 +956,8 @@ def list_event_ids_for_feed_url(feed_url):
             """
             select e.id
             from events e
-            inner join event_feeds ef on ef.event_id = e.id
-            inner join feeds f on f.id = ef.feed_id
+            inner join event_sources ef on ef.event_id = e.id
+            inner join sources f on f.id = ef.source_id
             where lower(f.url) = lower(%s)
             order by e.id asc
             """,

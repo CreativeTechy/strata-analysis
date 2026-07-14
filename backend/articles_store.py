@@ -11,7 +11,7 @@ from embeddings import cosine_similarity, get_embedding
 from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
 
 ARTICLES_SELECT = (
-    "id,url,source,feed,title,author,published,text,fetched_at,summary,"
+    "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
     "sentiment,relevance_score,category,article_category,insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
@@ -124,7 +124,7 @@ def _where_parts(search=None, sentiment=None, category=None, event_id=None):
         clauses.append(
             "("
             "title ilike %s or summary ilike %s or text ilike %s or "
-            "source ilike %s or feed ilike %s or author ilike %s"
+            "source ilike %s or source_url ilike %s or author ilike %s"
             ")"
         )
         params.extend([pattern] * 6)
@@ -253,7 +253,7 @@ def _article_search_blob(row: dict) -> str:
         row.get("summary"),
         row.get("text"),
         row.get("source"),
-        row.get("feed"),
+        row.get("source_url"),
         row.get("author"),
         insight.get("topic"),
         insight.get("summary"),

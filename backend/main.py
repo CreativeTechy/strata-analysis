@@ -5,16 +5,13 @@ The four stages live in their own modules:
   enricher -> enrich.py
   saver    -> store.py
 
-This API triggers the jobs and exposes configured feeds to the dashboard.
+This API triggers the jobs and exposes configured sources to the dashboard.
 """
 
 import asyncio
+import contextlib
 import json
-import os
-import subprocess
-import sys
 import uuid
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,13 +30,22 @@ from events_store import (
     diagnose_event_setup,
     list_events,
     list_events_page,
-    list_feeds_for_event,
+    list_sources_for_event,
     persist_event_embedding_for_id,
-    set_event_feeds,
+    set_event_sources,
     update_event,
 )
-from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, list_feeds_page, update_feed
-from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
+from sources_store import (
+    bootstrap_sources,
+    create_source,
+    delete_source,
+    diagnose_source_setup,
+    list_sources_page,
+    update_source,
+)
+from pipeline import run_scraper_pipeline
+from pipeline_runs import create_pipeline_run, get_active_run_for_event, list_pipeline_runs
+from scheduler import scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
@@ -64,15 +70,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def _load_pipeline_stats(stats_file: Path):
-    if not stats_file.exists():
-        return {}
-    try:
-        return json.loads(stats_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
 
 
 def _format_event_context(event: dict | None) -> str:
@@ -132,91 +129,18 @@ def _format_event_context(event: dict | None) -> str:
     return "\n".join(parts)
 
 
-def run_scraper_pipeline(run_id: str, event_id: int | None = None):
-    """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
-    env = os.environ.copy()
-    env["PIPELINE_RUN_ID"] = run_id
-    if event_id is not None:
-        env["PIPELINE_EVENT_ID"] = str(event_id)
-    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
-        run_path = Path(run_dir)
-        raw_file = run_path / "articles.raw.json"
-        enriched_file = run_path / "articles.enriched.json"
-        stats_file = run_path / "pipeline.stats.json"
-        env["PIPELINE_WORKDIR"] = str(run_path)
-        env["PIPELINE_RAW_FILE"] = str(raw_file)
-        env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
-        env["PIPELINE_STATS_FILE"] = str(stats_file)
+@app.on_event("startup")
+async def _start_scheduler():
+    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
 
-        if event_id is not None:
-            try:
-                feeds = list_feeds_for_event(event_id)
-                feed_urls = [feed.get("url") for feed in feeds if feed.get("url")]
-                if feed_urls:
-                    env["FEEDS"] = ",".join(feed_urls)
-                else:
-                    update_pipeline_run(
-                        run_id,
-                        status="failed",
-                        stage="error",
-                        message="Selected event has no feeds assigned.",
-                        error="No feeds assigned to the selected event.",
-                        finished_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                    return
-            except Exception:
-                pass
 
-        try:
-            update_pipeline_run(
-                run_id,
-                status="running",
-                stage="scrape",
-                message="Starting scrape...",
-                started_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("1. Scraping configured sources...")
-            subprocess.run(
-                ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
-                cwd=BASE_DIR,
-                check=True,
-                env=env,
-            )
-            update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
-            print("2. Enriching + saving...")
-            subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
-            stats = _load_pipeline_stats(stats_file)
-            update_pipeline_run(
-                run_id,
-                status="success",
-                stage="done",
-                message="Pipeline complete.",
-                articles_scraped=int(stats.get("articles_scraped") or 0),
-                articles_cleaned=int(stats.get("articles_cleaned") or 0),
-                articles_saved=int(stats.get("articles_saved") or 0),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("Pipeline complete!")
-        except subprocess.CalledProcessError as e:
-            update_pipeline_run(
-                run_id,
-                status="failed",
-                stage="error",
-                message="Pipeline failed.",
-                error=str(e),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print(f"Pipeline failed: {e}")
-        except Exception as e:
-            update_pipeline_run(
-                run_id,
-                status="failed",
-                stage="error",
-                message="Pipeline crashed.",
-                error=str(e),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print(f"Pipeline crashed: {e}")
+@app.on_event("shutdown")
+async def _stop_scheduler():
+    task = getattr(app.state, "scheduler_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 @app.get("/")
@@ -229,16 +153,16 @@ def health_check():
     return {"status": "healthy", "service": "Strata Scraper API"}
 
 
-@app.get("/api/feeds")
-def get_feeds(limit: int | None = None, offset: int = 0):
+@app.get("/api/sources")
+def get_sources(limit: int | None = None, offset: int = 0):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
-        feeds = bootstrap_feeds()
-        source = feeds[0].get("source", "database") if feeds else "database"
-        return {"feeds": feeds, "source": source}
+        sources = bootstrap_sources()
+        source = sources[0].get("source", "database") if sources else "database"
+        return {"sources": sources, "source": source}
 
-    page = list_feeds_page(limit=limit, offset=offset)
-    source = page["feeds"][0].get("source", "database") if page["feeds"] else "database"
+    page = list_sources_page(limit=limit, offset=offset)
+    source = page["sources"][0].get("source", "database") if page["sources"] else "database"
     return {**page, "source": source}
 
 
@@ -250,18 +174,18 @@ def get_events(limit: int | None = None, offset: int = 0):
 
 
 def _default_discovery_result(event):
-    feed_ids = []
-    for value in event.get("feed_ids") or []:
+    source_ids = []
+    for value in event.get("source_ids") or []:
         try:
-            feed_ids.append(int(value))
+            source_ids.append(int(value))
         except Exception:
             continue
     return {
         "search_terms": [],
         "candidates": [],
         "suggested_links": [],
-        "feed_ids": feed_ids,
-        "feeds": [],
+        "source_ids": source_ids,
+        "sources": [],
     }
 
 
@@ -274,8 +198,8 @@ def _save_event_with_discovery(event):
         if (event.get("hashtags") or event.get("keywords") or event.get("usernames"))
         else _default_discovery_result(event)
     )
-    if discovery.get("feed_ids") is not None:
-        event = {**event, "feed_ids": discovery.get("feed_ids") or event.get("feed_ids") or []}
+    if discovery.get("source_ids") is not None:
+        event = {**event, "source_ids": discovery.get("source_ids") or event.get("source_ids") or []}
     return event, discovery
 
 
@@ -291,6 +215,8 @@ def discover_event(payload: dict):
 def add_event(background_tasks: BackgroundTasks, payload: dict):
     try:
         event = create_event(payload or {}, embed=False)
+    except ValueError as e:
+        return {"error": "Invalid event payload.", "detail": str(e)}
     except Exception as e:
         detail = diagnose_event_setup()
         return {
@@ -311,6 +237,8 @@ def add_event(background_tasks: BackgroundTasks, payload: dict):
 def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict):
     try:
         event = update_event(event_id, payload or {}, embed=False)
+    except ValueError as e:
+        return {"error": "Invalid event payload.", "detail": str(e)}
     except Exception as e:
         detail = diagnose_event_setup()
         return {
@@ -416,49 +344,49 @@ def export_articles_jsonl(
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
 
 
-@app.post("/api/feeds")
-def add_feed(payload: dict):
-    """Create or update a feed record in local PostgreSQL."""
-    feed = create_feed(payload or {})
-    if not feed:
-        detail = diagnose_feed_setup()
+@app.post("/api/sources")
+def add_source(payload: dict):
+    """Create or update a source record in local PostgreSQL."""
+    source = create_source(payload or {})
+    if not source:
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to create feed. Check database connection settings.",
-            "detail": detail or "The feed request did not return a row.",
+            "error": "Unable to create source. Check database connection settings.",
+            "detail": detail or "The source request did not return a row.",
         }
-    return {"feed": feed}
+    return {"source": source}
 
 
-@app.put("/api/feeds/{feed_id}")
-def edit_feed(feed_id: int, payload: dict):
-    """Update a feed record in local PostgreSQL."""
-    feed = update_feed(feed_id, payload or {})
-    if not feed:
-        detail = diagnose_feed_setup()
+@app.put("/api/sources/{source_id}")
+def edit_source(source_id: int, payload: dict):
+    """Update a source record in local PostgreSQL."""
+    source = update_source(source_id, payload or {})
+    if not source:
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to update feed. Check database connection settings.",
+            "error": "Unable to update source. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
-    return {"feed": feed}
+    return {"source": source}
 
 
-@app.delete("/api/feeds/{feed_id}")
-def remove_feed(feed_id: int):
-    """Delete a feed record from local PostgreSQL."""
-    if not delete_feed(feed_id):
-        detail = diagnose_feed_setup()
+@app.delete("/api/sources/{source_id}")
+def remove_source(source_id: int):
+    """Delete a source record from local PostgreSQL."""
+    if not delete_source(source_id):
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to delete feed. Check database connection settings.",
+            "error": "Unable to delete source. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
 
 
-@app.post("/api/events/{event_id}/feeds")
-def replace_event_feeds(event_id: int, payload: dict):
-    feed_ids = payload.get("feed_ids") if isinstance(payload, dict) else []
-    assigned = set_event_feeds(event_id, feed_ids or [])
-    return {"event_id": event_id, "feed_ids": assigned}
+@app.post("/api/events/{event_id}/sources")
+def replace_event_sources(event_id: int, payload: dict):
+    source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
+    assigned = set_event_sources(event_id, source_ids or [])
+    return {"event_id": event_id, "source_ids": assigned}
 
 
 @app.post("/scrape")
@@ -478,8 +406,16 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
         else:
             raise HTTPException(status_code=400, detail="Select an event before running the scraper.")
 
-    if not list_feeds_for_event(event_id):
-        raise HTTPException(status_code=400, detail="Assign at least one feed to the selected event before scraping.")
+    if not list_sources_for_event(event_id):
+        raise HTTPException(status_code=400, detail="Assign at least one source to the selected event before scraping.")
+
+    active_run = get_active_run_for_event(event_id)
+    if active_run:
+        return {
+            "message": "A pipeline run is already active for this event.",
+            "run_id": active_run["id"],
+            "event_id": event_id,
+        }
 
     run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", event_id=event_id)
     run_id = run["id"] if run else uuid.uuid4().hex
