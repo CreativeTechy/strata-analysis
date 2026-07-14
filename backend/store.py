@@ -9,7 +9,7 @@ import json
 import config
 import db
 from embeddings import cosine_similarity
-from events_store import list_event_ids_for_source_url, list_events, set_article_events
+from projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 
 ARTICLE_COLUMNS = (
@@ -25,10 +25,6 @@ LEGACY_ARTICLE_COLUMNS = (
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models",
-)
-
-CRAWL_COLUMNS = (
-    "crawl_id", "url", "source", "seed", "title", "text", "words", "depth", "fetched_at",
 )
 
 ARTICLE_MUTABLE_FIELDS = (
@@ -217,79 +213,44 @@ def _upsert_article_row(article):
     )
 
 
-def save_crawl_pages(rows, batch_size=50):
-    if not config.DATABASE_URL:
-        print("Database credentials not set, skipping crawl save.")
-        return 0
-
-    sent = 0
-    for i in range(0, len(rows), batch_size):
-        batch = [{k: r.get(k) for k in CRAWL_COLUMNS} for r in rows[i:i + batch_size]]
-        try:
-            for row in batch:
-                db.execute(
-                    """
-                    insert into crawl_pages (crawl_id, url, source, seed, title, text, words, depth, fetched_at)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    on conflict (url) do update set
-                      crawl_id = excluded.crawl_id,
-                      source = excluded.source,
-                      seed = excluded.seed,
-                      title = excluded.title,
-                      text = excluded.text,
-                      words = excluded.words,
-                      depth = excluded.depth,
-                      fetched_at = excluded.fetched_at
-                    """,
-                    (
-                        row["crawl_id"], row["url"], row["source"], row["seed"], row["title"],
-                        row["text"], row["words"], row["depth"], row["fetched_at"],
-                    ),
-                )
-            sent += len(batch)
-        except Exception as e:
-            _log_db_error(f"  crawl_pages upload error for batch {i // batch_size + 1}", e)
-    return sent
-
-
 def save_articles(articles, batch_size=50):
     if not config.DATABASE_URL:
         print("Database credentials not set, skipping upload.")
         return 0
 
     sent = 0
-    event_id = None
+    project_id = None
     try:
         from os import environ
 
-        raw_event_id = (environ.get("PIPELINE_EVENT_ID") or "").strip()
-        if raw_event_id:
-            event_id = int(raw_event_id)
+        raw_project_id = (environ.get("PIPELINE_PROJECT_ID") or "").strip()
+        if raw_project_id:
+            project_id = int(raw_project_id)
     except Exception:
-        event_id = None
+        project_id = None
 
-    source_event_cache = {}
+    source_project_cache = {}
     linked_articles = defaultdict(set)
     linked_scores = defaultdict(dict)
-    event_embedding_cache = None
-    event_embedding_map = {}
+    project_embedding_cache = None
+    project_embedding_map = {}
 
-    def _load_event_embedding_map():
-        nonlocal event_embedding_cache, event_embedding_map
-        if event_embedding_cache is not None:
-            return event_embedding_map
+    def _load_project_embedding_map():
+        nonlocal project_embedding_cache, project_embedding_map
+        if project_embedding_cache is not None:
+            return project_embedding_map
 
-        event_embedding_cache = list_events()
-        event_embedding_map = {}
-        for event in event_embedding_cache or []:
+        project_embedding_cache = list_projects()
+        project_embedding_map = {}
+        for project in project_embedding_cache or []:
             try:
-                event_id_value = int(event.get("id"))
+                project_id_value = int(project.get("id"))
             except Exception:
                 continue
-            embedding = event.get("embedding_json") or []
+            embedding = project.get("embedding_json") or []
             if isinstance(embedding, list) and embedding:
-                event_embedding_map[event_id_value] = embedding
-        return event_embedding_map
+                project_embedding_map[project_id_value] = embedding
+        return project_embedding_map
 
     for i in range(0, len(articles), batch_size):
         source_batch = articles[i:i + batch_size]
@@ -311,27 +272,27 @@ def save_articles(articles, batch_size=50):
                 source_url = (row.get("source_url") or article.get("source_url") or "").strip()
                 if not source_url:
                     continue
-                if source_url not in source_event_cache:
-                    source_event_cache[source_url] = list_event_ids_for_source_url(source_url)
-                event_ids = list(source_event_cache.get(source_url) or [])
-                if event_id is not None and event_id not in event_ids:
-                    event_ids.append(event_id)
-                for linked_event_id in event_ids:
-                    linked_articles[linked_event_id].add(article_id)
+                if source_url not in source_project_cache:
+                    source_project_cache[source_url] = list_project_ids_for_source_url(source_url)
+                project_ids = list(source_project_cache.get(source_url) or [])
+                if project_id is not None and project_id not in project_ids:
+                    project_ids.append(project_id)
+                for linked_project_id in project_ids:
+                    linked_articles[linked_project_id].add(article_id)
 
                 article_embedding = article.get("embedding_json") or row.get("embedding_json") or []
                 if isinstance(article_embedding, list) and article_embedding:
-                    event_embeddings = _load_event_embedding_map()
-                    best_event_id = None
+                    project_embeddings = _load_project_embedding_map()
+                    best_project_id = None
                     best_score = 0.0
-                    for candidate_event_id, candidate_embedding in event_embeddings.items():
+                    for candidate_project_id, candidate_embedding in project_embeddings.items():
                         score = cosine_similarity(article_embedding, candidate_embedding)
                         if score > best_score:
                             best_score = score
-                            best_event_id = candidate_event_id
-                    if best_event_id is not None and best_score >= 0.78:
-                        linked_articles[best_event_id].add(article_id)
-                        linked_scores[best_event_id][article_id] = best_score
+                            best_project_id = candidate_project_id
+                    if best_project_id is not None and best_score >= 0.78:
+                        linked_articles[best_project_id].add(article_id)
+                        linked_scores[best_project_id][article_id] = best_score
             print(f"  Uploaded batch {i // batch_size + 1} ({len(source_batch)} articles)")
         except Exception as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
@@ -407,8 +368,8 @@ def save_articles(articles, batch_size=50):
             _log_db_error(f"  Database upload error for batch {i // batch_size + 1}", e)
 
     if linked_articles:
-        for linked_event_id, article_ids in linked_articles.items():
-            set_article_events(sorted(article_ids), linked_event_id, similarity_scores=linked_scores.get(linked_event_id, {}))
+        for linked_project_id, article_ids in linked_articles.items():
+            set_article_projects(sorted(article_ids), linked_project_id, similarity_scores=linked_scores.get(linked_project_id, {}))
 
     return sent
 

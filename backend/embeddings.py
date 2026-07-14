@@ -1,4 +1,4 @@
-"""Shared embedding helpers for articles and events."""
+"""Shared embedding helpers for articles and projects."""
 
 from __future__ import annotations
 
@@ -83,22 +83,22 @@ def build_article_embedding_text(article: dict, enrichment: dict | None = None) 
     return "\n".join(part for part in parts if part)[:12000]
 
 
-def build_event_embedding_text(event: dict) -> str:
+def build_project_embedding_text(project: dict) -> str:
     parts = []
     for value in (
-        event.get("name"),
-        event.get("description"),
-        event.get("location"),
-        event.get("target_audience"),
+        project.get("name"),
+        project.get("description"),
+        project.get("location"),
+        project.get("target_audience"),
     ):
         text = _clean_text(value)
         if text:
             parts.append(text)
 
     list_fields = (
-        event.get("hashtags"),
-        event.get("keywords"),
-        event.get("usernames"),
+        project.get("hashtags"),
+        project.get("keywords"),
+        project.get("usernames"),
     )
     for values in list_fields:
         parts.extend(_dedupe_texts(_coerce_list(values)))

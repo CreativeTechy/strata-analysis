@@ -21,7 +21,7 @@ function StatSkeleton() {
   );
 }
 
-export default function StatsOverview({ stats = {}, scopeLabel = 'Current event', loading = false }) {
+export default function StatsOverview({ stats = {}, scopeLabel = 'Current project', loading = false }) {
   const total = Number(stats.total) || 0;
   const positive = Number(stats.positive) || 0;
   const negative = Number(stats.negative) || 0;

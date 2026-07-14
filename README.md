@@ -8,7 +8,7 @@ it in Supabase, and surfaces it in the dashboard.
 - `backend/scraper/` - Scrapy project for source and page extraction
 - `backend/enrich.py` - AI enrichment stage
 - `backend/store.py` - Supabase upsert layer
-- `backend/main.py` - FastAPI API for scraping, sources, events, and chat
+- `backend/main.py` - FastAPI API for scraping, sources, projects, and chat
 - `dashboard/` - React + Vite dashboard
 
 ## Stages
@@ -24,8 +24,8 @@ it in Supabase, and surfaces it in the dashboard.
 
 DeepSeek is used everywhere in this app for AI: article enrichment
 (`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
-hashtag/keyword/username/source discovery (`backend/events_ai.py` and
-`backend/event_discovery.py`).
+hashtag/keyword/username/source discovery (`backend/projects_ai.py` and
+`backend/project_discovery.py`).
 
 ## Clone And Run
 
@@ -57,7 +57,7 @@ Set at minimum:
 
 - `DATABASE_URL`
 - `DEEPSEEK_API_KEY` - required for enrichment, Intelligence Copilot chat, and
-  event/source discovery
+  project/source discovery
 
 ### 3. Run the backend locally
 
@@ -69,8 +69,8 @@ pip install -r requirements-optional.txt
 uvicorn main:app --port 8000
 ```
 
-If you only want the core API and not Spider Mode, you can skip the optional
-requirements file.
+If you don't need local embeddings, you can skip the optional requirements
+file.
 
 ### 4. Run the dashboard locally
 
@@ -126,7 +126,7 @@ The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
 - `DEEPSEEK_API_KEY=...` - required for enrichment, Intelligence Copilot chat,
-  and event/source discovery
+  and project/source discovery
 
 ### Adminer login
 
@@ -186,21 +186,16 @@ in `backend/.env`, but only if the `users` table is still empty - it will not
 touch an existing account. Log in with either the username or the email.
 
 Every authenticated user, regardless of role, can view the dashboard, articles,
-sources, events, pipeline runs, brand sentiment, and the Intelligence Copilot
-chat. Roles add specific write/action permissions on top of that shared read
-access (`admin` is the only role that automatically satisfies every check
-below - `viewer`/`editor`/`operator` are otherwise independent, not a ladder):
+sources, projects, pipeline runs, and the Intelligence Copilot chat. Roles add
+specific write/action permissions on top of that shared read access (`admin` is
+the only role that automatically satisfies every check below -
+`viewer`/`editor`/`operator` are otherwise independent, not a ladder):
 
 - **viewer** - read-only. No create, update, delete, or pipeline actions.
-- **editor** - create, update, and delete sources and events; link sources to
-  events; use AI event discovery/suggestions.
-- **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, use
-  Spider Mode, and delete all stored articles.
+- **editor** - create, update, and delete sources and projects; link sources to
+  projects; use AI project discovery/suggestions.
+- **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, and
+  delete all stored articles.
 - **admin** - everything above, plus user management: create users, change
   roles, and enable/disable accounts (`/admin/users` in the dashboard, or the
   `/api/users` endpoints).
-
-## Spider Mode
-
-Spider Mode is the separate deep-crawl view powered by `backend/spider.py` and
-`GET /api/spider/stream`.

@@ -25,7 +25,7 @@ const emptyDraft = {
   category: '',
   enabled: true,
   limited: false,
-  event_ids: [],
+  project_ids: [],
 };
 
 const SOURCE_TYPE_OPTIONS = [
@@ -60,15 +60,15 @@ function normalizeDraftForCompare(value) {
     category: String(value?.category || '').trim(),
     enabled: Boolean(value?.enabled),
     limited: Boolean(value?.limited),
-    event_ids: Array.isArray(value?.event_ids)
-      ? [...new Set(value.event_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
+    project_ids: Array.isArray(value?.project_ids)
+      ? [...new Set(value.project_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
       : [],
   };
 }
 
 export default function SourcesPage({
   sources = [],
-  events = [],
+  projects = [],
   sourcesSource,
   onCreateSource,
   onUpdateSource,
@@ -116,9 +116,9 @@ export default function SourcesPage({
         return;
       }
 
-      const assignedEventIds = events
-        .filter((event) => Array.isArray(event.source_ids) && event.source_ids.map(Number).includes(Number(currentSource.id)))
-        .map((event) => Number(event.id));
+      const assignedProjectIds = projects
+        .filter((project) => Array.isArray(project.source_ids) && project.source_ids.map(Number).includes(Number(currentSource.id)))
+        .map((project) => Number(project.id));
 
       setDraft({
         url: currentSource.url || '',
@@ -127,7 +127,7 @@ export default function SourcesPage({
         category: currentSource.category || '',
         enabled: currentSource.enabled ?? true,
         limited: currentSource.limited ?? false,
-        event_ids: assignedEventIds,
+        project_ids: assignedProjectIds,
       });
       setInitialDraft({
         url: currentSource.url || '',
@@ -136,50 +136,50 @@ export default function SourcesPage({
         category: currentSource.category || '',
         enabled: currentSource.enabled ?? true,
         limited: currentSource.limited ?? false,
-        event_ids: assignedEventIds,
+        project_ids: assignedProjectIds,
       });
       return;
     }
 
     setDraft(emptyDraft);
     setInitialDraft(emptyDraft);
-  }, [currentSource, events, isEditRoute, isFormRoute]);
+  }, [currentSource, projects, isEditRoute, isFormRoute]);
 
-  const sourceEventsById = useMemo(() => {
+  const sourceProjectsById = useMemo(() => {
     const map = new Map();
-    events.forEach((event) => {
-      (event.source_ids || []).forEach((sourceId) => {
+    projects.forEach((project) => {
+      (project.source_ids || []).forEach((sourceId) => {
         const id = Number(sourceId);
         if (!map.has(id)) map.set(id, []);
-        map.get(id).push(event);
+        map.get(id).push(project);
       });
     });
     return map;
-  }, [events]);
+  }, [projects]);
 
   const stats = useMemo(() => {
     const total = sources.length;
     const enabled = sources.filter((source) => source.enabled).length;
-    const assigned = sources.filter((source) => (sourceEventsById.get(Number(source.id)) || []).length > 0).length;
+    const assigned = sources.filter((source) => (sourceProjectsById.get(Number(source.id)) || []).length > 0).length;
     const rss = sources.filter((source) => (source.source_type || 'rss') === 'rss').length;
     return { total, enabled, assigned, rss };
-  }, [sources, sourceEventsById]);
+  }, [sources, sourceProjectsById]);
 
   const visibleSources = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return sources.filter((source) => {
-      const sourceEvents = sourceEventsById.get(Number(source.id)) || [];
+      const sourceProjects = sourceProjectsById.get(Number(source.id)) || [];
       const matchesQuery =
         !needle ||
-        [source.name, source.url, source.category, source.source_type, ...sourceEvents.map((event) => event.name)]
+        [source.name, source.url, source.category, source.source_type, ...sourceProjects.map((project) => project.name)]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
       const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'enabled' && source.enabled) ||
         (statusFilter === 'disabled' && !source.enabled) ||
-        (statusFilter === 'assigned' && sourceEvents.length > 0) ||
-        (statusFilter === 'unassigned' && sourceEvents.length === 0);
+        (statusFilter === 'assigned' && sourceProjects.length > 0) ||
+        (statusFilter === 'unassigned' && sourceProjects.length === 0);
       const matchesType = typeFilter === 'all' || (source.source_type || 'rss') === typeFilter;
       const matchesReach =
         reachFilter === 'all' ||
@@ -187,7 +187,7 @@ export default function SourcesPage({
         (reachFilter === 'global' && !source.limited);
       return matchesQuery && matchesStatus && matchesType && matchesReach;
     });
-  }, [sources, sourceEventsById, query, statusFilter, typeFilter, reachFilter]);
+  }, [sources, sourceProjectsById, query, statusFilter, typeFilter, reachFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleSources.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -225,7 +225,7 @@ export default function SourcesPage({
       category: draft.category.trim(),
       enabled: Boolean(draft.enabled),
       limited: Boolean(draft.limited),
-      event_ids: draft.event_ids,
+      project_ids: draft.project_ids,
     };
 
     if (isTermType ? !payload.name : !payload.url) return;
@@ -239,13 +239,13 @@ export default function SourcesPage({
     navigate('/sources');
   };
 
-  const toggleEvent = (eventId) => {
-    const id = Number(eventId);
+  const toggleProject = (projectId) => {
+    const id = Number(projectId);
     setDraft((prev) => ({
       ...prev,
-      event_ids: prev.event_ids.includes(id)
-        ? prev.event_ids.filter((value) => value !== id)
-        : [...prev.event_ids, id],
+      project_ids: prev.project_ids.includes(id)
+        ? prev.project_ids.filter((value) => value !== id)
+        : [...prev.project_ids, id],
     }));
   };
 
@@ -281,8 +281,8 @@ export default function SourcesPage({
             <h1 className="admin-page-title">{heading}</h1>
             <p className="admin-page-subtitle">
               {isEditRoute
-                ? 'Update a tracked source and keep its event assignments in sync.'
-                : 'Add a new source, classify it, and assign it to the events it should power.'}
+                ? 'Update a tracked source and keep its project assignments in sync.'
+                : 'Add a new source, classify it, and assign it to the projects it should power.'}
             </p>
           </div>
           <div className="admin-page-toolbar">
@@ -291,8 +291,8 @@ export default function SourcesPage({
               <strong>{isEditRoute ? 'Editing' : 'Creating'}</strong>
             </div>
             <div className="admin-page-toolbar-meta">
-              <span>Events</span>
-              <strong>{draft.event_ids.length.toLocaleString()}</strong>
+              <span>Projects</span>
+              <strong>{draft.project_ids.length.toLocaleString()}</strong>
             </div>
           </div>
         </div>
@@ -401,7 +401,7 @@ export default function SourcesPage({
             <div style={{ minWidth: 0 }}>
               <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Source reach</strong>
               <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
-                Limited sources stay out of the assignable list on event create/edit pages unless already attached to that event.
+                Limited sources stay out of the assignable list on project create/edit pages unless already attached to that project.
               </span>
             </div>
             <button
@@ -421,22 +421,22 @@ export default function SourcesPage({
             </button>
           </div>
 
-          <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>Assign to events</div>
+          <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>Assign to projects</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
-            {events.length === 0 ? (
-              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No events yet. Create an event first.</div>
+            {projects.length === 0 ? (
+              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No projects yet. Create a project first.</div>
             ) : (
-              events.map((event) => (
+              projects.map((project) => (
                 <label
-                  key={event.id}
+                  key={project.id}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}
                 >
                   <input
                     type="checkbox"
-                    checked={draft.event_ids.includes(Number(event.id))}
-                    onChange={() => toggleEvent(event.id)}
+                    checked={draft.project_ids.includes(Number(project.id))}
+                    onChange={() => toggleProject(project.id)}
                   />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.name}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
                 </label>
               ))
             )}
@@ -483,7 +483,7 @@ export default function SourcesPage({
           </div>
           <h1 className="admin-page-title">Source Manager</h1>
           <p className="admin-page-subtitle">
-            Curate the source pool, assign sources to one or more events, and keep enabled sources easy to scan.
+            Curate the source pool, assign sources to one or more projects, and keep enabled sources easy to scan.
           </p>
         </div>
         <div className="admin-page-toolbar">
@@ -549,7 +549,7 @@ export default function SourcesPage({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search sources, URLs, categories, or event names"
+            placeholder="Search sources, URLs, categories, or project names"
           />
         </label>
 
@@ -593,7 +593,7 @@ export default function SourcesPage({
                 <Rss size={18} />
               </div>
               <strong>No sources yet</strong>
-              <span>Add your first source, then attach it to one or more events.</span>
+              <span>Add your first source, then attach it to one or more projects.</span>
               {canEdit && (
                 <Link to="/sources/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
                   <Plus size={16} /> Add Source
@@ -603,7 +603,7 @@ export default function SourcesPage({
           )}
 
           {pagedSources.map((source, index) => {
-            const sourceEvents = sourceEventsById.get(Number(source.id)) || [];
+            const sourceProjects = sourceProjectsById.get(Number(source.id)) || [];
             return (
               <motion.div
                 key={source.id ?? source.url}
@@ -626,7 +626,7 @@ export default function SourcesPage({
                       <span>{sourceTypeLabel(source.source_type)}</span>
                       {source.category ? <span>{source.category}</span> : null}
                       <span>
-                        {sourceEvents.length} event{sourceEvents.length === 1 ? '' : 's'}
+                        {sourceProjects.length} project{sourceProjects.length === 1 ? '' : 's'}
                       </span>
                     </div>
                   </div>
@@ -651,10 +651,10 @@ export default function SourcesPage({
                   )}
                 </div>
                 <div className="admin-item-chips">
-                  {sourceEvents.length ? (
-                    sourceEvents.slice(0, 4).map((event) => (
-                      <span key={event.id} className="admin-tag">
-                        {event.name}
+                  {sourceProjects.length ? (
+                    sourceProjects.slice(0, 4).map((project) => (
+                      <span key={project.id} className="admin-tag">
+                        {project.name}
                       </span>
                     ))
                   ) : (
@@ -719,7 +719,7 @@ export default function SourcesPage({
         <ConfirmModal
           open={Boolean(deleteTarget)}
           title={`Delete source "${deleteTarget?.name || deleteTarget?.url || ''}"?`}
-          message="This will permanently remove the source and detach it from any linked events."
+          message="This will permanently remove the source and detach it from any linked projects."
           confirmLabel="Delete source"
           cancelLabel="Keep source"
           confirmButtonStyle={{

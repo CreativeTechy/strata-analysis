@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from events_store import list_sources_for_event, record_run_completion
+from projects_store import list_sources_for_project, record_run_completion
 from pipeline_runs import update_pipeline_run
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -133,19 +133,19 @@ def _load_pipeline_stats(stats_file: Path):
         return {}
 
 
-def _finish_run(run_id, event_id, **fields):
-    """Persist the terminal pipeline_runs state and reschedule the event's next run."""
+def _finish_run(run_id, project_id, **fields):
+    """Persist the terminal pipeline_runs state and reschedule the project's next run."""
     update_pipeline_run(run_id, **fields)
-    if event_id is not None:
-        record_run_completion(event_id, status=fields.get("status"), completed_at=datetime.now(timezone.utc))
+    if project_id is not None:
+        record_run_completion(project_id, status=fields.get("status"), completed_at=datetime.now(timezone.utc))
 
 
-def run_scraper_pipeline(run_id: str, event_id: int | None = None):
+def run_scraper_pipeline(run_id: str, project_id: int | None = None):
     """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
     if _is_cancel_requested(run_id):
         _finish_run(
             run_id,
-            event_id,
+            project_id,
             status="cancelled",
             stage="cancelled",
             message="Pipeline cancelled before it started.",
@@ -157,8 +157,8 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
 
     env = os.environ.copy()
     env["PIPELINE_RUN_ID"] = run_id
-    if event_id is not None:
-        env["PIPELINE_EVENT_ID"] = str(event_id)
+    if project_id is not None:
+        env["PIPELINE_PROJECT_ID"] = str(project_id)
     with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
         run_path = Path(run_dir)
         raw_file = run_path / "articles.raw.json"
@@ -169,20 +169,20 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
         env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
         env["PIPELINE_STATS_FILE"] = str(stats_file)
 
-        if event_id is not None:
+        if project_id is not None:
             try:
-                sources = list_sources_for_event(event_id)
+                sources = list_sources_for_project(project_id)
                 source_urls = [source.get("url") for source in sources if source.get("url")]
                 if source_urls:
                     env["SOURCES"] = ",".join(source_urls)
                 else:
                     _finish_run(
                         run_id,
-                        event_id,
+                        project_id,
                         status="failed",
                         stage="error",
-                        message="Selected event has no sources assigned.",
-                        error="No sources assigned to the selected event.",
+                        message="Selected project has no sources assigned.",
+                        error="No sources assigned to the selected project.",
                         finished_at=datetime.now(timezone.utc).isoformat(),
                     )
                     return
@@ -210,7 +210,7 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
             stats = _load_pipeline_stats(stats_file)
             _finish_run(
                 run_id,
-                event_id,
+                project_id,
                 status="success",
                 stage="done",
                 message="Pipeline complete.",
@@ -223,7 +223,7 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
         except PipelineCancelled:
             _finish_run(
                 run_id,
-                event_id,
+                project_id,
                 status="cancelled",
                 stage="cancelled",
                 message="Pipeline cancelled by user.",
@@ -234,7 +234,7 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
         except subprocess.CalledProcessError as e:
             _finish_run(
                 run_id,
-                event_id,
+                project_id,
                 status="failed",
                 stage="error",
                 message="Pipeline failed.",
@@ -245,7 +245,7 @@ def run_scraper_pipeline(run_id: str, event_id: int | None = None):
         except Exception as e:
             _finish_run(
                 run_id,
-                event_id,
+                project_id,
                 status="failed",
                 stage="error",
                 message="Pipeline crashed.",

@@ -11,7 +11,7 @@ begin
 end;
 $$;
 
-create table if not exists public.events (
+create table if not exists public.projects (
     id           bigint generated always as identity primary key,
     name         text not null,
     status       text not null default 'draft',
@@ -31,7 +31,7 @@ create table if not exists public.events (
     updated_at   timestamptz default now()
 );
 
-alter table public.events
+alter table public.projects
     add column if not exists description text,
     add column if not exists location text,
     add column if not exists target_audience text,
@@ -49,10 +49,10 @@ alter table public.events
     add column if not exists last_run_at timestamptz,
     add column if not exists last_run_status text;
 
-alter table public.events
-    drop constraint if exists events_repeat_interval_unit_check;
-alter table public.events
-    add constraint events_repeat_interval_unit_check
+alter table public.projects
+    drop constraint if exists projects_repeat_interval_unit_check;
+alter table public.projects
+    add constraint projects_repeat_interval_unit_check
     check (repeat_interval_unit is null or repeat_interval_unit in ('minutes', 'hours', 'days'));
 
 create table if not exists public.sources (
@@ -81,7 +81,7 @@ create table if not exists public.pipeline_runs (
     articles_saved   integer not null default 0,
     crawl_pages      integer not null default 0,
     error            text,
-    event_id         bigint references public.events(id) on delete set null,
+    project_id       bigint references public.projects(id) on delete set null,
     started_at       timestamptz default now(),
     finished_at      timestamptz,
     cancel_requested_at timestamptz,
@@ -93,20 +93,6 @@ create table if not exists public.pipeline_runs (
 alter table public.pipeline_runs
     add column if not exists cancel_requested_at timestamptz,
     add column if not exists cancelled_at timestamptz;
-
-create table if not exists public.crawl_pages (
-    id          bigint generated always as identity primary key,
-    crawl_id    text,
-    url         text not null unique,
-    source      text,
-    seed        text,
-    title       text,
-    text        text,
-    words       integer,
-    depth       integer,
-    fetched_at  timestamptz,
-    created_at  timestamptz default now()
-);
 
 create table if not exists public.articles (
     id              bigint generated always as identity primary key,
@@ -197,24 +183,24 @@ execute function public.set_updated_at();
 alter table public.users enable row level security;
 alter table public.sessions enable row level security;
 
-create table if not exists public.event_sources (
-    event_id     bigint not null references public.events(id) on delete cascade,
+create table if not exists public.project_sources (
+    project_id   bigint not null references public.projects(id) on delete cascade,
     source_id    bigint not null references public.sources(id) on delete cascade,
     created_at   timestamptz default now(),
-    primary key (event_id, source_id)
+    primary key (project_id, source_id)
 );
 
-create table if not exists public.article_events (
+create table if not exists public.article_projects (
     article_id   bigint not null references public.articles(id) on delete cascade,
-    event_id     bigint not null references public.events(id) on delete cascade,
+    project_id   bigint not null references public.projects(id) on delete cascade,
     similarity_score numeric,
     created_at   timestamptz default now(),
-    primary key (article_id, event_id)
+    primary key (article_id, project_id)
 );
 
-create index if not exists events_status_idx on public.events (status);
-create index if not exists events_created_idx on public.events (created_at desc);
-create index if not exists events_next_run_idx on public.events (next_run_at) where repeat_enabled = true;
+create index if not exists projects_status_idx on public.projects (status);
+create index if not exists projects_created_idx on public.projects (created_at desc);
+create index if not exists projects_next_run_idx on public.projects (next_run_at) where repeat_enabled = true;
 
 create index if not exists sources_enabled_idx on public.sources (enabled);
 create index if not exists sources_created_idx on public.sources (created_at desc);
@@ -222,25 +208,21 @@ create index if not exists sources_created_idx on public.sources (created_at des
 create index if not exists pipeline_runs_created_idx on public.pipeline_runs (created_at desc);
 create index if not exists pipeline_runs_status_idx on public.pipeline_runs (status);
 
-create index if not exists crawl_pages_crawl_idx on public.crawl_pages (crawl_id);
-create index if not exists crawl_pages_source_idx on public.crawl_pages (source);
-create index if not exists crawl_pages_created_idx on public.crawl_pages (created_at desc);
-
 create index if not exists articles_published_idx on public.articles (published desc);
 create index if not exists articles_sentiment_idx on public.articles (sentiment);
 create index if not exists articles_article_category_idx on public.articles (article_category);
 create index if not exists articles_analyzed_at_idx on public.articles (analyzed_at desc);
 
-create index if not exists event_sources_event_idx on public.event_sources (event_id);
-create index if not exists event_sources_source_idx on public.event_sources (source_id);
+create index if not exists project_sources_project_idx on public.project_sources (project_id);
+create index if not exists project_sources_source_idx on public.project_sources (source_id);
 
-create index if not exists article_events_event_idx on public.article_events (event_id);
-create index if not exists article_events_article_idx on public.article_events (article_id);
-create index if not exists article_events_similarity_idx on public.article_events (similarity_score desc);
+create index if not exists article_projects_project_idx on public.article_projects (project_id);
+create index if not exists article_projects_article_idx on public.article_projects (article_id);
+create index if not exists article_projects_similarity_idx on public.article_projects (similarity_score desc);
 
-drop trigger if exists set_events_updated_at on public.events;
-create trigger set_events_updated_at
-before update on public.events
+drop trigger if exists set_projects_updated_at on public.projects;
+create trigger set_projects_updated_at
+before update on public.projects
 for each row
 execute function public.set_updated_at();
 
@@ -256,17 +238,16 @@ before update on public.pipeline_runs
 for each row
 execute function public.set_updated_at();
 
-alter table public.events enable row level security;
+alter table public.projects enable row level security;
 alter table public.sources enable row level security;
 alter table public.pipeline_runs enable row level security;
-alter table public.crawl_pages enable row level security;
 alter table public.articles enable row level security;
-alter table public.event_sources enable row level security;
-alter table public.article_events enable row level security;
+alter table public.project_sources enable row level security;
+alter table public.article_projects enable row level security;
 
-drop policy if exists "Public read access" on public.events;
+drop policy if exists "Public read access" on public.projects;
 create policy "Public read access"
-on public.events
+on public.projects
 for select
 to anon, authenticated
 using (true);
@@ -285,13 +266,6 @@ for select
 to anon, authenticated
 using (true);
 
-drop policy if exists "Public read access" on public.crawl_pages;
-create policy "Public read access"
-on public.crawl_pages
-for select
-to anon, authenticated
-using (true);
-
 drop policy if exists "Public read access" on public.articles;
 create policy "Public read access"
 on public.articles
@@ -299,16 +273,16 @@ for select
 to anon, authenticated
 using (true);
 
-drop policy if exists "Public read access" on public.event_sources;
+drop policy if exists "Public read access" on public.project_sources;
 create policy "Public read access"
-on public.event_sources
+on public.project_sources
 for select
 to anon, authenticated
 using (true);
 
-drop policy if exists "Public read access" on public.article_events;
+drop policy if exists "Public read access" on public.article_projects;
 create policy "Public read access"
-on public.article_events
+on public.article_projects
 for select
 to anon, authenticated
 using (true);

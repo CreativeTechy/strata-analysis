@@ -83,8 +83,8 @@ export default function SourceView({ articles, isScraping }) {
                   {article.relevance_score > 0 && (
                     <span className="badge score">Score: {article.relevance_score}/10</span>
                   )}
-                  {article.event_similarity_score != null && (
-                    <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
+                  {article.project_similarity_score != null && (
+                    <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
                   )}
                 </div>
               </div>

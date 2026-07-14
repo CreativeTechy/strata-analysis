@@ -60,10 +60,10 @@ export default function WorkflowPage({
   isScraping = false,
   onRunScraper,
   sources = [],
-  events = [],
-  selectedEvents = [],
-  selectedEventIds = [],
-  onChangeSelectedEventIds = () => {},
+  projects = [],
+  selectedProjects = [],
+  selectedProjectIds = [],
+  onChangeSelectedProjectIds = () => {},
   activeRun = null,
   onStopRun = () => {},
 }) {
@@ -156,17 +156,17 @@ export default function WorkflowPage({
 
   const hasData = articles.length > 0;
   const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
-  const selectedEventCount = selectedEventIds.length;
-  const eventLabel = useMemo(() => {
-    if (selectedEvents.length === 0) return events.length ? 'select one or more events' : 'no events available';
-    if (selectedEvents.length === 1) return selectedEvents[0].name || '1 event';
-    return `${selectedEvents.length} selected events`;
-  }, [events.length, selectedEvents]);
-  const selectedEventNames = useMemo(
-    () => selectedEvents.map((event) => event.name).filter(Boolean).slice(0, 4),
-    [selectedEvents]
+  const selectedProjectCount = selectedProjectIds.length;
+  const projectLabel = useMemo(() => {
+    if (selectedProjects.length === 0) return projects.length ? 'select one or more projects' : 'no projects available';
+    if (selectedProjects.length === 1) return selectedProjects[0].name || '1 project';
+    return `${selectedProjects.length} selected projects`;
+  }, [projects.length, selectedProjects]);
+  const selectedProjectNames = useMemo(
+    () => selectedProjects.map((project) => project.name).filter(Boolean).slice(0, 4),
+    [selectedProjects]
   );
-  const hasMultipleEvents = events.length > 1;
+  const hasMultipleProjects = projects.length > 1;
 
   const formatMatchScore = (value) => {
     const score = Number(value);
@@ -260,30 +260,30 @@ export default function WorkflowPage({
     return currentRun.message || '';
   }, [currentRun]);
 
-  const toggleSelectedEvent = (eventId) => {
-    const id = Number(eventId);
+  const toggleSelectedProject = (projectId) => {
+    const id = Number(projectId);
     if (!Number.isFinite(id)) return;
 
-    const isSelected = selectedEventIds.includes(id);
-    if (isSelected && selectedEventIds.length === 1) {
+    const isSelected = selectedProjectIds.includes(id);
+    if (isSelected && selectedProjectIds.length === 1) {
       return;
     }
 
     const nextIds = isSelected
-      ? selectedEventIds.filter((value) => Number(value) !== id)
-      : [...selectedEventIds, id];
-    onChangeSelectedEventIds([...new Set(nextIds)]);
+      ? selectedProjectIds.filter((value) => Number(value) !== id)
+      : [...selectedProjectIds, id];
+    onChangeSelectedProjectIds([...new Set(nextIds)]);
   };
 
-  const selectAllEvents = () => {
-    onChangeSelectedEventIds([...new Set(events.map((event) => Number(event.id)).filter((id) => Number.isFinite(id)))]);
+  const selectAllProjects = () => {
+    onChangeSelectedProjectIds([...new Set(projects.map((project) => Number(project.id)).filter((id) => Number.isFinite(id)))]);
   };
 
-  const runLabel = selectedEventCount > 1
-    ? `Run Extractor for ${selectedEventCount} Events`
-    : selectedEventCount === 1
-      ? 'Run Extractor for Event'
-      : 'Select Events to Run';
+  const runLabel = selectedProjectCount > 1
+    ? `Run Extractor for ${selectedProjectCount} Projects`
+    : selectedProjectCount === 1
+      ? 'Run Extractor for Project'
+      : 'Select Projects to Run';
 
   return (
     <div className="workflow-layout">
@@ -301,7 +301,7 @@ export default function WorkflowPage({
               <div className="panel-kicker"><Clock3 size={14} /> Live stopwatch</div>
               <h2>Workflow elapsed time</h2>
               <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 6 }}>
-                Running scope: {eventLabel}
+                Running scope: {projectLabel}
               </div>
             </div>
             <span className={`panel-pill ${isScraping ? 'warning' : workflowStartedAt ? 'success' : 'neutral'}`}>
@@ -340,63 +340,63 @@ export default function WorkflowPage({
                 <div className="block-title">Get Data</div>
               </div>
 
-              <div className="workflow-event-picker">
-                <div className="workflow-event-picker-header">
+              <div className="workflow-project-picker">
+                <div className="workflow-project-picker-header">
                   <div>
-                    <div className="workflow-event-picker-kicker">Scope</div>
-                    <strong>Choose one or more events to extract</strong>
+                    <div className="workflow-project-picker-kicker">Scope</div>
+                    <strong>Choose one or more projects to extract</strong>
                   </div>
-                  <div className="workflow-event-picker-summary">
-                    <span className="panel-chip">{selectedEventCount} selected</span>
-                    <span className="panel-chip muted">{events.length} total</span>
+                  <div className="workflow-project-picker-summary">
+                    <span className="panel-chip">{selectedProjectCount} selected</span>
+                    <span className="panel-chip muted">{projects.length} total</span>
                   </div>
                 </div>
 
-                <div className="workflow-event-picker-note">
-                  The extractor will run once for each selected event, then the results below will merge the latest articles into a single view.
+                <div className="workflow-project-picker-note">
+                  The extractor will run once for each selected project, then the results below will merge the latest articles into a single view.
                 </div>
 
-                {events.length === 0 ? (
+                {projects.length === 0 ? (
                   <div className="panel-empty" style={{ marginTop: 8 }}>
                     <ShieldCheck size={16} />
-                    <span>No events yet. Create an event first, then come back to run the workflow.</span>
+                    <span>No projects yet. Create a project first, then come back to run the workflow.</span>
                   </div>
                 ) : (
                   <>
-                    <div className="workflow-event-picker-actions">
+                    <div className="workflow-project-picker-actions">
                       <button
                         type="button"
                         className="btn-secondary"
-                        onClick={selectAllEvents}
-                        disabled={!hasMultipleEvents || selectedEventCount === events.length}
+                        onClick={selectAllProjects}
+                        disabled={!hasMultipleProjects || selectedProjectCount === projects.length}
                         style={{ padding: '8px 10px', fontSize: '0.78rem' }}
                       >
                         Select all
                       </button>
                     </div>
 
-                    <div className="workflow-event-list">
-                      {events.map((event) => {
-                        const isSelected = selectedEventIds.includes(Number(event.id));
+                    <div className="workflow-project-list">
+                      {projects.map((project) => {
+                        const isSelected = selectedProjectIds.includes(Number(project.id));
                         return (
-                          <label key={event.id} className={`workflow-event-item ${isSelected ? 'selected' : ''}`}>
+                          <label key={project.id} className={`workflow-project-item ${isSelected ? 'selected' : ''}`}>
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleSelectedEvent(event.id)}
+                              onChange={() => toggleSelectedProject(project.id)}
                               disabled={isScraping}
                             />
-                            <div className="workflow-event-copy">
-                              <div className="workflow-event-topline">
-                                <strong>{event.name}</strong>
+                            <div className="workflow-project-copy">
+                              <div className="workflow-project-topline">
+                                <strong>{project.name}</strong>
                                 <span className={`panel-chip ${isSelected ? 'success' : 'muted'}`}>
                                   {isSelected ? 'Selected' : 'Unselected'}
                                 </span>
                               </div>
-                              <div className="workflow-event-meta">
-                                <span>{event.status || 'draft'}</span>
-                                {event.location ? <span>{event.location}</span> : null}
-                                {(event.source_ids || []).length ? <span>{event.source_ids.length} source{event.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
+                              <div className="workflow-project-meta">
+                                <span>{project.status || 'draft'}</span>
+                                {project.location ? <span>{project.location}</span> : null}
+                                {(project.source_ids || []).length ? <span>{project.source_ids.length} source{project.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
                               </div>
                             </div>
                           </label>
@@ -407,13 +407,13 @@ export default function WorkflowPage({
                 )}
               </div>
 
-              {selectedEventNames.length ? (
-                <div className="workflow-event-pills">
-                  {selectedEventNames.map((name) => (
-                    <span key={name} className="workflow-event-pill">{name}</span>
+              {selectedProjectNames.length ? (
+                <div className="workflow-project-pills">
+                  {selectedProjectNames.map((name) => (
+                    <span key={name} className="workflow-project-pill">{name}</span>
                   ))}
-                  {selectedEvents.length > selectedEventNames.length ? (
-                    <span className="workflow-event-pill muted">+{selectedEvents.length - selectedEventNames.length} more</span>
+                  {selectedProjects.length > selectedProjectNames.length ? (
+                    <span className="workflow-project-pill muted">+{selectedProjects.length - selectedProjectNames.length} more</span>
                   ) : null}
                 </div>
               ) : null}
@@ -425,7 +425,7 @@ export default function WorkflowPage({
                 </div>
                 <button
                   type="button"
-                  className="workflow-event-toggle"
+                  className="workflow-project-toggle"
                   onClick={() => setIsSourceListCollapsed((current) => !current)}
                   aria-expanded={!isSourceListCollapsed}
                   aria-controls="workflow-source-list"
@@ -505,7 +505,7 @@ export default function WorkflowPage({
                 ) : (
                   <motion.div
                     key="workflow-source-list-collapsed"
-                    className="workflow-event-list-collapsed"
+                    className="workflow-project-list-collapsed"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -527,8 +527,8 @@ export default function WorkflowPage({
                 <button
                   className="btn-primary"
                   style={{ opacity: isScraping ? 0.7 : 1, flex: 1 }}
-                  onClick={() => onRunScraper?.(selectedEventIds)}
-                  disabled={isScraping || selectedEventCount === 0 || !canRunScraper}
+                  onClick={() => onRunScraper?.(selectedProjectIds)}
+                  disabled={isScraping || selectedProjectCount === 0 || !canRunScraper}
                   title={canRunScraper ? undefined : 'Requires the operator or admin role.'}
                 >
                   {isScraping ? (
@@ -839,8 +839,8 @@ export default function WorkflowPage({
                       <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
                         {article.sentiment || 'Neutral'}
                       </span>
-                      {article.event_similarity_score != null && (
-                        <span className="badge score">Match {formatMatchScore(article.event_similarity_score)}</span>
+                      {article.project_similarity_score != null && (
+                        <span className="badge score">Match {formatMatchScore(article.project_similarity_score)}</span>
                       )}
                     </div>
                       <div className="article-preview-title">{article.title || article.url}</div>

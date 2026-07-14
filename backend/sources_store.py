@@ -7,7 +7,7 @@ from urllib.parse import quote_plus, urlparse
 
 import config
 import db
-from events_store import set_source_events, list_source_event_ids
+from projects_store import set_source_projects, list_source_project_ids
 
 
 SOURCE_SELECT = "id,url,name,enabled,source_type,category,limited,created_at,updated_at"
@@ -39,7 +39,7 @@ def _derive_term_url(source_type, term):
     return ""
 
 
-def _normalize_record(row, include_event_ids=False):
+def _normalize_record(row, include_project_ids=False):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
     source_type = config._resolve_source_type(row.get("source_type") or "", url)
@@ -54,7 +54,7 @@ def _normalize_record(row, include_event_ids=False):
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source": row.get("source", "database"),
-        "event_ids": list_source_event_ids(row.get("id")) if include_event_ids and row.get("id") else [],
+        "project_ids": list_source_project_ids(row.get("id")) if include_project_ids and row.get("id") else [],
     }
 
 
@@ -151,7 +151,7 @@ def create_source(source):
         return None
 
     payload = _upsert_payload(source)
-    event_ids = source.get("event_ids") or [] if isinstance(source, dict) else []
+    project_ids = source.get("project_ids") or [] if isinstance(source, dict) else []
     if not payload["url"]:
         return None
 
@@ -181,8 +181,8 @@ def create_source(source):
         if not row:
             return None
         record = _normalize_record({**row, "source": "database"})
-        if event_ids is not None:
-            record["event_ids"] = set_source_events(record["id"], event_ids)
+        if project_ids is not None:
+            record["project_ids"] = set_source_projects(record["id"], project_ids)
         return record
     except Exception:
         return None
@@ -193,7 +193,7 @@ def update_source(source_id, source):
         return None
 
     payload = _upsert_payload(source)
-    event_ids = source.get("event_ids") if isinstance(source, dict) else None
+    project_ids = source.get("project_ids") if isinstance(source, dict) else None
 
     try:
         row = db.fetch_one(
@@ -222,8 +222,8 @@ def update_source(source_id, source):
         if not row:
             return None
         record = _normalize_record({**row, "source": "database"})
-        if event_ids is not None:
-            record["event_ids"] = set_source_events(record["id"], event_ids)
+        if project_ids is not None:
+            record["project_ids"] = set_source_projects(record["id"], project_ids)
         return record
     except Exception:
         return None

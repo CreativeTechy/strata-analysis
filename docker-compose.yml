@@ -39,7 +39,6 @@ services:
     build:
       context: ./dashboard
       args:
-        VITE_SPIDER_URL: ${VITE_SPIDER_URL:-}
         VITE_API_TARGET: ${VITE_API_TARGET:-}
     expose:
       - "80"

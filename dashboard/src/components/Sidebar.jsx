@@ -1,6 +1,6 @@
 import React from 'react';
-import { LayoutDashboard, GitMerge, Bug, BarChart3, MessageSquare, Rss, Play, Newspaper, Database, CalendarDays, Users, LogOut } from 'lucide-react';
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, LogOut } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
 export default function Sidebar({
@@ -8,7 +8,6 @@ export default function Sidebar({
 }) {
   const { user, hasRole, logout } = useAuth();
   const navigate = useNavigate();
-  const canRunScraper = hasRole('operator');
 
   const handleLogout = async () => {
     await logout();
@@ -45,22 +44,14 @@ export default function Sidebar({
         <NavLink to="/sources" className="btn-secondary" style={navStyle}>
           <Rss size={18} /> Sources
         </NavLink>
-        <NavLink to="/events" className="btn-secondary" style={navStyle}>
-          <CalendarDays size={18} /> Events
+        <NavLink to="/projects" className="btn-secondary" style={navStyle}>
+          <CalendarDays size={18} /> Projects
         </NavLink>
         <NavLink to="/workflow" className="btn-secondary" style={navStyle}>
           <GitMerge size={18} /> Workflow
         </NavLink>
         <NavLink to="/pipeline-runs" className="btn-secondary" style={navStyle}>
           <Database size={18} /> Pipeline Runs
-        </NavLink>
-        {canRunScraper && (
-          <NavLink to="/spider" className="btn-secondary" style={navStyle}>
-            <Bug size={18} /> Spider Mode
-          </NavLink>
-        )}
-        <NavLink to="/sentiment" className="btn-secondary" style={navStyle}>
-          <BarChart3 size={18} /> Brand Sentiment
         </NavLink>
         <NavLink to="/intelligence" className="btn-secondary" style={navStyle}>
           <MessageSquare size={18} /> Intelligence
@@ -71,16 +62,6 @@ export default function Sidebar({
           </NavLink>
         )}
       </nav>
-
-      <Link
-        to="/workflow"
-        className="btn-primary"
-        style={{ width: '100%', textDecoration: 'none', opacity: canRunScraper ? 1 : 0.6 }}
-        title={canRunScraper ? undefined : 'Viewing only - running scrapes requires the operator or admin role.'}
-      >
-        <Play size={18} />
-        Run Scraper
-      </Link>
 
       {user && (
         <div className="sidebar-profile">

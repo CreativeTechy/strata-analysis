@@ -1,4 +1,4 @@
-"""Postgres-backed event helpers."""
+"""Postgres-backed project helpers."""
 
 from __future__ import annotations
 
@@ -10,19 +10,19 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 import config
 import db
-from embeddings import build_event_embedding_text, get_embedding
+from embeddings import build_project_embedding_text, get_embedding
 from psycopg.types.json import Jsonb
 
 
-EVENT_SELECT = (
+PROJECT_SELECT = (
     "id,name,status,description,location,target_audience,hashtags,keywords,usernames,"
     "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,"
     "repeat_enabled,repeat_interval_value,repeat_interval_unit,next_run_at,last_run_at,last_run_status,"
     "created_at,updated_at"
 )
 
-EVENT_SELECT_FIELDS = tuple(EVENT_SELECT.split(","))
-EVENT_MUTABLE_FIELDS = (
+PROJECT_SELECT_FIELDS = tuple(PROJECT_SELECT.split(","))
+PROJECT_MUTABLE_FIELDS = (
     "name",
     "status",
     "description",
@@ -37,14 +37,14 @@ EVENT_MUTABLE_FIELDS = (
     "repeat_interval_value",
     "repeat_interval_unit",
 )
-EVENT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
-EVENT_SCHEDULE_FIELDS = ("next_run_at", "last_run_at", "last_run_status")
+PROJECT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
+PROJECT_SCHEDULE_FIELDS = ("next_run_at", "last_run_at", "last_run_status")
 
 REPEAT_INTERVAL_UNITS = ("minutes", "hours", "days")
 
 
 @lru_cache(maxsize=1)
-def _event_table_columns():
+def _project_table_columns():
     if not config.DATABASE_URL:
         return set()
 
@@ -54,7 +54,7 @@ def _event_table_columns():
             select column_name
             from information_schema.columns
             where table_schema = 'public'
-              and table_name = 'events'
+              and table_name = 'projects'
             """
         )
     except Exception:
@@ -68,32 +68,32 @@ def _event_table_columns():
     return columns
 
 
-def _event_columns():
-    columns = _event_table_columns()
+def _project_columns():
+    columns = _project_table_columns()
     if columns:
         return columns
-    return set(EVENT_SELECT_FIELDS)
+    return set(PROJECT_SELECT_FIELDS)
 
 
-def _event_select_sql():
-    columns = _event_columns()
-    selected = [field for field in EVENT_SELECT_FIELDS if field in columns]
+def _project_select_sql():
+    columns = _project_columns()
+    selected = [field for field in PROJECT_SELECT_FIELDS if field in columns]
     return ",".join(selected or ["id", "name", "status", "start_date", "end_date", "created_at", "updated_at"])
 
 
-def _event_write_fields():
-    columns = _event_columns()
-    return [field for field in EVENT_MUTABLE_FIELDS if field in columns]
+def _project_write_fields():
+    columns = _project_columns()
+    return [field for field in PROJECT_MUTABLE_FIELDS if field in columns]
 
 
-def _event_embedding_fields():
-    columns = _event_columns()
-    return [field for field in EVENT_EMBEDDING_FIELDS if field in columns]
+def _project_embedding_fields():
+    columns = _project_columns()
+    return [field for field in PROJECT_EMBEDDING_FIELDS if field in columns]
 
 
-def _event_schedule_fields():
-    columns = _event_columns()
-    return [field for field in EVENT_SCHEDULE_FIELDS if field in columns]
+def _project_schedule_fields():
+    columns = _project_columns()
+    return [field for field in PROJECT_SCHEDULE_FIELDS if field in columns]
 
 
 def _jsonb_param(value):
@@ -151,7 +151,7 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _normalize_event(row, source_ids=None):
+def _normalize_project(row, source_ids=None):
     row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
@@ -216,29 +216,29 @@ def _fetch_rows(query, params=None):
         return []
 
 
-def _fetch_event_source_map():
-    rows = _fetch_rows("select event_id, source_id from event_sources order by event_id asc, source_id asc")
+def _fetch_project_source_map():
+    rows = _fetch_rows("select project_id, source_id from project_sources order by project_id asc, source_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
-            event_id = int(row.get("event_id"))
+            project_id = int(row.get("project_id"))
             source_id = int(row.get("source_id"))
         except Exception:
             continue
-        mapping[event_id].append(source_id)
+        mapping[project_id].append(source_id)
     return mapping
 
 
-def _fetch_source_event_map():
-    rows = _fetch_rows("select event_id, source_id from event_sources order by source_id asc, event_id asc")
+def _fetch_source_project_map():
+    rows = _fetch_rows("select project_id, source_id from project_sources order by source_id asc, project_id asc")
     mapping = defaultdict(list)
     for row in rows:
         try:
-            event_id = int(row.get("event_id"))
+            project_id = int(row.get("project_id"))
             source_id = int(row.get("source_id"))
         except Exception:
             continue
-        mapping[source_id].append(event_id)
+        mapping[source_id].append(project_id)
     return mapping
 
 
@@ -256,10 +256,10 @@ def _fetch_source_url_map():
     return mapping
 
 
-def _fetch_article_event_map(event_id):
+def _fetch_article_project_map(project_id):
     rows = _fetch_rows(
-        "select article_id from article_events where event_id = %s order by article_id asc",
-        (int(event_id),),
+        "select article_id from article_projects where project_id = %s order by article_id asc",
+        (int(project_id),),
     )
     ids = []
     seen = set()
@@ -274,15 +274,15 @@ def _fetch_article_event_map(event_id):
     return ids
 
 
-def _persist_event_embedding(event):
+def _persist_project_embedding(project):
     if not config.DATABASE_URL:
         return {}
 
-    embedding_fields = _event_embedding_fields()
+    embedding_fields = _project_embedding_fields()
     if not embedding_fields:
         return {}
 
-    text = build_event_embedding_text(event)
+    text = build_project_embedding_text(project)
     if not text:
         return {}
 
@@ -291,7 +291,7 @@ def _persist_event_embedding(event):
         return {}
 
     try:
-        event_id = int(event.get("id"))
+        project_id = int(project.get("id"))
     except Exception:
         return {}
 
@@ -313,13 +313,13 @@ def _persist_event_embedding(event):
         if not assignments:
             return {}
         assignments.append("updated_at = now()")
-        params.append(event_id)
+        params.append(project_id)
         row = db.fetch_one(
             f"""
-            update events
+            update projects
             set {", ".join(assignments)}
             where id = %s
-            returning {_event_select_sql()}
+            returning {_project_select_sql()}
             """,
             params,
         )
@@ -336,27 +336,27 @@ def _persist_event_embedding(event):
     return embedding
 
 
-def list_events():
+def list_projects():
     if not config.DATABASE_URL:
         return []
 
     try:
         rows = db.fetch_all(
             f"""
-            select {_event_select_sql()}
-            from events
+            select {_project_select_sql()}
+            from projects
             order by created_at asc
             """
         )
-        source_map = _fetch_event_source_map()
-        return [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows]
+        source_map = _fetch_project_source_map()
+        return [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows]
     except Exception:
         return []
 
 
-def list_events_page(limit=25, offset=0):
+def list_projects_page(limit=25, offset=0):
     if not config.DATABASE_URL:
-        return {"events": [], "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
+        return {"projects": [], "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
 
     limit = max(1, min(int(limit or 25), 100))
     offset = max(0, int(offset or 0))
@@ -364,40 +364,40 @@ def list_events_page(limit=25, offset=0):
     try:
         rows = db.fetch_all(
             f"""
-            select {_event_select_sql()}
-            from events
+            select {_project_select_sql()}
+            from projects
             order by created_at asc
             limit %s offset %s
             """,
             (limit, offset),
         )
-        total_row = db.fetch_one("select count(*)::int as total from events")
-        source_map = _fetch_event_source_map()
-        events = [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
-        total = int((total_row or {}).get("total") or len(events))
-        return {"events": events, "total": total, "limit": limit, "offset": offset}
+        total_row = db.fetch_one("select count(*)::int as total from projects")
+        source_map = _fetch_project_source_map()
+        projects = [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
+        total = int((total_row or {}).get("total") or len(projects))
+        return {"projects": projects, "total": total, "limit": limit, "offset": offset}
     except Exception:
-        return {"events": [], "total": 0, "limit": limit, "offset": offset}
+        return {"projects": [], "total": 0, "limit": limit, "offset": offset}
 
 
-def get_event(event_id):
+def get_project(project_id):
     if not config.DATABASE_URL:
         return None
 
     try:
         rows = db.fetch_all(
             f"""
-            select {_event_select_sql()}
-            from events
+            select {_project_select_sql()}
+            from projects
             where id = %s
             limit 1
             """,
-            (int(event_id),),
+            (int(project_id),),
         )
         if not rows:
             return None
-        source_map = _fetch_event_source_map()
-        return _normalize_event(rows[0], source_map.get(rows[0].get("id"), []))
+        source_map = _fetch_project_source_map()
+        return _normalize_project(rows[0], source_map.get(rows[0].get("id"), []))
     except Exception:
         return None
 
@@ -453,13 +453,13 @@ def _compute_next_run_at(base_time, value, unit):
     return base_time + delta
 
 
-def _event_payload(event):
-    if not isinstance(event, dict):
-        event = {}
+def _project_payload(project):
+    if not isinstance(project, dict):
+        project = {}
 
-    hashtags = event.get("hashtags")
-    keywords = event.get("keywords")
-    usernames = event.get("usernames")
+    hashtags = project.get("hashtags")
+    keywords = project.get("keywords")
+    usernames = project.get("usernames")
     if isinstance(hashtags, str):
         hashtags = [part.strip() for part in hashtags.replace("\n", ",").split(",")]
     if isinstance(keywords, str):
@@ -467,31 +467,31 @@ def _event_payload(event):
     if isinstance(usernames, str):
         usernames = [part.strip() for part in usernames.replace("\n", ",").split(",")]
 
-    repeat_enabled = bool(event.get("repeat_enabled"))
+    repeat_enabled = bool(project.get("repeat_enabled"))
     repeat_interval_value, repeat_interval_unit = _validate_repeat_fields(
-        repeat_enabled, event.get("repeat_interval_value"), event.get("repeat_interval_unit")
+        repeat_enabled, project.get("repeat_interval_value"), project.get("repeat_interval_unit")
     )
 
     return {
-        "name": (event.get("name") or "").strip(),
-        "status": (event.get("status") or "draft").strip().lower() or "draft",
-        "description": (event.get("description") or "").strip() or None,
-        "location": (event.get("location") or "").strip() or None,
-        "target_audience": (event.get("target_audience") or "").strip() or None,
+        "name": (project.get("name") or "").strip(),
+        "status": (project.get("status") or "draft").strip().lower() or "draft",
+        "description": (project.get("description") or "").strip() or None,
+        "location": (project.get("location") or "").strip() or None,
+        "target_audience": (project.get("target_audience") or "").strip() or None,
         "hashtags": _clean_terms(hashtags or []),
         "keywords": _clean_terms(keywords or []),
         "usernames": _clean_terms(usernames or []),
-        "start_date": event.get("start_date") or None,
-        "end_date": event.get("end_date") or None,
+        "start_date": project.get("start_date") or None,
+        "end_date": project.get("end_date") or None,
         "repeat_enabled": repeat_enabled,
         "repeat_interval_value": repeat_interval_value,
         "repeat_interval_unit": repeat_interval_unit or None,
     }
 
 
-def _apply_repeat_schedule(event_id, previous, payload):
+def _apply_repeat_schedule(project_id, previous, payload):
     """Recompute next_run_at when the repeat settings actually changed; system fields only."""
-    if "next_run_at" not in _event_schedule_fields():
+    if "next_run_at" not in _project_schedule_fields():
         return None
 
     repeat_enabled = payload["repeat_enabled"]
@@ -517,49 +517,49 @@ def _apply_repeat_schedule(event_id, previous, payload):
     try:
         row = db.fetch_one(
             f"""
-            update events
+            update projects
             set next_run_at = %s
             where id = %s
-            returning {_event_select_sql()}
+            returning {_project_select_sql()}
             """,
-            (next_run_at, int(event_id)),
+            (next_run_at, int(project_id)),
         )
-        return _normalize_event(row) if row else None
+        return _normalize_project(row) if row else None
     except Exception:
         return None
 
 
-def list_due_events():
-    """Events with repeat enabled whose next_run_at has passed."""
-    if not config.DATABASE_URL or "next_run_at" not in _event_schedule_fields():
+def list_due_projects():
+    """Projects with repeat enabled whose next_run_at has passed."""
+    if not config.DATABASE_URL or "next_run_at" not in _project_schedule_fields():
         return []
 
     try:
         rows = db.fetch_all(
             f"""
-            select {_event_select_sql()}
-            from events
+            select {_project_select_sql()}
+            from projects
             where repeat_enabled = true
               and next_run_at is not null
               and next_run_at <= now()
             order by next_run_at asc
             """
         )
-        source_map = _fetch_event_source_map()
-        return [_normalize_event(row, source_map.get(row.get("id"), [])) for row in rows]
+        source_map = _fetch_project_source_map()
+        return [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows]
     except Exception:
         return []
 
 
-def claim_due_event(event_id):
-    """Atomically clear next_run_at so only one poller starts this event's run."""
+def claim_due_project(project_id):
+    """Atomically clear next_run_at so only one poller starts this project's run."""
     if not config.DATABASE_URL:
         return False
 
     try:
         row = db.fetch_one(
             """
-            update events
+            update projects
             set next_run_at = null
             where id = %s
               and repeat_enabled = true
@@ -567,89 +567,89 @@ def claim_due_event(event_id):
               and next_run_at <= now()
             returning id
             """,
-            (int(event_id),),
+            (int(project_id),),
         )
         return bool(row)
     except Exception:
         return False
 
 
-def record_run_completion(event_id, *, status, completed_at=None):
+def record_run_completion(project_id, *, status, completed_at=None):
     """Stamp last_run_at/last_run_status and, if repeat is enabled, schedule the next run."""
-    if not config.DATABASE_URL or event_id is None:
+    if not config.DATABASE_URL or project_id is None:
         return None
 
     completed_at = completed_at or datetime.now(timezone.utc)
-    event = get_event(event_id)
-    if not event:
+    project = get_project(project_id)
+    if not project:
         return None
 
     assignments = ["last_run_at = %s", "last_run_status = %s"]
     params = [completed_at, str(status or "").strip().lower()]
 
-    if event.get("repeat_enabled") and event.get("repeat_interval_value") and event.get("repeat_interval_unit"):
+    if project.get("repeat_enabled") and project.get("repeat_interval_value") and project.get("repeat_interval_unit"):
         next_run_at = _compute_next_run_at(
-            completed_at, event.get("repeat_interval_value"), event.get("repeat_interval_unit")
+            completed_at, project.get("repeat_interval_value"), project.get("repeat_interval_unit")
         )
         assignments.append("next_run_at = %s")
         params.append(next_run_at)
 
-    params.append(int(event_id))
+    params.append(int(project_id))
     try:
         row = db.fetch_one(
             f"""
-            update events
+            update projects
             set {", ".join(assignments)}
             where id = %s
-            returning {_event_select_sql()}
+            returning {_project_select_sql()}
             """,
             params,
         )
-        return _normalize_event(row) if row else None
+        return _normalize_project(row) if row else None
     except Exception:
         return None
 
 
-def _set_event_sources(event_id, source_ids):
-    event_id = int(event_id)
+def _set_project_sources(project_id, source_ids):
+    project_id = int(project_id)
     source_ids = _clean_ids(source_ids)
     try:
-        db.execute("delete from event_sources where event_id = %s", (event_id,))
+        db.execute("delete from project_sources where project_id = %s", (project_id,))
         for source_id in source_ids:
             db.execute(
                 """
-                insert into event_sources (event_id, source_id)
+                insert into project_sources (project_id, source_id)
                 values (%s, %s)
-                on conflict (event_id, source_id) do nothing
+                on conflict (project_id, source_id) do nothing
                 """,
-                (event_id, source_id),
+                (project_id, source_id),
             )
         return source_ids
     except Exception:
         return []
 
 
-def persist_event_embedding_for_id(event_id):
+def persist_project_embedding_for_id(project_id):
     if not config.DATABASE_URL:
         return {}
 
-    event = get_event(event_id)
-    if not event:
+    project = get_project(project_id)
+    if not project:
         return {}
-    return _persist_event_embedding(event)
+    return _persist_project_embedding(project)
 
 
-def create_event(event, *, embed=True):
+def create_project(project, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
-    payload = _event_payload(event)
+    payload = _project_payload(project)
     if not payload["name"]:
         return None
 
-    source_ids = _clean_ids(event.get("source_ids") or [])
+    source_ids = _clean_ids(project.get("source_ids") or [])
     try:
-        write_fields = _event_write_fields()
+        write_fields = _project_write_fields()
         if not write_fields:
             return None
         insert_columns = ", ".join(write_fields)
@@ -660,19 +660,19 @@ def create_event(event, *, embed=True):
         ]
         row = db.fetch_one(
             f"""
-            insert into events ({insert_columns})
+            insert into projects ({insert_columns})
             values ({insert_values})
-            returning {_event_select_sql()}
+            returning {_project_select_sql()}
             """,
             params,
         )
         if not row:
             return None
-        created = _normalize_event(row)
+        created = _normalize_project(row)
         if embed:
-            created.update(_persist_event_embedding(created))
+            created.update(_persist_project_embedding(created))
         if source_ids:
-            created["source_ids"] = set_event_sources(created["id"], source_ids)
+            created["source_ids"] = set_project_sources(created["id"], source_ids)
         else:
             created["source_ids"] = []
         schedule_update = _apply_repeat_schedule(created["id"], None, payload)
@@ -683,15 +683,15 @@ def create_event(event, *, embed=True):
         raise RuntimeError(f"Database request failed: {e}") from e
 
 
-def update_event(event_id, event, *, embed=True):
+def update_project(project_id, project, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
-    previous = get_event(event_id)
-    payload = _event_payload(event)
-    source_ids = event.get("source_ids") if isinstance(event, dict) else None
+    previous = get_project(project_id)
+    payload = _project_payload(project)
+    source_ids = project.get("source_ids") if isinstance(project, dict) else None
     try:
-        write_fields = _event_write_fields()
+        write_fields = _project_write_fields()
         if not write_fields:
             return None
         assignments = ", ".join(f"{field} = %s" for field in write_fields)
@@ -699,27 +699,27 @@ def update_event(event_id, event, *, embed=True):
             _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
             for field in write_fields
         ]
-        params.append(int(event_id))
+        params.append(int(project_id))
         row = db.fetch_one(
             f"""
-            update events
+            update projects
             set {assignments},
                 updated_at = now()
             where id = %s
-            returning {_event_select_sql()}
+            returning {_project_select_sql()}
             """,
             params,
         )
         if not row:
             return None
-        normalized = _normalize_event(row)
+        normalized = _normalize_project(row)
         if embed:
-            normalized.update(_persist_event_embedding(normalized))
+            normalized.update(_persist_project_embedding(normalized))
         if source_ids is not None:
-            normalized["source_ids"] = _set_event_sources(event_id, source_ids)
+            normalized["source_ids"] = _set_project_sources(project_id, source_ids)
         else:
-            normalized["source_ids"] = list_event_source_ids(event_id)
-        schedule_update = _apply_repeat_schedule(event_id, previous, payload)
+            normalized["source_ids"] = list_project_source_ids(project_id)
+        schedule_update = _apply_repeat_schedule(project_id, previous, payload)
         if schedule_update:
             normalized["next_run_at"] = schedule_update.get("next_run_at")
         return normalized
@@ -727,25 +727,25 @@ def update_event(event_id, event, *, embed=True):
         raise RuntimeError(f"Database request failed: {e}") from e
 
 
-def delete_event(event_id):
+def delete_project(project_id):
     if not config.DATABASE_URL:
         return False
 
     try:
-        db.execute("delete from events where id = %s", (int(event_id),))
+        db.execute("delete from projects where id = %s", (int(project_id),))
         return True
     except Exception:
         return False
 
 
-def list_event_source_ids(event_id):
+def list_project_source_ids(project_id):
     if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            "select source_id from event_sources where event_id = %s order by source_id asc",
-            (int(event_id),),
+            "select source_id from project_sources where project_id = %s order by source_id asc",
+            (int(project_id),),
         )
         ids = []
         seen = set()
@@ -762,59 +762,59 @@ def list_event_source_ids(event_id):
         return []
 
 
-def list_source_event_ids(source_id):
+def list_source_project_ids(source_id):
     if not config.DATABASE_URL:
         return []
 
     try:
         rows = _fetch_rows(
-            "select event_id from event_sources where source_id = %s order by event_id asc",
+            "select project_id from project_sources where source_id = %s order by project_id asc",
             (int(source_id),),
         )
         ids = []
         seen = set()
         for row in rows:
             try:
-                event_id = int(row.get("event_id"))
+                project_id = int(row.get("project_id"))
             except Exception:
                 continue
-            if event_id not in seen:
-                seen.add(event_id)
-                ids.append(event_id)
+            if project_id not in seen:
+                seen.add(project_id)
+                ids.append(project_id)
         return ids
     except Exception:
         return []
 
 
-def set_event_sources(event_id, source_ids):
+def set_project_sources(project_id, source_ids):
     if not config.DATABASE_URL:
         return []
-    return _set_event_sources(event_id, source_ids)
+    return _set_project_sources(project_id, source_ids)
 
 
-def set_source_events(source_id, event_ids):
+def set_source_projects(source_id, project_ids):
     if not config.DATABASE_URL:
         return []
 
     source_id = int(source_id)
-    event_ids = _clean_ids(event_ids)
+    project_ids = _clean_ids(project_ids)
     try:
-        db.execute("delete from event_sources where source_id = %s", (source_id,))
-        for event_id in event_ids:
+        db.execute("delete from project_sources where source_id = %s", (source_id,))
+        for project_id in project_ids:
             db.execute(
                 """
-                insert into event_sources (event_id, source_id)
+                insert into project_sources (project_id, source_id)
                 values (%s, %s)
-                on conflict (event_id, source_id) do nothing
+                on conflict (project_id, source_id) do nothing
                 """,
-                (event_id, source_id),
+                (project_id, source_id),
             )
-        return event_ids
+        return project_ids
     except Exception:
         return []
 
 
-def list_sources_for_event(event_id):
+def list_sources_for_project(project_id):
     if not config.DATABASE_URL:
         return []
 
@@ -823,18 +823,18 @@ def list_sources_for_event(event_id):
             """
             select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.limited, f.created_at, f.updated_at
             from sources f
-            inner join event_sources ef on ef.source_id = f.id
-            where ef.event_id = %s
+            inner join project_sources ef on ef.source_id = f.id
+            where ef.project_id = %s
             order by f.created_at asc
             """,
-            (int(event_id),),
+            (int(project_id),),
         )
         return [_normalize_source(row) for row in rows]
     except Exception:
         return []
 
 
-def set_article_events(article_ids, event_id, similarity_scores=None):
+def set_article_projects(article_ids, project_id, similarity_scores=None):
     if not config.DATABASE_URL:
         return 0
 
@@ -842,7 +842,7 @@ def set_article_events(article_ids, event_id, similarity_scores=None):
     if not article_ids:
         return 0
 
-    event_id = int(event_id)
+    project_id = int(project_id)
     score_map = {}
     if isinstance(similarity_scores, dict):
         for key, value in similarity_scores.items():
@@ -856,31 +856,31 @@ def set_article_events(article_ids, event_id, similarity_scores=None):
                 continue
 
     try:
-        db.execute("delete from article_events where event_id = %s and article_id = any(%s)", (event_id, article_ids))
+        db.execute("delete from article_projects where project_id = %s and article_id = any(%s)", (project_id, article_ids))
         for article_id in article_ids:
             db.execute(
                 """
-                insert into article_events (article_id, event_id, similarity_score)
+                insert into article_projects (article_id, project_id, similarity_score)
                 values (%s, %s, %s)
-                on conflict (article_id, event_id) do update
+                on conflict (article_id, project_id) do update
                 set similarity_score = excluded.similarity_score,
-                    created_at = article_events.created_at
+                    created_at = article_projects.created_at
                 """,
-                (article_id, event_id, score_map.get(article_id)),
+                (article_id, project_id, score_map.get(article_id)),
             )
         return len(article_ids)
     except Exception:
         return 0
 
 
-def list_article_similarity_scores_for_event(event_id):
+def list_article_similarity_scores_for_project(project_id):
     if not config.DATABASE_URL:
         return {}
 
     try:
         rows = _fetch_rows(
-            "select article_id, similarity_score from article_events where event_id = %s order by article_id asc",
-            (int(event_id),),
+            "select article_id, similarity_score from article_projects where project_id = %s order by article_id asc",
+            (int(project_id),),
         )
     except Exception:
         return {}
@@ -898,20 +898,20 @@ def list_article_similarity_scores_for_event(event_id):
     return scores
 
 
-def list_article_ids_for_event(event_id):
+def list_article_ids_for_project(project_id):
     if not config.DATABASE_URL:
         return []
 
     ids = []
     seen = set()
 
-    for article_id in _fetch_article_event_map(event_id):
+    for article_id in _fetch_article_project_map(project_id):
         if article_id in seen:
             continue
         seen.add(article_id)
         ids.append(article_id)
 
-    source_ids = list_event_source_ids(event_id)
+    source_ids = list_project_source_ids(project_id)
     if not source_ids:
         return ids
 
@@ -921,11 +921,11 @@ def list_article_ids_for_event(event_id):
             select a.id
             from articles a
             inner join sources f on f.url = a.source_url
-            inner join event_sources ef on ef.source_id = f.id
-            where ef.event_id = %s
+            inner join project_sources ef on ef.source_id = f.id
+            where ef.project_id = %s
             order by a.id asc
             """,
-            (int(event_id),),
+            (int(project_id),),
         )
     except Exception:
         rows = []
@@ -943,7 +943,7 @@ def list_article_ids_for_event(event_id):
     return ids
 
 
-def list_event_ids_for_source_url(source_url):
+def list_project_ids_for_source_url(source_url):
     if not config.DATABASE_URL:
         return []
 
@@ -955,8 +955,8 @@ def list_event_ids_for_source_url(source_url):
         rows = _fetch_rows(
             """
             select e.id
-            from events e
-            inner join event_sources ef on ef.event_id = e.id
+            from projects e
+            inner join project_sources ef on ef.project_id = e.id
             inner join sources f on f.id = ef.source_id
             where lower(f.url) = lower(%s)
             order by e.id asc
@@ -970,17 +970,17 @@ def list_event_ids_for_source_url(source_url):
     seen = set()
     for row in rows:
         try:
-            event_id = int(row.get("id"))
+            project_id = int(row.get("id"))
         except Exception:
             continue
-        if event_id in seen:
+        if project_id in seen:
             continue
-        seen.add(event_id)
-        ids.append(event_id)
+        seen.add(project_id)
+        ids.append(project_id)
     return ids
 
 
-def diagnose_event_setup():
+def diagnose_project_setup():
     if not config.DATABASE_URL:
         return "DATABASE_URL is missing."
 

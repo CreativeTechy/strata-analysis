@@ -39,10 +39,10 @@ function normalizeList(value) {
   return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
-export default function EventDetailPage({
-  events = [],
+export default function ProjectDetailPage({
+  projects = [],
   sources = [],
-  onDeleteEvent,
+  onDeleteProject,
 }) {
   const navigate = useNavigate();
   const params = useParams();
@@ -51,16 +51,16 @@ export default function EventDetailPage({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
 
-  const event = useMemo(
-    () => events.find((item) => Number(item.id) === Number(params.eventId)) || null,
-    [events, params.eventId]
+  const project = useMemo(
+    () => projects.find((item) => Number(item.id) === Number(params.projectId)) || null,
+    [projects, params.projectId]
   );
 
   const assignedSources = useMemo(() => {
-    if (!event) return [];
-    const sourceIds = new Set((event.source_ids || []).map((value) => Number(value)));
+    if (!project) return [];
+    const sourceIds = new Set((project.source_ids || []).map((value) => Number(value)));
     return sources.filter((source) => sourceIds.has(Number(source.id)));
-  }, [event, sources]);
+  }, [project, sources]);
 
   const totalSourcesPages = Math.max(1, Math.ceil(assignedSources.length / SOURCES_PAGE_SIZE));
   const safeSourcesPage = Math.min(sourcesPage, totalSourcesPages);
@@ -69,16 +69,16 @@ export default function EventDetailPage({
     return assignedSources.slice(start, start + SOURCES_PAGE_SIZE);
   }, [assignedSources, safeSourcesPage]);
 
-  const hashtagList = normalizeList(event?.hashtags);
-  const keywordList = normalizeList(event?.keywords);
-  const usernameList = normalizeList(event?.usernames);
+  const hashtagList = normalizeList(project?.hashtags);
+  const keywordList = normalizeList(project?.keywords);
+  const usernameList = normalizeList(project?.usernames);
 
-  const status = String(event?.status || 'draft').toLowerCase();
+  const status = String(project?.status || 'draft').toLowerCase();
   const isActive = status === 'active';
   const isArchived = status === 'archived';
   const statusLabel = status.toUpperCase();
 
-  if (!event) {
+  if (!project) {
     return (
       <div className="admin-page-shell">
         <div className="glass-card" style={{ maxWidth: 760, margin: '0 auto' }}>
@@ -86,10 +86,10 @@ export default function EventDetailPage({
             <div className="admin-empty-state-icon">
               <CalendarDays size={18} />
             </div>
-            <strong>Event not found</strong>
-            <span>The event may have been removed or the link is outdated.</span>
-            <Link to="/events" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-              <ArrowLeft size={16} /> Back to Events
+            <strong>Project not found</strong>
+            <span>The project may have been removed or the link is outdated.</span>
+            <Link to="/projects" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+              <ArrowLeft size={16} /> Back to Projects
             </Link>
           </div>
         </div>
@@ -98,9 +98,9 @@ export default function EventDetailPage({
   }
 
   const handleDelete = async () => {
-    if (!onDeleteEvent) return;
-    await onDeleteEvent(event.id);
-    navigate('/events');
+    if (!onDeleteProject) return;
+    await onDeleteProject(project.id);
+    navigate('/projects');
   };
 
   return (
@@ -108,11 +108,11 @@ export default function EventDetailPage({
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Event details
+            <CalendarDays size={14} /> Project details
           </div>
-          <h1 className="admin-page-title">{event.name}</h1>
+          <h1 className="admin-page-title">{project.name}</h1>
           <p className="admin-page-subtitle">
-            Review the sources, tags, and metadata attached to this event. This page is the best place to inspect the working scope before running the pipeline.
+            Review the sources, tags, and metadata attached to this project. This page is the best place to inspect the working scope before running the pipeline.
           </p>
         </div>
 
@@ -127,8 +127,8 @@ export default function EventDetailPage({
           </div>
           {canEdit && (
             <>
-              <Link to={`/events/${event.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
-                <Pencil size={16} /> Edit Event
+              <Link to={`/projects/${project.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
+                <Pencil size={16} /> Edit Project
               </Link>
               <button
                 type="button"
@@ -143,7 +143,7 @@ export default function EventDetailPage({
         </div>
       </div>
 
-      <div className="event-detail-layout">
+      <div className="project-detail-layout">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -156,14 +156,14 @@ export default function EventDetailPage({
             <span className={`panel-chip ${isActive ? 'success' : isArchived ? 'muted' : 'warning'}`}>{statusLabel}</span>
           </div>
 
-          <div className="event-detail-summary-grid">
+          <div className="project-detail-summary-grid">
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="admin-item-meta" style={{ marginBottom: 8 }}>
                 <span><CalendarDays size={12} /> Start</span>
                 <span><CalendarDays size={12} /> End</span>
               </div>
-              <strong style={{ fontSize: '0.98rem' }}>{formatDate(event.start_date)}</strong>
-              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{formatDate(event.end_date)}</div>
+              <strong style={{ fontSize: '0.98rem' }}>{formatDate(project.start_date)}</strong>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{formatDate(project.end_date)}</div>
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
@@ -171,33 +171,33 @@ export default function EventDetailPage({
                 <span><MapPin size={12} /> Location</span>
                 <span><Tag size={12} /> Audience</span>
               </div>
-              <strong style={{ fontSize: '0.98rem' }}>{event.location || 'Not set'}</strong>
-              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{event.target_audience || 'No audience specified'}</div>
+              <strong style={{ fontSize: '0.98rem' }}>{project.location || 'Not set'}</strong>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{project.target_audience || 'No audience specified'}</div>
             </div>
           </div>
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
               <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> Automatic Reruns</strong>
-              <span className={`panel-chip ${event.repeat_enabled ? 'success' : 'muted'}`}>
-                {event.repeat_enabled ? 'Enabled' : 'Disabled'}
+              <span className={`panel-chip ${project.repeat_enabled ? 'success' : 'muted'}`}>
+                {project.repeat_enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
-            {event.repeat_enabled ? (
+            {project.repeat_enabled ? (
               <div style={{ display: 'grid', gap: 6, color: 'var(--text-light)', fontSize: '0.86rem' }}>
                 <div>
-                  Runs again every {event.repeat_interval_value} {event.repeat_interval_unit} after completion.
+                  Runs again every {project.repeat_interval_value} {project.repeat_interval_unit} after completion.
                 </div>
                 <div className="admin-item-meta">
-                  <span>Next run: {formatDateTime(event.next_run_at)}</span>
-                  <span>Last run: {formatDateTime(event.last_run_at)}</span>
-                  {event.last_run_status && <span>Last status: {event.last_run_status}</span>}
+                  <span>Next run: {formatDateTime(project.next_run_at)}</span>
+                  <span>Last run: {formatDateTime(project.last_run_at)}</span>
+                  {project.last_run_status && <span>Last status: {project.last_run_status}</span>}
                 </div>
               </div>
             ) : (
               <div style={{ color: 'var(--text-light)', fontSize: '0.86rem' }}>
-                This event only runs when triggered manually. Edit the event to enable interval-based reruns.
-                {event.last_run_at && ` Last run: ${formatDateTime(event.last_run_at)}.`}
+                This project only runs when triggered manually. Edit the project to enable interval-based reruns.
+                {project.last_run_at && ` Last run: ${formatDateTime(project.last_run_at)}.`}
               </div>
             )}
           </div>
@@ -207,7 +207,7 @@ export default function EventDetailPage({
               <strong style={{ fontSize: '0.94rem' }}>Description</strong>
             </div>
             <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-              {event.description || 'No description has been added for this event yet.'}
+              {project.description || 'No description has been added for this project yet.'}
             </div>
           </div>
 
@@ -270,7 +270,7 @@ export default function EventDetailPage({
                 <Link2 size={18} />
               </div>
               <strong>No sources assigned</strong>
-              <span>Use Edit Event to attach sources to this event.</span>
+              <span>Use Edit Project to attach sources to this project.</span>
             </div>
           ) : (
             <>
@@ -345,8 +345,8 @@ export default function EventDetailPage({
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               <div className="admin-item-meta">
-                <span>Created {formatDate(event.created_at)}</span>
-                <span>Updated {formatDate(event.updated_at)}</span>
+                <span>Created {formatDate(project.created_at)}</span>
+                <span>Updated {formatDate(project.updated_at)}</span>
               </div>
               <div className="admin-item-meta">
                 <span>{assignedSources.length} linked source{assignedSources.length === 1 ? '' : 's'}</span>
@@ -359,10 +359,10 @@ export default function EventDetailPage({
 
       <ConfirmModal
         open={deleteOpen}
-        title={`Delete event "${event.name}"?`}
-        message="This will permanently remove the event and detach it from any linked sources."
-        confirmLabel="Delete event"
-        cancelLabel="Keep event"
+        title={`Delete project "${project.name}"?`}
+        message="This will permanently remove the project and detach it from any linked sources."
+        confirmLabel="Delete project"
+        cancelLabel="Keep project"
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',

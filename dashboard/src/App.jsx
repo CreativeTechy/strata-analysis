@@ -3,18 +3,16 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router
 import Sidebar from './components/Sidebar';
 import StatsOverview from './components/StatsOverview';
 import SourcesPage from './components/SourcesPage';
-import EventsPage from './components/EventsPage';
-import EventDetailPage from './components/EventDetailPage';
+import ProjectsPage from './components/ProjectsPage';
+import ProjectDetailPage from './components/ProjectDetailPage';
 import IntelligencePage from './components/IntelligencePage';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
-import SpiderPage from './components/SpiderPage';
-import BrandSentimentPage from './components/BrandSentimentPage';
 import ArticlesPage from './components/ArticlesPage';
 import LoginPage from './components/LoginPage';
 import UsersPage from './components/UsersPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw, MessageSquare, GitMerge, Rss, Newspaper, CalendarDays } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 function RouteShell({ children, backTo, backLabel, backStyle }) {
@@ -62,9 +60,9 @@ function RequireRole({ roles, children }) {
 export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
-  const workflowSelectionStorageKey = 'strata.workflowSelectedEventIds';
+  const workflowSelectionStorageKey = 'strata.workflowSelectedProjectIds';
 
-  const [events, setEvents] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [reportStats, setReportStats] = useState({
     total: 0,
     positive: 0,
@@ -79,9 +77,9 @@ export default function App() {
   const [sources, setSources] = useState([]);
   const [sourcesProvenance, setSourcesProvenance] = useState('supabase');
   const [isLoadingSources, setIsLoadingSources] = useState(false);
-  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
-  const [workflowSelectedEventIds, setWorkflowSelectedEventIds] = useState(() => {
+  const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
     if (stored) {
       try {
@@ -94,47 +92,47 @@ export default function App() {
         // Ignore malformed localStorage and fall back to an empty selection.
       }
     }
-    const selected = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
+    const selected = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedProjectId') : null;
     return selected ? [Number(selected)] : [];
   });
-  const [selectedEventId, setSelectedEventId] = useState(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedEventId') : null;
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedProjectId') : null;
     return stored ? Number(stored) : null;
   });
   const [appNow, setAppNow] = useState(() => new Date());
   const pollIntervalRef = useRef(null);
   const pipelineRunsPollRef = useRef(null);
 
-  const selectedEvent = useMemo(
-    () => events.find((event) => Number(event.id) === Number(selectedEventId)) || null,
-    [events, selectedEventId]
+  const selectedProject = useMemo(
+    () => projects.find((project) => Number(project.id) === Number(selectedProjectId)) || null,
+    [projects, selectedProjectId]
   );
 
-  const selectedEventSourceIds = useMemo(
-    () => (selectedEvent?.source_ids || []).map(Number),
-    [selectedEvent]
+  const selectedProjectSourceIds = useMemo(
+    () => (selectedProject?.source_ids || []).map(Number),
+    [selectedProject]
   );
 
-  const selectedEventSources = useMemo(
-    () => sources.filter((source) => selectedEventSourceIds.includes(Number(source.id))),
-    [sources, selectedEventSourceIds]
+  const selectedProjectSources = useMemo(
+    () => sources.filter((source) => selectedProjectSourceIds.includes(Number(source.id))),
+    [sources, selectedProjectSourceIds]
   );
 
-  const workflowSelectedEvents = useMemo(() => {
-    const selectedIds = new Set(workflowSelectedEventIds.map((id) => Number(id)));
-    return events.filter((event) => selectedIds.has(Number(event.id)));
-  }, [events, workflowSelectedEventIds]);
+  const workflowSelectedProjects = useMemo(() => {
+    const selectedIds = new Set(workflowSelectedProjectIds.map((id) => Number(id)));
+    return projects.filter((project) => selectedIds.has(Number(project.id)));
+  }, [projects, workflowSelectedProjectIds]);
 
   const workflowSelectedSourceUrls = useMemo(() => {
     const urls = new Set();
-    workflowSelectedEvents.forEach((event) => {
-      (event.source_ids || []).forEach((sourceId) => {
+    workflowSelectedProjects.forEach((project) => {
+      (project.source_ids || []).forEach((sourceId) => {
         const source = sources.find((item) => Number(item.id) === Number(sourceId));
         if (source?.url) urls.add(source.url);
       });
     });
     return [...urls];
-  }, [sources, workflowSelectedEvents]);
+  }, [sources, workflowSelectedProjects]);
 
   const isTerminalPipelineStatus = (status) => ['success', 'failed', 'cancelled'].includes(String(status || '').toLowerCase());
   const activePipelineRun = useMemo(
@@ -143,22 +141,22 @@ export default function App() {
   );
   const activePipelineStartedAt = activePipelineRun?.started_at || activePipelineRun?.created_at || null;
 
-  const coerceEventId = (value) => {
+  const coerceProjectId = (value) => {
     if (value == null) return null;
-    if (Array.isArray(value)) return coerceEventId(value[0]);
+    if (Array.isArray(value)) return coerceProjectId(value[0]);
     if (typeof value === 'object') {
-      if ('id' in value) return coerceEventId(value.id);
+      if ('id' in value) return coerceProjectId(value.id);
       return null;
     }
     const normalized = Number(value);
     return Number.isFinite(normalized) ? normalized : null;
   };
 
-  const normalizeWorkflowSelection = (ids, sourceEvents = events) => {
-    const availableIds = new Set(sourceEvents.map((event) => Number(event.id)));
+  const normalizeWorkflowSelection = (ids, sourceProjects = projects) => {
+    const availableIds = new Set(sourceProjects.map((project) => Number(project.id)));
     const normalized = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && availableIds.has(id)))];
     if (normalized.length) return normalized;
-    if (sourceEvents.length) return [Number(sourceEvents[0].id)];
+    if (sourceProjects.length) return [Number(sourceProjects[0].id)];
     return [];
   };
 
@@ -187,17 +185,17 @@ export default function App() {
     }
   };
 
-  const refreshEvents = async () => {
-    setIsLoadingEvents(true);
+  const refreshProjects = async () => {
+    setIsLoadingProjects(true);
     try {
-      const res = await fetch('/api/events');
+      const res = await fetch('/api/projects');
       if (!res.ok) return;
       const data = await res.json();
-      setEvents(Array.isArray(data?.events) ? data.events : []);
+      setProjects(Array.isArray(data?.projects) ? data.projects : []);
     } catch {
-      setEvents([]);
+      setProjects([]);
     } finally {
-      setIsLoadingEvents(false);
+      setIsLoadingProjects(false);
     }
   };
 
@@ -225,13 +223,13 @@ export default function App() {
     return fallback;
   };
 
-  const loadReportStats = async (eventId = selectedEventId) => {
-    const scopedEventId = coerceEventId(eventId);
+  const loadReportStats = async (projectId = selectedProjectId) => {
+    const scopedProjectId = coerceProjectId(projectId);
     setIsLoadingReportStats(true);
     try {
       const params = new URLSearchParams();
-      if (scopedEventId != null) {
-        params.set('event_id', String(scopedEventId));
+      if (scopedProjectId != null) {
+        params.set('project_id', String(scopedProjectId));
       }
       const scopedRes = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
       if (!scopedRes.ok) throw new Error(`Stats request failed: ${scopedRes.status}`);
@@ -252,12 +250,12 @@ export default function App() {
     }
   };
 
-  const loadWorkflowArticles = async (eventId = selectedEventId) => {
+  const loadWorkflowArticles = async (projectId = selectedProjectId) => {
     try {
-      const eventIds = (Array.isArray(eventId) ? eventId : [eventId])
-        .map((value) => coerceEventId(value))
+      const projectIds = (Array.isArray(projectId) ? projectId : [projectId])
+        .map((value) => coerceProjectId(value))
         .filter((value) => value != null);
-      if (eventIds.length === 0) {
+      if (projectIds.length === 0) {
         setWorkflowArticles([]);
         return;
       }
@@ -267,9 +265,9 @@ export default function App() {
         offset: '0',
         sort: 'published.desc',
       });
-      const requests = eventIds.map(async (singleEventId) => {
+      const requests = projectIds.map(async (singleProjectId) => {
         const scopedParams = new URLSearchParams(params);
-        scopedParams.set('event_id', String(singleEventId));
+        scopedParams.set('project_id', String(singleProjectId));
         const res = await fetch(`/api/articles?${scopedParams.toString()}`);
         if (!res.ok) throw new Error(`Articles request failed: ${res.status}`);
         const data = await res.json();
@@ -297,7 +295,7 @@ export default function App() {
 
   useEffect(() => {
     refreshSources();
-    refreshEvents();
+    refreshProjects();
     return () => stopPolling();
   }, []);
 
@@ -308,64 +306,64 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (events.length === 0) {
-      if (selectedEventId != null) {
-        setSelectedEventId(null);
+    if (projects.length === 0) {
+      if (selectedProjectId != null) {
+        setSelectedProjectId(null);
       }
-      setWorkflowSelectedEventIds([]);
+      setWorkflowSelectedProjectIds([]);
       return;
     }
 
-    const currentExists = events.some((event) => Number(event.id) === Number(selectedEventId));
-    if (selectedEventId != null && !currentExists) {
-      setSelectedEventId(null);
+    const currentExists = projects.some((project) => Number(project.id) === Number(selectedProjectId));
+    if (selectedProjectId != null && !currentExists) {
+      setSelectedProjectId(null);
     }
 
-    setWorkflowSelectedEventIds((current) => normalizeWorkflowSelection(current, events));
-  }, [events, selectedEventId]);
+    setWorkflowSelectedProjectIds((current) => normalizeWorkflowSelection(current, projects));
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      if (selectedEventId == null) {
-        window.localStorage.removeItem('strata.selectedEventId');
+      if (selectedProjectId == null) {
+        window.localStorage.removeItem('strata.selectedProjectId');
       } else {
-        window.localStorage.setItem('strata.selectedEventId', String(selectedEventId));
+        window.localStorage.setItem('strata.selectedProjectId', String(selectedProjectId));
       }
     }
-  }, [selectedEventId]);
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      if (workflowSelectedEventIds.length === 0) {
+      if (workflowSelectedProjectIds.length === 0) {
         window.localStorage.removeItem(workflowSelectionStorageKey);
       } else {
-        window.localStorage.setItem(workflowSelectionStorageKey, JSON.stringify(workflowSelectedEventIds));
+        window.localStorage.setItem(workflowSelectionStorageKey, JSON.stringify(workflowSelectedProjectIds));
       }
     }
-  }, [workflowSelectedEventIds]);
+  }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
     if (pathname === '/dashboard' || pathname === '/') {
-      loadReportStats(selectedEventId);
+      loadReportStats(selectedProjectId);
     }
 
     if (pathname === '/workflow') {
-      loadWorkflowArticles(workflowSelectedEventIds);
+      loadWorkflowArticles(workflowSelectedProjectIds);
     }
-  }, [pathname, selectedEventId, workflowSelectedEventIds]);
+  }, [pathname, selectedProjectId, workflowSelectedProjectIds]);
 
-  const runScraper = async (eventIds = workflowSelectedEventIds) => {
-    const normalizedEventIds = normalizeWorkflowSelection(Array.isArray(eventIds) ? eventIds : [eventIds]);
-    if (normalizedEventIds.length === 0) return;
+  const runScraper = async (projectIds = workflowSelectedProjectIds) => {
+    const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
+    if (normalizedProjectIds.length === 0) return;
     stopPolling();
     setIsScraping(true);
     try {
       const runIds = [];
-      for (const eventId of normalizedEventIds) {
+      for (const projectId of normalizedProjectIds) {
         const res = await fetch('/scrape', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_id: eventId }),
+          body: JSON.stringify({ project_id: projectId }),
         });
         if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
         const data = await res.json().catch(() => ({}));
@@ -384,19 +382,19 @@ export default function App() {
           const runs = Array.isArray(data?.runs) ? data.runs : [];
           const trackedRuns = runIds.length
             ? runs.filter((run) => runIds.includes(String(run.id)))
-            : runs.filter((run) => normalizedEventIds.includes(Number(run.event_id)));
+            : runs.filter((run) => normalizedProjectIds.includes(Number(run.project_id)));
           const allDone = trackedRuns.length > 0 && trackedRuns.every((run) => isTerminalPipelineStatus(run.status));
           if (allDone) {
             stopPolling();
             setIsScraping(false);
-            await loadWorkflowArticles(normalizedEventIds);
+            await loadWorkflowArticles(normalizedProjectIds);
             return;
           }
         } catch (error) {
           console.error('Failed to poll pipeline runs:', error);
         }
 
-        await loadWorkflowArticles(normalizedEventIds);
+        await loadWorkflowArticles(normalizedProjectIds);
         if (polls >= maxPolls) {
           stopPolling();
           setIsScraping(false);
@@ -425,10 +423,6 @@ export default function App() {
     }
   };
 
-  const dashboardHeaderButtonStyle = {
-    textDecoration: 'none',
-  };
-
   useEffect(() => {
     const timer = setInterval(() => setAppNow(new Date()), 1000);
     return () => clearInterval(timer);
@@ -455,7 +449,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add source (${res.status})`);
       await refreshSources();
-      await refreshEvents();
+      await refreshProjects();
       return data?.source ?? null;
     } catch (error) {
       console.error('Failed to add source:', error);
@@ -473,7 +467,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update source (${res.status})`);
       await refreshSources();
-      await refreshEvents();
+      await refreshProjects();
       return data?.source ?? null;
     } catch (error) {
       console.error('Failed to update source:', error);
@@ -487,7 +481,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete source (${res.status})`));
       await refreshSources();
-      await refreshEvents();
+      await refreshProjects();
       return true;
     } catch (error) {
       console.error('Failed to remove source:', error);
@@ -495,54 +489,54 @@ export default function App() {
     }
   };
 
-  const createEvent = async (payload) => {
+  const createProject = async (payload) => {
     try {
-      const res = await fetch('/api/events', {
+      const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add event (${res.status})`));
-      await refreshEvents();
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add project (${res.status})`));
+      await refreshProjects();
       await refreshSources();
       return data ?? null;
     } catch (error) {
-      console.error('Failed to add event:', error);
+      console.error('Failed to add project:', error);
       throw error;
     }
   };
 
-  const updateEvent = async (eventId, payload) => {
+  const updateProject = async (projectId, payload) => {
     try {
-      const res = await fetch(`/api/events/${eventId}`, {
+      const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update event (${res.status})`));
-      await refreshEvents();
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update project (${res.status})`));
+      await refreshProjects();
       await refreshSources();
       return data ?? null;
     } catch (error) {
-      console.error('Failed to update event:', error);
+      console.error('Failed to update project:', error);
       throw error;
     }
   };
 
-  const deleteEvent = async (eventId) => {
+  const deleteProject = async (projectId) => {
     try {
-      const res = await fetch(`/api/events/${eventId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete event (${res.status})`));
-      await refreshEvents();
-      if (Number(selectedEventId) === Number(eventId)) {
-        setSelectedEventId(null);
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete project (${res.status})`));
+      await refreshProjects();
+      if (Number(selectedProjectId) === Number(projectId)) {
+        setSelectedProjectId(null);
       }
       return true;
     } catch (error) {
-      console.error('Failed to remove event:', error);
+      console.error('Failed to remove project:', error);
       throw error;
     }
   };
@@ -561,47 +555,32 @@ export default function App() {
             <div>
               <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
               <p className="subtitle">
-                Overview metrics and pipeline health{selectedEvent ? ` for ${selectedEvent.name}` : ' - all events'}
+                Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
               </p>
             </div>
 
             <div className="dashboard-hero-actions">
               <select
                 className="filter-select"
-                value={selectedEventId ?? ''}
-                onChange={(e) => setSelectedEventId(e.target.value ? Number(e.target.value) : null)}
-                disabled={isLoadingEvents || events.length === 0}
+                value={selectedProjectId ?? ''}
+                onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                disabled={isLoadingProjects || projects.length === 0}
                 style={{ minWidth: '220px' }}
               >
-                <option value="">{events.length ? 'all events' : 'No events yet'}</option>
-                {events.map((event) => (
-                  <option key={event.id} value={event.id}>
-                    {event.name} ({event.status || 'draft'})
+                <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name} ({project.status || 'draft'})
                   </option>
                 ))}
               </select>
-              <Link to="/articles" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
-                <Newspaper size={16} /> Open Articles
-              </Link>
-              <Link to="/sources" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
-                <Rss size={16} /> Manage Sources
-              </Link>
-              <Link to="/events" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
-                <CalendarDays size={16} /> Manage Events
-              </Link>
-              <Link to="/workflow" className="btn-secondary toolbar-button" style={dashboardHeaderButtonStyle}>
-                <GitMerge size={16} /> Open Workflow Board
-              </Link>
-              <Link to="/intelligence" className="btn-primary toolbar-button toolbar-button-primary" style={dashboardHeaderButtonStyle}>
-                <MessageSquare size={16} /> Open Intelligence Copilot
-              </Link>
               <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
                 <RefreshCw size={16} /> Refresh Reports
               </button>
             </div>
           </header>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-            {(isLoadingReportStats || isLoadingEvents || isLoadingSources) ? (
+            {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
               <span className="panel-chip warning">
                 <RefreshCw size={12} className="spin" />
                 Loading dashboard
@@ -614,7 +593,7 @@ export default function App() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             <StatsOverview
               stats={reportStats}
-              scopeLabel={selectedEvent ? selectedEvent.name : 'all events'}
+              scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
               loading={isLoadingReportStats}
             />
           </motion.div>
@@ -636,10 +615,10 @@ export default function App() {
         isScraping={isScraping}
         onRunScraper={runScraper}
         sources={workflowSelectedSourceUrls}
-        events={events}
-        selectedEvents={workflowSelectedEvents}
-        selectedEventIds={workflowSelectedEventIds}
-        onChangeSelectedEventIds={setWorkflowSelectedEventIds}
+        projects={projects}
+        selectedProjects={workflowSelectedProjects}
+        selectedProjectIds={workflowSelectedProjectIds}
+        onChangeSelectedProjectIds={setWorkflowSelectedProjectIds}
         activeRun={activePipelineRun}
         onStopRun={stopPipelineRun}
       />
@@ -675,7 +654,7 @@ export default function App() {
         <Route element={<RequireAuth />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={renderDashboardView()} />
-        <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage event={selectedEvent} eventId={selectedEventId} events={events} /></RouteShell>} />
+        <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} /></RouteShell>} />
         <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
         <Route
           path="/sources"
@@ -683,7 +662,7 @@ export default function App() {
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
               <SourcesPage
                 sources={sources}
-                events={events}
+                projects={projects}
                 sourcesSource={sourcesProvenance}
                 onCreateSource={createSource}
                 onUpdateSource={updateSource}
@@ -700,7 +679,7 @@ export default function App() {
               <RequireRole roles={['editor']}>
                 <SourcesPage
                   sources={sources}
-                  events={events}
+                  projects={projects}
                   sourcesSource={sourcesProvenance}
                   onCreateSource={createSource}
                   onUpdateSource={updateSource}
@@ -718,7 +697,7 @@ export default function App() {
               <RequireRole roles={['editor']}>
                 <SourcesPage
                   sources={sources}
-                  events={events}
+                  projects={projects}
                   sourcesSource={sourcesProvenance}
                   onCreateSource={createSource}
                   onUpdateSource={updateSource}
@@ -730,88 +709,70 @@ export default function App() {
           )}
         />
         <Route
-          path="/events"
+          path="/projects"
           element={(
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <EventsPage
-                events={events}
+              <ProjectsPage
+                projects={projects}
                 sources={sources}
-                onCreateEvent={createEvent}
-                onUpdateEvent={updateEvent}
-                isLoadingEvents={isLoadingEvents}
+                onCreateProject={createProject}
+                onUpdateProject={updateProject}
+                isLoadingProjects={isLoadingProjects}
               />
             </RouteShell>
           )}
         />
         <Route
-          path="/events/new"
+          path="/projects/new"
           element={(
-            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
               <RequireRole roles={['editor']}>
-                <EventsPage
-                  events={events}
+                <ProjectsPage
+                  projects={projects}
                   sources={sources}
-                  onCreateEvent={createEvent}
-                  onUpdateEvent={updateEvent}
+                  onCreateProject={createProject}
+                  onUpdateProject={updateProject}
                   onCreateSource={createSource}
-                  isLoadingEvents={isLoadingEvents}
+                  isLoadingProjects={isLoadingProjects}
                 />
               </RequireRole>
             </RouteShell>
           )}
         />
         <Route
-          path="/events/:eventId/edit"
+          path="/projects/:projectId/edit"
           element={(
-            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
+            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
               <RequireRole roles={['editor']}>
-                <EventsPage
-                  events={events}
+                <ProjectsPage
+                  projects={projects}
                   sources={sources}
-                  onCreateEvent={createEvent}
-                  onUpdateEvent={updateEvent}
-                  isLoadingEvents={isLoadingEvents}
+                  onCreateProject={createProject}
+                  onUpdateProject={updateProject}
+                  isLoadingProjects={isLoadingProjects}
                 />
               </RequireRole>
             </RouteShell>
           )}
         />
         <Route
-          path="/events/:eventId"
+          path="/projects/:projectId"
           element={(
-            <RouteShell backTo="/events" backLabel="Back to Events" backStyle={{ background: 'white' }}>
-              <EventDetailPage
-                events={events}
+            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
+              <ProjectDetailPage
+                projects={projects}
                 sources={sources}
-                onDeleteEvent={deleteEvent}
+                onDeleteProject={deleteProject}
               />
             </RouteShell>
           )}
         />
         <Route path="/workflow" element={renderWorkflowRoute()} />
         <Route
-          path="/spider"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['operator']}>
-                <SpiderPage />
-              </RequireRole>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/sentiment"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <BrandSentimentPage />
-            </RouteShell>
-          )}
-        />
-        <Route
           path="/intelligence"
           element={(
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <IntelligencePage key={selectedEventId ?? 'all'} event={selectedEvent} eventId={selectedEventId} />
+              <IntelligencePage key={selectedProjectId ?? 'all'} project={selectedProject} projectId={selectedProjectId} />
             </RouteShell>
           )}
         />

@@ -227,13 +227,13 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
   );
 }
 
-export default function EventsPage({
-  events = [],
+export default function ProjectsPage({
+  projects = [],
   sources = [],
-  onCreateEvent,
-  onUpdateEvent,
+  onCreateProject,
+  onUpdateProject,
   onCreateSource,
-  isLoadingEvents,
+  isLoadingProjects,
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -244,10 +244,10 @@ export default function EventsPage({
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
   const isFormRoute = isCreateRoute || isEditRoute;
-  const editingId = isEditRoute ? Number(params.eventId) : null;
-  const currentEvent = useMemo(
-    () => (editingId != null ? events.find((event) => Number(event.id) === Number(editingId)) || null : null),
-    [editingId, events]
+  const editingId = isEditRoute ? Number(params.projectId) : null;
+  const currentProject = useMemo(
+    () => (editingId != null ? projects.find((project) => Number(project.id) === Number(editingId)) || null : null),
+    [editingId, projects]
   );
 
   const [draft, setDraft] = useState(emptyDraft);
@@ -270,17 +270,17 @@ export default function EventsPage({
   const [newSourceError, setNewSourceError] = useState('');
   const [isSyncingSources, setIsSyncingSources] = useState(false);
 
-  const sourceEventsById = useMemo(() => {
+  const sourceProjectsById = useMemo(() => {
     const map = new Map();
-    events.forEach((event) => {
-      (event.source_ids || []).forEach((sourceId) => {
+    projects.forEach((project) => {
+      (project.source_ids || []).forEach((sourceId) => {
         const id = Number(sourceId);
         if (!map.has(id)) map.set(id, []);
-        map.get(id).push(event);
+        map.get(id).push(project);
       });
     });
     return map;
-  }, [events]);
+  }, [projects]);
 
   const assignableSources = useMemo(() => {
     const selected = new Set(draft.source_ids.map((id) => Number(id)));
@@ -328,47 +328,47 @@ export default function EventsPage({
   const allVisibleSelected = visibleAssignableSources.length > 0 && visibleSelectedCount === visibleAssignableSources.length;
 
   const stats = useMemo(() => {
-    const total = events.length;
-    const active = events.filter((event) => (event.status || '').toLowerCase() === 'active').length;
-    const draftCount = events.filter((event) => (event.status || '').toLowerCase() === 'draft').length;
-    const archived = events.filter((event) => (event.status || '').toLowerCase() === 'archived').length;
-    const assignedSources = new Set(events.flatMap((event) => (event.source_ids || []).map(Number))).size;
+    const total = projects.length;
+    const active = projects.filter((project) => (project.status || '').toLowerCase() === 'active').length;
+    const draftCount = projects.filter((project) => (project.status || '').toLowerCase() === 'draft').length;
+    const archived = projects.filter((project) => (project.status || '').toLowerCase() === 'archived').length;
+    const assignedSources = new Set(projects.flatMap((project) => (project.source_ids || []).map(Number))).size;
     return { total, active, draftCount, archived, assignedSources };
-  }, [events]);
+  }, [projects]);
 
-  const visibleEvents = useMemo(() => {
+  const visibleProjects = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return events.filter((event) => {
-      const hashtagNames = (event.hashtags || []).map((value) => String(value).trim()).filter(Boolean);
-      const keywordNames = (event.keywords || []).map((value) => String(value).trim()).filter(Boolean);
-      const usernameNames = (event.usernames || []).map((value) => String(value).trim()).filter(Boolean);
+    return projects.filter((project) => {
+      const hashtagNames = (project.hashtags || []).map((value) => String(value).trim()).filter(Boolean);
+      const keywordNames = (project.keywords || []).map((value) => String(value).trim()).filter(Boolean);
+      const usernameNames = (project.usernames || []).map((value) => String(value).trim()).filter(Boolean);
       const matchesQuery =
         !needle ||
         [
-          event.name,
-          event.status,
-          event.description,
-          event.location,
-          event.target_audience,
-          event.start_date,
-          event.end_date,
+          project.name,
+          project.status,
+          project.description,
+          project.location,
+          project.target_audience,
+          project.start_date,
+          project.end_date,
           ...hashtagNames,
           ...keywordNames,
           ...usernameNames,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
-      const matchesStatus = statusFilter === 'all' || (event.status || 'draft').toLowerCase() === statusFilter;
+      const matchesStatus = statusFilter === 'all' || (project.status || 'draft').toLowerCase() === statusFilter;
       return matchesQuery && matchesStatus;
     });
-  }, [events, query, statusFilter]);
+  }, [projects, query, statusFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(visibleEvents.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(visibleProjects.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
-  const pagedEvents = useMemo(() => {
+  const pagedProjects = useMemo(() => {
     const start = (safePage - 1) * PAGE_SIZE;
-    return visibleEvents.slice(start, start + PAGE_SIZE);
-  }, [visibleEvents, safePage]);
+    return visibleProjects.slice(start, start + PAGE_SIZE);
+  }, [visibleProjects, safePage]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -397,45 +397,45 @@ export default function EventsPage({
     }
 
     if (isEditRoute) {
-      if (!currentEvent) {
+      if (!currentProject) {
         setDraft(emptyDraft);
         setInitialDraft(emptyDraft);
         return;
       }
 
       setDraft({
-        name: currentEvent.name || '',
-        status: currentEvent.status || 'draft',
-        description: currentEvent.description || '',
-        location: currentEvent.location || '',
-        target_audience: currentEvent.target_audience || '',
-        usernames: sanitizeTermArray(currentEvent.usernames),
-        hashtags: sanitizeTermArray(currentEvent.hashtags),
-        keywords: sanitizeTermArray(currentEvent.keywords),
-        start_date: toDateInput(currentEvent.start_date),
-        end_date: toDateInput(currentEvent.end_date),
-        source_ids: Array.isArray(currentEvent.source_ids) ? currentEvent.source_ids.map(Number) : [],
-        repeat_enabled: Boolean(currentEvent.repeat_enabled),
-        repeat_interval_value: currentEvent.repeat_interval_value || 30,
-        repeat_interval_unit: currentEvent.repeat_interval_unit || 'minutes',
+        name: currentProject.name || '',
+        status: currentProject.status || 'draft',
+        description: currentProject.description || '',
+        location: currentProject.location || '',
+        target_audience: currentProject.target_audience || '',
+        usernames: sanitizeTermArray(currentProject.usernames),
+        hashtags: sanitizeTermArray(currentProject.hashtags),
+        keywords: sanitizeTermArray(currentProject.keywords),
+        start_date: toDateInput(currentProject.start_date),
+        end_date: toDateInput(currentProject.end_date),
+        source_ids: Array.isArray(currentProject.source_ids) ? currentProject.source_ids.map(Number) : [],
+        repeat_enabled: Boolean(currentProject.repeat_enabled),
+        repeat_interval_value: currentProject.repeat_interval_value || 30,
+        repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
       });
       setSourceAssignQuery('');
       setLastDiscovery(null);
       setInitialDraft({
-        name: currentEvent.name || '',
-        status: currentEvent.status || 'draft',
-        description: currentEvent.description || '',
-        location: currentEvent.location || '',
-        target_audience: currentEvent.target_audience || '',
-        usernames: sanitizeTermArray(currentEvent.usernames),
-        hashtags: sanitizeTermArray(currentEvent.hashtags),
-        keywords: sanitizeTermArray(currentEvent.keywords),
-        start_date: toDateInput(currentEvent.start_date),
-        end_date: toDateInput(currentEvent.end_date),
-        source_ids: Array.isArray(currentEvent.source_ids) ? currentEvent.source_ids.map(Number) : [],
-        repeat_enabled: Boolean(currentEvent.repeat_enabled),
-        repeat_interval_value: currentEvent.repeat_interval_value || 30,
-        repeat_interval_unit: currentEvent.repeat_interval_unit || 'minutes',
+        name: currentProject.name || '',
+        status: currentProject.status || 'draft',
+        description: currentProject.description || '',
+        location: currentProject.location || '',
+        target_audience: currentProject.target_audience || '',
+        usernames: sanitizeTermArray(currentProject.usernames),
+        hashtags: sanitizeTermArray(currentProject.hashtags),
+        keywords: sanitizeTermArray(currentProject.keywords),
+        start_date: toDateInput(currentProject.start_date),
+        end_date: toDateInput(currentProject.end_date),
+        source_ids: Array.isArray(currentProject.source_ids) ? currentProject.source_ids.map(Number) : [],
+        repeat_enabled: Boolean(currentProject.repeat_enabled),
+        repeat_interval_value: currentProject.repeat_interval_value || 30,
+        repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
       });
       return;
     }
@@ -451,14 +451,14 @@ export default function EventsPage({
     setShowNewSourceForm(false);
     setNewSourceDraft(emptyNewSourceDraft);
     setNewSourceError('');
-  }, [currentEvent, isEditRoute, isFormRoute]);
+  }, [currentProject, isEditRoute, isFormRoute]);
 
   const discardChanges = () => {
     setShowCancelModal(false);
     setSourceAssignQuery('');
     setDraft(emptyDraft);
     setLastDiscovery(null);
-    navigate('/events');
+    navigate('/projects');
   };
 
   const toggleSource = (sourceId) => {
@@ -494,7 +494,7 @@ export default function EventsPage({
       source_type: newSourceDraft.source_type,
       category: newSourceDraft.category.trim(),
       enabled: true,
-      event_ids: [],
+      project_ids: [],
     };
 
     if (isCreatingSource) return;
@@ -532,7 +532,7 @@ export default function EventsPage({
     try {
       const created = await Promise.all(
         terms.map(({ term, source_type }) =>
-          onCreateSource({ name: term, source_type, category: '', enabled: true, event_ids: [] }).catch(() => null)
+          onCreateSource({ name: term, source_type, category: '', enabled: true, project_ids: [] }).catch(() => null)
         )
       );
       const ids = created
@@ -558,14 +558,14 @@ export default function EventsPage({
     setIsGeneratingMetadata(true);
     setMetadataError('');
     try {
-      const res = await fetch('/api/events/suggest', {
+      const res = await fetch('/api/projects/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) {
-        throw new Error(data?.detail || data?.error || `Failed to generate event metadata (${res.status})`);
+        throw new Error(data?.detail || data?.error || `Failed to generate project metadata (${res.status})`);
       }
 
       const suggestions = data?.suggestions || {};
@@ -608,7 +608,7 @@ export default function EventsPage({
     setIsDiscoveringSources(true);
     setMetadataError('');
     try {
-      const res = await fetch('/api/events/discover', {
+      const res = await fetch('/api/projects/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -679,15 +679,15 @@ export default function EventsPage({
     setIsSaving(true);
     try {
       if (editingId) {
-        await onUpdateEvent?.(editingId, payload);
+        await onUpdateProject?.(editingId, payload);
       } else {
-        await onCreateEvent?.(payload);
+        await onCreateProject?.(payload);
         setLastDiscovery(null);
       }
       if (editingId) {
-        navigate(`/events/${editingId}`);
+        navigate(`/projects/${editingId}`);
       } else {
-        navigate('/events');
+        navigate('/projects');
       }
     } finally {
       setIsSaving(false);
@@ -716,11 +716,11 @@ export default function EventsPage({
         <div className="admin-page-header">
           <div>
             <div className="admin-page-kicker">
-              <CalendarDays size={14} /> Event planner
+              <CalendarDays size={14} /> Project planner
             </div>
-            <h1 className="admin-page-title">Create Event</h1>
+            <h1 className="admin-page-title">Create Project</h1>
             <p className="admin-page-subtitle">
-              Build the event in three steps. Start with the basics, choose how to fill metadata, then review sources and create the workspace.
+              Build the project in three steps. Start with the basics, choose how to fill metadata, then review sources and create the workspace.
             </p>
           </div>
           <div className="admin-page-toolbar">
@@ -738,7 +738,7 @@ export default function EventsPage({
         <div className="glass-card" style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
             {[
-              { label: 'Event basics', detail: 'Name and description' },
+              { label: 'Project basics', detail: 'Name and description' },
               { label: 'Metadata', detail: 'Manual or AI fill' },
               { label: 'Create', detail: 'Review and generate sources' },
             ].map((item, index) => {
@@ -779,16 +779,16 @@ export default function EventsPage({
           {wizardStep === 1 && (
           <div className="glass-card" style={{ padding: 18, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 1. Event basics</strong>
+              <strong style={{ fontSize: '1rem' }}>Step 1. Project basics</strong>
               <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               <label style={{ display: 'grid', gap: 6 }}>
-                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Event name</span>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Project name</span>
                 <input
                   type="text"
                   className="source-input"
-                  placeholder="Event name"
+                  placeholder="Project name"
                   value={draft.name}
                   onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
                   disabled={isSaving}
@@ -798,7 +798,7 @@ export default function EventsPage({
                 <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
                 <textarea
                   className="source-input"
-                  placeholder="Event description"
+                  placeholder="Project description"
                   rows={4}
                   value={draft.description}
                   onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
@@ -925,7 +925,7 @@ export default function EventsPage({
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                   <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5, maxWidth: 480 }}>
-                    The AI step gives you a starting point. You can still reshape handles, tags, and keywords before creating the event.
+                    The AI step gives you a starting point. You can still reshape handles, tags, and keywords before creating the project.
                   </span>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <button
@@ -1043,7 +1043,7 @@ export default function EventsPage({
                     onChange={(e) => setDraft((prev) => ({ ...prev, repeat_enabled: e.target.checked }))}
                     disabled={isSaving}
                   />
-                  <span style={{ fontSize: '0.86rem' }}>Automatically rerun this event's workflow after each completion</span>
+                  <span style={{ fontSize: '0.86rem' }}>Automatically rerun this project's workflow after each completion</span>
                 </label>
                 {draft.repeat_enabled && (
                   <>
@@ -1084,7 +1084,7 @@ export default function EventsPage({
                 <div className="assign-sources-header">
                   <div>
                     <div className="assign-sources-kicker">Assign sources</div>
-                    <strong className="assign-sources-title">Choose the sources that should power this event</strong>
+                    <strong className="assign-sources-title">Choose the sources that should power this project</strong>
                   </div>
                   <div className="assign-sources-summary">
                     <span className="panel-chip">{selectedSourceCount} selected</span>
@@ -1248,7 +1248,7 @@ export default function EventsPage({
                 <div className="assign-sources-list">
                   {assignableSources.length === 0 ? (
                     <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                      No sources yet. Add sources first, then attach them to events.
+                      No sources yet. Add sources first, then attach them to projects.
                     </div>
                   ) : visibleAssignableSources.length === 0 ? (
                     <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
@@ -1262,7 +1262,7 @@ export default function EventsPage({
                     visibleAssignableSources.map((source) => {
                       const sourceId = Number(source.id);
                       const isSelected = draft.source_ids.includes(sourceId);
-                      const eventCount = (sourceEventsById.get(sourceId) || []).length;
+                      const projectCount = (sourceProjectsById.get(sourceId) || []).length;
                       return (
                         <label key={source.id} className={`assign-source-item ${isSelected ? 'selected' : ''}`}>
                           <input
@@ -1283,7 +1283,7 @@ export default function EventsPage({
                               <span>{sourceTypeLabel(source.source_type)}</span>
                               {source.category ? <span>{source.category}</span> : null}
                               <span>
-                                {eventCount} event{eventCount === 1 ? '' : 's'}
+                                {projectCount} project{projectCount === 1 ? '' : 's'}
                               </span>
                             </div>
                           </div>
@@ -1311,7 +1311,7 @@ export default function EventsPage({
               )}
 
               <div className="admin-form-hint">
-                Use AI to prefill sources from the final X accounts, hashtags, and keywords, then create the event row.
+                Use AI to prefill sources from the final X accounts, hashtags, and keywords, then create the project row.
               </div>
 
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -1343,7 +1343,7 @@ export default function EventsPage({
                     </>
                   ) : (
                     <>
-                      <Plus size={18} /> Create Event
+                      <Plus size={18} /> Create Project
                     </>
                   )}
                 </button>
@@ -1359,7 +1359,7 @@ export default function EventsPage({
         <ConfirmModal
           open={showCancelModal}
           title="Discard changes?"
-          message="You have unsaved changes on this event. If you cancel now, all edits on this page will be lost."
+          message="You have unsaved changes on this project. If you cancel now, all edits on this page will be lost."
           confirmLabel="Discard changes"
           cancelLabel="Keep editing"
           onClose={() => setShowCancelModal(false)}
@@ -1370,19 +1370,19 @@ export default function EventsPage({
   }
 
   if (isFormRoute) {
-    const heading = isEditRoute ? 'Edit Event' : 'Create Event';
+    const heading = isEditRoute ? 'Edit Project' : 'Create Project';
     return (
       <div className="admin-page-shell">
         <div className="admin-page-header">
           <div>
             <div className="admin-page-kicker">
-              <CalendarDays size={14} /> Event planner
+              <CalendarDays size={14} /> Project planner
             </div>
             <h1 className="admin-page-title">{heading}</h1>
             <p className="admin-page-subtitle">
               {isEditRoute
-                ? 'Update the event envelope, then keep the linked sources and discovery terms in sync.'
-                : 'Create a new event scope, attach sources, and let discovery suggest more from X accounts, hashtags, and keywords.'}
+                ? 'Update the project envelope, then keep the linked sources and discovery terms in sync.'
+                : 'Create a new project scope, attach sources, and let discovery suggest more from X accounts, hashtags, and keywords.'}
             </p>
           </div>
           <div className="admin-page-toolbar">
@@ -1404,11 +1404,11 @@ export default function EventsPage({
           </div>
 
           <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Event name</span>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Project name</span>
             <input
               type="text"
               className="source-input"
-              placeholder="Event name"
+              placeholder="Project name"
               value={draft.name}
               onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
               disabled={isSaving}
@@ -1418,7 +1418,7 @@ export default function EventsPage({
             <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
             <textarea
               className="source-input"
-              placeholder="Event description"
+              placeholder="Project description"
               rows={3}
               value={draft.description}
               onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
@@ -1530,7 +1530,7 @@ export default function EventsPage({
                 onChange={(e) => setDraft((prev) => ({ ...prev, repeat_enabled: e.target.checked }))}
                 disabled={isSaving}
               />
-              <span style={{ fontSize: '0.86rem' }}>Automatically rerun this event's workflow after each completion</span>
+              <span style={{ fontSize: '0.86rem' }}>Automatically rerun this project's workflow after each completion</span>
             </label>
             {draft.repeat_enabled && (
               <>
@@ -1571,7 +1571,7 @@ export default function EventsPage({
             <div className="assign-sources-header">
               <div>
                 <div className="assign-sources-kicker">Assign sources</div>
-                <strong className="assign-sources-title">Choose the sources that should power this event</strong>
+                <strong className="assign-sources-title">Choose the sources that should power this project</strong>
               </div>
               <div className="assign-sources-summary">
                 <span className="panel-chip">{selectedSourceCount} selected</span>
@@ -1735,7 +1735,7 @@ export default function EventsPage({
             <div className="assign-sources-list">
               {assignableSources.length === 0 ? (
                 <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  No sources yet. Add sources first, then attach them to events.
+                  No sources yet. Add sources first, then attach them to projects.
                 </div>
               ) : visibleAssignableSources.length === 0 ? (
                 <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
@@ -1749,7 +1749,7 @@ export default function EventsPage({
                 visibleAssignableSources.map((source) => {
                   const sourceId = Number(source.id);
                   const isSelected = draft.source_ids.includes(sourceId);
-                  const eventCount = (sourceEventsById.get(sourceId) || []).length;
+                  const projectCount = (sourceProjectsById.get(sourceId) || []).length;
                   return (
                     <label key={source.id} className={`assign-source-item ${isSelected ? 'selected' : ''}`}>
                       <input
@@ -1770,7 +1770,7 @@ export default function EventsPage({
                           <span>{source.source_type || 'rss'}</span>
                           {source.category ? <span>{source.category}</span> : null}
                           <span>
-                            {eventCount} event{eventCount === 1 ? '' : 's'}
+                            {projectCount} project{projectCount === 1 ? '' : 's'}
                           </span>
                         </div>
                       </div>
@@ -1782,7 +1782,7 @@ export default function EventsPage({
           </div>
 
           <div className="admin-form-hint">
-            Selected sources stay reusable across events. This page only controls the event envelope.
+            Selected sources stay reusable across projects. This page only controls the project envelope.
             {isSaving && (draft.usernames.length || draft.hashtags.length || draft.keywords.length) ? ' Finding sources from your X accounts, hashtags, and keywords...' : ''}
           </div>
 
@@ -1864,7 +1864,7 @@ export default function EventsPage({
                 </>
               ) : (
                 <>
-                  <Plus size={18} /> {isEditRoute ? 'Update Event' : 'Create Event'}
+                  <Plus size={18} /> {isEditRoute ? 'Update Project' : 'Create Project'}
                 </>
               )}
             </button>
@@ -1877,7 +1877,7 @@ export default function EventsPage({
         <ConfirmModal
           open={showCancelModal}
           title="Discard changes?"
-          message="You have unsaved changes on this event. If you cancel now, all edits on this page will be lost."
+          message="You have unsaved changes on this project. If you cancel now, all edits on this page will be lost."
           confirmLabel="Discard changes"
           cancelLabel="Keep editing"
           onClose={() => setShowCancelModal(false)}
@@ -1893,25 +1893,25 @@ export default function EventsPage({
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Event planner
+            <CalendarDays size={14} /> Project planner
           </div>
-          <h1 className="admin-page-title">Events</h1>
+          <h1 className="admin-page-title">Projects</h1>
           <p className="admin-page-subtitle">
-            Shape each news cycle as its own workspace, attach shared sources, and keep every scrape tied to a named event.
+            Shape each news cycle as its own workspace, attach shared sources, and keep every scrape tied to a named project.
           </p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
             <span>Status</span>
-            <strong>{events.length ? 'Configured' : 'Empty'}</strong>
+            <strong>{projects.length ? 'Configured' : 'Empty'}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
             <span>Search</span>
-            <strong>{visibleEvents.length.toLocaleString()} matches</strong>
+            <strong>{visibleProjects.length.toLocaleString()} matches</strong>
           </div>
           {canEdit && (
-            <Link to="/events/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-              <Plus size={16} /> Add Event
+            <Link to="/projects/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+              <Plus size={16} /> Add Project
             </Link>
           )}
         </div>
@@ -1923,7 +1923,7 @@ export default function EventsPage({
             <Layers3 size={18} />
           </div>
           <div>
-            <span>Total events</span>
+            <span>Total projects</span>
             <strong>{stats.total.toLocaleString()}</strong>
           </div>
         </div>
@@ -1963,7 +1963,7 @@ export default function EventsPage({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search events, dates, statuses, or assigned sources"
+            placeholder="Search projects, dates, statuses, or assigned sources"
           />
         </label>
 
@@ -1979,35 +1979,35 @@ export default function EventsPage({
 
       <div className="glass-card admin-list-panel">
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Tracked Events</strong>
+          <strong style={{ fontSize: '1rem' }}>Tracked Projects</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isLoadingEvents && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
-            <span className="panel-chip">{visibleEvents.length} visible</span>
+            {isLoadingProjects && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
+            <span className="panel-chip">{visibleProjects.length} visible</span>
           </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {events.length === 0 && !isLoadingEvents && (
+          {projects.length === 0 && !isLoadingProjects && (
             <div className="admin-empty-state">
               <div className="admin-empty-state-icon">
                 <CalendarDays size={18} />
               </div>
-              <strong>No events yet</strong>
-              <span>Start by creating an event, then assign sources and run the scraper against that scope.</span>
+              <strong>No projects yet</strong>
+              <span>Start by creating a project, then assign sources and run the scraper against that scope.</span>
               {canEdit && (
-                <Link to="/events/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-                  <Plus size={16} /> Add Event
+                <Link to="/projects/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+                  <Plus size={16} /> Add Project
                 </Link>
               )}
             </div>
           )}
 
-          {pagedEvents.map((event, index) => {
-            const assignedSourceCount = Array.isArray(event.source_ids) ? event.source_ids.length : 0;
-            const isActive = (event.status || '').toLowerCase() === 'active';
+          {pagedProjects.map((project, index) => {
+            const assignedSourceCount = Array.isArray(project.source_ids) ? project.source_ids.length : 0;
+            const isActive = (project.status || '').toLowerCase() === 'active';
             return (
               <motion.div
-                key={event.id}
+                key={project.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.03 }}
@@ -2016,36 +2016,36 @@ export default function EventsPage({
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title">{event.name}</strong>
-                      <span className={`panel-chip ${isActive ? 'success' : event.status === 'archived' ? 'muted' : 'warning'}`}>
-                        {(event.status || 'draft').toUpperCase()}
+                      <strong className="admin-item-title">{project.name}</strong>
+                      <span className={`panel-chip ${isActive ? 'success' : project.status === 'archived' ? 'muted' : 'warning'}`}>
+                        {(project.status || 'draft').toUpperCase()}
                       </span>
-                      {event.repeat_enabled && (
+                      {project.repeat_enabled && (
                         <span className="panel-chip success">
-                          <RefreshCw size={12} /> Every {event.repeat_interval_value} {event.repeat_interval_unit}
+                          <RefreshCw size={12} /> Every {project.repeat_interval_value} {project.repeat_interval_unit}
                         </span>
                       )}
                     </div>
                     <div className="admin-item-meta">
-                      <span>{event.start_date || 'No start date'}</span>
-                      <span>{event.end_date || 'No end date'}</span>
+                      <span>{project.start_date || 'No start date'}</span>
+                      <span>{project.end_date || 'No end date'}</span>
                       <span>
                         {assignedSourceCount} source{assignedSourceCount === 1 ? '' : 's'}
                       </span>
-                      {event.repeat_enabled && (
-                        <span>Next run: {formatDateTime(event.next_run_at) || 'Pending first run'}</span>
+                      {project.repeat_enabled && (
+                        <span>Next run: {formatDateTime(project.next_run_at) || 'Pending first run'}</span>
                       )}
-                      {event.last_run_at && <span>Last run: {formatDateTime(event.last_run_at)}</span>}
+                      {project.last_run_at && <span>Last run: {formatDateTime(project.last_run_at)}</span>}
                     </div>
                     <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                      {event.description || 'Open the event to see assigned sources, tags, and metadata.'}
+                      {project.description || 'Open the project to see assigned sources, tags, and metadata.'}
                     </div>
                   </div>
 
                   <div className="admin-item-actions">
                     <Link
                       className="btn-secondary"
-                      to={`/events/${event.id}`}
+                      to={`/projects/${project.id}`}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
                       <Eye size={14} /> View
@@ -2056,18 +2056,18 @@ export default function EventsPage({
             );
           })}
 
-          {!isLoadingEvents && visibleEvents.length === 0 && events.length > 0 && (
+          {!isLoadingProjects && visibleProjects.length === 0 && projects.length > 0 && (
             <div className="admin-empty-state">
               <div className="admin-empty-state-icon">
                 <Search size={18} />
               </div>
-              <strong>No matching events</strong>
+              <strong>No matching projects</strong>
               <span>Try another search term or switch the status filter.</span>
             </div>
           )}
         </div>
 
-        {visibleEvents.length > 0 && (
+        {visibleProjects.length > 0 && (
           <div
             style={{
               marginTop: 14,
@@ -2081,7 +2081,7 @@ export default function EventsPage({
             }}
           >
             <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleEvents.length)} of {visibleEvents.length}
+              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleProjects.length)} of {visibleProjects.length}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button

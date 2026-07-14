@@ -13,7 +13,7 @@ from pathlib import Path
 
 import config
 from embeddings import build_article_embedding_text, get_embedding
-from events_store import get_event
+from projects_store import get_project
 from llm_client import chat_completion
 from pipeline_runs import update_pipeline_run
 from store import save_articles
@@ -33,7 +33,7 @@ VALID_CATEGORIES = {
 }
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
-PIPELINE_EVENT_ID = os.environ.get("PIPELINE_EVENT_ID", "").strip()
+PIPELINE_PROJECT_ID = os.environ.get("PIPELINE_PROJECT_ID", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
@@ -80,58 +80,58 @@ DEFAULT_ENRICHMENT = {
 }
 
 
-def _load_event_context():
-    if not PIPELINE_EVENT_ID:
+def _load_project_context():
+    if not PIPELINE_PROJECT_ID:
         return ""
     try:
-        event = get_event(int(PIPELINE_EVENT_ID))
+        project = get_project(int(PIPELINE_PROJECT_ID))
     except Exception:
-        event = None
-    if not event:
+        project = None
+    if not project:
         return ""
 
     parts = []
-    name = (event.get("name") or "").strip()
+    name = (project.get("name") or "").strip()
     if name:
         parts.append(f"Name: {name}")
-    status = (event.get("status") or "").strip()
+    status = (project.get("status") or "").strip()
     if status:
         parts.append(f"Status: {status}")
-    start_date = event.get("start_date")
+    start_date = project.get("start_date")
     if start_date:
         parts.append(f"Start date: {start_date}")
-    end_date = event.get("end_date")
+    end_date = project.get("end_date")
     if end_date:
         parts.append(f"End date: {end_date}")
-    location = (event.get("location") or "").strip()
+    location = (project.get("location") or "").strip()
     if location:
         parts.append(f"Location: {location}")
-    target_audience = (event.get("target_audience") or "").strip()
+    target_audience = (project.get("target_audience") or "").strip()
     if target_audience:
         parts.append(f"Target audience: {target_audience}")
-    hashtags = event.get("hashtags") or []
+    hashtags = project.get("hashtags") or []
     if isinstance(hashtags, str):
         hashtags = [hashtags]
     hashtags = [str(item).strip() for item in hashtags if str(item).strip()]
     if hashtags:
         parts.append(f"Hashtags: {', '.join(hashtags)}")
-    keywords = event.get("keywords") or []
+    keywords = project.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [keywords]
     keywords = [str(item).strip() for item in keywords if str(item).strip()]
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
-    description = (event.get("description") or "").strip()
+    description = (project.get("description") or "").strip()
     if description:
         parts.append(f"Description: {description}")
     return "\n".join(parts)
 
 
-def _load_event():
-    if not PIPELINE_EVENT_ID:
+def _load_project():
+    if not PIPELINE_PROJECT_ID:
         return None
     try:
-        return get_event(int(PIPELINE_EVENT_ID))
+        return get_project(int(PIPELINE_PROJECT_ID))
     except Exception:
         return None
 
@@ -178,18 +178,18 @@ def _article_published_date(article):
     return None
 
 
-def _event_date_window(event):
-    if not isinstance(event, dict):
+def _project_date_window(project):
+    if not isinstance(project, dict):
         return None, None
-    return _coerce_date(event.get("start_date")), _coerce_date(event.get("end_date"))
+    return _coerce_date(project.get("start_date")), _coerce_date(project.get("end_date"))
 
 
-def _article_matches_event_window(article, event):
+def _article_matches_project_window(article, project):
     article_date = _article_published_date(article)
     if article_date is None:
         return True
 
-    start_date, end_date = _event_date_window(event)
+    start_date, end_date = _project_date_window(project)
     if start_date and article_date < start_date:
         return False
     if end_date and article_date > end_date:
@@ -652,7 +652,7 @@ def build_topic_insight(articles, topic_name=""):
     }
 
 
-def enrich_article(article, event_context=""):
+def enrich_article(article, project_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:5000]
     prompt = (
@@ -660,8 +660,8 @@ def enrich_article(article, event_context=""):
         .replace("{title}", title)
         .replace("{text}", text)
     )
-    if event_context:
-        prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context only to help interpret the article. Do not invent facts."
+    if project_context:
+        prompt = f"{prompt}\n\nProject context:\n{project_context}\n\nUse this context only to help interpret the article. Do not invent facts."
 
     try:
         raw = chat_completion(
@@ -749,23 +749,23 @@ def main():
         )
         return
 
-    event = _load_event()
-    event_context = _load_event_context()
-    event_name = ""
-    if event_context:
-        for line in event_context.splitlines():
+    project = _load_project()
+    project_context = _load_project_context()
+    project_name = ""
+    if project_context:
+        for line in project_context.splitlines():
             if line.startswith("Name: "):
-                event_name = line.replace("Name: ", "", 1).strip()
+                project_name = line.replace("Name: ", "", 1).strip()
                 break
 
-    if event:
-        matching_articles = [article for article in articles if _article_matches_event_window(article, event)]
+    if project:
+        matching_articles = [article for article in articles if _article_matches_project_window(article, project)]
     else:
         matching_articles = articles
 
     filtered_out = len(articles) - len(matching_articles)
     if filtered_out:
-        print(f"Filtered out {filtered_out} articles outside the event date window.")
+        print(f"Filtered out {filtered_out} articles outside the project date window.")
     articles = matching_articles
 
     enriched = []
@@ -782,7 +782,7 @@ def main():
             message=f"Cleaning articles {idx + 1}/{len(articles)}...",
         )
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
-        enrichment = enrich_article(article, event_context=event_context)
+        enrichment = enrich_article(article, project_context=project_context)
         if enrichment is None:
             enrichment = dict(DEFAULT_ENRICHMENT)
         time.sleep(0.5)
@@ -795,7 +795,7 @@ def main():
             enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched.append({**article, **enrichment})
 
-    topic_insight = build_topic_insight(enriched, topic_name=event_name or "general")
+    topic_insight = build_topic_insight(enriched, topic_name=project_name or "general")
     for article in enriched:
         if not article.get("insight_json"):
             article["insight_json"] = {

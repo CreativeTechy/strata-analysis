@@ -8,7 +8,7 @@ import re
 import config
 import db
 from embeddings import cosine_similarity, get_embedding
-from events_store import list_article_ids_for_event, list_article_similarity_scores_for_event
+from projects_store import list_article_ids_for_project, list_article_similarity_scores_for_project
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
@@ -113,7 +113,7 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, event_id=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None):
     clauses = []
     params = []
 
@@ -139,8 +139,8 @@ def _where_parts(search=None, sentiment=None, category=None, event_id=None):
         clauses.append("category = %s")
         params.append(category_value)
 
-    if event_id is not None:
-        article_ids = list_article_ids_for_event(event_id)
+    if project_id is not None:
+        article_ids = list_article_ids_for_project(project_id)
         if not article_ids:
             clauses.append("id = -1")
         else:
@@ -152,14 +152,14 @@ def _where_parts(search=None, sentiment=None, category=None, event_id=None):
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, event_id=None, order="published.desc", select=ARTICLES_SELECT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT):
     if not config.DATABASE_URL:
         return [], 0
 
     field, direction = _normalize_sort(order)
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
-    where_sql, params = _where_parts(search=search, sentiment=sentiment, category=category, event_id=event_id)
+    where_sql, params = _where_parts(search=search, sentiment=sentiment, category=category, project_id=project_id)
 
     try:
         rows = db.fetch_all(
@@ -186,7 +186,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         return [], 0
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
     if not config.DATABASE_URL:
         return []
 
@@ -202,7 +202,7 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=Non
             search=search,
             sentiment=sentiment,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
             order=order,
             select=select,
         )
@@ -216,11 +216,11 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, event_id=Non
     return rows[:limit]
 
 
-def _attach_event_similarity_scores(rows, event_id):
-    if event_id is None or not rows:
+def _attach_project_similarity_scores(rows, project_id):
+    if project_id is None or not rows:
         return rows
 
-    scores = list_article_similarity_scores_for_event(event_id)
+    scores = list_article_similarity_scores_for_project(project_id)
     if not scores:
         return rows
 
@@ -230,7 +230,7 @@ def _attach_event_similarity_scores(rows, event_id):
         except Exception:
             continue
         if article_id in scores:
-            row["event_similarity_score"] = scores[article_id]
+            row["project_similarity_score"] = scores[article_id]
     return rows
 
 
@@ -328,11 +328,11 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def _search_results(search=None, sentiment=None, category=None, event_id=None):
+def _search_results(search=None, sentiment=None, category=None, project_id=None):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
-        event_id=event_id,
+        project_id=project_id,
         select=ARTICLES_SELECT,
         order=DEFAULT_SORT,
         limit=SEARCH_SCAN_LIMIT,
@@ -344,7 +344,7 @@ def _search_results(search=None, sentiment=None, category=None, event_id=None):
     return ranked_rows, len(ranked_rows)
 
 
-def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000):
+def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=1000):
     if not config.DATABASE_URL:
         return []
 
@@ -358,7 +358,7 @@ def _fetch_rows_for_stats(search=None, category=None, event_id=None, limit=1000)
             offset=offset,
             search=search,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
             order="created_at.desc",
             select="url,title,sentiment,category,article_category,insight_json,summary",
         )
@@ -633,7 +633,7 @@ def _topic_summary(rows):
     }
 
 
-def list_articles(search=None, sentiment=None, category=None, event_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -644,10 +644,10 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
             search=search_text,
             sentiment=sentiment,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
         )
         rows = rows[offset:offset + limit]
-        rows = _attach_event_similarity_scores(rows, event_id)
+        rows = _attach_project_similarity_scores(rows, project_id)
         return {
             "articles": rows,
             "total": total,
@@ -662,11 +662,11 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
         search=search,
         sentiment=sentiment,
         category=category,
-        event_id=event_id,
+        project_id=project_id,
         order=f"{field}.{direction}",
         select=ARTICLES_SELECT,
     )
-    rows = _attach_event_similarity_scores(rows, event_id)
+    rows = _attach_project_similarity_scores(rows, project_id)
     return {
         "articles": rows,
         "total": total,
@@ -676,16 +676,16 @@ def list_articles(search=None, sentiment=None, category=None, event_id=None, lim
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, event_id=None, sort=DEFAULT_SORT):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT):
     search_text = _normalize_text(search)
     if search_text:
         rows, _ = _search_results(
             search=search_text,
             sentiment=sentiment,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
         )
-        return _attach_event_similarity_scores(rows, event_id)
+        return _attach_project_similarity_scores(rows, project_id)
 
     rows = []
     page_size = 200
@@ -699,7 +699,7 @@ def export_articles(search=None, sentiment=None, category=None, event_id=None, s
             search=search,
             sentiment=sentiment,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
             order=f"{field}.{direction}",
             select=ARTICLES_SELECT,
         )
@@ -710,17 +710,17 @@ def export_articles(search=None, sentiment=None, category=None, event_id=None, s
             break
         offset += page_size
 
-    return _attach_event_similarity_scores(rows, event_id)
+    return _attach_project_similarity_scores(rows, project_id)
 
 
-def _count_articles(search=None, sentiment=None, category=None, event_id=None):
+def _count_articles(search=None, sentiment=None, category=None, project_id=None):
     search_text = _normalize_text(search)
     if search_text:
         _, total = _search_results(
             search=search_text,
             sentiment=sentiment,
             category=category,
-            event_id=event_id,
+            project_id=project_id,
         )
         return total
 
@@ -730,23 +730,23 @@ def _count_articles(search=None, sentiment=None, category=None, event_id=None):
         search=search,
         sentiment=sentiment,
         category=category,
-        event_id=event_id,
+        project_id=project_id,
         order=DEFAULT_SORT,
         select="id",
     )
     return total
 
 
-def get_article_stats(search=None, category=None, event_id=None):
-    total = _count_articles(search=search, category=category, event_id=event_id)
-    positive = _count_articles(search=search, sentiment="positive", category=category, event_id=event_id)
-    negative = _count_articles(search=search, sentiment="negative", category=category, event_id=event_id)
-    neutral = _count_articles(search=search, sentiment="neutral", category=category, event_id=event_id)
+def get_article_stats(search=None, category=None, project_id=None):
+    total = _count_articles(search=search, category=category, project_id=project_id)
+    positive = _count_articles(search=search, sentiment="positive", category=category, project_id=project_id)
+    negative = _count_articles(search=search, sentiment="negative", category=category, project_id=project_id)
+    neutral = _count_articles(search=search, sentiment="neutral", category=category, project_id=project_id)
     search_text = _normalize_text(search)
     if search_text:
-        rows, _ = _search_results(search=search_text, category=category, event_id=event_id)
+        rows, _ = _search_results(search=search_text, category=category, project_id=project_id)
     else:
-        rows = _fetch_rows_for_stats(search=search, category=category, event_id=event_id)
+        rows = _fetch_rows_for_stats(search=search, category=category, project_id=project_id)
 
     return {
         "total": total,
@@ -757,50 +757,4 @@ def get_article_stats(search=None, category=None, event_id=None):
         "insights": _topic_summary(rows),
     }
 
-
-def get_brand_sentiment_rollup(limit=50):
-    if not config.DATABASE_URL:
-        return {"rows": [], "crawl_count": 0}
-
-    try:
-        rows = db.fetch_all(
-            """
-            select
-                brand,
-                count(*)::int as mentions,
-                avg(case sentiment when 'positive' then 1 when 'negative' then -1 else 0 end)::float as avg_sentiment,
-                sum(case when sentiment = 'positive' then 1 else 0 end)::int as positive,
-                sum(case when sentiment = 'negative' then 1 else 0 end)::int as negative,
-                sum(case when sentiment = 'neutral' then 1 else 0 end)::int as neutral
-            from articles a
-            inner join lateral jsonb_array_elements_text(coalesce(a.brands, '[]'::jsonb)) as brand on true
-            group by brand
-            order by mentions desc, brand asc
-            limit %s
-            """,
-            (max(1, min(int(limit or 50), 100)),),
-        )
-        crawl_row = db.fetch_one("select count(*)::int as crawl_count from crawl_pages")
-        payload = []
-        for row in rows:
-            mentions = int(row.get("mentions") or 0)
-            confidence = "low"
-            if mentions >= 20:
-                confidence = "high"
-            elif mentions >= 5:
-                confidence = "medium"
-            payload.append(
-                {
-                    "brand": row.get("brand"),
-                    "mentions": mentions,
-                    "avg_sentiment": float(row.get("avg_sentiment") or 0),
-                    "positive": int(row.get("positive") or 0),
-                    "negative": int(row.get("negative") or 0),
-                    "neutral": int(row.get("neutral") or 0),
-                    "confidence": confidence,
-                }
-            )
-        return {"rows": payload, "crawl_count": int((crawl_row or {}).get("crawl_count") or 0)}
-    except Exception:
-        return {"rows": [], "crawl_count": 0}
 

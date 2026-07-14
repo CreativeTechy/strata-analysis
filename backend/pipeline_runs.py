@@ -6,10 +6,10 @@ import config
 import db
 
 
-RUN_SELECT = "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
+RUN_SELECT = "id,pipeline,project_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
 
 # Runs in these statuses are still in flight; anything else (success, failed,
-# cancelled) is terminal and must not block a new run for the same event.
+# cancelled) is terminal and must not block a new run for the same project.
 ACTIVE_STATUSES = ("queued", "running")
 
 
@@ -17,7 +17,7 @@ def _normalize(row):
     return {
         "id": row.get("id"),
         "pipeline": row.get("pipeline") or "scrape",
-        "event_id": row.get("event_id"),
+        "project_id": row.get("project_id"),
         "status": row.get("status") or "queued",
         "stage": row.get("stage") or "queued",
         "message": row.get("message") or "",
@@ -49,14 +49,14 @@ def get_pipeline_run(run_id):
         return None
 
 
-def get_active_run_for_event(event_id):
-    """Return the in-flight run for this event, or None if it's free to start.
+def get_active_run_for_project(project_id):
+    """Return the in-flight run for this project, or None if it's free to start.
 
     A run is "active" if it's queued/running (cancelled/success/failed are all
     terminal) and started recently enough to trust; this keeps a crashed backend
-    from permanently blocking future runs for the event.
+    from permanently blocking future runs for the project.
     """
-    if not config.DATABASE_URL or event_id is None:
+    if not config.DATABASE_URL or project_id is None:
         return None
 
     try:
@@ -64,13 +64,13 @@ def get_active_run_for_event(event_id):
             f"""
             select {RUN_SELECT}
             from pipeline_runs
-            where event_id = %s
+            where project_id = %s
               and status = any(%s)
               and created_at > now() - (%s || ' minutes')::interval
             order by created_at desc
             limit 1
             """,
-            (int(event_id), list(ACTIVE_STATUSES), config.SCHEDULER_STALE_RUN_MINUTES),
+            (int(project_id), list(ACTIVE_STATUSES), config.SCHEDULER_STALE_RUN_MINUTES),
         )
         return _normalize(row) if row else None
     except Exception:
@@ -96,7 +96,7 @@ def list_pipeline_runs(limit=10):
         return []
 
 
-def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="queued", stage="queued", message=""):
+def create_pipeline_run(run_id=None, pipeline="scrape", project_id=None, status="queued", stage="queued", message=""):
     if not config.DATABASE_URL:
         return None
 
@@ -104,7 +104,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="q
     payload = {
         "id": run_id,
         "pipeline": pipeline,
-        "event_id": event_id,
+        "project_id": project_id,
         "status": status,
         "stage": stage,
         "message": message,
@@ -113,11 +113,11 @@ def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="q
     try:
         row = db.fetch_one(
             f"""
-            insert into pipeline_runs (id, pipeline, event_id, status, stage, message)
+            insert into pipeline_runs (id, pipeline, project_id, status, stage, message)
             values (%s, %s, %s, %s, %s, %s)
             on conflict (id) do update set
               pipeline = excluded.pipeline,
-              event_id = excluded.event_id,
+              project_id = excluded.project_id,
               status = excluded.status,
               stage = excluded.stage,
               message = excluded.message,
@@ -127,7 +127,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", event_id=None, status="q
             (
                 payload["id"],
                 payload["pipeline"],
-                payload["event_id"],
+                payload["project_id"],
                 payload["status"],
                 payload["stage"],
                 payload["message"],
@@ -144,7 +144,7 @@ def update_pipeline_run(run_id, **fields):
 
     allowed = {
         "pipeline",
-        "event_id",
+        "project_id",
         "status",
         "stage",
         "message",
