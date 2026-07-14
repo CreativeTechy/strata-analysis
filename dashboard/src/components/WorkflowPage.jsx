@@ -57,7 +57,7 @@ export default function WorkflowPage({
   articles = [],
   isScraping = false,
   onRunScraper,
-  feeds = [],
+  sources = [],
   events = [],
   selectedEvents = [],
   selectedEventIds = [],
@@ -71,18 +71,18 @@ export default function WorkflowPage({
       value: url,
     }));
 
-  const [rows, setRows] = useState(() => seedRows(feeds));
+  const [rows, setRows] = useState(() => seedRows(sources));
   const [runs, setRuns] = useState([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState('');
   const [workflowStartedAt, setWorkflowStartedAt] = useState(null);
   const [workflowElapsed, setWorkflowElapsed] = useState(0);
-  const [isFeedListCollapsed, setIsFeedListCollapsed] = useState(false);
+  const [isSourceListCollapsed, setIsSourceListCollapsed] = useState(false);
   const wasScrapingRef = useRef(false);
 
   useEffect(() => {
-    if (feeds.length) setRows(seedRows(feeds));
-  }, [feeds]);
+    if (sources.length) setRows(seedRows(sources));
+  }, [sources]);
 
   useEffect(() => {
     if (isScraping && !wasScrapingRef.current) {
@@ -376,7 +376,7 @@ export default function WorkflowPage({
                               <div className="workflow-event-meta">
                                 <span>{event.status || 'draft'}</span>
                                 {event.location ? <span>{event.location}</span> : null}
-                                {(event.feed_ids || []).length ? <span>{event.feed_ids.length} feed{event.feed_ids.length === 1 ? '' : 's'}</span> : <span>No feeds</span>}
+                                {(event.source_ids || []).length ? <span>{event.source_ids.length} source{event.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
                               </div>
                             </div>
                           </label>
@@ -400,33 +400,33 @@ export default function WorkflowPage({
 
               <div className="get-rows-header">
                 <div className="get-rows-header-copy">
-                  <strong>Feeds</strong>
+                  <strong>Sources</strong>
                   <span>Paste URLs here or switch a row to keywords</span>
                 </div>
                 <button
                   type="button"
                   className="workflow-event-toggle"
-                  onClick={() => setIsFeedListCollapsed((current) => !current)}
-                  aria-expanded={!isFeedListCollapsed}
-                  aria-controls="workflow-feed-list"
+                  onClick={() => setIsSourceListCollapsed((current) => !current)}
+                  aria-expanded={!isSourceListCollapsed}
+                  aria-controls="workflow-source-list"
                 >
-                  {isFeedListCollapsed ? (
+                  {isSourceListCollapsed ? (
                     <>
-                      Expand feeds <ChevronDown size={14} />
+                      Expand sources <ChevronDown size={14} />
                     </>
                   ) : (
                     <>
-                      Collapse feeds <ChevronUp size={14} />
+                      Collapse sources <ChevronUp size={14} />
                     </>
                   )}
                 </button>
               </div>
 
               <AnimatePresence initial={false}>
-                {!isFeedListCollapsed ? (
+                {!isSourceListCollapsed ? (
                   <motion.div
-                    key="workflow-feed-list"
-                    id="workflow-feed-list"
+                    key="workflow-source-list"
+                    id="workflow-source-list"
                     className="get-rows"
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
@@ -484,19 +484,19 @@ export default function WorkflowPage({
                   </motion.div>
                 ) : (
                   <motion.div
-                    key="workflow-feed-list-collapsed"
+                    key="workflow-source-list-collapsed"
                     className="workflow-event-list-collapsed"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
-                    Feed URLs are collapsed. Expand them to edit or review the source list.
+                    Source URLs are collapsed. Expand them to edit or review the source list.
                   </motion.div>
                 )}
               </AnimatePresence>
 
               <Link
-                to="/feeds"
+                to="/sources"
                 className="add-row-btn"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}
               >

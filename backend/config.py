@@ -1,6 +1,6 @@
 """Central configuration for the generic source pipeline.
 
-Single source of truth for the dynamic feed list and for the credentials each
+Single source of truth for the dynamic source list and for the credentials each
 stage needs. Everything reads from here so swapping sources or rotating keys is
 a one-place change.
 """
@@ -46,6 +46,9 @@ DEEPSEEK_CHAT_BASE_URL = os.environ.get("DEEPSEEK_CHAT_BASE_URL", "https://api.d
 DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
+
+SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 30)
+SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
 
 
 def _looks_like_feed_url(url: str) -> bool:
@@ -143,9 +146,9 @@ def _discover_feed_urls(url: str):
 
 def load_source_records():
     """Return configured source records with source_type preserved."""
-    env_feeds = os.environ.get("FEEDS", "").strip()
-    if env_feeds:
-        raw_urls = [u.strip() for u in env_feeds.split(",") if u.strip()]
+    env_sources = os.environ.get("SOURCES", "").strip()
+    if env_sources:
+        raw_urls = [u.strip() for u in env_sources.split(",") if u.strip()]
         return [
             _normalize_source_record(
                 {
@@ -167,7 +170,7 @@ def load_source_records():
         records = db.fetch_all(
             """
             select id, url, name, enabled, source_type, category, created_at, updated_at
-            from feeds
+            from sources
             order by created_at asc
             """
         )

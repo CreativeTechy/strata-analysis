@@ -9,11 +9,11 @@ import json
 import config
 import db
 from embeddings import cosine_similarity
-from events_store import list_event_ids_for_feed_url, list_events, set_article_events
+from events_store import list_event_ids_for_source_url, list_events, set_article_events
 from psycopg.types.json import Jsonb
 
 ARTICLE_COLUMNS = (
-    "url", "source", "feed", "title", "author", "published", "text",
+    "url", "source", "source_url", "title", "author", "published", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "article_category", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
@@ -21,7 +21,7 @@ ARTICLE_COLUMNS = (
 )
 
 LEGACY_ARTICLE_COLUMNS = (
-    "url", "source", "feed", "title", "author", "published", "text",
+    "url", "source", "source_url", "title", "author", "published", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models",
@@ -34,7 +34,7 @@ CRAWL_COLUMNS = (
 ARTICLE_MUTABLE_FIELDS = (
     "url",
     "source",
-    "feed",
+    "source_url",
     "title",
     "author",
     "published",
@@ -104,7 +104,7 @@ def _article_params(article):
     return (
         row["url"],
         row["source"],
-        row["feed"],
+        row["source_url"],
         row["title"],
         row["author"],
         row["published"],
@@ -173,7 +173,7 @@ def _article_write_fields():
 
 def _article_returning_sql():
     columns = _article_columns()
-    returning = ["id", "feed"]
+    returning = ["id", "source_url"]
     if "embedding_json" in columns:
         returning.append("embedding_json")
     return ", ".join(returning)
@@ -268,7 +268,7 @@ def save_articles(articles, batch_size=50):
     except Exception:
         event_id = None
 
-    feed_event_cache = {}
+    source_event_cache = {}
     linked_articles = defaultdict(set)
     linked_scores = defaultdict(dict)
     event_embedding_cache = None
@@ -308,12 +308,12 @@ def save_articles(articles, batch_size=50):
                     article_id = int(row.get("id"))
                 except Exception:
                     continue
-                feed_url = (row.get("feed") or article.get("feed") or "").strip()
-                if not feed_url:
+                source_url = (row.get("source_url") or article.get("source_url") or "").strip()
+                if not source_url:
                     continue
-                if feed_url not in feed_event_cache:
-                    feed_event_cache[feed_url] = list_event_ids_for_feed_url(feed_url)
-                event_ids = list(feed_event_cache.get(feed_url) or [])
+                if source_url not in source_event_cache:
+                    source_event_cache[source_url] = list_event_ids_for_source_url(source_url)
+                event_ids = list(source_event_cache.get(source_url) or [])
                 if event_id is not None and event_id not in event_ids:
                     event_ids.append(event_id)
                 for linked_event_id in event_ids:
@@ -343,7 +343,7 @@ def save_articles(articles, batch_size=50):
                         row = db.fetch_one(
                             """
                             insert into articles (
-                                url, source, feed, title, author, published, text,
+                                url, source, source_url, title, author, published, text,
                                 fetched_at, summary, sentiment, relevance_score, category,
                                 organizations, entities, topics, key_points, risks, opportunities,
                                 brands, car_models
@@ -351,7 +351,7 @@ def save_articles(articles, batch_size=50):
                             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             on conflict (url) do update set
                                 source = excluded.source,
-                                feed = excluded.feed,
+                                source_url = excluded.source_url,
                                 title = excluded.title,
                                 author = excluded.author,
                                 published = excluded.published,
@@ -369,12 +369,12 @@ def save_articles(articles, batch_size=50):
                                 opportunities = excluded.opportunities,
                                 brands = excluded.brands,
                                 car_models = excluded.car_models
-                            returning id, feed
+                            returning id, source_url
                             """,
                             (
                                 _legacy_row(article)["url"],
                                 _legacy_row(article)["source"],
-                                _legacy_row(article)["feed"],
+                                _legacy_row(article)["source_url"],
                                 _legacy_row(article)["title"],
                                 _legacy_row(article)["author"],
                                 _legacy_row(article)["published"],

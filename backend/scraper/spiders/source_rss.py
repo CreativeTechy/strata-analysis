@@ -4,7 +4,7 @@ Generic source spider: RSS discovery -> web/social page fetch -> trafilatura ext
 Run from the backend/ directory:
     scrapy crawl source_rss -O <output-file>
 
-Sources come from Supabase via config.load_source_records() (or the FEEDS env var
+Sources come from Supabase via config.load_source_records() (or the SOURCES env var
 override), so adding/removing a publisher does not require code changes. The
 spider never hand-writes CSS selectors per site -- trafilatura extracts
 title/date/text generically, so one spider covers every publisher.
@@ -91,7 +91,7 @@ class SourceRssSpider(scrapy.Spider):
                 url,
                 callback=self.parse_source,
                 meta={
-                    "feed": url,
+                    "source_url": url,
                     "source_type": source_type,
                     "source_name": record.get("name") or url,
                     "dont_obey_robotstxt": source_type in {"social", "username", "hashtag"},
@@ -152,7 +152,7 @@ class SourceRssSpider(scrapy.Spider):
                 yield response.follow(
                     url,
                     callback=self.parse_article,
-                    meta={"feed": response.url},
+                    meta={"source_url": response.url},
                 )
 
     def parse_homepage(self, response):
@@ -167,7 +167,7 @@ class SourceRssSpider(scrapy.Spider):
 
         if discovered_feeds:
             for feed_url in discovered_feeds:
-                yield response.follow(feed_url, callback=self.parse_feed, meta={"feed": feed_url})
+                yield response.follow(feed_url, callback=self.parse_feed, meta={"source_url": feed_url})
             return
 
         yield from self.parse_page(response, follow_links=True)
@@ -212,7 +212,7 @@ class SourceRssSpider(scrapy.Spider):
             yield response.follow(
                 link,
                 callback=self.parse_article,
-                meta={"feed": response.url, "source_type": "web"},
+                meta={"source_url": response.url, "source_type": "web"},
             )
 
     def parse_social_page(self, response):
@@ -236,7 +236,7 @@ class SourceRssSpider(scrapy.Spider):
             yield response.follow(
                 link,
                 callback=self.parse_article,
-                meta={"feed": response.url, "source_type": "social", "dont_obey_robotstxt": True},
+                meta={"source_url": response.url, "source_type": "social", "dont_obey_robotstxt": True},
             )
 
     def _yield_article(self, response):
@@ -267,7 +267,7 @@ class SourceRssSpider(scrapy.Spider):
         yield {
             "url": response.url,
             "source": urlparse(response.url).netloc,
-            "feed": response.meta.get("feed"),
+            "source_url": response.meta.get("source_url"),
             "title": doc.get("title"),
             "author": doc.get("author"),
             "published": doc.get("date"),
@@ -304,7 +304,7 @@ class SourceRssSpider(scrapy.Spider):
             return {
                 "url": tweet.get("url") or f"https://twitter.com/{handle}/status/{tid}",
                 "source": f"x.com/{author}",
-                "feed": url,
+                "source_url": url,
                 "title": f"@{author}",
                 "author": author,
                 "published": tweet.get("created_at"),

@@ -13,16 +13,24 @@ import {
   AtSign,
   Tag,
   Pencil,
+  RefreshCw,
   Trash2,
 } from 'lucide-react';
 
-const FEEDS_PAGE_SIZE = 3;
+const SOURCES_PAGE_SIZE = 3;
 
 function formatDate(value) {
   if (!value) return 'Not set';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleDateString();
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Not yet';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
 }
 
 function normalizeList(value) {
@@ -32,31 +40,31 @@ function normalizeList(value) {
 
 export default function EventDetailPage({
   events = [],
-  feeds = [],
+  sources = [],
   onDeleteEvent,
 }) {
   const navigate = useNavigate();
   const params = useParams();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [feedsPage, setFeedsPage] = useState(1);
+  const [sourcesPage, setSourcesPage] = useState(1);
 
   const event = useMemo(
     () => events.find((item) => Number(item.id) === Number(params.eventId)) || null,
     [events, params.eventId]
   );
 
-  const assignedFeeds = useMemo(() => {
+  const assignedSources = useMemo(() => {
     if (!event) return [];
-    const feedIds = new Set((event.feed_ids || []).map((value) => Number(value)));
-    return feeds.filter((feed) => feedIds.has(Number(feed.id)));
-  }, [event, feeds]);
+    const sourceIds = new Set((event.source_ids || []).map((value) => Number(value)));
+    return sources.filter((source) => sourceIds.has(Number(source.id)));
+  }, [event, sources]);
 
-  const totalFeedsPages = Math.max(1, Math.ceil(assignedFeeds.length / FEEDS_PAGE_SIZE));
-  const safeFeedsPage = Math.min(feedsPage, totalFeedsPages);
-  const pagedAssignedFeeds = useMemo(() => {
-    const start = (safeFeedsPage - 1) * FEEDS_PAGE_SIZE;
-    return assignedFeeds.slice(start, start + FEEDS_PAGE_SIZE);
-  }, [assignedFeeds, safeFeedsPage]);
+  const totalSourcesPages = Math.max(1, Math.ceil(assignedSources.length / SOURCES_PAGE_SIZE));
+  const safeSourcesPage = Math.min(sourcesPage, totalSourcesPages);
+  const pagedAssignedSources = useMemo(() => {
+    const start = (safeSourcesPage - 1) * SOURCES_PAGE_SIZE;
+    return assignedSources.slice(start, start + SOURCES_PAGE_SIZE);
+  }, [assignedSources, safeSourcesPage]);
 
   const hashtagList = normalizeList(event?.hashtags);
   const keywordList = normalizeList(event?.keywords);
@@ -101,7 +109,7 @@ export default function EventDetailPage({
           </div>
           <h1 className="admin-page-title">{event.name}</h1>
           <p className="admin-page-subtitle">
-            Review the feeds, tags, and metadata attached to this event. This page is the best place to inspect the working scope before running the pipeline.
+            Review the sources, tags, and metadata attached to this event. This page is the best place to inspect the working scope before running the pipeline.
           </p>
         </div>
 
@@ -111,8 +119,8 @@ export default function EventDetailPage({
             <strong>{statusLabel}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Assigned feeds</span>
-            <strong>{assignedFeeds.length.toLocaleString()}</strong>
+            <span>Assigned sources</span>
+            <strong>{assignedSources.length.toLocaleString()}</strong>
           </div>
           <Link to={`/events/${event.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
             <Pencil size={16} /> Edit Event
@@ -163,6 +171,32 @@ export default function EventDetailPage({
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+              <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> Automatic Reruns</strong>
+              <span className={`panel-chip ${event.repeat_enabled ? 'success' : 'muted'}`}>
+                {event.repeat_enabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            {event.repeat_enabled ? (
+              <div style={{ display: 'grid', gap: 6, color: 'var(--text-light)', fontSize: '0.86rem' }}>
+                <div>
+                  Runs again every {event.repeat_interval_value} {event.repeat_interval_unit} after completion.
+                </div>
+                <div className="admin-item-meta">
+                  <span>Next run: {formatDateTime(event.next_run_at)}</span>
+                  <span>Last run: {formatDateTime(event.last_run_at)}</span>
+                  {event.last_run_status && <span>Last status: {event.last_run_status}</span>}
+                </div>
+              </div>
+            ) : (
+              <div style={{ color: 'var(--text-light)', fontSize: '0.86rem' }}>
+                This event only runs when triggered manually. Edit the event to enable interval-based reruns.
+                {event.last_run_at && ` Last run: ${formatDateTime(event.last_run_at)}.`}
+              </div>
+            )}
+          </div>
+
+          <div className="admin-item-card" style={{ margin: 0 }}>
+            <div className="panel-header-tight" style={{ marginBottom: 10 }}>
               <strong style={{ fontSize: '0.94rem' }}>Description</strong>
             </div>
             <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
@@ -188,12 +222,12 @@ export default function EventDetailPage({
 
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  <AtSign size={14} /> Usernames
+                  <AtSign size={14} /> X Accounts
                 </div>
                 <div className="admin-item-chips">
                   {usernameList.length ? usernameList.map((item) => (
                     <span key={item} className="admin-tag muted">{item}</span>
-                  )) : <span className="admin-tag muted">No usernames</span>}
+                  )) : <span className="admin-tag muted">No X accounts</span>}
                 </div>
               </div>
 
@@ -219,35 +253,35 @@ export default function EventDetailPage({
           style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
         >
           <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>Assigned Feeds</strong>
-            <span className="panel-chip">{assignedFeeds.length} linked</span>
+            <strong style={{ fontSize: '1rem' }}>Assigned Sources</strong>
+            <span className="panel-chip">{assignedSources.length} linked</span>
           </div>
 
-          {assignedFeeds.length === 0 ? (
+          {assignedSources.length === 0 ? (
             <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
               <div className="admin-empty-state-icon">
                 <Link2 size={18} />
               </div>
-              <strong>No feeds assigned</strong>
-              <span>Use Edit Event to attach feeds to this event.</span>
+              <strong>No sources assigned</strong>
+              <span>Use Edit Event to attach sources to this event.</span>
             </div>
           ) : (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {pagedAssignedFeeds.map((feed) => (
-                <div key={feed.id} className="admin-item-card" style={{ margin: 0 }}>
+                {pagedAssignedSources.map((source) => (
+                <div key={source.id} className="admin-item-card" style={{ margin: 0 }}>
                   <div className="admin-item-top">
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        <strong className="admin-item-title">{feed.name || feed.url}</strong>
-                        <span className={`panel-chip ${feed.enabled ? 'success' : 'muted'}`}>
-                          {feed.enabled ? 'Enabled' : 'Disabled'}
+                        <strong className="admin-item-title">{source.name || source.url}</strong>
+                        <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
+                          {source.enabled ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
-                      <div className="admin-item-url">{feed.url}</div>
+                      <div className="admin-item-url">{source.url}</div>
                       <div className="admin-item-meta">
-                        <span>{feed.source_type || 'rss'}</span>
-                        {feed.category ? <span>{feed.category}</span> : null}
+                        <span>{source.source_type || 'rss'}</span>
+                        {source.category ? <span>{source.category}</span> : null}
                       </div>
                     </div>
                   </div>
@@ -255,7 +289,7 @@ export default function EventDetailPage({
                 ))}
               </div>
 
-              {assignedFeeds.length > FEEDS_PAGE_SIZE && (
+              {assignedSources.length > SOURCES_PAGE_SIZE && (
                 <div
                   style={{
                     display: 'flex',
@@ -268,26 +302,26 @@ export default function EventDetailPage({
                   }}
                 >
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                    Showing {(safeFeedsPage - 1) * FEEDS_PAGE_SIZE + 1}-{Math.min(safeFeedsPage * FEEDS_PAGE_SIZE, assignedFeeds.length)} of {assignedFeeds.length}
+                    Showing {(safeSourcesPage - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(safeSourcesPage * SOURCES_PAGE_SIZE, assignedSources.length)} of {assignedSources.length}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setFeedsPage((value) => Math.max(1, value - 1))}
-                      disabled={safeFeedsPage <= 1}
+                      onClick={() => setSourcesPage((value) => Math.max(1, value - 1))}
+                      disabled={safeSourcesPage <= 1}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
                       <ChevronLeft size={14} /> Previous
                     </button>
                     <span className="panel-chip">
-                      Page {safeFeedsPage} of {totalFeedsPages}
+                      Page {safeSourcesPage} of {totalSourcesPages}
                     </span>
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setFeedsPage((value) => Math.min(totalFeedsPages, value + 1))}
-                      disabled={safeFeedsPage >= totalFeedsPages}
+                      onClick={() => setSourcesPage((value) => Math.min(totalSourcesPages, value + 1))}
+                      disabled={safeSourcesPage >= totalSourcesPages}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
                       Next <ChevronRight size={14} />
@@ -308,7 +342,7 @@ export default function EventDetailPage({
                 <span>Updated {formatDate(event.updated_at)}</span>
               </div>
               <div className="admin-item-meta">
-                <span>{assignedFeeds.length} linked feed{assignedFeeds.length === 1 ? '' : 's'}</span>
+                <span>{assignedSources.length} linked source{assignedSources.length === 1 ? '' : 's'}</span>
                 <span>{hashtagList.length} hashtag{hashtagList.length === 1 ? '' : 's'}</span>
               </div>
             </div>
@@ -319,7 +353,7 @@ export default function EventDetailPage({
       <ConfirmModal
         open={deleteOpen}
         title={`Delete event "${event.name}"?`}
-        message="This will permanently remove the event and detach it from any linked feeds."
+        message="This will permanently remove the event and detach it from any linked sources."
         confirmLabel="Delete event"
         cancelLabel="Keep event"
         confirmButtonStyle={{

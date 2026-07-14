@@ -53,7 +53,7 @@ def build_article_embedding_text(article: dict, enrichment: dict | None = None) 
         enrichment.get("summary"),
         article.get("summary"),
         enrichment.get("topic"),
-        article.get("feed"),
+        article.get("source_url"),
         article.get("source"),
         article.get("author"),
     ):

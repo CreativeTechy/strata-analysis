@@ -17,7 +17,7 @@ the Crawl4AI engine is active when installed).
 Endpoints:
 - `GET /api/health`
 - `GET /api/spider/stream?seed=&depth=&pages=` - SSE live crawl
-- `GET /api/feeds`
+- `GET /api/sources`
 - `POST /api/chat`
 
 The dashboard points `VITE_SPIDER_URL` at this service.

@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pipeline: Scrapy spider → AI enrichment → Supabase/Postgres → FastAPI → React dashboard.
 
-- `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `feeds` table (or `FEEDS` env var override), discovers article links, extracts text via trafilatura.
+- `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `sources` table (or `SOURCES` env var override), discovers article links, extracts text via trafilatura.
 - `backend/enrich.py` - tags/cleans articles using DeepSeek (via `llm_client.chat_completion`), falling back to neutral defaults if the call fails.
 - `backend/store.py` - upserts enriched articles into Supabase.
-- `backend/main.py` - FastAPI app: scraping, feeds, events, chat (Intelligence Copilot, also DeepSeek) endpoints.
-- `backend/events_ai.py` / `backend/event_discovery.py` - call DeepSeek directly (not via `llm_client`) for hashtag/keyword/username/feed discovery.
+- `backend/main.py` - FastAPI app: scraping, sources, events, chat (Intelligence Copilot, also DeepSeek) endpoints.
+- `backend/events_ai.py` / `backend/event_discovery.py` - call DeepSeek directly (not via `llm_client`) for hashtag/keyword/username/source discovery.
 - `backend/spider.py` - Spider Mode, a separate deep-crawl feature exposed via `GET /api/spider/stream`.
-- `backend/config.py` - single source of truth for feed list and credentials; loads `backend/.env` manually (not python-dotenv).
+- `backend/config.py` - single source of truth for source list and credentials; loads `backend/.env` manually (not python-dotenv).
 - `dashboard/` - React 19 + Vite dashboard, reads Supabase directly and calls the backend API.
 
 No automated test suite exists in this repo.
