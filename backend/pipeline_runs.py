@@ -6,7 +6,11 @@ import config
 import db
 
 
-RUN_SELECT = "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,created_at,updated_at"
+RUN_SELECT = "id,pipeline,event_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
+
+# Runs in these statuses are still in flight; anything else (success, failed,
+# cancelled) is terminal and must not block a new run for the same event.
+ACTIVE_STATUSES = ("queued", "running")
 
 
 def _normalize(row):
@@ -24,6 +28,8 @@ def _normalize(row):
         "error": row.get("error") or "",
         "started_at": row.get("started_at"),
         "finished_at": row.get("finished_at"),
+        "cancel_requested_at": row.get("cancel_requested_at"),
+        "cancelled_at": row.get("cancelled_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -34,11 +40,21 @@ def _fetch_by_id(run_id):
     return _normalize(row) if row else None
 
 
+def get_pipeline_run(run_id):
+    if not config.DATABASE_URL or not run_id:
+        return None
+    try:
+        return _fetch_by_id(run_id)
+    except Exception:
+        return None
+
+
 def get_active_run_for_event(event_id):
     """Return the in-flight run for this event, or None if it's free to start.
 
-    A run is "active" if it's queued/running and started recently enough to trust;
-    this keeps a crashed backend from permanently blocking future runs for the event.
+    A run is "active" if it's queued/running (cancelled/success/failed are all
+    terminal) and started recently enough to trust; this keeps a crashed backend
+    from permanently blocking future runs for the event.
     """
     if not config.DATABASE_URL or event_id is None:
         return None
@@ -49,12 +65,12 @@ def get_active_run_for_event(event_id):
             select {RUN_SELECT}
             from pipeline_runs
             where event_id = %s
-              and status in ('queued', 'running')
+              and status = any(%s)
               and created_at > now() - (%s || ' minutes')::interval
             order by created_at desc
             limit 1
             """,
-            (int(event_id), config.SCHEDULER_STALE_RUN_MINUTES),
+            (int(event_id), list(ACTIVE_STATUSES), config.SCHEDULER_STALE_RUN_MINUTES),
         )
         return _normalize(row) if row else None
     except Exception:
@@ -139,6 +155,8 @@ def update_pipeline_run(run_id, **fields):
         "error",
         "started_at",
         "finished_at",
+        "cancel_requested_at",
+        "cancelled_at",
     }
     keys = [key for key in fields.keys() if key in allowed]
     if not keys:

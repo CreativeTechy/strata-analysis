@@ -104,7 +104,7 @@ export default function App() {
     return [...urls];
   }, [sources, workflowSelectedEvents]);
 
-  const isTerminalPipelineStatus = (status) => ['success', 'failed'].includes(String(status || '').toLowerCase());
+  const isTerminalPipelineStatus = (status) => ['success', 'failed', 'cancelled'].includes(String(status || '').toLowerCase());
   const activePipelineRun = useMemo(
     () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
     [pipelineRuns]
@@ -377,6 +377,22 @@ export default function App() {
     }
   };
 
+  const stopPipelineRun = async (runId) => {
+    if (!runId) return null;
+    try {
+      const res = await fetch(`/api/pipeline-runs/${runId}/stop`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(formatApiError(data, `Failed to stop pipeline run (${res.status})`));
+      stopPolling();
+      setIsScraping(false);
+      await loadPipelineRuns();
+      return data;
+    } catch (error) {
+      console.error('Failed to stop pipeline run:', error);
+      throw error;
+    }
+  };
+
   const dashboardHeaderButtonStyle = {
     textDecoration: 'none',
   };
@@ -592,6 +608,8 @@ export default function App() {
         selectedEvents={workflowSelectedEvents}
         selectedEventIds={workflowSelectedEventIds}
         onChangeSelectedEventIds={setWorkflowSelectedEventIds}
+        activeRun={activePipelineRun}
+        onStopRun={stopPipelineRun}
       />
     </div>
   );

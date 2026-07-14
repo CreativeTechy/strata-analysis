@@ -150,6 +150,20 @@ To remove the Postgres volume as well:
 docker compose down -v
 ```
 
+### Reset the database (fresh start)
+
+`schema.sql` only runs automatically against an empty Postgres volume, so if
+your local schema ever drifts from `schema.sql` (e.g. leftover tables from a
+rename), drop the volume and rebuild:
+
+```bash
+docker compose down -v
+docker compose up --build -d
+```
+
+This deletes all local data and recreates the database from the current
+`schema.sql` on next startup.
+
 ## Deployment Notes
 
 For a production-style deployment, the important pieces are:

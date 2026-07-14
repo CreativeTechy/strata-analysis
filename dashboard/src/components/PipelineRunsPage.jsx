@@ -16,10 +16,13 @@ function stageColor(status) {
   return '#9aa0aa';
 }
 
+const ACTIVE_STATUSES = ['queued', 'running'];
+
 export default function PipelineRunsPage() {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [stoppingId, setStoppingId] = useState(null);
 
   const loadRuns = async () => {
     setLoading(true);
@@ -40,6 +43,20 @@ export default function PipelineRunsPage() {
   useEffect(() => {
     loadRuns();
   }, []);
+
+  const stopRun = async (runId) => {
+    setStoppingId(runId);
+    try {
+      const res = await fetch(`/api/pipeline-runs/${runId}/stop`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Failed to stop run (${res.status})`);
+      await loadRuns();
+    } catch (err) {
+      setError(err?.message || 'Failed to stop pipeline run.');
+    } finally {
+      setStoppingId(null);
+    }
+  };
 
   return (
     <div style={{ minHeight: '100vh', padding: '32px 28px 40px' }}>
@@ -90,11 +107,23 @@ export default function PipelineRunsPage() {
                 transition={{ delay: i * 0.03 }}
                 style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <strong style={{ fontSize: '0.98rem' }}>{prettyStage(run.stage)}</strong>
-                  <span style={{ color: stageColor(run.status), fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 700 }}>
-                    {run.status}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ color: stageColor(run.status), fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 700 }}>
+                      {run.status}
+                    </span>
+                    {ACTIVE_STATUSES.includes(run.status) ? (
+                      <button
+                        className="btn-secondary"
+                        onClick={() => stopRun(run.id)}
+                        disabled={stoppingId === run.id}
+                        style={{ padding: '6px 10px', fontSize: '0.75rem' }}
+                      >
+                        {stoppingId === run.id ? 'Stopping...' : 'Stop'}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div style={{ fontSize: '0.88rem', color: 'var(--text-dark)' }}>
                   {run.message || 'No message'}
