@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, ShieldCheck, LogOut } from 'lucide-react';
+import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, ShieldCheck, Link2, LogOut } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
@@ -64,6 +64,11 @@ export default function Sidebar({
         {hasPermission('roles.view') && (
           <NavLink to="/admin/roles" className="btn-secondary" style={navStyle}>
             <ShieldCheck size={18} /> Roles
+          </NavLink>
+        )}
+        {hasPermission('projects.link_users') && (
+          <NavLink to="/admin/project-linkage" className="btn-secondary" style={navStyle}>
+            <Link2 size={18} /> Project Access
           </NavLink>
         )}
       </nav>

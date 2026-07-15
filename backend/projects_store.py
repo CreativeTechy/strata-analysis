@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 import config
 import db
+import users_store
 from embeddings import build_project_embedding_text, get_embedding
 from psycopg.types.json import Jsonb
 
@@ -151,7 +152,7 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _normalize_project(row, source_ids=None):
+def _normalize_project(row, source_ids=None, user_ids=None):
     row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
@@ -187,6 +188,7 @@ def _normalize_project(row, source_ids=None):
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source_ids": _clean_ids(source_ids or []),
+        "user_ids": _clean_ids(user_ids or []),
     }
 
 
@@ -226,6 +228,32 @@ def _fetch_project_source_map():
         except Exception:
             continue
         mapping[project_id].append(source_id)
+    return mapping
+
+
+def _fetch_project_user_map():
+    rows = _fetch_rows("select project_id, user_id from project_users order by project_id asc, user_id asc")
+    mapping = defaultdict(list)
+    for row in rows:
+        try:
+            project_id = int(row.get("project_id"))
+            user_id = int(row.get("user_id"))
+        except Exception:
+            continue
+        mapping[project_id].append(user_id)
+    return mapping
+
+
+def _fetch_user_project_map():
+    rows = _fetch_rows("select project_id, user_id from project_users order by user_id asc, project_id asc")
+    mapping = defaultdict(list)
+    for row in rows:
+        try:
+            project_id = int(row.get("project_id"))
+            user_id = int(row.get("user_id"))
+        except Exception:
+            continue
+        mapping[user_id].append(project_id)
     return mapping
 
 
@@ -336,25 +364,42 @@ def _persist_project_embedding(project):
     return embedding
 
 
-def list_projects():
+def list_projects(visible_project_ids=None):
+    """`visible_project_ids=None` returns every project (admin/full_access
+    view); otherwise only the given ids are returned, e.g. to scope non-admin
+    users to the projects they're linked to via project_users."""
     if not config.DATABASE_URL:
         return []
 
     try:
+        where_sql = ""
+        params = ()
+        if visible_project_ids is not None:
+            ids = _clean_ids(visible_project_ids)
+            if not ids:
+                return []
+            where_sql = "where id = any(%s)"
+            params = (ids,)
         rows = db.fetch_all(
             f"""
             select {_project_select_sql()}
             from projects
+            {where_sql}
             order by created_at asc
-            """
+            """,
+            params,
         )
         source_map = _fetch_project_source_map()
-        return [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows]
+        user_map = _fetch_project_user_map()
+        return [
+            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
+            for row in rows
+        ]
     except Exception:
         return []
 
 
-def list_projects_page(limit=25, offset=0):
+def list_projects_page(limit=25, offset=0, visible_project_ids=None):
     if not config.DATABASE_URL:
         return {"projects": [], "total": 0, "limit": int(limit or 0), "offset": int(offset or 0)}
 
@@ -362,18 +407,39 @@ def list_projects_page(limit=25, offset=0):
     offset = max(0, int(offset or 0))
 
     try:
+        where_sql = ""
+        count_where_sql = ""
+        list_params = []
+        count_params = []
+        if visible_project_ids is not None:
+            ids = _clean_ids(visible_project_ids)
+            if not ids:
+                return {"projects": [], "total": 0, "limit": limit, "offset": offset}
+            where_sql = "where id = any(%s)"
+            count_where_sql = "where id = any(%s)"
+            list_params = [ids]
+            count_params = [ids]
+
         rows = db.fetch_all(
             f"""
             select {_project_select_sql()}
             from projects
+            {where_sql}
             order by created_at asc
             limit %s offset %s
             """,
-            (limit, offset),
+            (*list_params, limit, offset),
         )
-        total_row = db.fetch_one("select count(*)::int as total from projects")
+        total_row = db.fetch_one(
+            f"select count(*)::int as total from projects {count_where_sql}", tuple(count_params)
+        )
         source_map = _fetch_project_source_map()
-        projects = [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows if isinstance(row, dict)]
+        user_map = _fetch_project_user_map()
+        projects = [
+            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
+            for row in rows
+            if isinstance(row, dict)
+        ]
         total = int((total_row or {}).get("total") or len(projects))
         return {"projects": projects, "total": total, "limit": limit, "offset": offset}
     except Exception:
@@ -397,7 +463,8 @@ def get_project(project_id):
         if not rows:
             return None
         source_map = _fetch_project_source_map()
-        return _normalize_project(rows[0], source_map.get(rows[0].get("id"), []))
+        user_map = _fetch_project_user_map()
+        return _normalize_project(rows[0], source_map.get(rows[0].get("id"), []), user_map.get(rows[0].get("id"), []))
     except Exception:
         return None
 
@@ -546,7 +613,11 @@ def list_due_projects():
             """
         )
         source_map = _fetch_project_source_map()
-        return [_normalize_project(row, source_map.get(row.get("id"), [])) for row in rows]
+        user_map = _fetch_project_user_map()
+        return [
+            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
+            for row in rows
+        ]
     except Exception:
         return []
 
@@ -629,6 +700,25 @@ def _set_project_sources(project_id, source_ids):
         return []
 
 
+def _set_project_users(project_id, user_ids):
+    project_id = int(project_id)
+    user_ids = _clean_ids(user_ids)
+    try:
+        db.execute("delete from project_users where project_id = %s", (project_id,))
+        for user_id in user_ids:
+            db.execute(
+                """
+                insert into project_users (project_id, user_id)
+                values (%s, %s)
+                on conflict (project_id, user_id) do nothing
+                """,
+                (project_id, user_id),
+            )
+        return user_ids
+    except Exception:
+        return []
+
+
 def persist_project_embedding_for_id(project_id):
     if not config.DATABASE_URL:
         return {}
@@ -648,6 +738,9 @@ def create_project(project, *, embed=True):
         return None
 
     source_ids = _clean_ids(project.get("source_ids") or [])
+    # Every project is linked to the admin (full_access) user(s) by default,
+    # on top of whatever users were explicitly selected at creation time.
+    user_ids = _clean_ids(list(project.get("user_ids") or []) + users_store.list_full_access_user_ids())
     try:
         write_fields = _project_write_fields()
         if not write_fields:
@@ -675,6 +768,10 @@ def create_project(project, *, embed=True):
             created["source_ids"] = set_project_sources(created["id"], source_ids)
         else:
             created["source_ids"] = []
+        if user_ids:
+            created["user_ids"] = set_project_users(created["id"], user_ids)
+        else:
+            created["user_ids"] = []
         schedule_update = _apply_repeat_schedule(created["id"], None, payload)
         if schedule_update:
             created["next_run_at"] = schedule_update.get("next_run_at")
@@ -690,6 +787,7 @@ def update_project(project_id, project, *, embed=True):
     previous = get_project(project_id)
     payload = _project_payload(project)
     source_ids = project.get("source_ids") if isinstance(project, dict) else None
+    user_ids = project.get("user_ids") if isinstance(project, dict) else None
     try:
         write_fields = _project_write_fields()
         if not write_fields:
@@ -719,6 +817,14 @@ def update_project(project_id, project, *, embed=True):
             normalized["source_ids"] = _set_project_sources(project_id, source_ids)
         else:
             normalized["source_ids"] = list_project_source_ids(project_id)
+        if user_ids is not None:
+            # Keep admin (full_access) users linked even if they weren't in
+            # the submitted selection, so the "admin sees every project"
+            # invariant survives edits to the linkage.
+            merged_user_ids = _clean_ids(list(user_ids or []) + users_store.list_full_access_user_ids())
+            normalized["user_ids"] = _set_project_users(project_id, merged_user_ids)
+        else:
+            normalized["user_ids"] = list_project_user_ids(project_id)
         schedule_update = _apply_repeat_schedule(project_id, previous, payload)
         if schedule_update:
             normalized["next_run_at"] = schedule_update.get("next_run_at")
@@ -790,6 +896,68 @@ def set_project_sources(project_id, source_ids):
     if not config.DATABASE_URL:
         return []
     return _set_project_sources(project_id, source_ids)
+
+
+def set_project_users(project_id, user_ids):
+    if not config.DATABASE_URL:
+        return []
+    return _set_project_users(project_id, user_ids)
+
+
+def list_project_user_ids(project_id):
+    if not config.DATABASE_URL:
+        return []
+
+    try:
+        rows = _fetch_rows(
+            "select user_id from project_users where project_id = %s order by user_id asc",
+            (int(project_id),),
+        )
+        ids = []
+        seen = set()
+        for row in rows:
+            try:
+                user_id = int(row.get("user_id"))
+            except Exception:
+                continue
+            if user_id not in seen:
+                seen.add(user_id)
+                ids.append(user_id)
+        return ids
+    except Exception:
+        return []
+
+
+def project_ids_by_user_map():
+    """Bulk project_id lookup for every linked user, e.g. for the linkage UI roster."""
+    if not config.DATABASE_URL:
+        return {}
+    return dict(_fetch_user_project_map())
+
+
+def list_project_ids_for_user(user_id):
+    """Project ids a non-admin user is linked to, i.e. the projects visible to them."""
+    if not config.DATABASE_URL:
+        return []
+
+    try:
+        rows = _fetch_rows(
+            "select project_id from project_users where user_id = %s order by project_id asc",
+            (int(user_id),),
+        )
+        ids = []
+        seen = set()
+        for row in rows:
+            try:
+                project_id = int(row.get("project_id"))
+            except Exception:
+                continue
+            if project_id not in seen:
+                seen.add(project_id)
+                ids.append(project_id)
+        return ids
+    except Exception:
+        return []
 
 
 def set_source_projects(source_id, project_ids):

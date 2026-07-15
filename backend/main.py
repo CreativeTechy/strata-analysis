@@ -32,12 +32,15 @@ from projects_store import (
     create_project,
     delete_project,
     diagnose_project_setup,
+    list_project_ids_for_user,
     list_projects,
     list_projects_page,
     list_sources_for_project,
     persist_project_embedding_for_id,
+    project_ids_by_user_map,
     record_run_completion,
     set_project_sources,
+    set_project_users,
     update_project,
 )
 from sources_store import (
@@ -226,6 +229,19 @@ def me(user: dict = Depends(get_current_user)):
 # --- User management ------------------------------------------------------
 
 
+@app.get("/api/users/linkable")
+def get_linkable_users(user: dict = Depends(require_permission("projects.link_users"))):
+    """Roster used by the project<->user linkage UI - gated only by
+    projects.link_users so it works for admins who manage linkage without
+    also holding users.view."""
+    project_ids_by_user = project_ids_by_user_map()
+    users = [
+        {**candidate, "project_ids": project_ids_by_user.get(int(candidate["id"]), [])}
+        for candidate in users_store.list_users()
+    ]
+    return {"users": users}
+
+
 @app.get("/api/users")
 def get_users(user: dict = Depends(require_permission("users.view"))):
     return {"users": users_store.list_users()}
@@ -364,11 +380,29 @@ def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(
     return {**page, "source": source}
 
 
+def _visible_project_ids_or_none(user: dict):
+    """None means "no restriction" (admin/full_access); otherwise the list of
+    project ids this user is linked to via project_users."""
+    if permissions_store.user_is_full_access(user):
+        return None
+    return list_project_ids_for_user(user["id"])
+
+
+def _ensure_project_visible(project_id: int, user: dict) -> None:
+    """Defense-in-depth for project-scoped mutations: a non-admin acting on a
+    project they can't see gets a 404, same as if it didn't exist."""
+    if permissions_store.user_is_full_access(user):
+        return
+    if int(project_id) not in set(list_project_ids_for_user(user["id"])):
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+
 @app.get("/api/projects")
 def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("projects.view"))):
+    visible_ids = _visible_project_ids_or_none(user)
     if limit is None:
-        return {"projects": list_projects()}
-    return list_projects_page(limit=limit, offset=offset)
+        return {"projects": list_projects(visible_project_ids=visible_ids)}
+    return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
 
 
 def _default_discovery_result(project):
@@ -409,8 +443,22 @@ def discover_project(payload: dict, user: dict = Depends(require_permission("pro
     return {"discovery": discovery}
 
 
+def _strip_unauthorized_user_ids(payload: dict, user: dict) -> dict:
+    """Drop `user_ids` from a project payload unless the caller holds
+    projects.link_users, so link management stays gated to that permission
+    even though project create/update itself only needs projects.create/update."""
+    if not isinstance(payload, dict) or "user_ids" not in payload:
+        return payload or {}
+    if "projects.link_users" in permissions_store.user_permission_keys(user):
+        return payload
+    payload = dict(payload)
+    payload.pop("user_ids", None)
+    return payload
+
+
 @app.post("/api/projects")
 def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.create"))):
+    payload = _strip_unauthorized_user_ids(payload, user)
     try:
         project = create_project(payload or {}, embed=False)
     except ValueError as e:
@@ -433,6 +481,8 @@ def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = D
 
 @app.put("/api/projects/{project_id}")
 def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
+    payload = _strip_unauthorized_user_ids(payload, user)
     try:
         project = update_project(project_id, payload or {}, embed=False)
     except ValueError as e:
@@ -470,6 +520,7 @@ def suggest_project(payload: dict, user: dict = Depends(require_any_permission("
 
 @app.delete("/api/projects/{project_id}")
 def remove_project(project_id: int, user: dict = Depends(require_permission("projects.delete"))):
+    _ensure_project_visible(project_id, user)
     if not delete_project(project_id):
         detail = diagnose_project_setup()
         return {
@@ -612,9 +663,18 @@ def remove_source(source_id: int, user: dict = Depends(require_permission("sourc
 
 @app.post("/api/projects/{project_id}/sources")
 def replace_project_sources(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
     source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
     assigned = set_project_sources(project_id, source_ids or [])
     return {"project_id": project_id, "source_ids": assigned}
+
+
+@app.post("/api/projects/{project_id}/users")
+def replace_project_users(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.link_users"))):
+    _ensure_project_visible(project_id, user)
+    user_ids = payload.get("user_ids") if isinstance(payload, dict) else []
+    assigned = set_project_users(project_id, user_ids or [])
+    return {"project_id": project_id, "user_ids": assigned}
 
 
 @app.post("/scrape")

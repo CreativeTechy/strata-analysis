@@ -14,6 +14,9 @@ import UsersPage from './components/UsersPage';
 import RolesListPage from './components/RolesListPage';
 import RoleCreatePage from './components/RoleCreatePage';
 import RoleEditPage from './components/RoleEditPage';
+import ProjectLinkageListPage from './components/ProjectLinkageListPage';
+import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
+import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
 import { RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -81,6 +84,8 @@ export default function App() {
   const [sourcesProvenance, setSourcesProvenance] = useState('supabase');
   const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
   const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
@@ -218,6 +223,20 @@ export default function App() {
     }
   };
 
+  const refreshUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const res = await fetch('/api/users/linkable');
+      if (!res.ok) return;
+      const data = await res.json();
+      setUsers(Array.isArray(data?.users) ? data.users : []);
+    } catch {
+      setUsers([]);
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
   const formatApiError = (data, fallback) => {
     const parts = [data?.error, data?.detail].filter(Boolean);
     if (parts.length > 0) {
@@ -299,6 +318,7 @@ export default function App() {
   useEffect(() => {
     refreshSources();
     refreshProjects();
+    refreshUsers();
     return () => stopPolling();
   }, []);
 
@@ -528,6 +548,23 @@ export default function App() {
     }
   };
 
+  const setProjectUsers = async (projectId, userIds) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_ids: userIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update linked users (${res.status})`));
+      await refreshProjects();
+      return data;
+    } catch (error) {
+      console.error('Failed to update linked users:', error);
+      throw error;
+    }
+  };
+
   const deleteProject = async (projectId) => {
     try {
       const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
@@ -718,6 +755,7 @@ export default function App() {
               <ProjectsPage
                 projects={projects}
                 sources={sources}
+                users={users}
                 onCreateProject={createProject}
                 onUpdateProject={updateProject}
                 isLoadingProjects={isLoadingProjects}
@@ -733,6 +771,7 @@ export default function App() {
                 <ProjectsPage
                   projects={projects}
                   sources={sources}
+                  users={users}
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
                   onCreateSource={createSource}
@@ -750,6 +789,7 @@ export default function App() {
                 <ProjectsPage
                   projects={projects}
                   sources={sources}
+                  users={users}
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
                   isLoadingProjects={isLoadingProjects}
@@ -765,6 +805,7 @@ export default function App() {
               <ProjectDetailPage
                 projects={projects}
                 sources={sources}
+                users={users}
                 onDeleteProject={deleteProject}
               />
             </RouteShell>
@@ -815,6 +856,41 @@ export default function App() {
             <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
               <RequirePermission permissions={['roles.manage']}>
                 <RoleEditPage />
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/project-linkage"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['projects.link_users']}>
+                <ProjectLinkageListPage
+                  projects={projects}
+                  users={users}
+                  isLoadingProjects={isLoadingProjects}
+                  isLoadingUsers={isLoadingUsers}
+                />
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/project-linkage/:projectId"
+          element={(
+            <RouteShell backTo="/admin/project-linkage" backLabel="Back to Project Linkage" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['projects.link_users']}>
+                <ProjectLinkageDetailPage projects={projects} users={users} />
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/project-linkage/:projectId/edit"
+          element={(
+            <RouteShell backTo="/admin/project-linkage" backLabel="Back to Project Linkage" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['projects.link_users']}>
+                <ProjectLinkageEditPage projects={projects} users={users} onSetProjectUsers={setProjectUsers} />
               </RequirePermission>
             </RouteShell>
           )}

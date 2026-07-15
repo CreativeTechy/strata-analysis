@@ -142,3 +142,14 @@ def user_permission_keys(user: dict) -> set:
     if role.get("full_access"):
         return {p["key"] for p in list_permissions()}
     return get_role_permission_keys(role_id)
+
+
+def user_is_full_access(user: dict) -> bool:
+    """A full_access role (seeded only on 'admin') is this app's definition of
+    an "admin user" - they implicitly hold every permission and must be able
+    to see every project regardless of explicit project_users links."""
+    role_id = user.get("role_id") if user else None
+    if not role_id:
+        return False
+    role = get_role_by_id(role_id)
+    return bool(role and role.get("full_access"))

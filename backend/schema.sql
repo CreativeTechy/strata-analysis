@@ -175,6 +175,7 @@ insert into public.permissions (key, description) values
     ('projects.create', 'Create projects'),
     ('projects.update', 'Edit projects'),
     ('projects.delete', 'Delete projects'),
+    ('projects.link_users', 'Manage which dashboard users are linked to a project'),
     ('sources.view', 'View sources'),
     ('sources.create', 'Create sources'),
     ('sources.update', 'Edit sources'),
@@ -267,6 +268,24 @@ create table if not exists public.project_sources (
     primary key (project_id, source_id)
 );
 
+create table if not exists public.project_users (
+    project_id   bigint not null references public.projects(id) on delete cascade,
+    user_id      bigint not null references public.users(id) on delete cascade,
+    created_at   timestamptz default now(),
+    primary key (project_id, user_id)
+);
+
+-- Every project must be linked to every full_access ("admin") user by
+-- default. New projects get this from projects_store.create_project(); this
+-- backfills any project/admin created before that link existed.
+insert into public.project_users (project_id, user_id)
+select p.id, u.id
+from public.projects p
+cross join public.users u
+join public.roles r on r.id = u.role_id
+where r.full_access = true
+on conflict (project_id, user_id) do nothing;
+
 create table if not exists public.article_projects (
     article_id   bigint not null references public.articles(id) on delete cascade,
     project_id   bigint not null references public.projects(id) on delete cascade,
@@ -292,6 +311,9 @@ create index if not exists articles_analyzed_at_idx on public.articles (analyzed
 
 create index if not exists project_sources_project_idx on public.project_sources (project_id);
 create index if not exists project_sources_source_idx on public.project_sources (source_id);
+
+create index if not exists project_users_project_idx on public.project_users (project_id);
+create index if not exists project_users_user_idx on public.project_users (user_id);
 
 create index if not exists article_projects_project_idx on public.article_projects (project_id);
 create index if not exists article_projects_article_idx on public.article_projects (article_id);
@@ -321,6 +343,7 @@ alter table public.pipeline_runs enable row level security;
 alter table public.articles enable row level security;
 alter table public.project_sources enable row level security;
 alter table public.article_projects enable row level security;
+alter table public.project_users enable row level security;
 
 drop policy if exists "Public read access" on public.projects;
 create policy "Public read access"
@@ -360,6 +383,13 @@ using (true);
 drop policy if exists "Public read access" on public.article_projects;
 create policy "Public read access"
 on public.article_projects
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.project_users;
+create policy "Public read access"
+on public.project_users
 for select
 to anon, authenticated
 using (true);

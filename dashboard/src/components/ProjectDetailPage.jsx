@@ -48,12 +48,14 @@ function prettyLabel(value) {
 export default function ProjectDetailPage({
   projects = [],
   sources = [],
+  users = [],
   onDeleteProject,
 }) {
   const navigate = useNavigate();
   const params = useParams();
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.update') || hasPermission('projects.delete');
+  const canLinkUsers = hasPermission('projects.link_users');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
   const [articleStats, setArticleStats] = useState(null);
@@ -91,6 +93,12 @@ export default function ProjectDetailPage({
     const sourceIds = new Set((project.source_ids || []).map((value) => Number(value)));
     return sources.filter((source) => sourceIds.has(Number(source.id)));
   }, [project, sources]);
+
+  const linkedUsers = useMemo(() => {
+    if (!project) return [];
+    const userIds = new Set((project.user_ids || []).map((value) => Number(value)));
+    return users.filter((user) => userIds.has(Number(user.id)));
+  }, [project, users]);
 
   const totalSourcesPages = Math.max(1, Math.ceil(assignedSources.length / SOURCES_PAGE_SIZE));
   const safeSourcesPage = Math.min(sourcesPage, totalSourcesPages);
@@ -382,6 +390,18 @@ export default function ProjectDetailPage({
                 <span>{assignedSources.length} linked source{assignedSources.length === 1 ? '' : 's'}</span>
                 <span>{hashtagList.length} hashtag{hashtagList.length === 1 ? '' : 's'}</span>
               </div>
+              {canLinkUsers && (
+                <div className="admin-item-meta">
+                  <span>{linkedUsers.length} linked user{linkedUsers.length === 1 ? '' : 's'}</span>
+                </div>
+              )}
+              {canLinkUsers && linkedUsers.length > 0 && (
+                <div className="admin-item-chips">
+                  {linkedUsers.map((user) => (
+                    <span key={user.id} className="admin-tag muted">{user.username}</span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </motion.div>

@@ -81,6 +81,26 @@ def list_users():
     return [_normalize(row) for row in rows]
 
 
+def list_full_access_user_ids() -> list[int]:
+    """Ids of every user whose role is full_access (this app's "admin"), so
+    project creation can auto-link them regardless of the role's name."""
+    rows = db.fetch_all(
+        """
+        select u.id
+        from users u
+        join roles r on r.id = u.role_id
+        where r.full_access = true
+        """
+    )
+    ids = []
+    for row in rows or []:
+        try:
+            ids.append(int(row.get("id")))
+        except Exception:
+            continue
+    return ids
+
+
 def create_user(username: str, email: str, password: str, role_id: int):
     password_hash = hash_password(password)
     row = db.fetch_one(
