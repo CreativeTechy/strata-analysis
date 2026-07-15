@@ -70,6 +70,7 @@ def _project_context(project):
         ("name", "Name"),
         ("status", "Status"),
         ("location", "Location"),
+        ("location_type", "Location type"),
         ("target_audience", "Target audience"),
         ("description", "Description"),
     ):

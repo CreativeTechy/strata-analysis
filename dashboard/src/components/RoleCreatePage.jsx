@@ -54,7 +54,7 @@ export default function RoleCreatePage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 900, margin: '0 auto', paddingTop: 80 }}>
+    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
       <header style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: '1.8rem' }}>
           <ShieldPlus size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />

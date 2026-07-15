@@ -824,6 +824,7 @@ def get_article_stats(search=None, category=None, project_id=None):
     positive = _count_articles(search=search, sentiment="positive", category=category, project_id=project_id)
     negative = _count_articles(search=search, sentiment="negative", category=category, project_id=project_id)
     neutral = _count_articles(search=search, sentiment="neutral", category=category, project_id=project_id)
+    mixed = _count_articles(search=search, sentiment="mixed", category=category, project_id=project_id)
     search_text = _normalize_text(search)
     if search_text:
         rows, _ = _search_results(search=search_text, category=category, project_id=project_id)
@@ -835,6 +836,7 @@ def get_article_stats(search=None, category=None, project_id=None):
         "positive": positive,
         "negative": negative,
         "neutral": neutral,
+        "mixed": mixed,
         "article_category_breakdown": _article_category_counts(rows),
         "insights": _topic_summary(rows),
     }

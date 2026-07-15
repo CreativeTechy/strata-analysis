@@ -89,6 +89,7 @@ def build_project_embedding_text(project: dict) -> str:
         project.get("name"),
         project.get("description"),
         project.get("location"),
+        project.get("location_type"),
         project.get("target_audience"),
     ):
         text = _clean_text(value)

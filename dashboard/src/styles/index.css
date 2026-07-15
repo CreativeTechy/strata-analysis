@@ -75,7 +75,7 @@ body::after {
   border: 1px solid var(--border-soft);
   border-radius: 20px;
   box-shadow: var(--glass-shadow);
-  padding: 24px;
+  padding: 32px;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
@@ -392,6 +392,7 @@ h1, h2, h3 {
 .badge.positive { background: rgba(46, 213, 115, 0.15); color: #2ed573; }
 .badge.negative { background: rgba(255, 71, 87, 0.15); color: #ff4757; }
 .badge.neutral { background: rgba(164, 176, 190, 0.15); color: #747d8c; }
+.badge.mixed { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
 .badge.category { background: rgba(46, 134, 222, 0.1); color: var(--secondary-color); }
 .badge.score { background: rgba(255, 159, 67, 0.1); color: #e67e22; }
 
@@ -768,7 +769,7 @@ h1, h2, h3 {
 }
 
 .admin-item-card {
-  padding: 16px;
+  padding: 20px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.58);
   border: 1px solid rgba(0, 0, 0, 0.05);
@@ -918,6 +919,62 @@ h1, h2, h3 {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.source-type-tabs {
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.source-type-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-light);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.source-type-tab:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--text-dark);
+}
+
+.source-type-tab.active {
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--secondary-color);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.source-type-tab:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.source-type-tab-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.source-type-tab.active .source-type-tab-count {
+  background: rgba(46, 134, 222, 0.14);
 }
 
 .assign-sources-toolbar {

@@ -2,7 +2,7 @@ import { Activity, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, L
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { motion } from 'framer-motion';
 
-const COLORS = ['#16a34a', '#e11d48', '#64748b'];
+const COLORS = ['#16a34a', '#e11d48', '#64748b', '#f59e0b'];
 
 const prettyLabel = (value) => String(value || '')
   .replace(/_/g, ' ')
@@ -26,6 +26,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
   const positive = Number(stats.positive) || 0;
   const negative = Number(stats.negative) || 0;
   const neutral = Number(stats.neutral) || 0;
+  const mixed = Number(stats.mixed) || 0;
   const insights = stats.insights || {};
   const categoryBreakdown = Array.isArray(insights.article_category_breakdown) ? insights.article_category_breakdown : [];
   const positiveFeedback = Array.isArray(insights.positive_feedback) ? insights.positive_feedback : [];
@@ -41,16 +42,19 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
   const positivePct = total ? Math.round((positive / total) * 100) : 0;
   const negativePct = total ? Math.round((negative / total) * 100) : 0;
   const neutralPct = total ? Math.round((neutral / total) * 100) : 0;
+  const mixedPct = total ? Math.round((mixed / total) * 100) : 0;
   const dominant = total ? [
     { label: 'Positive', value: positive, pct: positivePct, color: '#16a34a' },
     { label: 'Negative', value: negative, pct: negativePct, color: '#e11d48' },
     { label: 'Neutral', value: neutral, pct: neutralPct, color: '#64748b' },
+    { label: 'Mixed', value: mixed, pct: mixedPct, color: '#f59e0b' },
   ].sort((a, b) => b.value - a.value)[0] : { label: 'Positive', pct: 0 };
 
   const data = [
     { name: 'Positive', value: positive },
     { name: 'Negative', value: negative },
     { name: 'Neutral', value: neutral },
+    { name: 'Mixed', value: mixed },
   ];
 
   const categoryData = categoryBreakdown.map((item) => ({
@@ -150,7 +154,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
                   </div>
                 </div>
                 <div className="sentiment-chip-row">
-                  {Array.from({ length: 3 }).map((_, index) => (
+                  {Array.from({ length: 4 }).map((_, index) => (
                     <div key={index} className="sentiment-chip">
                       <div className="skeleton-line skeleton-shimmer" style={{ width: 72, height: 14 }} />
                     </div>
@@ -303,6 +307,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
                     { label: 'Positive', pct: positivePct, value: positive, color: '#16a34a' },
                     { label: 'Negative', pct: negativePct, value: negative, color: '#e11d48' },
                     { label: 'Neutral', pct: neutralPct, value: neutral, color: '#64748b' },
+                    { label: 'Mixed', pct: mixedPct, value: mixed, color: '#f59e0b' },
                   ].map((item) => (
                     <div key={item.label} className="sentiment-legend-row">
                       <div className="sentiment-legend-label">

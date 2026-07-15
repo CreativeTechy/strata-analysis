@@ -47,6 +47,7 @@ export default function SourceView({ articles, isScraping }) {
           <option value="Positive">Positive</option>
           <option value="Negative">Negative</option>
           <option value="Neutral">Neutral</option>
+          <option value="Mixed">Mixed</option>
         </select>
 
         <select

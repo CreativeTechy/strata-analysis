@@ -49,11 +49,27 @@ function sourceTypeLabel(sourceType) {
   return match ? match.label : (sourceType || 'RSS');
 }
 
+const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
+
+function sourceMatchesQuery(source, needle) {
+  if (!needle) return true;
+  return [
+    source.name,
+    source.url,
+    source.category,
+    source.source_type,
+    source.enabled ? 'enabled' : 'disabled',
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(needle));
+}
+
 const emptyDraft = {
   name: '',
   status: 'draft',
   description: '',
   location: '',
+  location_type: '',
   target_audience: '',
   usernames: [],
   hashtags: [],
@@ -65,6 +81,8 @@ const emptyDraft = {
   repeat_enabled: false,
   repeat_interval_value: 30,
   repeat_interval_unit: 'minutes',
+  first_run_at: '',
+  repeat_weekdays: [],
 };
 
 const STATUS_OPTIONS = ['draft', 'active', 'archived'];
@@ -72,6 +90,20 @@ const REPEAT_UNIT_OPTIONS = [
   { value: 'minutes', label: 'Minutes' },
   { value: 'hours', label: 'Hours' },
   { value: 'days', label: 'Days' },
+];
+const LOCATION_TYPE_OPTIONS = [
+  { value: 'on_site', label: 'On site' },
+  { value: 'remote', label: 'Remote' },
+  { value: 'hybrid', label: 'Hybrid' },
+];
+const WEEKDAY_OPTIONS = [
+  { value: 'monday', label: 'Monday' },
+  { value: 'tuesday', label: 'Tuesday' },
+  { value: 'wednesday', label: 'Wednesday' },
+  { value: 'thursday', label: 'Thursday' },
+  { value: 'friday', label: 'Friday' },
+  { value: 'saturday', label: 'Saturday' },
+  { value: 'sunday', label: 'Sunday' },
 ];
 const PAGE_SIZE = 10;
 
@@ -86,7 +118,13 @@ function repeatSummary(draft) {
   const value = Number(draft.repeat_interval_value);
   if (!draft.repeat_enabled || !Number.isFinite(value) || value <= 0) return '';
   const unitLabel = value === 1 ? draft.repeat_interval_unit.replace(/s$/, '') : draft.repeat_interval_unit;
-  return `Runs again every ${value} ${unitLabel} after completion`;
+  const weekdays = Array.isArray(draft.repeat_weekdays) ? draft.repeat_weekdays : [];
+  const weekdaySuffix = weekdays.length
+    ? ` on ${weekdays
+        .map((day) => WEEKDAY_OPTIONS.find((option) => option.value === day)?.label || day)
+        .join(', ')}`
+    : '';
+  return `Runs again every ${value} ${unitLabel} after completion${weekdaySuffix}`;
 }
 
 function toDateInput(value) {
@@ -94,6 +132,26 @@ function toDateInput(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return '';
   return parsed.toISOString().slice(0, 10);
+}
+
+function toDateTimeLocalInput(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  const year = parsed.getFullYear();
+  const month = pad(parsed.getMonth() + 1);
+  const day = pad(parsed.getDate());
+  const hours = pad(parsed.getHours());
+  const minutes = pad(parsed.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function fromDateTimeLocalInput(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
 }
 
 function sanitizeTermArray(values) {
@@ -116,6 +174,7 @@ function normalizeDraftForCompare(value) {
     status: String(value?.status || 'draft').trim().toLowerCase(),
     description: String(value?.description || '').trim(),
     location: String(value?.location || '').trim(),
+    location_type: String(value?.location_type || '').trim().toLowerCase(),
     target_audience: String(value?.target_audience || '').trim(),
     usernames: normalizeTermListForCompare(value?.usernames),
     hashtags: normalizeTermListForCompare(value?.hashtags),
@@ -131,6 +190,8 @@ function normalizeDraftForCompare(value) {
     repeat_enabled: Boolean(value?.repeat_enabled),
     repeat_interval_value: Number(value?.repeat_interval_value) || 0,
     repeat_interval_unit: String(value?.repeat_interval_unit || 'minutes').trim().toLowerCase(),
+    first_run_at: String(value?.first_run_at || ''),
+    repeat_weekdays: normalizeTermListForCompare(value?.repeat_weekdays),
   };
 }
 
@@ -232,6 +293,40 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
   );
 }
 
+function WeekdayPicker({ values, onChange, disabled }) {
+  const toggleDay = (day) => {
+    onChange(values.includes(day) ? values.filter((value) => value !== day) : [...values, day]);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>
+        Repeat on these days
+      </span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {WEEKDAY_OPTIONS.map((option) => {
+          const active = values.includes(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={`btn-secondary ${active ? 'active' : ''}`}
+              onClick={() => toggleDay(option.value)}
+              disabled={disabled}
+              style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+            >
+              {option.label.slice(0, 3)}
+            </button>
+          );
+        })}
+      </div>
+      <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
+        {values.length ? `Restricted to ${values.length} day${values.length === 1 ? '' : 's'} per week.` : 'Runs on any day the interval lands on.'}
+      </span>
+    </div>
+  );
+}
+
 function UserAssignField({ users, selectedIds, onToggle, query, onQueryChange, disabled }) {
   const visibleUsers = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -324,6 +419,10 @@ export default function ProjectsPage({
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
+  const STEP = useMemo(() => {
+    const keys = ['basics', ...(canLinkUsers ? ['users'] : []), 'discovery', 'schedule', 'sources'];
+    return Object.fromEntries(keys.map((key, index) => [key, index + 1]));
+  }, [canLinkUsers]);
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -341,6 +440,7 @@ export default function ProjectsPage({
   const [lastDiscovery, setLastDiscovery] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [sourceAssignQuery, setSourceAssignQuery] = useState('');
+  const [activeSourceTab, setActiveSourceTab] = useState('all');
   const [userAssignQuery, setUserAssignQuery] = useState('');
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -390,27 +490,29 @@ export default function ProjectsPage({
     };
   }, [sources]);
 
-  const visibleAssignableSources = useMemo(() => {
-    const needle = sourceAssignQuery.trim().toLowerCase();
-    if (!needle) return assignableSources;
-
-    return assignableSources.filter((source) => {
-      const searchable = [
-        source.name,
-        source.url,
-        source.category,
-        source.source_type,
-        source.enabled ? 'enabled' : 'disabled',
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(needle));
-      return searchable;
+  // Both the create wizard's Step 4 and the edit form's assign-sources block scope
+  // selection/search to whichever source-type tab is active.
+  const sourceTabCounts = useMemo(() => {
+    const counts = { all: assignableSources.length };
+    SOURCE_TYPE_OPTIONS.forEach((option) => {
+      counts[option.value] = assignableSources.filter((source) => (source.source_type || 'rss') === option.value).length;
     });
-  }, [assignableSources, sourceAssignQuery]);
+    return counts;
+  }, [assignableSources]);
+
+  const sourcesForActiveTab = useMemo(() => {
+    if (activeSourceTab === 'all') return assignableSources;
+    return assignableSources.filter((source) => (source.source_type || 'rss') === activeSourceTab);
+  }, [assignableSources, activeSourceTab]);
+
+  const visibleSourcesForActiveTab = useMemo(() => {
+    const needle = sourceAssignQuery.trim().toLowerCase();
+    return sourcesForActiveTab.filter((source) => sourceMatchesQuery(source, needle));
+  }, [sourcesForActiveTab, sourceAssignQuery]);
 
   const selectedSourceCount = draft.source_ids.length;
-  const visibleSelectedCount = visibleAssignableSources.filter((source) => draft.source_ids.includes(Number(source.id))).length;
-  const allVisibleSelected = visibleAssignableSources.length > 0 && visibleSelectedCount === visibleAssignableSources.length;
+  const visibleSelectedCountForActiveTab = visibleSourcesForActiveTab.filter((source) => draft.source_ids.includes(Number(source.id))).length;
+  const allVisibleSelectedForActiveTab = visibleSourcesForActiveTab.length > 0 && visibleSelectedCountForActiveTab === visibleSourcesForActiveTab.length;
 
   const stats = useMemo(() => {
     const total = projects.length;
@@ -478,6 +580,7 @@ export default function ProjectsPage({
       setShowNewSourceForm(false);
       setNewSourceDraft(emptyNewSourceDraft);
       setNewSourceError('');
+      setActiveSourceTab('all');
       return;
     }
 
@@ -488,11 +591,12 @@ export default function ProjectsPage({
         return;
       }
 
-      setDraft({
+      const draftFromProject = {
         name: currentProject.name || '',
         status: currentProject.status || 'draft',
         description: currentProject.description || '',
         location: currentProject.location || '',
+        location_type: currentProject.location_type || '',
         target_audience: currentProject.target_audience || '',
         usernames: sanitizeTermArray(currentProject.usernames),
         hashtags: sanitizeTermArray(currentProject.hashtags),
@@ -504,27 +608,25 @@ export default function ProjectsPage({
         repeat_enabled: Boolean(currentProject.repeat_enabled),
         repeat_interval_value: currentProject.repeat_interval_value || 30,
         repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
-      });
+        first_run_at: toDateTimeLocalInput(currentProject.first_run_at),
+        repeat_weekdays: sanitizeTermArray(currentProject.repeat_weekdays),
+      };
+      setDraft(draftFromProject);
       setSourceAssignQuery('');
       setUserAssignQuery('');
+      setActiveSourceTab('all');
       setLastDiscovery(null);
-      setInitialDraft({
-        name: currentProject.name || '',
-        status: currentProject.status || 'draft',
-        description: currentProject.description || '',
-        location: currentProject.location || '',
-        target_audience: currentProject.target_audience || '',
-        usernames: sanitizeTermArray(currentProject.usernames),
-        hashtags: sanitizeTermArray(currentProject.hashtags),
-        keywords: sanitizeTermArray(currentProject.keywords),
-        start_date: toDateInput(currentProject.start_date),
-        end_date: toDateInput(currentProject.end_date),
-        source_ids: Array.isArray(currentProject.source_ids) ? currentProject.source_ids.map(Number) : [],
-        user_ids: Array.isArray(currentProject.user_ids) ? currentProject.user_ids.map(Number) : [],
-        repeat_enabled: Boolean(currentProject.repeat_enabled),
-        repeat_interval_value: currentProject.repeat_interval_value || 30,
-        repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
-      });
+      setInitialDraft(draftFromProject);
+      setWizardStep(1);
+      // An existing project already has its metadata filled in manually; default to the
+      // "manual" fill mode so all wizard steps unlock immediately instead of forcing the
+      // user to pick a fill method before they can see their own data.
+      setFillMode('manual');
+      setIsGeneratingMetadata(false);
+      setMetadataError('');
+      setShowNewSourceForm(false);
+      setNewSourceDraft(emptyNewSourceDraft);
+      setNewSourceError('');
       return;
     }
 
@@ -540,12 +642,14 @@ export default function ProjectsPage({
     setShowNewSourceForm(false);
     setNewSourceDraft(emptyNewSourceDraft);
     setNewSourceError('');
+    setActiveSourceTab('all');
   }, [currentProject, isEditRoute, isFormRoute]);
 
   const discardChanges = () => {
     setShowCancelModal(false);
     setSourceAssignQuery('');
     setUserAssignQuery('');
+    setActiveSourceTab('all');
     setDraft(emptyDraft);
     setLastDiscovery(null);
     navigate('/projects');
@@ -571,15 +675,16 @@ export default function ProjectsPage({
     }));
   };
 
-  const selectAllVisibleSources = () => {
+  // Scoped to the sources visible in the active source-type tab.
+  const selectAllSourcesForActiveTab = () => {
     setDraft((prev) => ({
       ...prev,
-      source_ids: Array.from(new Set([...prev.source_ids, ...visibleAssignableSources.map((source) => Number(source.id))])),
+      source_ids: Array.from(new Set([...prev.source_ids, ...visibleSourcesForActiveTab.map((source) => Number(source.id))])),
     }));
   };
 
-  const clearVisibleSources = () => {
-    const visibleIds = new Set(visibleAssignableSources.map((source) => Number(source.id)));
+  const clearSourcesForActiveTab = () => {
+    const visibleIds = new Set(visibleSourcesForActiveTab.map((source) => Number(source.id)));
     setDraft((prev) => ({
       ...prev,
       source_ids: prev.source_ids.filter((id) => !visibleIds.has(Number(id))),
@@ -665,7 +770,7 @@ export default function ProjectsPage({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) {
-        throw new Error(data?.detail || data?.error || `Failed to generate project metadata (${res.status})`);
+        throw new Error(data?.detail || data?.error || `Failed to generate discovery details (${res.status})`);
       }
 
       const suggestions = data?.suggestions || {};
@@ -741,12 +846,12 @@ export default function ProjectsPage({
   const chooseManualFill = () => {
     setMetadataError('');
     setFillMode('manual');
-    setWizardStep(2);
+    setWizardStep(STEP.discovery);
   };
 
   const chooseAiFill = async () => {
     setFillMode('ai');
-    setWizardStep(2);
+    setWizardStep(STEP.discovery);
     try {
       await generateMetadataFromAi();
     } catch {
@@ -762,6 +867,7 @@ export default function ProjectsPage({
       status: draft.status,
       description: draft.description.trim(),
       location: draft.location.trim(),
+      location_type: draft.location_type || null,
       target_audience: draft.target_audience.trim(),
       usernames: sanitizeTermArray(draft.usernames),
       hashtags: sanitizeTermArray(draft.hashtags),
@@ -773,6 +879,8 @@ export default function ProjectsPage({
       repeat_enabled: Boolean(draft.repeat_enabled),
       repeat_interval_value: draft.repeat_interval_value,
       repeat_interval_unit: draft.repeat_interval_unit,
+      first_run_at: fromDateTimeLocalInput(draft.first_run_at),
+      repeat_weekdays: sanitizeTermArray(draft.repeat_weekdays),
     };
 
     if (!payload.name) return;
@@ -807,10 +915,21 @@ export default function ProjectsPage({
     discardChanges();
   };
 
-  if (isCreateRoute) {
-    const step1Complete = draft.name.trim() && draft.description.trim();
+  if (isFormRoute) {
+    const heading = isEditRoute ? 'Edit Project' : 'Create Project';
+    const step1Complete = Boolean(draft.name.trim() && draft.description.trim());
     const step2Complete = fillMode === 'manual' || fillMode === 'ai';
     const canContinueFromStep2 = step2Complete && !isGeneratingMetadata;
+    const step3Complete = !draft.repeat_enabled || Boolean(Number(draft.repeat_interval_value) > 0 && draft.repeat_interval_unit);
+    const totalSteps = Object.keys(STEP).length;
+    const stepMeta = {
+      basics: { label: 'Project basics', detail: 'Name, location, and dates', complete: step1Complete },
+      users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
+      discovery: { label: 'Discovery details', detail: 'Manual or AI fill', complete: step2Complete },
+      schedule: { label: 'Schedule', detail: 'Status and automatic runs', complete: step3Complete },
+      sources: { label: 'Sources', detail: isEditRoute ? 'Assign sources and save' : 'Assign sources and create', complete: true },
+    };
+    const stepOrder = Object.keys(STEP).sort((a, b) => STEP[a] - STEP[b]);
 
     return (
       <div className="admin-page-shell">
@@ -819,15 +938,17 @@ export default function ProjectsPage({
             <div className="admin-page-kicker">
               <CalendarDays size={14} /> Project planner
             </div>
-            <h1 className="admin-page-title">Create Project</h1>
+            <h1 className="admin-page-title">{heading}</h1>
             <p className="admin-page-subtitle">
-              Build the project in three steps. Start with the basics, choose how to fill metadata, then review sources and create the workspace.
+              {isEditRoute
+                ? `Update the project in ${totalSteps} steps. Revisit any step, then save your changes.`
+                : `Build the project in ${totalSteps} steps, then create the workspace.`}
             </p>
           </div>
           <div className="admin-page-toolbar">
             <div className="admin-page-toolbar-meta">
               <span>Step</span>
-              <strong>{wizardStep} of 3</strong>
+              <strong>{wizardStep} of {totalSteps}</strong>
             </div>
             <div className="admin-page-toolbar-meta">
               <span>Mode</span>
@@ -836,22 +957,20 @@ export default function ProjectsPage({
           </div>
         </div>
 
-        <div className="glass-card" style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-            {[
-              { label: 'Project basics', detail: 'Name and description' },
-              { label: 'Metadata', detail: 'Manual or AI fill' },
-              { label: 'Create', detail: 'Review and generate sources' },
-            ].map((item, index) => {
-              const step = index + 1;
+        <div className="glass-card" style={{ maxWidth: 1320, margin: '0 auto', padding: 32, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${totalSteps}, minmax(0, 1fr))`, gap: 10 }}>
+            {stepOrder.map((key) => {
+              const item = stepMeta[key];
+              const step = STEP[key];
               const active = wizardStep === step;
               const done = wizardStep > step;
+              const allowed = stepOrder.filter((k) => STEP[k] < step).every((k) => stepMeta[k].complete);
               return (
                 <button
-                  key={item.label}
+                  key={key}
                   type="button"
                   onClick={() => {
-                    if (step === 1 || (step === 2 && step1Complete) || (step === 3 && step1Complete && step2Complete)) {
+                    if (allowed) {
                       setWizardStep(step);
                     }
                   }}
@@ -877,10 +996,10 @@ export default function ProjectsPage({
             })}
           </div>
 
-          {wizardStep === 1 && (
-          <div className="glass-card" style={{ padding: 18, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+          {wizardStep === STEP.basics && (
+          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 1. Project basics</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.basics}. Project basics</strong>
               <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
@@ -908,16 +1027,58 @@ export default function ProjectsPage({
                 />
               </label>
 
-              {canLinkUsers && (
-                <UserAssignField
-                  users={users}
-                  selectedIds={draft.user_ids}
-                  onToggle={toggleUserLink}
-                  query={userAssignQuery}
-                  onQueryChange={setUserAssignQuery}
-                  disabled={isSaving}
-                />
-              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location type</span>
+                  <select
+                    className="filter-select"
+                    value={draft.location_type}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, location_type: e.target.value }))}
+                    disabled={isSaving}
+                  >
+                    <option value="">Select...</option>
+                    {LOCATION_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
+                  <input
+                    type="text"
+                    className="source-input"
+                    placeholder="Location"
+                    value={draft.location}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
+                  <input
+                    type="date"
+                    className="source-input"
+                    value={draft.start_date}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
+                  <input
+                    type="date"
+                    className="source-input"
+                    value={draft.end_date}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
+                    disabled={isSaving}
+                  />
+                </label>
+              </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
@@ -926,7 +1087,7 @@ export default function ProjectsPage({
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => setWizardStep(2)}
+                  onClick={() => setWizardStep(STEP.users || STEP.discovery)}
                   disabled={!step1Complete || isSaving}
                   style={{ minWidth: 180 }}
                 >
@@ -937,18 +1098,52 @@ export default function ProjectsPage({
           </div>
           )}
 
-          {wizardStep === 2 && (
+          {canLinkUsers && wizardStep === STEP.users && (
+          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.users}. Linked users</strong>
+              <span className="panel-chip">{draft.user_ids.length} selected</span>
+            </div>
+            <div style={{ display: 'grid', gap: 14 }}>
+              <UserAssignField
+                users={users}
+                selectedIds={draft.user_ids}
+                onToggle={toggleUserLink}
+                query={userAssignQuery}
+                onQueryChange={setUserAssignQuery}
+                disabled={isSaving}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.basics)} disabled={isSaving} style={{ minWidth: 120 }}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setWizardStep(STEP.discovery)}
+                  disabled={isSaving}
+                  style={{ minWidth: 180 }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {wizardStep === STEP.discovery && (
           <div
             className="glass-card"
             style={{
-              padding: 18,
+              padding: 24,
               boxShadow: 'none',
               background: 'rgba(255,255,255,0.55)',
               opacity: step1Complete ? 1 : 0.7,
             }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 2. Metadata fill</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.discovery}. Discovery details</strong>
               <span className="panel-chip">{fillMode ? fillMode.toUpperCase() : 'Choose a method'}</span>
             </div>
 
@@ -1044,7 +1239,7 @@ export default function ProjectsPage({
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setWizardStep(1)}
+                      onClick={() => setWizardStep(STEP.users || STEP.basics)}
                       disabled={isSaving || isGeneratingMetadata}
                       style={{ minWidth: 120 }}
                     >
@@ -1055,7 +1250,7 @@ export default function ProjectsPage({
                       className="btn-primary"
                       onClick={async () => {
                         await syncTermSourcesToDraft();
-                        setWizardStep(3);
+                        setWizardStep(STEP.schedule);
                       }}
                       disabled={!canContinueFromStep2 || isSaving || isSyncingSources}
                       style={{ minWidth: 180 }}
@@ -1075,72 +1270,50 @@ export default function ProjectsPage({
           </div>
           )}
 
-          {wizardStep === 3 && (
+          {wizardStep === STEP.schedule && (
           <div
             className="glass-card"
             style={{
-              padding: 18,
+              padding: 24,
               boxShadow: 'none',
               background: 'rgba(255,255,255,0.55)',
               opacity: step1Complete && step2Complete ? 1 : 0.7,
             }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 3. Review and create</strong>
-              <span className="panel-chip">{selectedSourceCount} selected sources</span>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.schedule}. Schedule and automatic runs</strong>
+              <span className={`panel-chip ${draft.repeat_enabled ? 'success' : 'muted'}`}>
+                {draft.repeat_enabled ? 'Repeat on' : 'Repeat off'}
+              </span>
             </div>
 
             <div style={{ display: 'grid', gap: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
-                  <select
-                    className="filter-select"
-                    value={draft.status}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
-                    disabled={isSaving}
-                  >
-                    {STATUS_OPTIONS.map((status) => (
-                      <option key={status} value={status}>
-                        {status[0].toUpperCase() + status.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
-                  <input
-                    type="text"
-                    className="source-input"
-                    placeholder="Location"
-                    value={draft.location}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-                    disabled={isSaving}
-                  />
-                </label>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
-                  <input
-                    type="date"
-                    className="source-input"
-                    value={draft.start_date}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
-                    disabled={isSaving}
-                  />
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
-                  <input
-                    type="date"
-                    className="source-input"
-                    value={draft.end_date}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
-                    disabled={isSaving}
-                  />
-                </label>
-              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
+                <select
+                  className="filter-select"
+                  value={draft.status}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
+                  disabled={isSaving}
+                >
+                  {STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status[0].toUpperCase() + status.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start first run at</span>
+                <input
+                  type="datetime-local"
+                  className="source-input"
+                  value={draft.first_run_at}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, first_run_at: e.target.value }))}
+                  disabled={isSaving}
+                />
+              </label>
 
               <div className="admin-item-card" style={{ margin: 0 }}>
                 <div className="panel-header-tight" style={{ marginBottom: 10 }}>
@@ -1188,11 +1361,52 @@ export default function ProjectsPage({
                         </select>
                       </label>
                     </div>
+                    <div style={{ marginTop: 12 }}>
+                      <WeekdayPicker
+                        values={draft.repeat_weekdays}
+                        onChange={(next) => setDraft((prev) => ({ ...prev, repeat_weekdays: next }))}
+                        disabled={isSaving}
+                      />
+                    </div>
                     <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.84rem' }}>{repeatSummary(draft)}</div>
                   </>
                 )}
               </div>
 
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.discovery)} disabled={isSaving} style={{ minWidth: 120 }}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setWizardStep(STEP.sources)}
+                  disabled={!step3Complete || isSaving}
+                  style={{ minWidth: 180 }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {wizardStep === STEP.sources && (
+          <div
+            className="glass-card"
+            style={{
+              padding: 24,
+              boxShadow: 'none',
+              background: 'rgba(255,255,255,0.55)',
+              opacity: step1Complete && step2Complete && step3Complete ? 1 : 0.7,
+            }}
+          >
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.sources}. Assign sources and {isEditRoute ? 'save' : 'create'}</strong>
+              <span className="panel-chip">{selectedSourceCount} selected sources</span>
+            </div>
+
+            <div style={{ display: 'grid', gap: 14 }}>
               <div className="assign-sources-panel">
                 <div className="assign-sources-header">
                   <div>
@@ -1201,9 +1415,31 @@ export default function ProjectsPage({
                   </div>
                   <div className="assign-sources-summary">
                     <span className="panel-chip">{selectedSourceCount} selected</span>
-                    <span className="panel-chip muted">{visibleAssignableSources.length} shown</span>
+                    <span className="panel-chip muted">{visibleSourcesForActiveTab.length} shown</span>
                   </div>
                 </div>
+
+                {assignableSources.length > 0 && (
+                  <div className="source-type-tabs" role="tablist" aria-label="Filter sources by type">
+                    {SOURCE_ASSIGN_TABS.map((tab) => {
+                      const isActive = activeSourceTab === tab.value;
+                      return (
+                        <button
+                          key={tab.value}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          className={`source-type-tab ${isActive ? 'active' : ''}`}
+                          onClick={() => setActiveSourceTab(tab.value)}
+                          disabled={isSaving}
+                        >
+                          {tab.label}
+                          <span className="source-type-tab-count">{sourceTabCounts[tab.value] || 0}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 <div className="assign-sources-toolbar">
                   <label className="assign-sources-search">
@@ -1221,8 +1457,8 @@ export default function ProjectsPage({
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={selectAllVisibleSources}
-                      disabled={isSaving || visibleAssignableSources.length === 0 || allVisibleSelected}
+                      onClick={selectAllSourcesForActiveTab}
+                      disabled={isSaving || visibleSourcesForActiveTab.length === 0 || allVisibleSelectedForActiveTab}
                       style={{ padding: '8px 10px', fontSize: '0.78rem' }}
                     >
                       Select visible
@@ -1230,8 +1466,8 @@ export default function ProjectsPage({
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={clearVisibleSources}
-                      disabled={isSaving || visibleSelectedCount === 0}
+                      onClick={clearSourcesForActiveTab}
+                      disabled={isSaving || visibleSelectedCountForActiveTab === 0}
                       style={{ padding: '8px 10px', fontSize: '0.78rem' }}
                     >
                       Clear visible
@@ -1363,16 +1599,22 @@ export default function ProjectsPage({
                     <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
                       No sources yet. Add sources first, then attach them to projects.
                     </div>
-                  ) : visibleAssignableSources.length === 0 ? (
+                  ) : visibleSourcesForActiveTab.length === 0 ? (
                     <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
                       <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
                         <Search size={16} />
                       </div>
                       <strong>No matching sources</strong>
-                      <span>Try a different search term in this assignment box.</span>
+                      <span>
+                        {sourceAssignQuery.trim()
+                          ? 'Try a different search term in this assignment box.'
+                          : activeSourceTab === 'all'
+                          ? 'No sources are available to assign yet.'
+                          : `No ${sourceTypeLabel(activeSourceTab)} sources yet. Switch tabs or add one below.`}
+                      </span>
                     </div>
                   ) : (
-                    visibleAssignableSources.map((source) => {
+                    visibleSourcesForActiveTab.map((source) => {
                       const sourceId = Number(source.id);
                       const isSelected = draft.source_ids.includes(sourceId);
                       const projectCount = (sourceProjectsById.get(sourceId) || []).length;
@@ -1424,11 +1666,62 @@ export default function ProjectsPage({
               )}
 
               <div className="admin-form-hint">
-                Use AI to prefill sources from the final X accounts, hashtags, and keywords, then create the project row.
+                {isEditRoute
+                  ? 'Selected sources stay reusable across projects. Prefilling looks at the current X accounts, hashtags, and keywords.'
+                  : 'Use AI to prefill sources from the final X accounts, hashtags, and keywords, then create the project row.'}
               </div>
 
+              {lastDiscovery && (
+                <div
+                  style={{
+                    padding: 14,
+                    borderRadius: 16,
+                    background: 'rgba(255,255,255,0.72)',
+                    border: '1px solid rgba(15, 23, 42, 0.08)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '0.92rem', color: 'var(--text-dark)' }}>Discovery results</strong>
+                    <span className="panel-chip">
+                      {(lastDiscovery.resolved_urls || []).length} source{(lastDiscovery.resolved_urls || []).length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  {(lastDiscovery.resolved_urls || []).length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(lastDiscovery.resolved_urls || []).map((url) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            fontSize: '0.84rem',
+                            color: 'var(--text-dark)',
+                            textDecoration: 'none',
+                            padding: '10px 12px',
+                            borderRadius: 12,
+                            background: 'rgba(15, 23, 42, 0.04)',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {url}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                      No valid URLs were resolved from the X accounts, hashtags, and keywords for this save.
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button className="btn-secondary" type="button" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ flexShrink: 0 }}>
+                <button className="btn-secondary" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving} style={{ flexShrink: 0 }}>
                   Back
                 </button>
                 <button
@@ -1448,7 +1741,7 @@ export default function ProjectsPage({
                     </>
                   )}
                 </button>
-                <button className="btn-primary" onClick={submit} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || !step1Complete}>
+                <button className="btn-primary" onClick={submit} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || !step1Complete || !step3Complete}>
                   {isSaving ? (
                     <>
                       <RefreshCw size={18} className="spin" />
@@ -1456,7 +1749,7 @@ export default function ProjectsPage({
                     </>
                   ) : (
                     <>
-                      <Plus size={18} /> Create Project
+                      <Plus size={18} /> {isEditRoute ? 'Update Project' : 'Create Project'}
                     </>
                   )}
                 </button>
@@ -1482,536 +1775,6 @@ export default function ProjectsPage({
     );
   }
 
-  if (isFormRoute) {
-    const heading = isEditRoute ? 'Edit Project' : 'Create Project';
-    return (
-      <div className="admin-page-shell">
-        <div className="admin-page-header">
-          <div>
-            <div className="admin-page-kicker">
-              <CalendarDays size={14} /> Project planner
-            </div>
-            <h1 className="admin-page-title">{heading}</h1>
-            <p className="admin-page-subtitle">
-              {isEditRoute
-                ? 'Update the project envelope, then keep the linked sources and discovery terms in sync.'
-                : 'Create a new project scope, attach sources, and let discovery suggest more from X accounts, hashtags, and keywords.'}
-            </p>
-          </div>
-          <div className="admin-page-toolbar">
-            <div className="admin-page-toolbar-meta">
-              <span>Mode</span>
-              <strong>{isEditRoute ? 'Editing' : 'Creating'}</strong>
-            </div>
-            <div className="admin-page-toolbar-meta">
-              <span>Sources</span>
-              <strong>{selectedSourceCount.toLocaleString()}</strong>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-card admin-form-panel" style={{ maxWidth: 980, margin: '0 auto' }}>
-          <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>{heading}</strong>
-            <span className="panel-chip">{isEditRoute ? 'Updating existing scope' : 'Create a fresh scope'}</span>
-          </div>
-
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Project name</span>
-            <input
-              type="text"
-              className="source-input"
-              placeholder="Project name"
-              value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-              disabled={isSaving}
-            />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
-            <textarea
-              className="source-input"
-              placeholder="Project description"
-              rows={3}
-              value={draft.description}
-              onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
-              style={{ resize: 'vertical', minHeight: 92 }}
-              disabled={isSaving}
-            />
-          </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
-              <input
-                type="text"
-                className="source-input"
-                placeholder="Location"
-                value={draft.location}
-                onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-                disabled={isSaving}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Target audience</span>
-              <input
-                type="text"
-                className="source-input"
-                placeholder="Target audience"
-                value={draft.target_audience}
-                onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
-                disabled={isSaving}
-              />
-            </label>
-          </div>
-
-          {canLinkUsers && (
-            <UserAssignField
-              users={users}
-              selectedIds={draft.user_ids}
-              onToggle={toggleUserLink}
-              query={userAssignQuery}
-              onQueryChange={setUserAssignQuery}
-              disabled={isSaving}
-            />
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-            <TermChipsField
-              label="X Accounts"
-              placeholder="Add an X account, without @"
-              values={draft.usernames}
-              onChange={(next) => setDraft((prev) => ({ ...prev, usernames: next }))}
-              options={globalTermOptions.username}
-              disabled={isSaving}
-            />
-            <TermChipsField
-              label="Hashtags"
-              placeholder="Add a hashtag, without #"
-              values={draft.hashtags}
-              onChange={(next) => setDraft((prev) => ({ ...prev, hashtags: next }))}
-              options={globalTermOptions.hashtag}
-              disabled={isSaving}
-            />
-            <TermChipsField
-              label="Keywords"
-              placeholder="Add a keyword or phrase"
-              values={draft.keywords}
-              onChange={(next) => setDraft((prev) => ({ ...prev, keywords: next }))}
-              options={globalTermOptions.keyword}
-              disabled={isSaving}
-            />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Status</span>
-              <select
-                className="filter-select"
-                value={draft.status}
-                onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value }))}
-                disabled={isSaving}
-              >
-                {STATUS_OPTIONS.map((status) => (
-                  <option key={status} value={status}>
-                    {status[0].toUpperCase() + status.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
-              <input
-                type="date"
-                className="source-input"
-                value={draft.start_date}
-                onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
-                disabled={isSaving}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
-              <input
-                type="date"
-                className="source-input"
-                value={draft.end_date}
-                onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
-                disabled={isSaving}
-              />
-            </label>
-          </div>
-
-          <div className="admin-item-card" style={{ margin: 0 }}>
-            <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}>Run automatically</strong>
-              <span className={`panel-chip ${draft.repeat_enabled ? 'success' : 'muted'}`}>
-                {draft.repeat_enabled ? 'Repeat on' : 'Repeat off'}
-              </span>
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: draft.repeat_enabled ? 12 : 0 }}>
-              <input
-                type="checkbox"
-                checked={draft.repeat_enabled}
-                onChange={(e) => setDraft((prev) => ({ ...prev, repeat_enabled: e.target.checked }))}
-                disabled={isSaving}
-              />
-              <span style={{ fontSize: '0.86rem' }}>Automatically rerun this project's workflow after each completion</span>
-            </label>
-            {draft.repeat_enabled && (
-              <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Repeat every</span>
-                    <input
-                      type="number"
-                      min="1"
-                      className="source-input"
-                      value={draft.repeat_interval_value}
-                      onChange={(e) => setDraft((prev) => ({ ...prev, repeat_interval_value: e.target.value }))}
-                      disabled={isSaving}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gap: 6 }}>
-                    <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Unit</span>
-                    <select
-                      className="filter-select"
-                      value={draft.repeat_interval_unit}
-                      onChange={(e) => setDraft((prev) => ({ ...prev, repeat_interval_unit: e.target.value }))}
-                      disabled={isSaving}
-                    >
-                      {REPEAT_UNIT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.84rem' }}>{repeatSummary(draft)}</div>
-              </>
-            )}
-          </div>
-
-          <div className="assign-sources-panel">
-            <div className="assign-sources-header">
-              <div>
-                <div className="assign-sources-kicker">Assign sources</div>
-                <strong className="assign-sources-title">Choose the sources that should power this project</strong>
-              </div>
-              <div className="assign-sources-summary">
-                <span className="panel-chip">{selectedSourceCount} selected</span>
-                <span className="panel-chip muted">{visibleAssignableSources.length} shown</span>
-              </div>
-            </div>
-
-            <div className="assign-sources-toolbar">
-              <label className="assign-sources-search">
-                <Search size={14} />
-                <input
-                  type="text"
-                  value={sourceAssignQuery}
-                  onChange={(e) => setSourceAssignQuery(e.target.value)}
-                  placeholder="Filter sources by name, URL, or category"
-                  disabled={isSaving}
-                />
-              </label>
-
-              <div className="assign-sources-actions">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={selectAllVisibleSources}
-                  disabled={isSaving || visibleAssignableSources.length === 0 || allVisibleSelected}
-                  style={{ padding: '8px 10px', fontSize: '0.78rem' }}
-                >
-                  Select visible
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={clearVisibleSources}
-                  disabled={isSaving || visibleSelectedCount === 0}
-                  style={{ padding: '8px 10px', fontSize: '0.78rem' }}
-                >
-                  Clear visible
-                </button>
-                <button
-                  type="button"
-                  className={`btn-secondary ${showNewSourceForm ? 'active' : ''}`}
-                  onClick={() => {
-                    setNewSourceError('');
-                    setShowNewSourceForm((prev) => !prev);
-                  }}
-                  disabled={isSaving}
-                  style={{ padding: '8px 10px', fontSize: '0.78rem' }}
-                >
-                  <Rss size={14} /> {showNewSourceForm ? 'Close' : 'New source'}
-                </button>
-              </div>
-            </div>
-
-            {showNewSourceForm && (
-              <div
-                style={{
-                  display: 'grid',
-                  gap: 10,
-                  padding: 14,
-                  marginBottom: 10,
-                  borderRadius: 14,
-                  border: '1px solid rgba(15, 23, 42, 0.08)',
-                  background: 'rgba(255,255,255,0.7)',
-                }}
-              >
-                <strong style={{ fontSize: '0.86rem' }}>Create a new source</strong>
-                {!TERM_SOURCE_TYPES.has(newSourceDraft.source_type) && (
-                  <input
-                    type="text"
-                    className="source-input"
-                    placeholder="Source URL"
-                    value={newSourceDraft.url}
-                    onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, url: e.target.value }))}
-                    disabled={isCreatingSource}
-                  />
-                )}
-                <input
-                  type="text"
-                  className="source-input"
-                  placeholder={TERM_SOURCE_PLACEHOLDERS[newSourceDraft.source_type] || 'Display name'}
-                  value={newSourceDraft.name}
-                  onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, name: e.target.value }))}
-                  disabled={isCreatingSource}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <select
-                    className="filter-select"
-                    value={newSourceDraft.source_type}
-                    onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, source_type: e.target.value }))}
-                    disabled={isCreatingSource}
-                  >
-                    {SOURCE_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    className="source-input"
-                    placeholder="Category"
-                    value={newSourceDraft.category}
-                    onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, category: e.target.value }))}
-                    disabled={isCreatingSource}
-                  />
-                </div>
-                {newSourceError && (
-                  <div
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: 12,
-                      background: 'rgba(255, 71, 87, 0.08)',
-                      border: '1px solid rgba(255, 71, 87, 0.16)',
-                      color: '#b42318',
-                      fontSize: '0.82rem',
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {newSourceError}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={createSourceInline}
-                    disabled={
-                      isCreatingSource ||
-                      (TERM_SOURCE_TYPES.has(newSourceDraft.source_type)
-                        ? !newSourceDraft.name.trim()
-                        : !newSourceDraft.url.trim())
-                    }
-                    style={{ minWidth: 160 }}
-                  >
-                    {isCreatingSource ? (
-                      <>
-                        <RefreshCw size={16} className="spin" /> Creating...
-                      </>
-                    ) : (
-                      <>
-                        <Plus size={16} /> Create source
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => {
-                      setShowNewSourceForm(false);
-                      setNewSourceDraft(emptyNewSourceDraft);
-                      setNewSourceError('');
-                    }}
-                    disabled={isCreatingSource}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="assign-sources-list">
-              {assignableSources.length === 0 ? (
-                <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  No sources yet. Add sources first, then attach them to projects.
-                </div>
-              ) : visibleAssignableSources.length === 0 ? (
-                <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
-                  <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
-                    <Search size={16} />
-                  </div>
-                  <strong>No matching sources</strong>
-                  <span>Try a different search term in this assignment box.</span>
-                </div>
-              ) : (
-                visibleAssignableSources.map((source) => {
-                  const sourceId = Number(source.id);
-                  const isSelected = draft.source_ids.includes(sourceId);
-                  const projectCount = (sourceProjectsById.get(sourceId) || []).length;
-                  return (
-                    <label key={source.id} className={`assign-source-item ${isSelected ? 'selected' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSource(source.id)}
-                        disabled={isSaving}
-                      />
-                      <div className="assign-source-copy">
-                        <div className="assign-source-topline">
-                          <strong className="assign-source-name">{source.name || source.url}</strong>
-                          <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
-                            {source.enabled ? 'Enabled' : 'Disabled'}
-                          </span>
-                        </div>
-                        <div className="assign-source-url">{source.url}</div>
-                        <div className="assign-source-meta">
-                          <span>{source.source_type || 'rss'}</span>
-                          {source.category ? <span>{source.category}</span> : null}
-                          <span>
-                            {projectCount} project{projectCount === 1 ? '' : 's'}
-                          </span>
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div className="admin-form-hint">
-            Selected sources stay reusable across projects. This page only controls the project envelope.
-            {isSaving && (draft.usernames.length || draft.hashtags.length || draft.keywords.length) ? ' Finding sources from your X accounts, hashtags, and keywords...' : ''}
-          </div>
-
-          {lastDiscovery && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 14,
-                borderRadius: 16,
-                background: 'rgba(255,255,255,0.72)',
-                border: '1px solid rgba(15, 23, 42, 0.08)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: '0.92rem', color: 'var(--text-dark)' }}>Discovery results</strong>
-                <span className="panel-chip">
-                  {(lastDiscovery.resolved_urls || []).length} source{(lastDiscovery.resolved_urls || []).length === 1 ? '' : 's'}
-                </span>
-              </div>
-
-              {(lastDiscovery.resolved_urls || []).length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {(lastDiscovery.resolved_urls || []).map((url) => (
-                    <a
-                      key={url}
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        fontSize: '0.84rem',
-                        color: 'var(--text-dark)',
-                        textDecoration: 'none',
-                        padding: '10px 12px',
-                        borderRadius: 12,
-                        background: 'rgba(15, 23, 42, 0.04)',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {url}
-                    </a>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                  No valid URLs were resolved from the X accounts, hashtags, and keywords for this save.
-                </div>
-              )}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-            <button className="btn-secondary" type="button" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ flexShrink: 0 }}>
-              Back
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => discoverSourcesFromDraft()}
-              disabled={!draft.name.trim() || isSaving || isDiscoveringSources}
-              style={{ flex: 1, minWidth: 220 }}
-            >
-              {isDiscoveringSources ? (
-                <>
-                  <RefreshCw size={18} className="spin" /> Prefilling sources...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} /> Prefill sources with AI
-                </>
-              )}
-            </button>
-            <button className="btn-primary" onClick={() => submit()} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || isDiscoveringSources}>
-              {isSaving ? (
-                <>
-                  <RefreshCw size={18} className="spin" /> Saving...
-                </>
-              ) : (
-                <>
-                  <Plus size={18} /> {isEditRoute ? 'Update Project' : 'Create Project'}
-                </>
-              )}
-            </button>
-            <button className="btn-secondary" type="button" onClick={handleCancel} style={{ flexShrink: 0 }}>
-              <X size={18} /> Cancel
-            </button>
-          </div>
-        </div>
-
-        <ConfirmModal
-          open={showCancelModal}
-          title="Discard changes?"
-          message="You have unsaved changes on this project. If you cancel now, all edits on this page will be lost."
-          confirmLabel="Discard changes"
-          cancelLabel="Keep editing"
-          onClose={() => setShowCancelModal(false)}
-          onConfirm={discardChanges}
-        />
-
-      </div>
-    );
-  }
 
   return (
     <div className="admin-page-shell">

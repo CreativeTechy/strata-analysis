@@ -100,7 +100,7 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 900, margin: '0 auto', paddingTop: 80 }}>
+    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
       <header style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: '1.8rem' }}><UsersIcon size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />Users</h2>
         <p className="subtitle">Create and manage dashboard accounts.</p>
@@ -112,7 +112,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      <form onSubmit={createUser} className="glass-card" style={{ padding: 20, marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <form onSubmit={createUser} className="glass-card" style={{ padding: 28, marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={{ fontSize: '0.8rem' }}>Username</span>
           <input className="filter-select" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} required />

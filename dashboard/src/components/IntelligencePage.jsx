@@ -92,7 +92,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
 
   const sites = [...new Set(articles.map((a) => a.source).filter(Boolean))];
   const categories = [...new Set(articles.map((a) => a.category).filter(Boolean))];
-  const sentiments = ['positive', 'negative', 'neutral'];
+  const sentiments = ['positive', 'negative', 'neutral', 'mixed'];
 
   const toggleFilter = (setFn, currentList, value) => {
     if (currentList.includes(value)) {

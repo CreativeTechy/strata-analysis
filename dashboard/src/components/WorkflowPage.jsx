@@ -179,6 +179,7 @@ export default function WorkflowPage({
     const total = articles.length;
     const positive = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'positive').length;
     const negative = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'negative').length;
+    const mixed = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'mixed').length;
     const neutral = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'neutral' || !a.sentiment).length;
     const sources = new Set(articles.map((a) => a.source).filter(Boolean)).size;
     const avg = total
@@ -195,7 +196,7 @@ export default function WorkflowPage({
       .slice(0, 4)
       .map(([source, count]) => ({ source, count }));
 
-    return { total, positive, negative, neutral, sources, avg, topSources };
+    return { total, positive, negative, neutral, mixed, sources, avg, topSources };
   }, [articles]);
 
   const latestArticles = useMemo(
@@ -662,6 +663,10 @@ export default function WorkflowPage({
                       <span className="summary-value" style={{ color: '#9aa0aa' }}>{stats.neutral} Articles</span>
                     </div>
                     <div className="summary-stat">
+                      <span className="summary-label">Mixed Sentiment</span>
+                      <span className="summary-value" style={{ color: '#f59e0b' }}>{stats.mixed} Articles</span>
+                    </div>
+                    <div className="summary-stat">
                       <span className="summary-label">Unique Sources</span>
                       <span className="summary-value" style={{ color: 'var(--secondary-color)' }}>{stats.sources} Found</span>
                     </div>
@@ -805,6 +810,10 @@ export default function WorkflowPage({
                 <div className="mini-list-row">
                   <span>Neutral</span>
                   <strong style={{ color: '#9aa0aa' }}>{stats.neutral.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
+                  <span>Mixed</span>
+                  <strong style={{ color: '#f59e0b' }}>{stats.mixed.toLocaleString()}</strong>
                 </div>
                 <div className="mini-list-row">
                   <span>Unique Sources</span>
