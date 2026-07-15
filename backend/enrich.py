@@ -19,7 +19,7 @@ from pipeline_runs import update_pipeline_run
 from store import save_articles
 
 MIN_TEXT_LENGTH = 200
-PROMPT_VERSION = "2026-06-30"
+PROMPT_VERSION = "2026-07-15"
 MODEL_NAME = config.DEEPSEEK_CHAT_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
@@ -30,6 +30,21 @@ VALID_CATEGORIES = {
     "ownership_experience",
     "buying_guide",
     "general_article",
+}
+VALID_TONES = {
+    "neutral",
+    "positive",
+    "enthusiastic",
+    "optimistic",
+    "critical",
+    "skeptical",
+    "negative",
+    "concerned",
+    "angry",
+    "sarcastic",
+    "humorous",
+    "formal",
+    "informal",
 }
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
@@ -44,6 +59,9 @@ DEFAULT_ENRICHMENT = {
     "topic": "",
     "article_category": "general_article",
     "overall_sentiment": "neutral",
+    "writer_tone": "neutral",
+    "article_tone": "neutral",
+    "overall_tone": "neutral",
     "summary": "",
     "positive_feedback": [],
     "negative_feedback": [],
@@ -268,6 +286,53 @@ def _normalize_sentiment(value):
     return sentiment if sentiment in VALID_SENTIMENTS else "neutral"
 
 
+def _normalize_tone(value):
+    tone = _as_text(value).lower()
+    return tone if tone in VALID_TONES else "neutral"
+
+
+def _compute_overall_tone(article_tone, writer_tone):
+    """Deterministic overall_tone for a single article. Never guessed by the AI."""
+    article_tone = _normalize_tone(article_tone)
+    writer_tone = _normalize_tone(writer_tone)
+    if article_tone == writer_tone:
+        return article_tone
+    if article_tone == "neutral" and writer_tone != "neutral":
+        return writer_tone
+    if writer_tone == "neutral" and article_tone != "neutral":
+        return article_tone
+    return "mixed"
+
+
+def _group_overall_tone(article_tone_counts, writer_tone_counts):
+    """Deterministic overall_tone for a collection of articles (project rollup).
+
+    Prefers the most frequent non-neutral article_tone; falls back to
+    writer_tone only as a tie-breaker/fallback; "mixed" on conflict.
+    """
+    non_neutral_article = [(tone, count) for tone, count in article_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_article:
+        top_count = max(count for _, count in non_neutral_article)
+        top_tones = {tone for tone, count in non_neutral_article if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        tie_break = [(tone, count) for tone, count in writer_tone_counts.items() if tone in top_tones and count]
+        if tie_break:
+            tie_break.sort(key=lambda item: -item[1])
+            return tie_break[0][0]
+        return "mixed"
+
+    non_neutral_writer = [(tone, count) for tone, count in writer_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_writer:
+        top_count = max(count for _, count in non_neutral_writer)
+        top_tones = {tone for tone, count in non_neutral_writer if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        return "mixed"
+
+    return "neutral"
+
+
 def _normalize_feedback_list(value):
     return _as_list(value)
 
@@ -368,6 +433,10 @@ def _validate_enrichment(payload):
     if sentiment == "neutral" and article_category in {"complaint"}:
         sentiment = "negative"
 
+    writer_tone = _normalize_tone(payload.get("writer_tone"))
+    article_tone = _normalize_tone(payload.get("article_tone"))
+    overall_tone = _compute_overall_tone(article_tone, writer_tone)
+
     organizations = _as_list(payload.get("organizations") or payload.get("brands"))
     entities = _as_list(payload.get("entities") or payload.get("car_models"))
     topics = _as_list(payload.get("topics"))
@@ -392,6 +461,9 @@ def _validate_enrichment(payload):
         "topic": _as_text(payload.get("topic")),
         "article_category": article_category,
         "overall_sentiment": sentiment,
+        "writer_tone": writer_tone,
+        "article_tone": article_tone,
+        "overall_tone": overall_tone,
         "summary": summary,
         "positive_feedback": positive_feedback,
         "negative_feedback": negative_feedback,
@@ -418,6 +490,9 @@ def _validate_enrichment(payload):
         "topic": insight_json["topic"],
         "article_category": article_category,
         "overall_sentiment": sentiment,
+        "writer_tone": writer_tone,
+        "article_tone": article_tone,
+        "overall_tone": overall_tone,
         "summary": summary,
         "positive_feedback": positive_feedback,
         "negative_feedback": negative_feedback,
@@ -505,8 +580,12 @@ def build_topic_insight(articles, topic_name=""):
         return {
             "topic": topic_name or "",
             "overall_sentiment": "neutral",
+            "overall_mood": "neutral",
+            "overall_tone": "neutral",
             "summary": "",
             "article_category_breakdown": [],
+            "writer_tone_breakdown": [],
+            "article_tone_breakdown": [],
             "positive_feedback": [],
             "negative_feedback": [],
             "nice_to_have_features": [],
@@ -524,6 +603,8 @@ def build_topic_insight(articles, topic_name=""):
 
     category_counts = Counter()
     sentiment_counts = Counter()
+    writer_tone_counts = Counter()
+    article_tone_counts = Counter()
     topic_counter = Counter()
 
     positive_feedback = []
@@ -547,6 +628,8 @@ def build_topic_insight(articles, topic_name=""):
         article_category = _normalize_category(article.get("article_category") or insight.get("article_category") or article.get("category"))
         category_counts[article_category] += 1
         sentiment_counts[_normalize_sentiment(article.get("sentiment") or insight.get("overall_sentiment"))] += 1
+        writer_tone_counts[_normalize_tone(article.get("writer_tone") or insight.get("writer_tone"))] += 1
+        article_tone_counts[_normalize_tone(article.get("article_tone") or insight.get("article_tone"))] += 1
         topic = _as_text(article.get("topic") or insight.get("topic"))
         if topic:
             topic_counter[topic] += 1
@@ -616,6 +699,9 @@ def build_topic_insight(articles, topic_name=""):
     else:
         overall_sentiment = "neutral"
 
+    overall_mood = article_tone_counts.most_common(1)[0][0] if article_tone_counts else "neutral"
+    overall_tone = _group_overall_tone(article_tone_counts, writer_tone_counts)
+
     summary_bits = []
     if positive_items:
         summary_bits.append(f"People like {positive_items[0]['text'].rstrip('.')}.")
@@ -631,10 +717,20 @@ def build_topic_insight(articles, topic_name=""):
         "topic": dominant_topic,
         "article_category": dominant_category,
         "overall_sentiment": overall_sentiment,
+        "overall_mood": overall_mood,
+        "overall_tone": overall_tone,
         "summary": summary,
         "article_category_breakdown": [
             {"category": category, "count": count}
             for category, count in category_counts.most_common()
+        ],
+        "writer_tone_breakdown": [
+            {"tone": tone, "count": count}
+            for tone, count in writer_tone_counts.most_common()
+        ],
+        "article_tone_breakdown": [
+            {"tone": tone, "count": count}
+            for tone, count in article_tone_counts.most_common()
         ],
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
@@ -802,6 +898,11 @@ def main():
                 "topic": article.get("topic", ""),
                 "article_category": article.get("article_category", article.get("category", "general_article")),
                 "overall_sentiment": article.get("overall_sentiment", article.get("sentiment", "neutral")),
+                "writer_tone": article.get("writer_tone", "neutral"),
+                "article_tone": article.get("article_tone", "neutral"),
+                "overall_tone": article.get("overall_tone") or _compute_overall_tone(
+                    article.get("article_tone"), article.get("writer_tone")
+                ),
                 "summary": article.get("summary", ""),
             }
 

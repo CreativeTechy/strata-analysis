@@ -8,11 +8,28 @@ Rules:
 - Keep items short, normalized, and easy to store.
 - Return ONLY valid JSON. No markdown, no explanation, no code fences.
 
+Language rules:
+- The article may be written in any language.
+- Analyze the article content in its ORIGINAL language.
+- Every field you return in the JSON structure below must be written in ENGLISH, regardless of the article's source language.
+- Do NOT translate or alter the article text itself anywhere outside this JSON (the article text you were given stays untouched).
+- Never leave a field in a non-English language.
+
+Tone rules:
+- "writer_tone" describes the voice/attitude of the person writing the article (e.g. neutral, positive, enthusiastic, optimistic, critical, skeptical, negative, concerned, angry, sarcastic, humorous, formal, informal).
+- "article_tone" describes the overall mood conveyed by the article's content itself, which can differ from the writer's voice.
+- Use exactly ONE short, concise English label per field from the list above (or an equally short, single-word/short-phrase English label if none of those fit).
+- Do not write a sentence or paragraph for these fields.
+- If the tone is unclear or not clearly supported by the article, use "neutral".
+- Do not invent a tone that is not supported by the article content.
+
 Return this exact JSON structure:
 {
   "topic": "",
   "article_category": "review | comparison | complaint | news | ownership_experience | buying_guide | general_article",
   "overall_sentiment": "positive | negative | mixed | neutral",
+  "writer_tone": "",
+  "article_tone": "",
   "summary": "",
   "positive_feedback": [],
   "negative_feedback": [],

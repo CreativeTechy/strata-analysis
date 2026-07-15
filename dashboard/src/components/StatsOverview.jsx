@@ -1,4 +1,4 @@
-import { Activity, TrendingUp, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3 } from 'lucide-react';
+import { Activity, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3, Smile, Mic } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { motion } from 'framer-motion';
 
@@ -32,9 +32,12 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
   const negativeFeedback = Array.isArray(insights.negative_feedback) ? insights.negative_feedback : [];
   const requests = Array.isArray(insights.nice_to_have_features) ? insights.nice_to_have_features : [];
   const frequentIdeas = Array.isArray(insights.frequent_ideas) ? insights.frequent_ideas : [];
+  const writerToneBreakdown = Array.isArray(insights.writer_tone_breakdown) ? insights.writer_tone_breakdown : [];
+  const articleToneBreakdown = Array.isArray(insights.article_tone_breakdown) ? insights.article_tone_breakdown : [];
   const summary = insights.summary || '';
   const dominantInsight = prettyLabel(insights.article_category || 'general_article');
-  const balance = positive - negative;
+  const overallMood = prettyLabel(insights.overall_mood || 'neutral');
+  const overallTone = prettyLabel(insights.overall_tone || 'neutral');
   const positivePct = total ? Math.round((positive / total) * 100) : 0;
   const negativePct = total ? Math.round((negative / total) * 100) : 0;
   const neutralPct = total ? Math.round((neutral / total) * 100) : 0;
@@ -60,7 +63,9 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
     ...positiveFeedback.map((item) => Number(item.count) || 0),
     ...negativeFeedback.map((item) => Number(item.count) || 0),
     ...requests.map((item) => Number(item.count) || 0),
-    ...frequentIdeas.map((item) => Number(item.frequency_estimate) || 0)
+    ...frequentIdeas.map((item) => Number(item.frequency_estimate) || 0),
+    ...writerToneBreakdown.map((item) => Number(item.count) || 0),
+    ...articleToneBreakdown.map((item) => Number(item.count) || 0)
   );
 
   const renderInsightList = (title, icon, items, color, tone = 'neutral') => (
@@ -71,7 +76,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
       </div>
       {items.length ? (
         items.slice(0, 4).map((item) => {
-          const text = item.text || item.idea || item.opinion || 'Unknown';
+          const text = item.text || item.idea || item.opinion || (item.tone ? prettyLabel(item.tone) : 'Unknown');
           const count = Number(item.count || item.frequency_estimate) || 1;
           const pct = Math.max(12, Math.round((count / maxInsightCount) * 100));
           const category = item.category ? prettyLabel(item.category) : '';
@@ -207,22 +212,31 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
           <Activity size={24} />
         </div>
         <div className="stat-info">
-          <h4>Curated Articles</h4>
+          <h4>Analyzed Articles</h4>
           <p>{total.toLocaleString()}</p>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
         </div>
       </motion.article>
 
       <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(22, 163, 74, 0.1), rgba(46, 134, 222, 0.1))', color: '#16a34a' }}>
-          <TrendingUp size={24} />
+        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(245, 158, 11, 0.1))', color: '#f97316' }}>
+          <Smile size={24} />
         </div>
         <div className="stat-info">
-          <h4>Sentiment Balance</h4>
-          <p>{balance > 0 ? '+' : ''}{balance.toLocaleString()}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
-            +{positive} / -{negative} / {neutral} neutral
-          </span>
+          <h4>Overall Mood</h4>
+          <p>{overallMood}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
+        </div>
+      </motion.article>
+
+      <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(46, 134, 222, 0.1), rgba(22, 163, 74, 0.1))', color: '#2e86de' }}>
+          <Mic size={24} />
+        </div>
+        <div className="stat-info">
+          <h4>Overall Tone</h4>
+          <p>{overallTone}</p>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
         </div>
       </motion.article>
 
@@ -230,7 +244,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
         className="glass-card stat-card sentiment-report"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
+        transition={{ delay: 0.4 }}
         style={{ minHeight: 560 }}
       >
         <div className="sentiment-report-layout">
@@ -344,12 +358,20 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
               <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.82rem' }}>
                 Dominant article category: <strong style={{ color: 'var(--secondary-color)' }}>{dominantInsight}</strong>
               </div>
+              <div style={{ marginTop: 6, color: 'var(--text-light)', fontSize: '0.82rem' }}>
+                Overall mood: <strong style={{ color: 'var(--secondary-color)' }}>{overallMood}</strong>
+              </div>
+              <div style={{ marginTop: 6, color: 'var(--text-light)', fontSize: '0.82rem' }}>
+                Overall tone: <strong style={{ color: 'var(--secondary-color)' }}>{overallTone}</strong>
+              </div>
             </article>
 
             {renderInsightList('Top praised features', <ThumbsUp size={14} color="#16a34a" />, positiveFeedback, '#16a34a', 'positive')}
             {renderInsightList('Top complaints', <ThumbsDown size={14} color="#e11d48" />, negativeFeedback, '#e11d48', 'negative')}
             {renderInsightList('Requested improvements', <MessageCircle size={14} color="#f59e0b" />, requests, '#f59e0b', 'requested')}
             {renderInsightList('Repeated ideas', <ListOrdered size={14} color="#64748b" />, frequentIdeas, '#64748b', 'neutral')}
+            {renderInsightList('Writer tone breakdown', <Mic size={14} color="#2e86de" />, writerToneBreakdown, '#2e86de', 'neutral')}
+            {renderInsightList('Article tone breakdown', <Smile size={14} color="#f97316" />, articleToneBreakdown, '#f97316', 'neutral')}
           </aside>
         </div>
       </motion.article>

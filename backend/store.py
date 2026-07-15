@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 ARTICLE_COLUMNS = (
     "url", "source", "source_url", "title", "author", "published", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
-    "article_category", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
+    "article_category", "writer_tone", "article_tone", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
 )
@@ -41,6 +41,8 @@ ARTICLE_MUTABLE_FIELDS = (
     "relevance_score",
     "category",
     "article_category",
+    "writer_tone",
+    "article_tone",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",

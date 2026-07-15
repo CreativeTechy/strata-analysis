@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
+import { computeOverallTone } from '../lib/tone.js';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
 const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
@@ -390,6 +391,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
                         </span>
                         <span className="badge category">
                           {prettyLabel(article.article_category || article.category || 'general_article')}
+                        </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
+                          Writer: {prettyLabel(article.writer_tone || 'neutral')}
+                        </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
+                          Article: {prettyLabel(article.article_tone || 'neutral')}
+                        </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
+                          Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
                         </span>
                         {article.relevance_score != null && (
                           <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
