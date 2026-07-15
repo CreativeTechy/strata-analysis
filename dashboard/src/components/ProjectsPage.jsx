@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
@@ -50,6 +50,20 @@ function sourceTypeLabel(sourceType) {
 }
 
 const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
+
+const DISCOVERY_STEPS = [
+  { key: 'suggesting', label: 'Generating AI suggestions' },
+  { key: 'prefilling', label: 'Prefilling sources' },
+  { key: 'syncing', label: 'Syncing sources' },
+  { key: 'success', label: 'Success' },
+];
+
+const DISCOVERY_PHASE_LABELS = {
+  suggesting: 'Generating AI suggestions...',
+  prefilling: 'Prefilling sources...',
+  syncing: 'Syncing sources...',
+  success: 'Sources ready',
+};
 
 function sourceMatchesQuery(source, needle) {
   if (!needle) return true;
@@ -411,6 +425,7 @@ export default function ProjectsPage({
   onCreateProject,
   onUpdateProject,
   onCreateSource,
+  onRefreshSources,
   isLoadingProjects,
 }) {
   const location = useLocation();
@@ -447,13 +462,22 @@ export default function ProjectsPage({
   const [wizardStep, setWizardStep] = useState(1);
   const [fillMode, setFillMode] = useState('');
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
-  const [isDiscoveringSources, setIsDiscoveringSources] = useState(false);
+  const [discoveryPhase, setDiscoveryPhase] = useState('idle');
+  const [showDiscoverySuccessModal, setShowDiscoverySuccessModal] = useState(false);
+  const discoveryPhaseTimersRef = useRef([]);
   const [metadataError, setMetadataError] = useState('');
   const [showNewSourceForm, setShowNewSourceForm] = useState(false);
   const [newSourceDraft, setNewSourceDraft] = useState(emptyNewSourceDraft);
   const [isCreatingSource, setIsCreatingSource] = useState(false);
   const [newSourceError, setNewSourceError] = useState('');
   const [isSyncingSources, setIsSyncingSources] = useState(false);
+
+  const clearDiscoveryPhaseTimers = () => {
+    discoveryPhaseTimersRef.current.forEach(clearTimeout);
+    discoveryPhaseTimersRef.current = [];
+  };
+
+  useEffect(() => () => clearDiscoveryPhaseTimers(), []);
 
   const sourceProjectsById = useMemo(() => {
     const map = new Map();
@@ -576,6 +600,9 @@ export default function ProjectsPage({
       setWizardStep(1);
       setFillMode('');
       setIsGeneratingMetadata(false);
+      clearDiscoveryPhaseTimers();
+      setDiscoveryPhase('idle');
+      setShowDiscoverySuccessModal(false);
       setMetadataError('');
       setShowNewSourceForm(false);
       setNewSourceDraft(emptyNewSourceDraft);
@@ -623,6 +650,9 @@ export default function ProjectsPage({
       // user to pick a fill method before they can see their own data.
       setFillMode('manual');
       setIsGeneratingMetadata(false);
+      clearDiscoveryPhaseTimers();
+      setDiscoveryPhase('idle');
+      setShowDiscoverySuccessModal(false);
       setMetadataError('');
       setShowNewSourceForm(false);
       setNewSourceDraft(emptyNewSourceDraft);
@@ -638,6 +668,9 @@ export default function ProjectsPage({
     setWizardStep(1);
     setFillMode('');
     setIsGeneratingMetadata(false);
+    clearDiscoveryPhaseTimers();
+    setDiscoveryPhase('idle');
+    setShowDiscoverySuccessModal(false);
     setMetadataError('');
     setShowNewSourceForm(false);
     setNewSourceDraft(emptyNewSourceDraft);
@@ -810,8 +843,15 @@ export default function ProjectsPage({
 
     if (!payload.name) return null;
 
-    setIsDiscoveringSources(true);
+    clearDiscoveryPhaseTimers();
+    setShowDiscoverySuccessModal(false);
+    setDiscoveryPhase('suggesting');
     setMetadataError('');
+    // The discovery endpoint runs AI suggestion + resolution + source creation as one
+    // request, so there's no real progress signal from the server; step the label to
+    // "prefilling" partway through so the wait doesn't look stuck on one phase.
+    discoveryPhaseTimersRef.current.push(setTimeout(() => setDiscoveryPhase('prefilling'), 1800));
+
     try {
       const res = await fetch('/api/projects/discover', {
         method: 'POST',
@@ -834,13 +874,25 @@ export default function ProjectsPage({
         }));
       }
       setLastDiscovery(discovery);
+
+      clearDiscoveryPhaseTimers();
+      setDiscoveryPhase('syncing');
+      await onRefreshSources?.();
+
+      setDiscoveryPhase('success');
+      setShowDiscoverySuccessModal(true);
       return discovery;
     } catch (error) {
+      clearDiscoveryPhaseTimers();
+      setDiscoveryPhase('idle');
       setMetadataError(error?.message || 'Failed to prefill sources.');
       return null;
-    } finally {
-      setIsDiscoveringSources(false);
     }
+  };
+
+  const closeDiscoverySuccessModal = () => {
+    setShowDiscoverySuccessModal(false);
+    setDiscoveryPhase('idle');
   };
 
   const chooseManualFill = () => {
@@ -922,6 +974,12 @@ export default function ProjectsPage({
     const canContinueFromStep2 = step2Complete && !isGeneratingMetadata;
     const step3Complete = !draft.repeat_enabled || Boolean(Number(draft.repeat_interval_value) > 0 && draft.repeat_interval_unit);
     const totalSteps = Object.keys(STEP).length;
+    const discoveredSources = Array.isArray(lastDiscovery?.sources) ? lastDiscovery.sources : [];
+    const discoveredResolvedUrls = Array.isArray(lastDiscovery?.resolved_urls) ? lastDiscovery.resolved_urls : [];
+    const discoveryPreviewLimit = 6;
+    const discoveryPreviewItems = discoveredSources.length
+      ? discoveredSources.slice(0, discoveryPreviewLimit).map((source) => ({ name: source.name || source.url, url: source.url }))
+      : discoveredResolvedUrls.slice(0, discoveryPreviewLimit).map((url) => ({ name: url, url }));
     const stepMeta = {
       basics: { label: 'Project basics', detail: 'Name, location, and dates', complete: step1Complete },
       users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
@@ -1720,6 +1778,27 @@ export default function ProjectsPage({
                 </div>
               )}
 
+              {discoveryPhase !== 'idle' && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {DISCOVERY_STEPS.map((step) => {
+                    const stepIndex = DISCOVERY_STEPS.findIndex((s) => s.key === step.key);
+                    const currentIndex = DISCOVERY_STEPS.findIndex((s) => s.key === discoveryPhase);
+                    const state = stepIndex < currentIndex ? 'done' : stepIndex === currentIndex ? 'active' : 'pending';
+                    return (
+                      <span
+                        key={step.key}
+                        className={`panel-chip ${state === 'done' ? 'success' : state === 'active' ? 'warning' : 'muted'}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
+                        {state === 'active' && <RefreshCw size={12} className="spin" />}
+                        {state === 'done' && <Check size={12} />}
+                        {step.label}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button className="btn-secondary" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving} style={{ flexShrink: 0 }}>
                   Back
@@ -1728,12 +1807,13 @@ export default function ProjectsPage({
                   type="button"
                   className="btn-secondary"
                   onClick={() => discoverSourcesFromDraft()}
-                  disabled={!step1Complete || !step2Complete || isSaving || isDiscoveringSources || isGeneratingMetadata}
+                  disabled={!step1Complete || !step2Complete || isSaving || discoveryPhase !== 'idle' || isGeneratingMetadata}
                   style={{ flex: 1, minWidth: 220 }}
                 >
-                  {isDiscoveringSources ? (
+                  {discoveryPhase !== 'idle' ? (
                     <>
-                      <RefreshCw size={18} className="spin" /> Prefilling sources...
+                      {discoveryPhase === 'success' ? <Check size={18} /> : <RefreshCw size={18} className="spin" />}
+                      {' '}{DISCOVERY_PHASE_LABELS[discoveryPhase]}
                     </>
                   ) : (
                     <>
@@ -1771,6 +1851,56 @@ export default function ProjectsPage({
           onClose={() => setShowCancelModal(false)}
           onConfirm={discardChanges}
         />
+
+        <ConfirmModal
+          open={showDiscoverySuccessModal}
+          title="Sources prefilled with AI"
+          message="AI discovery finished successfully and the sources list has been refreshed."
+          confirmLabel="Done"
+          hideCancel
+          onClose={closeDiscoverySuccessModal}
+        >
+          <div style={{ display: 'grid', gap: 10, marginBottom: 18 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <span className="panel-chip success">
+                {discoveredSources.length} source{discoveredSources.length === 1 ? '' : 's'} collected
+              </span>
+              <span className="panel-chip">
+                {discoveredResolvedUrls.length} URL{discoveredResolvedUrls.length === 1 ? '' : 's'} resolved
+              </span>
+            </div>
+
+            {discoveryPreviewItems.length > 0 ? (
+              <div style={{ display: 'grid', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+                {discoveryPreviewItems.map((item) => (
+                  <div
+                    key={item.url}
+                    style={{
+                      fontSize: '0.82rem',
+                      padding: '8px 10px',
+                      borderRadius: 10,
+                      background: 'rgba(15, 23, 42, 0.04)',
+                    }}
+                  >
+                    <strong style={{ display: 'block' }}>{item.name}</strong>
+                    {item.url && item.url !== item.name && (
+                      <div style={{ color: 'var(--text-light)', wordBreak: 'break-word' }}>{item.url}</div>
+                    )}
+                  </div>
+                ))}
+                {discoveredSources.length > discoveryPreviewItems.length && (
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
+                    +{discoveredSources.length - discoveryPreviewItems.length} more
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                No new sources were collected from the X accounts, hashtags, and keywords for this project.
+              </div>
+            )}
+          </div>
+        </ConfirmModal>
       </div>
     );
   }
