@@ -25,7 +25,7 @@ import users_store
 from auth import clear_auth_cookies, get_current_user, require_role, set_auth_cookies
 from project_discovery import discover_project_links
 from projects_ai import suggest_project_metadata
-from articles_store import export_articles, get_article_stats, list_articles
+from articles_store import compute_overall_tone, export_articles, get_article_stats, list_articles
 from llm_client import chat_completion
 from projects_store import (
     create_project,
@@ -618,9 +618,17 @@ async def chat(payload: dict, user: dict = Depends(require_role())):
 
     project_context = _format_project_context(project)
 
+    def _article_tone_line(a):
+        writer_tone = a.get('writer_tone') or (a.get('insight_json') or {}).get('writer_tone', 'neutral')
+        article_tone = a.get('article_tone') or (a.get('insight_json') or {}).get('article_tone', 'neutral')
+        overall_tone = compute_overall_tone(article_tone, writer_tone)
+        return f"writer tone: {writer_tone} | article tone: {article_tone} | overall tone: {overall_tone}"
+
     context = "\n".join(
         f"{i + 1}. [{a.get('source', '?')} | {a.get('sentiment', 'neutral')} | "
-        f"{a.get('article_category') or a.get('category', 'general_article')} | score {a.get('relevance_score', '?')}] "
+        f"{a.get('article_category') or a.get('category', 'general_article')} | "
+        f"{_article_tone_line(a)} | "
+        f"score {a.get('relevance_score', '?')}] "
         f"{a.get('title', '')}\n   {a.get('summary', '') or (a.get('insight_json') or {}).get('summary', '')}"
         for i, a in enumerate(articles)
     )

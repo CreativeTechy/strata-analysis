@@ -4,6 +4,7 @@ import { Send, Bot, User, X, FileText, ChevronRight, ChevronLeft, Filter } from 
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { computeOverallTone } from '../lib/tone.js';
 
 const MATCHES_PAGE_SIZE = 4;
 
@@ -138,6 +139,8 @@ export default function IntelligencePage({ project = null, projectId = null }) {
             sentiment: a.sentiment,
             category: a.category,
             article_category: a.article_category,
+            writer_tone: a.writer_tone,
+            article_tone: a.article_tone,
             title: a.title,
             summary: a.summary,
             insight_json: a.insight_json,
@@ -319,6 +322,15 @@ export default function IntelligencePage({ project = null, projectId = null }) {
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
                   {article.sentiment || 'Neutral'}
                 </span>
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Writer tone">
+                  Writer: {article.writer_tone || 'neutral'}
+                </span>
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Article tone">
+                  Article: {article.article_tone || 'neutral'}
+                </span>
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Overall tone (derived from writer + article tone)">
+                  Overall: {computeOverallTone(article.article_tone, article.writer_tone)}
+                </span>
                 {article.project_similarity_score != null && (
                   <span className="badge score" style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
                     Match: {formatMatchScore(article.project_similarity_score)}
@@ -381,6 +393,11 @@ export default function IntelligencePage({ project = null, projectId = null }) {
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
                 <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
+                <span className="badge category" title="Writer tone">Writer tone: {selectedArticle.writer_tone || 'neutral'}</span>
+                <span className="badge category" title="Article tone">Article tone: {selectedArticle.article_tone || 'neutral'}</span>
+                <span className="badge category" title="Overall tone (derived from writer + article tone)">
+                  Overall tone: {computeOverallTone(selectedArticle.article_tone, selectedArticle.writer_tone)}
+                </span>
                 <span className="badge score">Score: {selectedArticle.relevance_score}/10</span>
                 {selectedArticle.project_similarity_score != null && (
                   <span className="badge score">Project match: {formatMatchScore(selectedArticle.project_similarity_score)}</span>

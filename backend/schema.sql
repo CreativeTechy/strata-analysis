@@ -109,6 +109,8 @@ create table if not exists public.articles (
     relevance_score numeric,
     category        text,
     article_category text,
+    writer_tone     text,
+    article_tone    text,
     insight_json    jsonb default '{}'::jsonb,
     analysis_model  text,
     analysis_prompt_version text,
@@ -132,7 +134,9 @@ alter table public.articles
     add column if not exists embedding_json jsonb default '[]'::jsonb,
     add column if not exists embedding_model text,
     add column if not exists embedding_source text,
-    add column if not exists embedded_at timestamptz;
+    add column if not exists embedded_at timestamptz,
+    add column if not exists writer_tone text,
+    add column if not exists article_tone text;
 
 create table if not exists public.users (
     id           bigint generated always as identity primary key,

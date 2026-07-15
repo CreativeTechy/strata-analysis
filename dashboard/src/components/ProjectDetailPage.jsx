@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
@@ -39,6 +39,12 @@ function normalizeList(value) {
   return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
+function prettyLabel(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function ProjectDetailPage({
   projects = [],
   sources = [],
@@ -50,11 +56,35 @@ export default function ProjectDetailPage({
   const canEdit = hasRole('editor');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
+  const [articleStats, setArticleStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const project = useMemo(
     () => projects.find((item) => Number(item.id) === Number(params.projectId)) || null,
     [projects, params.projectId]
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadArticleStats() {
+      if (!project?.id) {
+        setArticleStats(null);
+        return;
+      }
+      setStatsLoading(true);
+      try {
+        const res = await fetch(`/api/articles/stats?project_id=${project.id}`, { signal: controller.signal });
+        const data = await res.json().catch(() => null);
+        setArticleStats(data && typeof data === 'object' ? data : null);
+      } catch (err) {
+        if (err?.name !== 'AbortError') setArticleStats(null);
+      } finally {
+        setStatsLoading(false);
+      }
+    }
+    loadArticleStats();
+    return () => controller.abort();
+  }, [project?.id]);
 
   const assignedSources = useMemo(() => {
     if (!project) return [];
@@ -356,6 +386,76 @@ export default function ProjectDetailPage({
           </div>
         </motion.div>
       </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.1 }}
+        className="glass-card"
+        style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}
+      >
+        <div className="panel-header-tight">
+          <strong style={{ fontSize: '1rem' }}>Article Insights</strong>
+          <span className="panel-chip">{(articleStats?.total || 0).toLocaleString()} analyzed articles</span>
+        </div>
+
+        {statsLoading ? (
+          <div style={{ color: 'var(--text-light)', fontSize: '0.86rem' }}>Loading article insights...</div>
+        ) : !articleStats?.total ? (
+          <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
+            <strong>No analyzed articles yet</strong>
+            <span>Run the pipeline for this project to see tone and sentiment insights here.</span>
+          </div>
+        ) : (
+          <>
+            <div className="project-detail-summary-grid">
+              <div className="admin-item-card" style={{ margin: 0 }}>
+                <div className="admin-item-meta" style={{ marginBottom: 8 }}>
+                  <span>Overall Mood</span>
+                </div>
+                <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_mood || 'neutral')}</strong>
+              </div>
+
+              <div className="admin-item-card" style={{ margin: 0 }}>
+                <div className="admin-item-meta" style={{ marginBottom: 8 }}>
+                  <span>Overall Tone</span>
+                </div>
+                <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_tone || 'neutral')}</strong>
+              </div>
+            </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Writer Tone Breakdown</strong>
+              </div>
+              <div className="admin-item-chips">
+                {(articleStats?.insights?.writer_tone_breakdown || []).length ? (
+                  articleStats.insights.writer_tone_breakdown.map((item) => (
+                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({item.count})</span>
+                  ))
+                ) : (
+                  <span className="admin-tag muted">No data yet</span>
+                )}
+              </div>
+            </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Article Tone Breakdown</strong>
+              </div>
+              <div className="admin-item-chips">
+                {(articleStats?.insights?.article_tone_breakdown || []).length ? (
+                  articleStats.insights.article_tone_breakdown.map((item) => (
+                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({item.count})</span>
+                  ))
+                ) : (
+                  <span className="admin-tag muted">No data yet</span>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </motion.div>
 
       <ConfirmModal
         open={deleteOpen}

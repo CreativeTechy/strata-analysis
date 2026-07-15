@@ -12,10 +12,26 @@ from projects_store import list_article_ids_for_project, list_article_similarity
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
-    "sentiment,relevance_score,category,article_category,insight_json,analysis_model,"
+    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
 )
+
+VALID_TONES = {
+    "neutral",
+    "positive",
+    "enthusiastic",
+    "optimistic",
+    "critical",
+    "skeptical",
+    "negative",
+    "concerned",
+    "angry",
+    "sarcastic",
+    "humorous",
+    "formal",
+    "informal",
+}
 
 SORTABLE_COLUMNS = {
     "published",
@@ -70,6 +86,53 @@ def _normalize_category(value: str | None) -> str:
 
 def _normalize_article_category(value: str | None) -> str:
     return _normalize_text(value).lower() or "general_article"
+
+
+def _normalize_tone(value: str | None) -> str:
+    tone = _normalize_text(value).lower()
+    return tone if tone in VALID_TONES else "neutral"
+
+
+def compute_overall_tone(article_tone, writer_tone):
+    """Deterministic overall_tone for a single article. Never guessed by the AI."""
+    article_tone = _normalize_tone(article_tone)
+    writer_tone = _normalize_tone(writer_tone)
+    if article_tone == writer_tone:
+        return article_tone
+    if article_tone == "neutral" and writer_tone != "neutral":
+        return writer_tone
+    if writer_tone == "neutral" and article_tone != "neutral":
+        return article_tone
+    return "mixed"
+
+
+def _group_overall_tone(article_tone_counts, writer_tone_counts):
+    """Deterministic overall_tone for a collection of articles (project rollup).
+
+    Prefers the most frequent non-neutral article_tone; falls back to
+    writer_tone only as a tie-breaker/fallback; "mixed" on conflict.
+    """
+    non_neutral_article = [(tone, count) for tone, count in article_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_article:
+        top_count = max(count for _, count in non_neutral_article)
+        top_tones = {tone for tone, count in non_neutral_article if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        tie_break = [(tone, count) for tone, count in writer_tone_counts.items() if tone in top_tones and count]
+        if tie_break:
+            tie_break.sort(key=lambda item: -item[1])
+            return tie_break[0][0]
+        return "mixed"
+
+    non_neutral_writer = [(tone, count) for tone, count in writer_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_writer:
+        top_count = max(count for _, count in non_neutral_writer)
+        top_tones = {tone for tone, count in non_neutral_writer if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        return "mixed"
+
+    return "neutral"
 
 
 def _normalize_limit(value, default=DEFAULT_LIMIT):
@@ -360,7 +423,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="url,title,sentiment,category,article_category,insight_json,summary",
+            select="url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary",
         )
         if not batch:
             break
@@ -509,6 +572,18 @@ def _overall_sentiment(rows):
     return "neutral"
 
 
+def _tone_counts(rows, field):
+    counts = Counter()
+    for row in rows:
+        insight = row.get("insight_json") if isinstance(row.get("insight_json"), dict) else {}
+        counts[_normalize_tone(row.get(field) or insight.get(field))] += 1
+    return counts
+
+
+def _overall_mood_from_counts(article_tone_counts):
+    return article_tone_counts.most_common(1)[0][0] if article_tone_counts else "neutral"
+
+
 def _topic_summary(rows):
     positive_feedback = []
     negative_feedback = []
@@ -612,11 +687,18 @@ def _topic_summary(rows):
         summary_bits.append(f"The most repeated idea is {frequent_ideas_rollup[0]['idea'].rstrip('.')}.")
     summary = " ".join(summary_bits).strip()
 
+    writer_tone_counts = _tone_counts(rows, "writer_tone")
+    article_tone_counts = _tone_counts(rows, "article_tone")
+
     return {
         "summary": summary,
         "topic": topics[0] if topics else "",
         "article_category_breakdown": _article_category_counts(rows),
         "overall_sentiment": _overall_sentiment(rows),
+        "overall_mood": _overall_mood_from_counts(article_tone_counts),
+        "overall_tone": _group_overall_tone(article_tone_counts, writer_tone_counts),
+        "writer_tone_breakdown": [{"tone": tone, "count": count} for tone, count in writer_tone_counts.most_common()],
+        "article_tone_breakdown": [{"tone": tone, "count": count} for tone, count in article_tone_counts.most_common()],
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
         "nice_to_have_features": request_items,
