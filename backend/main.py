@@ -120,6 +120,10 @@ def _format_project_context(project: dict | None) -> str:
     if location:
         parts.append(f"Location: {location}")
 
+    location_type = (project.get("location_type") or "").strip()
+    if location_type:
+        parts.append(f"Location type: {location_type}")
+
     target_audience = (project.get("target_audience") or "").strip()
     if target_audience:
         parts.append(f"Target audience: {target_audience}")
@@ -144,6 +148,10 @@ def _format_project_context(project: dict | None) -> str:
     usernames = [str(item).strip() for item in usernames if str(item).strip()]
     if usernames:
         parts.append(f"Usernames: {', '.join(usernames)}")
+
+    first_run_at = project.get("first_run_at")
+    if first_run_at:
+        parts.append(f"First run at: {first_run_at}")
 
     description = (project.get("description") or "").strip()
     if description:

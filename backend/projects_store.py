@@ -16,9 +16,10 @@ from psycopg.types.json import Jsonb
 
 
 PROJECT_SELECT = (
-    "id,name,status,description,location,target_audience,hashtags,keywords,usernames,"
+    "id,name,status,description,location,location_type,target_audience,hashtags,keywords,usernames,"
     "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,"
-    "repeat_enabled,repeat_interval_value,repeat_interval_unit,next_run_at,last_run_at,last_run_status,"
+    "repeat_enabled,repeat_interval_value,repeat_interval_unit,first_run_at,repeat_weekdays,"
+    "next_run_at,last_run_at,last_run_status,"
     "created_at,updated_at"
 )
 
@@ -28,6 +29,7 @@ PROJECT_MUTABLE_FIELDS = (
     "status",
     "description",
     "location",
+    "location_type",
     "target_audience",
     "hashtags",
     "keywords",
@@ -37,11 +39,16 @@ PROJECT_MUTABLE_FIELDS = (
     "repeat_enabled",
     "repeat_interval_value",
     "repeat_interval_unit",
+    "first_run_at",
+    "repeat_weekdays",
 )
 PROJECT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
 PROJECT_SCHEDULE_FIELDS = ("next_run_at", "last_run_at", "last_run_status")
 
 REPEAT_INTERVAL_UNITS = ("minutes", "hours", "days")
+LOCATION_TYPES = ("on_site", "remote", "hybrid")
+REPEAT_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+WEEKDAY_INDEX = {day: index for index, day in enumerate(REPEAT_WEEKDAYS)}
 
 
 @lru_cache(maxsize=1)
@@ -169,6 +176,7 @@ def _normalize_project(row, source_ids=None, user_ids=None):
         "status": (row.get("status") or "draft").strip().lower() or "draft",
         "description": (row.get("description") or "").strip(),
         "location": (row.get("location") or "").strip(),
+        "location_type": (row.get("location_type") or "").strip().lower(),
         "target_audience": (row.get("target_audience") or "").strip(),
         "hashtags": _clean_terms(hashtags),
         "keywords": _clean_terms(keywords),
@@ -182,6 +190,8 @@ def _normalize_project(row, source_ids=None, user_ids=None):
         "repeat_enabled": bool(row.get("repeat_enabled", False)),
         "repeat_interval_value": row.get("repeat_interval_value"),
         "repeat_interval_unit": (row.get("repeat_interval_unit") or "").strip().lower(),
+        "first_run_at": row.get("first_run_at"),
+        "repeat_weekdays": _validate_weekdays(row.get("repeat_weekdays")),
         "next_run_at": row.get("next_run_at"),
         "last_run_at": row.get("last_run_at"),
         "last_run_status": (row.get("last_run_status") or "").strip(),
@@ -469,6 +479,53 @@ def get_project(project_id):
         return None
 
 
+def _validate_location_type(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in LOCATION_TYPES:
+        raise ValueError(f"location_type must be one of {', '.join(LOCATION_TYPES)}.")
+    return text
+
+
+def _validate_weekdays(values):
+    cleaned = []
+    seen = set()
+    for value in values or []:
+        text = str(value or "").strip().lower()
+        if text and text in WEEKDAY_INDEX and text not in seen:
+            seen.add(text)
+            cleaned.append(text)
+    return cleaned
+
+
+def _coerce_datetime(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except Exception:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _apply_weekday_filter(base_time, weekdays):
+    """Roll `base_time` forward (never backward) to the next day matching one of `weekdays`."""
+    if not isinstance(base_time, datetime):
+        return base_time
+    allowed = {WEEKDAY_INDEX[day] for day in weekdays or [] if day in WEEKDAY_INDEX}
+    if not allowed:
+        return base_time
+    candidate = base_time
+    for _ in range(7):
+        if candidate.weekday() in allowed:
+            return candidate
+        candidate = candidate + timedelta(days=1)
+    return base_time
+
+
 def _validate_repeat_fields(repeat_enabled, interval_value, interval_unit):
     """Raise ValueError on bad input; return (value, unit) normalized for storage."""
     unit = str(interval_unit or "").strip().lower()
@@ -497,19 +554,11 @@ def _validate_repeat_fields(repeat_enabled, interval_value, interval_unit):
     return value, unit
 
 
-def _compute_next_run_at(base_time, value, unit):
+def _compute_next_run_at(base_time, value, unit, weekdays=None):
     if not value or unit not in REPEAT_INTERVAL_UNITS:
         return None
 
-    if isinstance(base_time, str):
-        try:
-            base_time = datetime.fromisoformat(base_time.replace("Z", "+00:00"))
-        except Exception:
-            base_time = None
-    if not isinstance(base_time, datetime):
-        base_time = datetime.now(timezone.utc)
-    if base_time.tzinfo is None:
-        base_time = base_time.replace(tzinfo=timezone.utc)
+    base_time = _coerce_datetime(base_time) or datetime.now(timezone.utc)
 
     if unit == "minutes":
         delta = timedelta(minutes=value)
@@ -517,7 +566,7 @@ def _compute_next_run_at(base_time, value, unit):
         delta = timedelta(hours=value)
     else:
         delta = timedelta(days=value)
-    return base_time + delta
+    return _apply_weekday_filter(base_time + delta, weekdays)
 
 
 def _project_payload(project):
@@ -544,6 +593,7 @@ def _project_payload(project):
         "status": (project.get("status") or "draft").strip().lower() or "draft",
         "description": (project.get("description") or "").strip() or None,
         "location": (project.get("location") or "").strip() or None,
+        "location_type": _validate_location_type(project.get("location_type")),
         "target_audience": (project.get("target_audience") or "").strip() or None,
         "hashtags": _clean_terms(hashtags or []),
         "keywords": _clean_terms(keywords or []),
@@ -553,6 +603,8 @@ def _project_payload(project):
         "repeat_enabled": repeat_enabled,
         "repeat_interval_value": repeat_interval_value,
         "repeat_interval_unit": repeat_interval_unit or None,
+        "first_run_at": _coerce_datetime(project.get("first_run_at")),
+        "repeat_weekdays": _validate_weekdays(project.get("repeat_weekdays")),
     }
 
 
@@ -564,6 +616,8 @@ def _apply_repeat_schedule(project_id, previous, payload):
     repeat_enabled = payload["repeat_enabled"]
     interval_value = payload["repeat_interval_value"]
     interval_unit = payload["repeat_interval_unit"]
+    first_run_at = payload.get("first_run_at")
+    weekdays = payload.get("repeat_weekdays") or []
     previous = previous or {}
 
     if not repeat_enabled:
@@ -576,10 +630,16 @@ def _apply_repeat_schedule(project_id, previous, payload):
             or previous.get("repeat_interval_value") != interval_value
             or (previous.get("repeat_interval_unit") or None) != interval_unit
             or previous.get("next_run_at") is None
+            or _coerce_datetime(previous.get("first_run_at")) != first_run_at
         )
         if not interval_changed:
             return None
-        next_run_at = _compute_next_run_at(previous.get("last_run_at"), interval_value, interval_unit)
+        if first_run_at:
+            # First (re)save of a repeating project: seed the schedule from the
+            # user-chosen first run instead of "now + interval".
+            next_run_at = _apply_weekday_filter(first_run_at, weekdays)
+        else:
+            next_run_at = _compute_next_run_at(previous.get("last_run_at"), interval_value, interval_unit, weekdays)
 
     try:
         row = db.fetch_one(
@@ -660,7 +720,10 @@ def record_run_completion(project_id, *, status, completed_at=None):
 
     if project.get("repeat_enabled") and project.get("repeat_interval_value") and project.get("repeat_interval_unit"):
         next_run_at = _compute_next_run_at(
-            completed_at, project.get("repeat_interval_value"), project.get("repeat_interval_unit")
+            completed_at,
+            project.get("repeat_interval_value"),
+            project.get("repeat_interval_unit"),
+            project.get("repeat_weekdays"),
         )
         assignments.append("next_run_at = %s")
         params.append(next_run_at)
@@ -748,7 +811,7 @@ def create_project(project, *, embed=True):
         insert_columns = ", ".join(write_fields)
         insert_values = ", ".join(["%s"] * len(write_fields))
         params = [
-            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames", "repeat_weekdays"} else payload[field]
             for field in write_fields
         ]
         row = db.fetch_one(
@@ -794,7 +857,7 @@ def update_project(project_id, project, *, embed=True):
             return None
         assignments = ", ".join(f"{field} = %s" for field in write_fields)
         params = [
-            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames", "repeat_weekdays"} else payload[field]
             for field in write_fields
         ]
         params.append(int(project_id))

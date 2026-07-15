@@ -34,6 +34,7 @@ create table if not exists public.projects (
 alter table public.projects
     add column if not exists description text,
     add column if not exists location text,
+    add column if not exists location_type text,
     add column if not exists target_audience text,
     add column if not exists hashtags jsonb default '[]'::jsonb,
     add column if not exists keywords jsonb default '[]'::jsonb,
@@ -45,6 +46,8 @@ alter table public.projects
     add column if not exists repeat_enabled boolean not null default false,
     add column if not exists repeat_interval_value integer,
     add column if not exists repeat_interval_unit text,
+    add column if not exists first_run_at timestamptz,
+    add column if not exists repeat_weekdays jsonb default '[]'::jsonb,
     add column if not exists next_run_at timestamptz,
     add column if not exists last_run_at timestamptz,
     add column if not exists last_run_status text;
@@ -54,6 +57,12 @@ alter table public.projects
 alter table public.projects
     add constraint projects_repeat_interval_unit_check
     check (repeat_interval_unit is null or repeat_interval_unit in ('minutes', 'hours', 'days'));
+
+alter table public.projects
+    drop constraint if exists projects_location_type_check;
+alter table public.projects
+    add constraint projects_location_type_check
+    check (location_type is null or location_type in ('on_site', 'remote', 'hybrid'));
 
 create table if not exists public.sources (
     id           bigint generated always as identity primary key,

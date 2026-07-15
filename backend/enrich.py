@@ -124,6 +124,12 @@ def _load_project_context():
     location = (project.get("location") or "").strip()
     if location:
         parts.append(f"Location: {location}")
+    location_type = (project.get("location_type") or "").strip()
+    if location_type:
+        parts.append(f"Location type: {location_type}")
+    first_run_at = project.get("first_run_at")
+    if first_run_at:
+        parts.append(f"First run at: {first_run_at}")
     target_audience = (project.get("target_audience") or "").strip()
     if target_audience:
         parts.append(f"Target audience: {target_audience}")

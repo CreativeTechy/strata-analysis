@@ -6,7 +6,7 @@ import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
 
-const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
+const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
 const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
 const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },

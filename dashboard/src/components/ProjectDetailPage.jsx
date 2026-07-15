@@ -20,6 +20,22 @@ import {
 
 const SOURCES_PAGE_SIZE = 3;
 
+const SOURCE_TYPE_OPTIONS = [
+  { value: 'rss', label: 'RSS' },
+  { value: 'web', label: 'Web' },
+  { value: 'social', label: 'Social' },
+  { value: 'hashtag', label: 'Hashtag' },
+  { value: 'keyword', label: 'Keyword' },
+  { value: 'username', label: 'X Account' },
+];
+
+const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
+
+function sourceTypeLabel(sourceType) {
+  const match = SOURCE_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
+  return match ? match.label : (sourceType || 'RSS');
+}
+
 function formatDate(value) {
   if (!value) return 'Not set';
   const parsed = new Date(value);
@@ -58,13 +74,23 @@ export default function ProjectDetailPage({
   const canLinkUsers = hasPermission('projects.link_users');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
+  const [activeSourceTab, setActiveSourceTab] = useState('all');
   const [articleStats, setArticleStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [seenProjectId, setSeenProjectId] = useState(null);
 
   const project = useMemo(
     () => projects.find((item) => Number(item.id) === Number(params.projectId)) || null,
     [projects, params.projectId]
   );
+
+  // Reset source pagination/tab when navigating to a different project. Adjusting state
+  // during render (rather than in an effect) avoids an extra render on every navigation.
+  if (project?.id !== seenProjectId) {
+    setSeenProjectId(project?.id ?? null);
+    setSourcesPage(1);
+    setActiveSourceTab('all');
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -100,16 +126,30 @@ export default function ProjectDetailPage({
     return users.filter((user) => userIds.has(Number(user.id)));
   }, [project, users]);
 
-  const totalSourcesPages = Math.max(1, Math.ceil(assignedSources.length / SOURCES_PAGE_SIZE));
+  const sourceTabCounts = useMemo(() => {
+    const counts = { all: assignedSources.length };
+    SOURCE_TYPE_OPTIONS.forEach((option) => {
+      counts[option.value] = assignedSources.filter((source) => (source.source_type || 'rss') === option.value).length;
+    });
+    return counts;
+  }, [assignedSources]);
+
+  const sourcesForActiveTab = useMemo(() => {
+    if (activeSourceTab === 'all') return assignedSources;
+    return assignedSources.filter((source) => (source.source_type || 'rss') === activeSourceTab);
+  }, [assignedSources, activeSourceTab]);
+
+  const totalSourcesPages = Math.max(1, Math.ceil(sourcesForActiveTab.length / SOURCES_PAGE_SIZE));
   const safeSourcesPage = Math.min(sourcesPage, totalSourcesPages);
   const pagedAssignedSources = useMemo(() => {
     const start = (safeSourcesPage - 1) * SOURCES_PAGE_SIZE;
-    return assignedSources.slice(start, start + SOURCES_PAGE_SIZE);
-  }, [assignedSources, safeSourcesPage]);
+    return sourcesForActiveTab.slice(start, start + SOURCES_PAGE_SIZE);
+  }, [sourcesForActiveTab, safeSourcesPage]);
 
   const hashtagList = normalizeList(project?.hashtags);
   const keywordList = normalizeList(project?.keywords);
   const usernameList = normalizeList(project?.usernames);
+  const weekdayList = normalizeList(project?.repeat_weekdays);
 
   const status = String(project?.status || 'draft').toLowerCase();
   const isActive = status === 'active';
@@ -150,7 +190,7 @@ export default function ProjectDetailPage({
           </div>
           <h1 className="admin-page-title">{project.name}</h1>
           <p className="admin-page-subtitle">
-            Review the sources, tags, and metadata attached to this project. This page is the best place to inspect the working scope before running the pipeline.
+            Review the sources, tags, and discovery details attached to this project. This page is the best place to inspect the working scope before running the pipeline.
           </p>
         </div>
 
@@ -209,7 +249,10 @@ export default function ProjectDetailPage({
                 <span><MapPin size={12} /> Location</span>
                 <span><Tag size={12} /> Audience</span>
               </div>
-              <strong style={{ fontSize: '0.98rem' }}>{project.location || 'Not set'}</strong>
+              <strong style={{ fontSize: '0.98rem' }}>
+                {project.location || 'Not set'}
+                {project.location_type ? ` (${prettyLabel(project.location_type)})` : ''}
+              </strong>
               <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{project.target_audience || 'No audience specified'}</div>
             </div>
           </div>
@@ -225,8 +268,10 @@ export default function ProjectDetailPage({
               <div style={{ display: 'grid', gap: 6, color: 'var(--text-light)', fontSize: '0.86rem' }}>
                 <div>
                   Runs again every {project.repeat_interval_value} {project.repeat_interval_unit} after completion.
+                  {weekdayList.length ? ` Restricted to ${weekdayList.map(prettyLabel).join(', ')}.` : ''}
                 </div>
                 <div className="admin-item-meta">
+                  <span>First run at: {formatDateTime(project.first_run_at)}</span>
                   <span>Next run: {formatDateTime(project.next_run_at)}</span>
                   <span>Last run: {formatDateTime(project.last_run_at)}</span>
                   {project.last_run_status && <span>Last status: {project.last_run_status}</span>}
@@ -312,6 +357,37 @@ export default function ProjectDetailPage({
             </div>
           ) : (
             <>
+              <div className="source-type-tabs" role="tablist" aria-label="Filter assigned sources by type">
+                {SOURCE_ASSIGN_TABS.map((tab) => {
+                  const isActive = activeSourceTab === tab.value;
+                  return (
+                    <button
+                      key={tab.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      className={`source-type-tab ${isActive ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveSourceTab(tab.value);
+                        setSourcesPage(1);
+                      }}
+                    >
+                      {tab.label}
+                      <span className="source-type-tab-count">{sourceTabCounts[tab.value] || 0}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {sourcesForActiveTab.length === 0 ? (
+                <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
+                  <div className="admin-empty-state-icon">
+                    <Link2 size={18} />
+                  </div>
+                  <strong>No matching sources</strong>
+                  <span>No {sourceTypeLabel(activeSourceTab)} sources are assigned to this project.</span>
+                </div>
+              ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {pagedAssignedSources.map((source) => (
                 <div key={source.id} className="admin-item-card" style={{ margin: 0 }}>
@@ -325,7 +401,7 @@ export default function ProjectDetailPage({
                       </div>
                       <div className="admin-item-url">{source.url}</div>
                       <div className="admin-item-meta">
-                        <span>{source.source_type || 'rss'}</span>
+                        <span>{sourceTypeLabel(source.source_type)}</span>
                         {source.category ? <span>{source.category}</span> : null}
                       </div>
                     </div>
@@ -333,8 +409,9 @@ export default function ProjectDetailPage({
                 </div>
                 ))}
               </div>
+              )}
 
-              {assignedSources.length > SOURCES_PAGE_SIZE && (
+              {sourcesForActiveTab.length > SOURCES_PAGE_SIZE && (
                 <div
                   style={{
                     display: 'flex',
@@ -347,7 +424,7 @@ export default function ProjectDetailPage({
                   }}
                 >
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                    Showing {(safeSourcesPage - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(safeSourcesPage * SOURCES_PAGE_SIZE, assignedSources.length)} of {assignedSources.length}
+                    Showing {(safeSourcesPage - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(safeSourcesPage * SOURCES_PAGE_SIZE, sourcesForActiveTab.length)} of {sourcesForActiveTab.length}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button

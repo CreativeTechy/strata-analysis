@@ -74,6 +74,7 @@ export default function App() {
     positive: 0,
     negative: 0,
     neutral: 0,
+    mixed: 0,
     article_category_breakdown: [],
     insights: {},
   });
@@ -261,12 +262,13 @@ export default function App() {
         positive: Number(data?.positive) || 0,
         negative: Number(data?.negative) || 0,
         neutral: Number(data?.neutral) || 0,
+        mixed: Number(data?.mixed) || 0,
         article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
         insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
       });
     } catch (error) {
       console.error('Failed to load report stats', error);
-      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0, article_category_breakdown: [], insights: {} });
+      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0, mixed: 0, article_category_breakdown: [], insights: {} });
     } finally {
       setIsLoadingReportStats(false);
     }
