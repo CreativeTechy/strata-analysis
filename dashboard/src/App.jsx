@@ -777,6 +777,7 @@ export default function App() {
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
                   onCreateSource={createSource}
+                  onRefreshSources={refreshSources}
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
@@ -794,6 +795,8 @@ export default function App() {
                   users={users}
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
+                  onCreateSource={createSource}
+                  onRefreshSources={refreshSources}
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
