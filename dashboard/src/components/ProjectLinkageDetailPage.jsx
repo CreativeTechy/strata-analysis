@@ -28,7 +28,7 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
   if (!project) {
     return (
       <div className="admin-page-shell">
-        <div className="glass-card" style={{ maxWidth: 760, margin: '0 auto' }}>
+        <div className="glass-card" style={{ maxWidth: 960, margin: '0 auto' }}>
           <div className="admin-empty-state" style={{ padding: '34px 20px' }}>
             <div className="admin-empty-state-icon">
               <Link2 size={18} />

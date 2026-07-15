@@ -297,7 +297,7 @@ export default function SourcesPage({
           </div>
         </div>
 
-        <div className="glass-card admin-form-panel" style={{ maxWidth: 860, margin: '0 auto' }}>
+        <div className="glass-card admin-form-panel" style={{ maxWidth: 1080, margin: '0 auto' }}>
           <div className="panel-header-tight">
             <strong style={{ fontSize: '1rem' }}>{heading}</strong>
             <span className="panel-chip">{isEditRoute ? 'Updating existing source' : 'Create a new source'}</span>

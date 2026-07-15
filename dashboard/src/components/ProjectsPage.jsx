@@ -419,6 +419,10 @@ export default function ProjectsPage({
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
+  const STEP = useMemo(() => {
+    const keys = ['basics', ...(canLinkUsers ? ['users'] : []), 'discovery', 'schedule', 'sources'];
+    return Object.fromEntries(keys.map((key, index) => [key, index + 1]));
+  }, [canLinkUsers]);
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -842,12 +846,12 @@ export default function ProjectsPage({
   const chooseManualFill = () => {
     setMetadataError('');
     setFillMode('manual');
-    setWizardStep(2);
+    setWizardStep(STEP.discovery);
   };
 
   const chooseAiFill = async () => {
     setFillMode('ai');
-    setWizardStep(2);
+    setWizardStep(STEP.discovery);
     try {
       await generateMetadataFromAi();
     } catch {
@@ -917,6 +921,15 @@ export default function ProjectsPage({
     const step2Complete = fillMode === 'manual' || fillMode === 'ai';
     const canContinueFromStep2 = step2Complete && !isGeneratingMetadata;
     const step3Complete = !draft.repeat_enabled || Boolean(Number(draft.repeat_interval_value) > 0 && draft.repeat_interval_unit);
+    const totalSteps = Object.keys(STEP).length;
+    const stepMeta = {
+      basics: { label: 'Project basics', detail: 'Name, location, and dates', complete: step1Complete },
+      users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
+      discovery: { label: 'Discovery details', detail: 'Manual or AI fill', complete: step2Complete },
+      schedule: { label: 'Schedule', detail: 'Status and automatic runs', complete: step3Complete },
+      sources: { label: 'Sources', detail: isEditRoute ? 'Assign sources and save' : 'Assign sources and create', complete: true },
+    };
+    const stepOrder = Object.keys(STEP).sort((a, b) => STEP[a] - STEP[b]);
 
     return (
       <div className="admin-page-shell">
@@ -928,14 +941,14 @@ export default function ProjectsPage({
             <h1 className="admin-page-title">{heading}</h1>
             <p className="admin-page-subtitle">
               {isEditRoute
-                ? 'Update the project in four steps. Revisit the basics, discovery details, schedule, or sources, then save your changes.'
-                : 'Build the project in four steps. Start with the basics, choose how to fill discovery details, set the schedule, then assign sources and create the workspace.'}
+                ? `Update the project in ${totalSteps} steps. Revisit any step, then save your changes.`
+                : `Build the project in ${totalSteps} steps, then create the workspace.`}
             </p>
           </div>
           <div className="admin-page-toolbar">
             <div className="admin-page-toolbar-meta">
               <span>Step</span>
-              <strong>{wizardStep} of 4</strong>
+              <strong>{wizardStep} of {totalSteps}</strong>
             </div>
             <div className="admin-page-toolbar-meta">
               <span>Mode</span>
@@ -944,28 +957,20 @@ export default function ProjectsPage({
           </div>
         </div>
 
-        <div className="glass-card" style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
-            {[
-              { label: 'Project basics', detail: 'Name, location, and dates' },
-              { label: 'Discovery details', detail: 'Manual or AI fill' },
-              { label: 'Schedule', detail: 'Status and automatic runs' },
-              { label: 'Sources', detail: isEditRoute ? 'Assign sources and save' : 'Assign sources and create' },
-            ].map((item, index) => {
-              const step = index + 1;
+        <div className="glass-card" style={{ maxWidth: 1320, margin: '0 auto', padding: 32, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${totalSteps}, minmax(0, 1fr))`, gap: 10 }}>
+            {stepOrder.map((key) => {
+              const item = stepMeta[key];
+              const step = STEP[key];
               const active = wizardStep === step;
               const done = wizardStep > step;
+              const allowed = stepOrder.filter((k) => STEP[k] < step).every((k) => stepMeta[k].complete);
               return (
                 <button
-                  key={item.label}
+                  key={key}
                   type="button"
                   onClick={() => {
-                    if (
-                      step === 1 ||
-                      (step === 2 && step1Complete) ||
-                      (step === 3 && step1Complete && step2Complete) ||
-                      (step === 4 && step1Complete && step2Complete && step3Complete)
-                    ) {
+                    if (allowed) {
                       setWizardStep(step);
                     }
                   }}
@@ -991,10 +996,10 @@ export default function ProjectsPage({
             })}
           </div>
 
-          {wizardStep === 1 && (
-          <div className="glass-card" style={{ padding: 18, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+          {wizardStep === STEP.basics && (
+          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 1. Project basics</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.basics}. Project basics</strong>
               <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
@@ -1075,17 +1080,6 @@ export default function ProjectsPage({
                 </label>
               </div>
 
-              {canLinkUsers && (
-                <UserAssignField
-                  users={users}
-                  selectedIds={draft.user_ids}
-                  onToggle={toggleUserLink}
-                  query={userAssignQuery}
-                  onQueryChange={setUserAssignQuery}
-                  disabled={isSaving}
-                />
-              )}
-
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
                   Use a clear working title and a short description. We’ll use these to seed the AI suggestions and source discovery.
@@ -1093,7 +1087,7 @@ export default function ProjectsPage({
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => setWizardStep(2)}
+                  onClick={() => setWizardStep(STEP.users || STEP.discovery)}
                   disabled={!step1Complete || isSaving}
                   style={{ minWidth: 180 }}
                 >
@@ -1104,18 +1098,52 @@ export default function ProjectsPage({
           </div>
           )}
 
-          {wizardStep === 2 && (
+          {canLinkUsers && wizardStep === STEP.users && (
+          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.users}. Linked users</strong>
+              <span className="panel-chip">{draft.user_ids.length} selected</span>
+            </div>
+            <div style={{ display: 'grid', gap: 14 }}>
+              <UserAssignField
+                users={users}
+                selectedIds={draft.user_ids}
+                onToggle={toggleUserLink}
+                query={userAssignQuery}
+                onQueryChange={setUserAssignQuery}
+                disabled={isSaving}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.basics)} disabled={isSaving} style={{ minWidth: 120 }}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setWizardStep(STEP.discovery)}
+                  disabled={isSaving}
+                  style={{ minWidth: 180 }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {wizardStep === STEP.discovery && (
           <div
             className="glass-card"
             style={{
-              padding: 18,
+              padding: 24,
               boxShadow: 'none',
               background: 'rgba(255,255,255,0.55)',
               opacity: step1Complete ? 1 : 0.7,
             }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 2. Discovery details</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.discovery}. Discovery details</strong>
               <span className="panel-chip">{fillMode ? fillMode.toUpperCase() : 'Choose a method'}</span>
             </div>
 
@@ -1211,7 +1239,7 @@ export default function ProjectsPage({
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setWizardStep(1)}
+                      onClick={() => setWizardStep(STEP.users || STEP.basics)}
                       disabled={isSaving || isGeneratingMetadata}
                       style={{ minWidth: 120 }}
                     >
@@ -1222,7 +1250,7 @@ export default function ProjectsPage({
                       className="btn-primary"
                       onClick={async () => {
                         await syncTermSourcesToDraft();
-                        setWizardStep(3);
+                        setWizardStep(STEP.schedule);
                       }}
                       disabled={!canContinueFromStep2 || isSaving || isSyncingSources}
                       style={{ minWidth: 180 }}
@@ -1242,18 +1270,18 @@ export default function ProjectsPage({
           </div>
           )}
 
-          {wizardStep === 3 && (
+          {wizardStep === STEP.schedule && (
           <div
             className="glass-card"
             style={{
-              padding: 18,
+              padding: 24,
               boxShadow: 'none',
               background: 'rgba(255,255,255,0.55)',
               opacity: step1Complete && step2Complete ? 1 : 0.7,
             }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 3. Schedule and automatic runs</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.schedule}. Schedule and automatic runs</strong>
               <span className={`panel-chip ${draft.repeat_enabled ? 'success' : 'muted'}`}>
                 {draft.repeat_enabled ? 'Repeat on' : 'Repeat off'}
               </span>
@@ -1346,13 +1374,13 @@ export default function ProjectsPage({
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                <button type="button" className="btn-secondary" onClick={() => setWizardStep(2)} disabled={isSaving} style={{ minWidth: 120 }}>
+                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.discovery)} disabled={isSaving} style={{ minWidth: 120 }}>
                   Back
                 </button>
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => setWizardStep(4)}
+                  onClick={() => setWizardStep(STEP.sources)}
                   disabled={!step3Complete || isSaving}
                   style={{ minWidth: 180 }}
                 >
@@ -1363,18 +1391,18 @@ export default function ProjectsPage({
           </div>
           )}
 
-          {wizardStep === 4 && (
+          {wizardStep === STEP.sources && (
           <div
             className="glass-card"
             style={{
-              padding: 18,
+              padding: 24,
               boxShadow: 'none',
               background: 'rgba(255,255,255,0.55)',
               opacity: step1Complete && step2Complete && step3Complete ? 1 : 0.7,
             }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: '1rem' }}>Step 4. Assign sources and {isEditRoute ? 'save' : 'create'}</strong>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.sources}. Assign sources and {isEditRoute ? 'save' : 'create'}</strong>
               <span className="panel-chip">{selectedSourceCount} selected sources</span>
             </div>
 
@@ -1693,7 +1721,7 @@ export default function ProjectsPage({
               )}
 
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button className="btn-secondary" type="button" onClick={() => setWizardStep(3)} disabled={isSaving} style={{ flexShrink: 0 }}>
+                <button className="btn-secondary" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving} style={{ flexShrink: 0 }}>
                   Back
                 </button>
                 <button

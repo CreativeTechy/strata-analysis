@@ -57,7 +57,7 @@ export default function RolesListPage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 900, margin: '0 auto', paddingTop: 80 }}>
+    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
       <header style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: '1.8rem' }}>

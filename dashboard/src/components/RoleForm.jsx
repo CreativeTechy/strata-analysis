@@ -55,7 +55,7 @@ export default function RoleForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <form onSubmit={onSubmit} className="glass-card" style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 20 }}>
       {error && (
         <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c' }}>
           {error}
