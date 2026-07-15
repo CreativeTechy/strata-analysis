@@ -67,8 +67,9 @@ export default function WorkflowPage({
   activeRun = null,
   onStopRun = () => {},
 }) {
-  const { hasRole } = useAuth();
-  const canRunScraper = hasRole('operator');
+  const { hasPermission } = useAuth();
+  const canRunScraper = hasPermission('pipeline.run');
+  const canStopScraper = hasPermission('pipeline.stop');
 
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
@@ -529,7 +530,7 @@ export default function WorkflowPage({
                   style={{ opacity: isScraping ? 0.7 : 1, flex: 1 }}
                   onClick={() => onRunScraper?.(selectedProjectIds)}
                   disabled={isScraping || selectedProjectCount === 0 || !canRunScraper}
-                  title={canRunScraper ? undefined : 'Requires the operator or admin role.'}
+                  title={canRunScraper ? undefined : 'Requires the pipeline.run permission.'}
                 >
                   {isScraping ? (
                     <><RefreshCw size={16} className="spin" /> Running...</>
@@ -543,8 +544,8 @@ export default function WorkflowPage({
                     type="button"
                     className="btn-secondary"
                     onClick={handleStopRun}
-                    disabled={isStopping || !canRunScraper}
-                    title={canRunScraper ? undefined : 'Requires the operator or admin role.'}
+                    disabled={isStopping || !canStopScraper}
+                    title={canStopScraper ? undefined : 'Requires the pipeline.stop permission.'}
                   >
                     {isStopping ? (
                       <><RefreshCw size={16} className="spin" /> Stopping...</>

@@ -138,23 +138,94 @@ alter table public.articles
     add column if not exists writer_tone text,
     add column if not exists article_tone text;
 
+-- Dynamic roles/permissions: a role is just a named, editable set of
+-- permissions. `is_system` protects the seeded 'admin' role from deletion;
+-- `full_access` grants every permission automatically (also only seeded on
+-- 'admin') so the app always keeps one role that can't be locked out of.
+create table if not exists public.roles (
+    id           bigint generated always as identity primary key,
+    name         text not null unique,
+    description  text,
+    is_system    boolean not null default false,
+    full_access  boolean not null default false,
+    created_at   timestamptz default now(),
+    updated_at   timestamptz default now()
+);
+
+create table if not exists public.permissions (
+    id          bigint generated always as identity primary key,
+    key         text not null unique,
+    description text
+);
+
+create table if not exists public.role_permissions (
+    role_id       bigint not null references public.roles(id) on delete cascade,
+    permission_id bigint not null references public.permissions(id) on delete cascade,
+    primary key (role_id, permission_id)
+);
+
+drop trigger if exists set_roles_updated_at on public.roles;
+create trigger set_roles_updated_at
+before update on public.roles
+for each row
+execute function public.set_updated_at();
+
+insert into public.permissions (key, description) values
+    ('projects.view', 'View projects'),
+    ('projects.create', 'Create projects'),
+    ('projects.update', 'Edit projects'),
+    ('projects.delete', 'Delete projects'),
+    ('projects.link_users', 'Manage which dashboard users are linked to a project'),
+    ('sources.view', 'View sources'),
+    ('sources.create', 'Create sources'),
+    ('sources.update', 'Edit sources'),
+    ('sources.delete', 'Delete sources'),
+    ('articles.view', 'View articles'),
+    ('articles.delete', 'Delete all stored articles'),
+    ('pipeline.view', 'View pipeline runs'),
+    ('pipeline.run', 'Trigger the scraper pipeline'),
+    ('pipeline.stop', 'Stop a running pipeline'),
+    ('users.view', 'View dashboard users'),
+    ('users.create', 'Create dashboard users'),
+    ('users.update', 'Edit dashboard users (role/status)'),
+    ('roles.view', 'View roles and their permissions'),
+    ('roles.manage', 'Create, edit, and delete roles and their permission assignments')
+on conflict (key) do nothing;
+
+insert into public.roles (name, description, is_system, full_access) values
+    ('admin', 'Full access to every part of the app.', true, true),
+    ('editor', 'Manage projects and sources; view articles and pipeline runs.', false, false),
+    ('operator', 'Run and stop the pipeline; view and clear articles.', false, false),
+    ('viewer', 'Read-only access to projects, sources, articles, and pipeline runs.', false, false)
+on conflict (name) do nothing;
+
+insert into public.role_permissions (role_id, permission_id)
+select r.id, p.id
+from (values
+    ('editor', 'projects.view'), ('editor', 'projects.create'), ('editor', 'projects.update'), ('editor', 'projects.delete'),
+    ('editor', 'sources.view'), ('editor', 'sources.create'), ('editor', 'sources.update'), ('editor', 'sources.delete'),
+    ('editor', 'articles.view'), ('editor', 'pipeline.view'),
+    ('operator', 'projects.view'), ('operator', 'sources.view'),
+    ('operator', 'articles.view'), ('operator', 'articles.delete'),
+    ('operator', 'pipeline.view'), ('operator', 'pipeline.run'), ('operator', 'pipeline.stop'),
+    ('viewer', 'projects.view'), ('viewer', 'sources.view'),
+    ('viewer', 'articles.view'), ('viewer', 'pipeline.view')
+) as seed(role_name, perm_key)
+join public.roles r on r.name = seed.role_name
+join public.permissions p on p.key = seed.perm_key
+on conflict do nothing;
+
 create table if not exists public.users (
     id           bigint generated always as identity primary key,
     username     text not null unique,
     email        text unique,
     password_hash text not null,
-    role         text not null default 'viewer',
+    role_id      bigint not null references public.roles(id),
     status       text not null default 'active',
     last_login_at timestamptz,
     created_at   timestamptz default now(),
     updated_at   timestamptz default now()
 );
-
-alter table public.users
-    drop constraint if exists users_role_check;
-alter table public.users
-    add constraint users_role_check
-    check (role in ('viewer', 'editor', 'operator', 'admin'));
 
 alter table public.users
     drop constraint if exists users_status_check;
@@ -173,6 +244,9 @@ create table if not exists public.sessions (
 
 create index if not exists sessions_user_idx on public.sessions (user_id);
 create index if not exists sessions_expires_idx on public.sessions (expires_at);
+
+create index if not exists users_role_id_idx on public.users (role_id);
+create index if not exists role_permissions_permission_idx on public.role_permissions (permission_id);
 
 drop trigger if exists set_users_updated_at on public.users;
 create trigger set_users_updated_at
@@ -193,6 +267,24 @@ create table if not exists public.project_sources (
     created_at   timestamptz default now(),
     primary key (project_id, source_id)
 );
+
+create table if not exists public.project_users (
+    project_id   bigint not null references public.projects(id) on delete cascade,
+    user_id      bigint not null references public.users(id) on delete cascade,
+    created_at   timestamptz default now(),
+    primary key (project_id, user_id)
+);
+
+-- Every project must be linked to every full_access ("admin") user by
+-- default. New projects get this from projects_store.create_project(); this
+-- backfills any project/admin created before that link existed.
+insert into public.project_users (project_id, user_id)
+select p.id, u.id
+from public.projects p
+cross join public.users u
+join public.roles r on r.id = u.role_id
+where r.full_access = true
+on conflict (project_id, user_id) do nothing;
 
 create table if not exists public.article_projects (
     article_id   bigint not null references public.articles(id) on delete cascade,
@@ -219,6 +311,9 @@ create index if not exists articles_analyzed_at_idx on public.articles (analyzed
 
 create index if not exists project_sources_project_idx on public.project_sources (project_id);
 create index if not exists project_sources_source_idx on public.project_sources (source_id);
+
+create index if not exists project_users_project_idx on public.project_users (project_id);
+create index if not exists project_users_user_idx on public.project_users (user_id);
 
 create index if not exists article_projects_project_idx on public.article_projects (project_id);
 create index if not exists article_projects_article_idx on public.article_projects (article_id);
@@ -248,6 +343,7 @@ alter table public.pipeline_runs enable row level security;
 alter table public.articles enable row level security;
 alter table public.project_sources enable row level security;
 alter table public.article_projects enable row level security;
+alter table public.project_users enable row level security;
 
 drop policy if exists "Public read access" on public.projects;
 create policy "Public read access"
@@ -287,6 +383,13 @@ using (true);
 drop policy if exists "Public read access" on public.article_projects;
 create policy "Public read access"
 on public.article_projects
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.project_users;
+create policy "Public read access"
+on public.project_users
 for select
 to anon, authenticated
 using (true);

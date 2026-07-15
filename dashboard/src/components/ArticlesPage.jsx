@@ -85,8 +85,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const hasArticlesRef = useRef(false);
-  const { hasRole } = useAuth();
-  const canDeleteAll = hasRole('operator');
+  const { hasPermission } = useAuth();
+  const canDeleteAll = hasPermission('articles.delete');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);

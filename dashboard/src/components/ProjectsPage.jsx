@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Sparkles,
   Rss,
+  Users,
 } from 'lucide-react';
 
 const emptyNewSourceDraft = {
@@ -60,6 +61,7 @@ const emptyDraft = {
   start_date: '',
   end_date: '',
   source_ids: [],
+  user_ids: [],
   repeat_enabled: false,
   repeat_interval_value: 30,
   repeat_interval_unit: 'minutes',
@@ -122,6 +124,9 @@ function normalizeDraftForCompare(value) {
     end_date: String(value?.end_date || ''),
     source_ids: Array.isArray(value?.source_ids)
       ? [...new Set(value.source_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
+      : [],
+    user_ids: Array.isArray(value?.user_ids)
+      ? [...new Set(value.user_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
       : [],
     repeat_enabled: Boolean(value?.repeat_enabled),
     repeat_interval_value: Number(value?.repeat_interval_value) || 0,
@@ -227,9 +232,87 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
   );
 }
 
+function UserAssignField({ users, selectedIds, onToggle, query, onQueryChange, disabled }) {
+  const visibleUsers = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return users;
+    return users.filter((user) =>
+      [user.username, user.email, user.role].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle))
+    );
+  }, [users, query]);
+
+  return (
+    <div className="assign-sources-panel">
+      <div className="assign-sources-header">
+        <div>
+          <div className="assign-sources-kicker">
+            <Users size={12} style={{ verticalAlign: -1, marginRight: 4 }} /> Linked users
+          </div>
+          <strong className="assign-sources-title">Choose dashboard users linked to this project</strong>
+        </div>
+        <div className="assign-sources-summary">
+          <span className="panel-chip">{selectedIds.length} selected</span>
+        </div>
+      </div>
+
+      <div className="assign-sources-toolbar">
+        <label className="assign-sources-search">
+          <Search size={14} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Filter users by username, email, or role"
+            disabled={disabled}
+          />
+        </label>
+      </div>
+
+      <div className="assign-sources-list">
+        {users.length === 0 ? (
+          <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
+            No dashboard users yet.
+          </div>
+        ) : visibleUsers.length === 0 ? (
+          <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+            <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
+              <Search size={16} />
+            </div>
+            <strong>No matching users</strong>
+            <span>Try a different search term in this assignment box.</span>
+          </div>
+        ) : (
+          visibleUsers.map((user) => {
+            const userId = Number(user.id);
+            const isSelected = selectedIds.includes(userId);
+            return (
+              <label key={user.id} className={`assign-source-item ${isSelected ? 'selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(userId)}
+                  disabled={disabled}
+                />
+                <div className="assign-source-copy">
+                  <div className="assign-source-topline">
+                    <strong className="assign-source-name">{user.username}</strong>
+                    <span className={`panel-chip role-${user.role}`}>{user.role}</span>
+                  </div>
+                  <div className="assign-source-url">{user.email || 'No email on file'}</div>
+                </div>
+              </label>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectsPage({
   projects = [],
   sources = [],
+  users = [],
   onCreateProject,
   onUpdateProject,
   onCreateSource,
@@ -238,8 +321,9 @@ export default function ProjectsPage({
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const { hasRole } = useAuth();
-  const canEdit = hasRole('editor');
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
+  const canLinkUsers = hasPermission('projects.link_users');
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -257,6 +341,7 @@ export default function ProjectsPage({
   const [lastDiscovery, setLastDiscovery] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [sourceAssignQuery, setSourceAssignQuery] = useState('');
+  const [userAssignQuery, setUserAssignQuery] = useState('');
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -415,11 +500,13 @@ export default function ProjectsPage({
         start_date: toDateInput(currentProject.start_date),
         end_date: toDateInput(currentProject.end_date),
         source_ids: Array.isArray(currentProject.source_ids) ? currentProject.source_ids.map(Number) : [],
+        user_ids: Array.isArray(currentProject.user_ids) ? currentProject.user_ids.map(Number) : [],
         repeat_enabled: Boolean(currentProject.repeat_enabled),
         repeat_interval_value: currentProject.repeat_interval_value || 30,
         repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
       });
       setSourceAssignQuery('');
+      setUserAssignQuery('');
       setLastDiscovery(null);
       setInitialDraft({
         name: currentProject.name || '',
@@ -433,6 +520,7 @@ export default function ProjectsPage({
         start_date: toDateInput(currentProject.start_date),
         end_date: toDateInput(currentProject.end_date),
         source_ids: Array.isArray(currentProject.source_ids) ? currentProject.source_ids.map(Number) : [],
+        user_ids: Array.isArray(currentProject.user_ids) ? currentProject.user_ids.map(Number) : [],
         repeat_enabled: Boolean(currentProject.repeat_enabled),
         repeat_interval_value: currentProject.repeat_interval_value || 30,
         repeat_interval_unit: currentProject.repeat_interval_unit || 'minutes',
@@ -442,6 +530,7 @@ export default function ProjectsPage({
 
     setDraft(emptyDraft);
     setSourceAssignQuery('');
+    setUserAssignQuery('');
     setLastDiscovery(null);
     setInitialDraft(emptyDraft);
     setWizardStep(1);
@@ -456,6 +545,7 @@ export default function ProjectsPage({
   const discardChanges = () => {
     setShowCancelModal(false);
     setSourceAssignQuery('');
+    setUserAssignQuery('');
     setDraft(emptyDraft);
     setLastDiscovery(null);
     navigate('/projects');
@@ -468,6 +558,16 @@ export default function ProjectsPage({
       source_ids: prev.source_ids.includes(id)
         ? prev.source_ids.filter((value) => value !== id)
         : [...prev.source_ids, id],
+    }));
+  };
+
+  const toggleUserLink = (userId) => {
+    const id = Number(userId);
+    setDraft((prev) => ({
+      ...prev,
+      user_ids: prev.user_ids.includes(id)
+        ? prev.user_ids.filter((value) => value !== id)
+        : [...prev.user_ids, id],
     }));
   };
 
@@ -669,6 +769,7 @@ export default function ProjectsPage({
       start_date: draft.start_date || null,
       end_date: draft.end_date || null,
       source_ids: draft.source_ids,
+      ...(canLinkUsers ? { user_ids: draft.user_ids } : {}),
       repeat_enabled: Boolean(draft.repeat_enabled),
       repeat_interval_value: draft.repeat_interval_value,
       repeat_interval_unit: draft.repeat_interval_unit,
@@ -806,6 +907,18 @@ export default function ProjectsPage({
                   disabled={isSaving}
                 />
               </label>
+
+              {canLinkUsers && (
+                <UserAssignField
+                  users={users}
+                  selectedIds={draft.user_ids}
+                  onToggle={toggleUserLink}
+                  query={userAssignQuery}
+                  onQueryChange={setUserAssignQuery}
+                  disabled={isSaving}
+                />
+              )}
+
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
                   Use a clear working title and a short description. We’ll use these to seed the AI suggestions and source discovery.
@@ -1450,6 +1563,18 @@ export default function ProjectsPage({
               />
             </label>
           </div>
+
+          {canLinkUsers && (
+            <UserAssignField
+              users={users}
+              selectedIds={draft.user_ids}
+              onToggle={toggleUserLink}
+              query={userAssignQuery}
+              onQueryChange={setUserAssignQuery}
+              disabled={isSaving}
+            />
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
             <TermChipsField
               label="X Accounts"

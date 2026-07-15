@@ -20,9 +20,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
+import permissions_store
 import sessions_store
 import users_store
-from auth import clear_auth_cookies, get_current_user, require_role, set_auth_cookies
+from auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
 from project_discovery import discover_project_links
 from projects_ai import suggest_project_metadata
 from articles_store import compute_overall_tone, export_articles, get_article_stats, list_articles
@@ -31,12 +32,15 @@ from projects_store import (
     create_project,
     delete_project,
     diagnose_project_setup,
+    list_project_ids_for_user,
     list_projects,
     list_projects_page,
     list_sources_for_project,
     persist_project_embedding_for_id,
+    project_ids_by_user_map,
     record_run_completion,
     set_project_sources,
+    set_project_users,
     update_project,
 )
 from sources_store import (
@@ -187,6 +191,7 @@ def _public_user(user: dict) -> dict:
         "email": user.get("email"),
         "role": user.get("role"),
         "status": user.get("status"),
+        "permissions": sorted(permissions_store.user_permission_keys(user)),
     }
 
 
@@ -209,7 +214,7 @@ def login(payload: dict, response: Response):
 
 
 @app.post("/api/auth/logout")
-def logout(request: Request, response: Response, user: dict = Depends(require_role())):
+def logout(request: Request, response: Response, user: dict = Depends(require_permission())):
     raw_token = request.cookies.get(config.SESSION_COOKIE_NAME)
     sessions_store.delete_session(raw_token)
     clear_auth_cookies(response)
@@ -221,31 +226,45 @@ def me(user: dict = Depends(get_current_user)):
     return {"user": _public_user(user)}
 
 
-# --- User management (admin only) ---------------------------------------
+# --- User management ------------------------------------------------------
+
+
+@app.get("/api/users/linkable")
+def get_linkable_users(user: dict = Depends(require_permission("projects.link_users"))):
+    """Roster used by the project<->user linkage UI - gated only by
+    projects.link_users so it works for admins who manage linkage without
+    also holding users.view."""
+    project_ids_by_user = project_ids_by_user_map()
+    users = [
+        {**candidate, "project_ids": project_ids_by_user.get(int(candidate["id"]), [])}
+        for candidate in users_store.list_users()
+    ]
+    return {"users": users}
 
 
 @app.get("/api/users")
-def get_users(user: dict = Depends(require_role("admin"))):
+def get_users(user: dict = Depends(require_permission("users.view"))):
     return {"users": users_store.list_users()}
 
 
 @app.post("/api/users")
-def add_user(payload: dict, user: dict = Depends(require_role("admin"))):
+def add_user(payload: dict, user: dict = Depends(require_permission("users.create"))):
     payload = payload or {}
     username = str(payload.get("username") or "").strip()
     email = str(payload.get("email") or "").strip()
     password = str(payload.get("password") or "")
-    role = str(payload.get("role") or "viewer").strip().lower()
+    role_name = str(payload.get("role") or "viewer").strip().lower()
 
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password are required.")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    if role not in users_store.ROLES:
-        raise HTTPException(status_code=400, detail=f"Role must be one of {', '.join(users_store.ROLES)}.")
+    role = permissions_store.get_role_by_name(role_name)
+    if not role:
+        raise HTTPException(status_code=400, detail=f"Unknown role: {role_name}")
 
     try:
-        created = users_store.create_user(username, email, password, role)
+        created = users_store.create_user(username, email, password, role["id"])
     except Exception as e:
         raise HTTPException(status_code=409, detail=f"Unable to create user: {e}")
     if not created:
@@ -254,20 +273,27 @@ def add_user(payload: dict, user: dict = Depends(require_role("admin"))):
 
 
 @app.patch("/api/users/{user_id}")
-def edit_user(user_id: int, payload: dict, user: dict = Depends(require_role("admin"))):
+def edit_user(user_id: int, payload: dict, user: dict = Depends(require_permission("users.update"))):
     payload = payload or {}
-    role = payload.get("role")
+    role_name = payload.get("role")
     status = payload.get("status")
-    if role is not None:
-        role = str(role).strip().lower()
+    if role_name is not None:
+        role_name = str(role_name).strip().lower()
     if status is not None:
         status = str(status).strip().lower()
 
-    if user_id == user["id"] and (role is not None or status == "disabled"):
-        raise HTTPException(status_code=400, detail="Admins cannot change their own role or disable themselves.")
+    if user_id == user["id"] and (role_name is not None or status == "disabled"):
+        raise HTTPException(status_code=400, detail="You cannot change your own role or disable yourself.")
+
+    role_id = None
+    if role_name is not None:
+        role = permissions_store.get_role_by_name(role_name)
+        if not role:
+            raise HTTPException(status_code=400, detail=f"Unknown role: {role_name}")
+        role_id = role["id"]
 
     try:
-        updated = users_store.update_user(user_id, role=role, status=status)
+        updated = users_store.update_user(user_id, role_id=role_id, status=status)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not updated:
@@ -277,8 +303,72 @@ def edit_user(user_id: int, payload: dict, user: dict = Depends(require_role("ad
     return {"user": updated}
 
 
+# --- Role management --------------------------------------------------------
+
+
+@app.get("/api/permissions")
+def get_permissions(user: dict = Depends(require_permission("roles.view"))):
+    return {"permissions": permissions_store.list_permissions()}
+
+
+@app.get("/api/roles")
+def get_roles(user: dict = Depends(require_permission("roles.view"))):
+    return {"roles": permissions_store.list_roles_with_permissions()}
+
+
+@app.post("/api/roles")
+def add_role(payload: dict, user: dict = Depends(require_permission("roles.manage"))):
+    payload = payload or {}
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    permission_keys = payload.get("permissions") or []
+    if not name:
+        raise HTTPException(status_code=400, detail="Role name is required.")
+
+    try:
+        role = permissions_store.create_role(name, description, permission_keys)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to create role: {e}")
+    if not role:
+        raise HTTPException(status_code=409, detail="Unable to create role.")
+    return {"role": role}
+
+
+@app.patch("/api/roles/{role_id}")
+def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permission("roles.manage"))):
+    payload = payload or {}
+    name = payload.get("name")
+    description = payload.get("description")
+    permission_keys = payload.get("permissions")
+
+    role = permissions_store.get_role_by_id(role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found.")
+
+    try:
+        if name is not None or description is not None:
+            permissions_store.update_role(role_id, name=name, description=description)
+        if permission_keys is not None and not role.get("full_access"):
+            permissions_store.set_role_permissions(role_id, permission_keys)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to update role: {e}")
+
+    return {"role": permissions_store.get_role_with_permissions(role_id)}
+
+
+@app.delete("/api/roles/{role_id}")
+def remove_role(role_id: int, user: dict = Depends(require_permission("roles.manage"))):
+    try:
+        deleted = permissions_store.delete_role(role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Role not found.")
+    return {"ok": True}
+
+
 @app.get("/api/sources")
-def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(require_role())):
+def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("sources.view"))):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
         sources = bootstrap_sources()
@@ -290,11 +380,29 @@ def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(
     return {**page, "source": source}
 
 
+def _visible_project_ids_or_none(user: dict):
+    """None means "no restriction" (admin/full_access); otherwise the list of
+    project ids this user is linked to via project_users."""
+    if permissions_store.user_is_full_access(user):
+        return None
+    return list_project_ids_for_user(user["id"])
+
+
+def _ensure_project_visible(project_id: int, user: dict) -> None:
+    """Defense-in-depth for project-scoped mutations: a non-admin acting on a
+    project they can't see gets a 404, same as if it didn't exist."""
+    if permissions_store.user_is_full_access(user):
+        return
+    if int(project_id) not in set(list_project_ids_for_user(user["id"])):
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+
 @app.get("/api/projects")
-def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_role())):
+def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("projects.view"))):
+    visible_ids = _visible_project_ids_or_none(user)
     if limit is None:
-        return {"projects": list_projects()}
-    return list_projects_page(limit=limit, offset=offset)
+        return {"projects": list_projects(visible_project_ids=visible_ids)}
+    return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
 
 
 def _default_discovery_result(project):
@@ -328,15 +436,29 @@ def _save_project_with_discovery(project):
 
 
 @app.post("/api/projects/discover")
-def discover_project(payload: dict, user: dict = Depends(require_role("editor"))):
+def discover_project(payload: dict, user: dict = Depends(require_permission("projects.create"))):
     if not isinstance(payload, dict):
         payload = {}
     discovery = discover_project_links(payload)
     return {"discovery": discovery}
 
 
+def _strip_unauthorized_user_ids(payload: dict, user: dict) -> dict:
+    """Drop `user_ids` from a project payload unless the caller holds
+    projects.link_users, so link management stays gated to that permission
+    even though project create/update itself only needs projects.create/update."""
+    if not isinstance(payload, dict) or "user_ids" not in payload:
+        return payload or {}
+    if "projects.link_users" in permissions_store.user_permission_keys(user):
+        return payload
+    payload = dict(payload)
+    payload.pop("user_ids", None)
+    return payload
+
+
 @app.post("/api/projects")
-def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_role("editor"))):
+def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.create"))):
+    payload = _strip_unauthorized_user_ids(payload, user)
     try:
         project = create_project(payload or {}, embed=False)
     except ValueError as e:
@@ -358,7 +480,9 @@ def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = D
 
 
 @app.put("/api/projects/{project_id}")
-def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_role("editor"))):
+def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
+    payload = _strip_unauthorized_user_ids(payload, user)
     try:
         project = update_project(project_id, payload or {}, embed=False)
     except ValueError as e:
@@ -381,7 +505,7 @@ def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: di
 
 
 @app.post("/api/projects/suggest")
-def suggest_project(payload: dict, user: dict = Depends(require_role("editor"))):
+def suggest_project(payload: dict, user: dict = Depends(require_any_permission("projects.create", "projects.update"))):
     if not isinstance(payload, dict):
         payload = {}
     name = str(payload.get("name") or "").strip()
@@ -395,7 +519,8 @@ def suggest_project(payload: dict, user: dict = Depends(require_role("editor")))
 
 
 @app.delete("/api/projects/{project_id}")
-def remove_project(project_id: int, user: dict = Depends(require_role("editor"))):
+def remove_project(project_id: int, user: dict = Depends(require_permission("projects.delete"))):
+    _ensure_project_visible(project_id, user)
     if not delete_project(project_id):
         detail = diagnose_project_setup()
         return {
@@ -406,12 +531,12 @@ def remove_project(project_id: int, user: dict = Depends(require_role("editor"))
 
 
 @app.get("/api/pipeline-runs")
-def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_role())):
+def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_permission("pipeline.view"))):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")
-def stop_pipeline_run(run_id: str, user: dict = Depends(require_role("operator"))):
+def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipeline.stop"))):
     run = get_pipeline_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found.")
@@ -446,7 +571,7 @@ def get_articles(
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
-    user: dict = Depends(require_role()),
+    user: dict = Depends(require_permission("articles.view")),
 ):
     return list_articles(
         search=search,
@@ -464,7 +589,7 @@ def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
-    user: dict = Depends(require_role()),
+    user: dict = Depends(require_permission("articles.view")),
 ):
     return get_article_stats(search=search, category=category, project_id=project_id)
 
@@ -476,7 +601,7 @@ def export_articles_jsonl(
     category: str | None = None,
     project_id: int | None = None,
     sort: str = "published.desc",
-    user: dict = Depends(require_role()),
+    user: dict = Depends(require_permission("articles.view")),
 ):
     rows = export_articles(
         search=search,
@@ -499,7 +624,7 @@ def export_articles_jsonl(
 
 
 @app.post("/api/sources")
-def add_source(payload: dict, user: dict = Depends(require_role("editor"))):
+def add_source(payload: dict, user: dict = Depends(require_permission("sources.create"))):
     """Create or update a source record in local PostgreSQL."""
     source = create_source(payload or {})
     if not source:
@@ -512,7 +637,7 @@ def add_source(payload: dict, user: dict = Depends(require_role("editor"))):
 
 
 @app.put("/api/sources/{source_id}")
-def edit_source(source_id: int, payload: dict, user: dict = Depends(require_role("editor"))):
+def edit_source(source_id: int, payload: dict, user: dict = Depends(require_permission("sources.update"))):
     """Update a source record in local PostgreSQL."""
     source = update_source(source_id, payload or {})
     if not source:
@@ -525,7 +650,7 @@ def edit_source(source_id: int, payload: dict, user: dict = Depends(require_role
 
 
 @app.delete("/api/sources/{source_id}")
-def remove_source(source_id: int, user: dict = Depends(require_role("editor"))):
+def remove_source(source_id: int, user: dict = Depends(require_permission("sources.delete"))):
     """Delete a source record from local PostgreSQL."""
     if not delete_source(source_id):
         detail = diagnose_source_setup()
@@ -537,14 +662,23 @@ def remove_source(source_id: int, user: dict = Depends(require_role("editor"))):
 
 
 @app.post("/api/projects/{project_id}/sources")
-def replace_project_sources(project_id: int, payload: dict, user: dict = Depends(require_role("editor"))):
+def replace_project_sources(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
     source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
     assigned = set_project_sources(project_id, source_ids or [])
     return {"project_id": project_id, "source_ids": assigned}
 
 
+@app.post("/api/projects/{project_id}/users")
+def replace_project_users(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.link_users"))):
+    _ensure_project_visible(project_id, user)
+    user_ids = payload.get("user_ids") if isinstance(payload, dict) else []
+    assigned = set_project_users(project_id, user_ids or [])
+    return {"project_id": project_id, "user_ids": assigned}
+
+
 @app.post("/scrape")
-def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None, user: dict = Depends(require_role("operator"))):
+def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None, user: dict = Depends(require_permission("pipeline.run"))):
     payload = payload or {}
     project_id = payload.get("project_id")
     try:
@@ -582,7 +716,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
 
 
 @app.delete("/api/articles")
-def delete_articles(user: dict = Depends(require_role("operator"))):
+def delete_articles(user: dict = Depends(require_permission("articles.delete"))):
     """Delete all stored articles from Postgres."""
     from store import delete_all_articles
 
@@ -597,7 +731,7 @@ def delete_articles(user: dict = Depends(require_role("operator"))):
 
 
 @app.post("/api/chat")
-async def chat(payload: dict, user: dict = Depends(require_role())):
+async def chat(payload: dict, user: dict = Depends(require_permission())):
     """Intelligence Copilot -> DeepSeek over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
