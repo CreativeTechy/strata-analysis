@@ -52,8 +52,8 @@ export default function ProjectDetailPage({
 }) {
   const navigate = useNavigate();
   const params = useParams();
-  const { hasRole } = useAuth();
-  const canEdit = hasRole('editor');
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('projects.update') || hasPermission('projects.delete');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcesPage, setSourcesPage] = useState(1);
   const [articleStats, setArticleStats] = useState(null);

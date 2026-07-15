@@ -238,8 +238,8 @@ export default function ProjectsPage({
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const { hasRole } = useAuth();
-  const canEdit = hasRole('editor');
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');

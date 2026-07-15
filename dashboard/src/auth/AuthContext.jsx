@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AuthContext, roleSatisfies } from './authContext.js';
+import { AuthContext, permissionsSatisfy } from './authContext.js';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -58,8 +58,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const hasRole = useCallback((...roles) => !!user && roleSatisfies(user.role, roles), [user]);
+  const hasPermission = useCallback((...perms) => !!user && permissionsSatisfy(user.permissions, perms), [user]);
 
-  const value = { user, loading, login, logout, refresh, hasRole };
+  const value = { user, loading, login, logout, refresh, hasPermission };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

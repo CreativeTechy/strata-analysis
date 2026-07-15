@@ -1,12 +1,12 @@
 import React from 'react';
-import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, LogOut } from 'lucide-react';
+import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, ShieldCheck, LogOut } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
 export default function Sidebar({
   onToggleSource,
 }) {
-  const { user, hasRole, logout } = useAuth();
+  const { user, hasPermission, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -56,9 +56,14 @@ export default function Sidebar({
         <NavLink to="/intelligence" className="btn-secondary" style={navStyle}>
           <MessageSquare size={18} /> Intelligence
         </NavLink>
-        {hasRole('admin') && (
+        {hasPermission('users.view') && (
           <NavLink to="/admin/users" className="btn-secondary" style={navStyle}>
             <Users size={18} /> Users
+          </NavLink>
+        )}
+        {hasPermission('roles.view') && (
+          <NavLink to="/admin/roles" className="btn-secondary" style={navStyle}>
+            <ShieldCheck size={18} /> Roles
           </NavLink>
         )}
       </nav>

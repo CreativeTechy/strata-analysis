@@ -78,8 +78,8 @@ export default function SourcesPage({
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const { hasRole } = useAuth();
-  const canEdit = hasRole('editor');
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('sources.create') || hasPermission('sources.update') || hasPermission('sources.delete');
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');

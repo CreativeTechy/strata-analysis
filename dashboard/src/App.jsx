@@ -11,6 +11,9 @@ import PipelineRunsPage from './components/PipelineRunsPage';
 import ArticlesPage from './components/ArticlesPage';
 import LoginPage from './components/LoginPage';
 import UsersPage from './components/UsersPage';
+import RolesListPage from './components/RolesListPage';
+import RoleCreatePage from './components/RoleCreatePage';
+import RoleEditPage from './components/RoleEditPage';
 import { useAuth } from './auth/useAuth.js';
 import { RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -44,9 +47,9 @@ function RequireAuth() {
   return <Outlet />;
 }
 
-function RequireRole({ roles, children }) {
-  const { hasRole } = useAuth();
-  if (!hasRole(...roles)) {
+function RequirePermission({ permissions, children }) {
+  const { hasPermission } = useAuth();
+  if (!hasPermission(...permissions)) {
     return (
       <div style={{ padding: 60, textAlign: 'center' }}>
         <h2>Access denied</h2>
@@ -676,7 +679,7 @@ export default function App() {
           path="/sources/new"
           element={(
             <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['editor']}>
+              <RequirePermission permissions={['sources.create']}>
                 <SourcesPage
                   sources={sources}
                   projects={projects}
@@ -686,7 +689,7 @@ export default function App() {
                   onDeleteSource={deleteSource}
                   isLoadingSources={isLoadingSources}
                 />
-              </RequireRole>
+              </RequirePermission>
             </RouteShell>
           )}
         />
@@ -694,7 +697,7 @@ export default function App() {
           path="/sources/:sourceId/edit"
           element={(
             <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['editor']}>
+              <RequirePermission permissions={['sources.update']}>
                 <SourcesPage
                   sources={sources}
                   projects={projects}
@@ -704,7 +707,7 @@ export default function App() {
                   onDeleteSource={deleteSource}
                   isLoadingSources={isLoadingSources}
                 />
-              </RequireRole>
+              </RequirePermission>
             </RouteShell>
           )}
         />
@@ -726,7 +729,7 @@ export default function App() {
           path="/projects/new"
           element={(
             <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['editor']}>
+              <RequirePermission permissions={['projects.create']}>
                 <ProjectsPage
                   projects={projects}
                   sources={sources}
@@ -735,7 +738,7 @@ export default function App() {
                   onCreateSource={createSource}
                   isLoadingProjects={isLoadingProjects}
                 />
-              </RequireRole>
+              </RequirePermission>
             </RouteShell>
           )}
         />
@@ -743,7 +746,7 @@ export default function App() {
           path="/projects/:projectId/edit"
           element={(
             <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['editor']}>
+              <RequirePermission permissions={['projects.update']}>
                 <ProjectsPage
                   projects={projects}
                   sources={sources}
@@ -751,7 +754,7 @@ export default function App() {
                   onUpdateProject={updateProject}
                   isLoadingProjects={isLoadingProjects}
                 />
-              </RequireRole>
+              </RequirePermission>
             </RouteShell>
           )}
         />
@@ -780,9 +783,39 @@ export default function App() {
           path="/admin/users"
           element={(
             <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <RequireRole roles={['admin']}>
+              <RequirePermission permissions={['users.view']}>
                 <UsersPage />
-              </RequireRole>
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/roles"
+          element={(
+            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['roles.view']}>
+                <RolesListPage />
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/roles/new"
+          element={(
+            <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['roles.manage']}>
+                <RoleCreatePage />
+              </RequirePermission>
+            </RouteShell>
+          )}
+        />
+        <Route
+          path="/admin/roles/:roleId/edit"
+          element={(
+            <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
+              <RequirePermission permissions={['roles.manage']}>
+                <RoleEditPage />
+              </RequirePermission>
             </RouteShell>
           )}
         />

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Request, Response
 
 import config
+import permissions_store
 import sessions_store
 import users_store
 
@@ -67,24 +68,43 @@ def get_current_user(request: Request) -> dict:
     return user
 
 
-def require_role(*roles: str):
-    """Dependency factory: require an authenticated user, optionally with one
-    of `roles` (admin always passes), and CSRF-check mutating requests.
+def _enforce_csrf(request: Request) -> None:
+    if request.method not in UNSAFE_METHODS:
+        return
+    session = getattr(request.state, "session", None)
+    header_token = request.headers.get("X-CSRF-Token", "")
+    if not session or not header_token or not hmac.compare_digest(header_token, session["csrf_token"]):
+        raise HTTPException(status_code=403, detail="Missing or invalid CSRF token.")
 
-    Call with no roles for "any authenticated user" endpoints.
+
+def require_permission(*permissions: str):
+    """Dependency factory: require an authenticated user who holds every
+    permission in `permissions` (roles with full_access always pass), and
+    CSRF-check mutating requests.
+
+    Call with no permissions for "any authenticated user" endpoints.
     """
-    allowed = set(roles)
+    required = set(permissions)
 
     def _check(request: Request, user: dict = Depends(get_current_user)) -> dict:
-        if allowed and user["role"] != "admin" and user["role"] not in allowed:
+        if required and not required.issubset(permissions_store.user_permission_keys(user)):
             raise HTTPException(status_code=403, detail="Insufficient permissions.")
+        _enforce_csrf(request)
+        return user
 
-        if request.method in UNSAFE_METHODS:
-            session = getattr(request.state, "session", None)
-            header_token = request.headers.get("X-CSRF-Token", "")
-            if not session or not header_token or not hmac.compare_digest(header_token, session["csrf_token"]):
-                raise HTTPException(status_code=403, detail="Missing or invalid CSRF token.")
+    return _check
 
+
+def require_any_permission(*permissions: str):
+    """Like require_permission, but passes if the user holds at least one of
+    `permissions` instead of all of them (e.g. an action usable from either a
+    create or an edit flow)."""
+    required = set(permissions)
+
+    def _check(request: Request, user: dict = Depends(get_current_user)) -> dict:
+        if required and not required & permissions_store.user_permission_keys(user):
+            raise HTTPException(status_code=403, detail="Insufficient permissions.")
+        _enforce_csrf(request)
         return user
 
     return _check

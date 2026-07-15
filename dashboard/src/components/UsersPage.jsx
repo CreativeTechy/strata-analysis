@@ -2,13 +2,12 @@ import { useEffect, useState } from 'react';
 import { UserPlus, Users as UsersIcon, Ban, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 
-const ROLES = ['viewer', 'editor', 'operator', 'admin'];
-
-const emptyDraft = { username: '', email: '', password: '', role: 'viewer' };
+const emptyDraft = { username: '', email: '', password: '', role: '' };
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(emptyDraft);
   const [error, setError] = useState('');
@@ -28,8 +27,23 @@ export default function UsersPage() {
     }
   };
 
+  const loadRoles = async () => {
+    try {
+      const res = await fetch('/api/roles');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      const roleList = Array.isArray(data?.roles) ? data.roles : [];
+      setRoles(roleList);
+      setDraft((prev) => (prev.role ? prev : { ...prev, role: roleList[0]?.name || '' }));
+    } catch {
+      // Role list is only used to populate the select options; if it fails
+      // to load the selects below just render empty.
+    }
+  };
+
   useEffect(() => {
     loadUsers();
+    loadRoles();
   }, []);
 
   const createUser = async (e) => {
@@ -114,7 +128,7 @@ export default function UsersPage() {
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={{ fontSize: '0.8rem' }}>Role</span>
           <select className="filter-select" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
-            {ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+            {roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
           </select>
         </label>
         <button type="submit" className="btn-primary" disabled={creating}>
@@ -153,7 +167,7 @@ export default function UsersPage() {
                       disabled={isSelf}
                       onChange={(e) => setRole(u.id, e.target.value)}
                     >
-                      {ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+                      {roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
                     </select>
                   </td>
                   <td style={{ padding: 12 }}>{u.status}</td>
