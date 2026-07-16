@@ -1,13 +1,50 @@
 import React from 'react';
-import { LayoutDashboard, GitMerge, MessageSquare, Rss, Newspaper, Database, CalendarDays, Users, ShieldCheck, Link2, LogOut } from 'lucide-react';
+import {
+  LayoutDashboard,
+  GitMerge,
+  MessageSquare,
+  Rss,
+  Newspaper,
+  Database,
+  CalendarDays,
+  Users,
+  ShieldCheck,
+  Link2,
+  LogOut,
+  ChevronsLeft,
+  ChevronsRight,
+  X,
+} from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
+const NAV_ITEMS = [
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/articles', label: 'Articles', icon: Newspaper },
+  { to: '/sources', label: 'Sources', icon: Rss },
+  { to: '/projects', label: 'Projects', icon: CalendarDays },
+  { to: '/workflow', label: 'Workflow', icon: GitMerge },
+  { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
+  { to: '/intelligence', label: 'Copilot', icon: MessageSquare },
+];
+
+const ADMIN_NAV_ITEMS = [
+  { to: '/admin/users', label: 'Users', icon: Users, permission: 'users.view' },
+  { to: '/admin/roles', label: 'Roles', icon: ShieldCheck, permission: 'roles.view' },
+  { to: '/admin/project-linkage', label: 'Project Access', icon: Link2, permission: 'projects.link_users' },
+];
+
 export default function Sidebar({
-  onToggleSource,
+  collapsed = false,
+  onToggleCollapse = () => {},
+  mobileOpen = false,
+  onCloseMobile = () => {},
 }) {
   const { user, hasPermission, logout } = useAuth();
   const navigate = useNavigate();
+
+  // On mobile the drawer always renders fully expanded; only the desktop rail collapses.
+  const showCollapsed = collapsed && !mobileOpen;
 
   const handleLogout = async () => {
     await logout();
@@ -24,66 +61,83 @@ export default function Sidebar({
     boxShadow: isActive ? '0 6px 18px rgba(0,0,0,0.08)' : 'none',
     textDecoration: 'none',
     width: '100%',
-    justifyContent: 'flex-start',
+    justifyContent: showCollapsed ? 'center' : 'flex-start',
   });
 
   return (
-    <div className="sidebar">
-      <div style={{ marginBottom: '20px' }}>
-        <h1 className="title">Strata</h1>
-        <p className="subtitle">Media Intelligence</p>
+    <div
+      className={`sidebar${showCollapsed ? ' sidebar-collapsed' : ''}${mobileOpen ? ' sidebar-mobile-open' : ''}`}
+    >
+      <div className="sidebar-header">
+        <div className="sidebar-brand">
+          {showCollapsed ? (
+            <span className="sidebar-brand-mark">S</span>
+          ) : (
+            <>
+              <h1 className="title">Strata</h1>
+              <p className="subtitle">Media Intelligence</p>
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          className="sidebar-toggle-btn"
+          onClick={mobileOpen ? onCloseMobile : onToggleCollapse}
+          title={mobileOpen ? 'Close navigation' : (collapsed ? 'Expand navigation' : 'Collapse navigation')}
+          aria-label={mobileOpen ? 'Close navigation' : (collapsed ? 'Expand navigation' : 'Collapse navigation')}
+        >
+          {mobileOpen ? <X size={18} /> : (collapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />)}
+        </button>
       </div>
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
-        <NavLink to="/dashboard" className="btn-secondary" style={navStyle}>
-          <LayoutDashboard size={18} /> Dashboard
-        </NavLink>
-        <NavLink to="/articles" className="btn-secondary" style={navStyle}>
-          <Newspaper size={18} /> Articles
-        </NavLink>
-        <NavLink to="/sources" className="btn-secondary" style={navStyle}>
-          <Rss size={18} /> Sources
-        </NavLink>
-        <NavLink to="/projects" className="btn-secondary" style={navStyle}>
-          <CalendarDays size={18} /> Projects
-        </NavLink>
-        <NavLink to="/workflow" className="btn-secondary" style={navStyle}>
-          <GitMerge size={18} /> Workflow
-        </NavLink>
-        <NavLink to="/pipeline-runs" className="btn-secondary" style={navStyle}>
-          <Database size={18} /> Pipeline Runs
-        </NavLink>
-        <NavLink to="/intelligence" className="btn-secondary" style={navStyle}>
-          <MessageSquare size={18} /> Copilot
-        </NavLink>
-        {hasPermission('users.view') && (
-          <NavLink to="/admin/users" className="btn-secondary" style={navStyle}>
-            <Users size={18} /> Users
+      <nav className="sidebar-nav">
+        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className="btn-secondary sidebar-nav-link"
+            style={navStyle}
+            title={showCollapsed ? label : undefined}
+            onClick={onCloseMobile}
+          >
+            <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
           </NavLink>
-        )}
-        {hasPermission('roles.view') && (
-          <NavLink to="/admin/roles" className="btn-secondary" style={navStyle}>
-            <ShieldCheck size={18} /> Roles
+        ))}
+        {ADMIN_NAV_ITEMS.filter((item) => hasPermission(item.permission)).map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className="btn-secondary sidebar-nav-link"
+            style={navStyle}
+            title={showCollapsed ? label : undefined}
+            onClick={onCloseMobile}
+          >
+            <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
           </NavLink>
-        )}
-        {hasPermission('projects.link_users') && (
-          <NavLink to="/admin/project-linkage" className="btn-secondary" style={navStyle}>
-            <Link2 size={18} /> Project Access
-          </NavLink>
-        )}
+        ))}
       </nav>
 
       {user && (
         <div className="sidebar-profile">
-          <div className="sidebar-profile-row">
+          <div
+            className="sidebar-profile-row"
+            title={showCollapsed ? `${user.username} (${user.role})` : undefined}
+          >
             <div className="sidebar-avatar">{initials}</div>
-            <div className="sidebar-profile-meta">
-              <span className="sidebar-profile-name">{user.username}</span>
-              <span className={`panel-chip role-${user.role}`}>{user.role}</span>
-            </div>
+            {!showCollapsed && (
+              <div className="sidebar-profile-meta">
+                <span className="sidebar-profile-name">{user.username}</span>
+                <span className={`panel-chip role-${user.role}`}>{user.role}</span>
+              </div>
+            )}
           </div>
-          <button type="button" className="btn-secondary sidebar-logout" onClick={handleLogout}>
-            <LogOut size={16} /> Log out
+          <button
+            type="button"
+            className="btn-secondary sidebar-logout"
+            onClick={handleLogout}
+            title={showCollapsed ? 'Log out' : undefined}
+          >
+            <LogOut size={16} /> {!showCollapsed && 'Log out'}
           </button>
         </div>
       )}
