@@ -196,6 +196,22 @@ the only role that automatically satisfies every check below -
   projects; use AI project discovery/suggestions.
 - **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, and
   delete all stored articles.
-- **admin** - everything above, plus user management: create users, change
-  roles, and enable/disable accounts (`/admin/users` in the dashboard, or the
-  `/api/users` endpoints).
+- **admin** - everything above, plus user management: create, delete, change
+  roles for, and enable/disable users (`/admin/users` in the dashboard, or the
+  `/api/users` endpoints); and role management: create, edit, and delete roles
+  (`/admin/roles` in the dashboard, or the `/api/roles` endpoints).
+
+Role administration is gated by its own granular permissions rather than one
+combined "manage roles" permission:
+
+- `roles.view` - view roles and their permission assignments.
+- `roles.create` - create new roles.
+- `roles.update` - rename a role, edit its description, or change its
+  permission assignments.
+- `roles.delete` - delete a role (blocked for the system `admin` role, and for
+  any role still assigned to a user).
+
+Similarly, user administration has a dedicated `users.delete` permission
+alongside `users.view`/`users.create`/`users.update`. Deleting a user removes
+their account and any active sessions; a user can never delete their own
+account, from either the dashboard or the API.

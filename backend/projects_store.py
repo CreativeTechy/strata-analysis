@@ -212,7 +212,6 @@ def _normalize_source(row):
         "name": name,
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
-        "category": (row.get("category") or "").strip(),
         "limited": bool(row.get("limited", False)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -1052,7 +1051,7 @@ def list_sources_for_project(project_id):
     try:
         rows = _fetch_rows(
             """
-            select f.id, f.url, f.name, f.enabled, f.source_type, f.category, f.limited, f.created_at, f.updated_at
+            select f.id, f.url, f.name, f.enabled, f.source_type, f.limited, f.created_at, f.updated_at
             from sources f
             inner join project_sources ef on ef.source_id = f.id
             where ef.project_id = %s

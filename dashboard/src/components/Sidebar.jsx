@@ -54,7 +54,7 @@ export default function Sidebar({
           <Database size={18} /> Pipeline Runs
         </NavLink>
         <NavLink to="/intelligence" className="btn-secondary" style={navStyle}>
-          <MessageSquare size={18} /> Intelligence
+          <MessageSquare size={18} /> Copilot
         </NavLink>
         {hasPermission('users.view') && (
           <NavLink to="/admin/users" className="btn-secondary" style={navStyle}>

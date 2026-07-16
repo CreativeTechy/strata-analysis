@@ -402,7 +402,6 @@ export default function ProjectDetailPage({
                       <div className="admin-item-url">{source.url}</div>
                       <div className="admin-item-meta">
                         <span>{sourceTypeLabel(source.source_type)}</span>
-                        {source.category ? <span>{source.category}</span> : null}
                       </div>
                     </div>
                   </div>

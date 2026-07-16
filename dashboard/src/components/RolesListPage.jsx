@@ -9,7 +9,9 @@ import { useAuth } from '../auth/useAuth.js';
 // renders a form itself.
 export default function RolesListPage() {
   const { hasPermission } = useAuth();
-  const canManage = hasPermission('roles.manage');
+  const canCreate = hasPermission('roles.create');
+  const canUpdate = hasPermission('roles.update');
+  const canDelete = hasPermission('roles.delete');
 
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +68,7 @@ export default function RolesListPage() {
           </h2>
           <p className="subtitle">Roles are named permission sets assigned to users.</p>
         </div>
-        {canManage && (
+        {canCreate && (
           <Link to="/admin/roles/new" className="btn-primary" style={{ textDecoration: 'none' }}>
             <ShieldPlus size={16} /> New role
           </Link>
@@ -111,24 +113,28 @@ export default function RolesListPage() {
                   )}
                 </td>
                 <td style={{ padding: 12 }}>
-                  {canManage ? (
+                  {(canUpdate || canDelete) ? (
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <Link
-                        className="btn-secondary"
-                        to={`/admin/roles/${role.id}/edit`}
-                        style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
-                      >
-                        <Pencil size={14} /> Edit
-                      </Link>
-                      <button
-                        className="btn-secondary"
-                        disabled={role.is_system}
-                        title={role.is_system ? 'System roles cannot be deleted.' : undefined}
-                        onClick={() => setDeleteTarget(role)}
-                        style={{ padding: '8px 10px', fontSize: '0.8rem', color: role.is_system ? undefined : '#ff4757' }}
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
+                      {canUpdate && (
+                        <Link
+                          className="btn-secondary"
+                          to={`/admin/roles/${role.id}/edit`}
+                          style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
+                        >
+                          <Pencil size={14} /> Edit
+                        </Link>
+                      )}
+                      {canDelete && (
+                        <button
+                          className="btn-secondary"
+                          disabled={role.is_system}
+                          title={role.is_system ? 'System roles cannot be deleted.' : undefined}
+                          onClick={() => setDeleteTarget(role)}
+                          style={{ padding: '8px 10px', fontSize: '0.8rem', color: role.is_system ? undefined : '#ff4757' }}
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <span className="subtitle">View only</span>

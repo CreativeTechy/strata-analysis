@@ -10,7 +10,7 @@ import db
 from projects_store import set_source_projects, list_source_project_ids
 
 
-SOURCE_SELECT = "id,url,name,enabled,source_type,category,limited,created_at,updated_at"
+SOURCE_SELECT = "id,url,name,enabled,source_type,limited,created_at,updated_at"
 
 TERM_SOURCE_TYPES = {"username", "hashtag", "keyword"}
 
@@ -49,7 +49,6 @@ def _normalize_record(row, include_project_ids=False):
         "name": name,
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
-        "category": row.get("category") or "",
         "limited": bool(row.get("limited", False)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -78,7 +77,6 @@ def _upsert_payload(source):
         "name": name or _default_name(url),
         "enabled": bool(source.get("enabled", True)),
         "source_type": source_type,
-        "category": (source.get("category") or "").strip(),
         "limited": bool(source.get("limited", False)),
     }
 
@@ -158,13 +156,12 @@ def create_source(source):
     try:
         row = db.fetch_one(
             f"""
-            insert into sources (url, name, enabled, source_type, category, limited)
-            values (%s, %s, %s, %s, %s, %s)
+            insert into sources (url, name, enabled, source_type, limited)
+            values (%s, %s, %s, %s, %s)
             on conflict (url) do update set
               name = excluded.name,
               enabled = excluded.enabled,
               source_type = excluded.source_type,
-              category = excluded.category,
               limited = excluded.limited,
               updated_at = now()
             returning {SOURCE_SELECT}
@@ -174,7 +171,6 @@ def create_source(source):
                 payload["name"],
                 payload["enabled"],
                 payload["source_type"],
-                payload["category"],
                 payload["limited"],
             ),
         )
@@ -203,7 +199,6 @@ def update_source(source_id, source):
                 name = %s,
                 enabled = %s,
                 source_type = %s,
-                category = %s,
                 limited = %s,
                 updated_at = now()
             where id = %s
@@ -214,7 +209,6 @@ def update_source(source_id, source):
                 payload["name"],
                 payload["enabled"],
                 payload["source_type"],
-                payload["category"],
                 payload["limited"],
                 source_id,
             ),

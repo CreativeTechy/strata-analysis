@@ -70,7 +70,6 @@ create table if not exists public.sources (
     name         text,
     enabled      boolean not null default true,
     source_type  text not null default 'rss',
-    category     text,
     limited      boolean not null default false,
     created_at   timestamptz default now(),
     updated_at   timestamptz default now()
@@ -78,6 +77,9 @@ create table if not exists public.sources (
 
 alter table public.sources
     add column if not exists limited boolean not null default false;
+
+alter table public.sources
+    drop column if exists category;
 
 create table if not exists public.pipeline_runs (
     id               text primary key,
@@ -197,8 +199,11 @@ insert into public.permissions (key, description) values
     ('users.view', 'View dashboard users'),
     ('users.create', 'Create dashboard users'),
     ('users.update', 'Edit dashboard users (role/status)'),
+    ('users.delete', 'Delete dashboard users'),
     ('roles.view', 'View roles and their permissions'),
-    ('roles.manage', 'Create, edit, and delete roles and their permission assignments')
+    ('roles.create', 'Create new roles'),
+    ('roles.update', 'Edit roles and their permission assignments'),
+    ('roles.delete', 'Delete roles')
 on conflict (key) do nothing;
 
 insert into public.roles (name, description, is_system, full_access) values

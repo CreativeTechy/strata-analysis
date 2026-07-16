@@ -540,7 +540,6 @@ def discover_project_links(project):
             "url": url,
             "name": (item.get("title") or "").strip() or urlparse(url).netloc or url,
             "source_type": item.get("source_type") or config._infer_source_type(url),
-            "category": "discovered",
             "enabled": True,
         }
         source = create_source(payload)
