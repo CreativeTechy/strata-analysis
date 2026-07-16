@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../auth/useAuth.js';
 import {
   Globe,
   AtSign,
@@ -24,6 +25,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Square,
 } from 'lucide-react';
 import '../styles/Workflow.css';
 
@@ -57,12 +59,18 @@ export default function WorkflowPage({
   articles = [],
   isScraping = false,
   onRunScraper,
-  feeds = [],
-  events = [],
-  selectedEvents = [],
-  selectedEventIds = [],
-  onChangeSelectedEventIds = () => {},
+  sources = [],
+  projects = [],
+  selectedProjects = [],
+  selectedProjectIds = [],
+  onChangeSelectedProjectIds = () => {},
+  activeRun = null,
+  onStopRun = () => {},
 }) {
+  const { hasPermission } = useAuth();
+  const canRunScraper = hasPermission('pipeline.run');
+  const canStopScraper = hasPermission('pipeline.stop');
+
   const seedRows = (list) =>
     (list.length ? list : []).map((url, i) => ({
       id: i + 1,
@@ -71,18 +79,31 @@ export default function WorkflowPage({
       value: url,
     }));
 
-  const [rows, setRows] = useState(() => seedRows(feeds));
+  const [rows, setRows] = useState(() => seedRows(sources));
   const [runs, setRuns] = useState([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState('');
   const [workflowStartedAt, setWorkflowStartedAt] = useState(null);
   const [workflowElapsed, setWorkflowElapsed] = useState(0);
-  const [isFeedListCollapsed, setIsFeedListCollapsed] = useState(false);
+  const [isSourceListCollapsed, setIsSourceListCollapsed] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const wasScrapingRef = useRef(false);
 
+  const handleStopRun = async () => {
+    if (!activeRun?.id) return;
+    setIsStopping(true);
+    try {
+      await onStopRun(activeRun.id);
+    } catch (error) {
+      console.error('Failed to stop pipeline run:', error);
+    } finally {
+      setIsStopping(false);
+    }
+  };
+
   useEffect(() => {
-    if (feeds.length) setRows(seedRows(feeds));
-  }, [feeds]);
+    if (sources.length) setRows(seedRows(sources));
+  }, [sources]);
 
   useEffect(() => {
     if (isScraping && !wasScrapingRef.current) {
@@ -136,17 +157,17 @@ export default function WorkflowPage({
 
   const hasData = articles.length > 0;
   const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
-  const selectedEventCount = selectedEventIds.length;
-  const eventLabel = useMemo(() => {
-    if (selectedEvents.length === 0) return events.length ? 'select one or more events' : 'no events available';
-    if (selectedEvents.length === 1) return selectedEvents[0].name || '1 event';
-    return `${selectedEvents.length} selected events`;
-  }, [events.length, selectedEvents]);
-  const selectedEventNames = useMemo(
-    () => selectedEvents.map((event) => event.name).filter(Boolean).slice(0, 4),
-    [selectedEvents]
+  const selectedProjectCount = selectedProjectIds.length;
+  const projectLabel = useMemo(() => {
+    if (selectedProjects.length === 0) return projects.length ? 'select one or more projects' : 'no projects available';
+    if (selectedProjects.length === 1) return selectedProjects[0].name || '1 project';
+    return `${selectedProjects.length} selected projects`;
+  }, [projects.length, selectedProjects]);
+  const selectedProjectNames = useMemo(
+    () => selectedProjects.map((project) => project.name).filter(Boolean).slice(0, 4),
+    [selectedProjects]
   );
-  const hasMultipleEvents = events.length > 1;
+  const hasMultipleProjects = projects.length > 1;
 
   const formatMatchScore = (value) => {
     const score = Number(value);
@@ -158,6 +179,7 @@ export default function WorkflowPage({
     const total = articles.length;
     const positive = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'positive').length;
     const negative = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'negative').length;
+    const mixed = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'mixed').length;
     const neutral = articles.filter((a) => (a.sentiment || '').toLowerCase() === 'neutral' || !a.sentiment).length;
     const sources = new Set(articles.map((a) => a.source).filter(Boolean)).size;
     const avg = total
@@ -174,7 +196,7 @@ export default function WorkflowPage({
       .slice(0, 4)
       .map(([source, count]) => ({ source, count }));
 
-    return { total, positive, negative, neutral, sources, avg, topSources };
+    return { total, positive, negative, neutral, mixed, sources, avg, topSources };
   }, [articles]);
 
   const latestArticles = useMemo(
@@ -240,30 +262,30 @@ export default function WorkflowPage({
     return currentRun.message || '';
   }, [currentRun]);
 
-  const toggleSelectedEvent = (eventId) => {
-    const id = Number(eventId);
+  const toggleSelectedProject = (projectId) => {
+    const id = Number(projectId);
     if (!Number.isFinite(id)) return;
 
-    const isSelected = selectedEventIds.includes(id);
-    if (isSelected && selectedEventIds.length === 1) {
+    const isSelected = selectedProjectIds.includes(id);
+    if (isSelected && selectedProjectIds.length === 1) {
       return;
     }
 
     const nextIds = isSelected
-      ? selectedEventIds.filter((value) => Number(value) !== id)
-      : [...selectedEventIds, id];
-    onChangeSelectedEventIds([...new Set(nextIds)]);
+      ? selectedProjectIds.filter((value) => Number(value) !== id)
+      : [...selectedProjectIds, id];
+    onChangeSelectedProjectIds([...new Set(nextIds)]);
   };
 
-  const selectAllEvents = () => {
-    onChangeSelectedEventIds([...new Set(events.map((event) => Number(event.id)).filter((id) => Number.isFinite(id)))]);
+  const selectAllProjects = () => {
+    onChangeSelectedProjectIds([...new Set(projects.map((project) => Number(project.id)).filter((id) => Number.isFinite(id)))]);
   };
 
-  const runLabel = selectedEventCount > 1
-    ? `Run Extractor for ${selectedEventCount} Events`
-    : selectedEventCount === 1
-      ? 'Run Extractor for Event'
-      : 'Select Events to Run';
+  const runLabel = selectedProjectCount > 1
+    ? `Run Extractor for ${selectedProjectCount} Projects`
+    : selectedProjectCount === 1
+      ? 'Run Extractor for Project'
+      : 'Select Projects to Run';
 
   return (
     <div className="workflow-layout">
@@ -281,7 +303,7 @@ export default function WorkflowPage({
               <div className="panel-kicker"><Clock3 size={14} /> Live stopwatch</div>
               <h2>Workflow elapsed time</h2>
               <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 6 }}>
-                Running scope: {eventLabel}
+                Running scope: {projectLabel}
               </div>
             </div>
             <span className={`panel-pill ${isScraping ? 'warning' : workflowStartedAt ? 'success' : 'neutral'}`}>
@@ -320,63 +342,63 @@ export default function WorkflowPage({
                 <div className="block-title">Get Data</div>
               </div>
 
-              <div className="workflow-event-picker">
-                <div className="workflow-event-picker-header">
+              <div className="workflow-project-picker">
+                <div className="workflow-project-picker-header">
                   <div>
-                    <div className="workflow-event-picker-kicker">Scope</div>
-                    <strong>Choose one or more events to extract</strong>
+                    <div className="workflow-project-picker-kicker">Scope</div>
+                    <strong>Choose one or more projects to extract</strong>
                   </div>
-                  <div className="workflow-event-picker-summary">
-                    <span className="panel-chip">{selectedEventCount} selected</span>
-                    <span className="panel-chip muted">{events.length} total</span>
+                  <div className="workflow-project-picker-summary">
+                    <span className="panel-chip">{selectedProjectCount} selected</span>
+                    <span className="panel-chip muted">{projects.length} total</span>
                   </div>
                 </div>
 
-                <div className="workflow-event-picker-note">
-                  The extractor will run once for each selected event, then the results below will merge the latest articles into a single view.
+                <div className="workflow-project-picker-note">
+                  The extractor will run once for each selected project, then the results below will merge the latest articles into a single view.
                 </div>
 
-                {events.length === 0 ? (
+                {projects.length === 0 ? (
                   <div className="panel-empty" style={{ marginTop: 8 }}>
                     <ShieldCheck size={16} />
-                    <span>No events yet. Create an event first, then come back to run the workflow.</span>
+                    <span>No projects yet. Create a project first, then come back to run the workflow.</span>
                   </div>
                 ) : (
                   <>
-                    <div className="workflow-event-picker-actions">
+                    <div className="workflow-project-picker-actions">
                       <button
                         type="button"
                         className="btn-secondary"
-                        onClick={selectAllEvents}
-                        disabled={!hasMultipleEvents || selectedEventCount === events.length}
+                        onClick={selectAllProjects}
+                        disabled={!hasMultipleProjects || selectedProjectCount === projects.length}
                         style={{ padding: '8px 10px', fontSize: '0.78rem' }}
                       >
                         Select all
                       </button>
                     </div>
 
-                    <div className="workflow-event-list">
-                      {events.map((event) => {
-                        const isSelected = selectedEventIds.includes(Number(event.id));
+                    <div className="workflow-project-list">
+                      {projects.map((project) => {
+                        const isSelected = selectedProjectIds.includes(Number(project.id));
                         return (
-                          <label key={event.id} className={`workflow-event-item ${isSelected ? 'selected' : ''}`}>
+                          <label key={project.id} className={`workflow-project-item ${isSelected ? 'selected' : ''}`}>
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleSelectedEvent(event.id)}
+                              onChange={() => toggleSelectedProject(project.id)}
                               disabled={isScraping}
                             />
-                            <div className="workflow-event-copy">
-                              <div className="workflow-event-topline">
-                                <strong>{event.name}</strong>
+                            <div className="workflow-project-copy">
+                              <div className="workflow-project-topline">
+                                <strong>{project.name}</strong>
                                 <span className={`panel-chip ${isSelected ? 'success' : 'muted'}`}>
                                   {isSelected ? 'Selected' : 'Unselected'}
                                 </span>
                               </div>
-                              <div className="workflow-event-meta">
-                                <span>{event.status || 'draft'}</span>
-                                {event.location ? <span>{event.location}</span> : null}
-                                {(event.feed_ids || []).length ? <span>{event.feed_ids.length} feed{event.feed_ids.length === 1 ? '' : 's'}</span> : <span>No feeds</span>}
+                              <div className="workflow-project-meta">
+                                <span>{project.status || 'draft'}</span>
+                                {project.location ? <span>{project.location}</span> : null}
+                                {(project.source_ids || []).length ? <span>{project.source_ids.length} source{project.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
                               </div>
                             </div>
                           </label>
@@ -387,46 +409,46 @@ export default function WorkflowPage({
                 )}
               </div>
 
-              {selectedEventNames.length ? (
-                <div className="workflow-event-pills">
-                  {selectedEventNames.map((name) => (
-                    <span key={name} className="workflow-event-pill">{name}</span>
+              {selectedProjectNames.length ? (
+                <div className="workflow-project-pills">
+                  {selectedProjectNames.map((name) => (
+                    <span key={name} className="workflow-project-pill">{name}</span>
                   ))}
-                  {selectedEvents.length > selectedEventNames.length ? (
-                    <span className="workflow-event-pill muted">+{selectedEvents.length - selectedEventNames.length} more</span>
+                  {selectedProjects.length > selectedProjectNames.length ? (
+                    <span className="workflow-project-pill muted">+{selectedProjects.length - selectedProjectNames.length} more</span>
                   ) : null}
                 </div>
               ) : null}
 
               <div className="get-rows-header">
                 <div className="get-rows-header-copy">
-                  <strong>Feeds</strong>
+                  <strong>Sources</strong>
                   <span>Paste URLs here or switch a row to keywords</span>
                 </div>
                 <button
                   type="button"
-                  className="workflow-event-toggle"
-                  onClick={() => setIsFeedListCollapsed((current) => !current)}
-                  aria-expanded={!isFeedListCollapsed}
-                  aria-controls="workflow-feed-list"
+                  className="workflow-project-toggle"
+                  onClick={() => setIsSourceListCollapsed((current) => !current)}
+                  aria-expanded={!isSourceListCollapsed}
+                  aria-controls="workflow-source-list"
                 >
-                  {isFeedListCollapsed ? (
+                  {isSourceListCollapsed ? (
                     <>
-                      Expand feeds <ChevronDown size={14} />
+                      Expand sources <ChevronDown size={14} />
                     </>
                   ) : (
                     <>
-                      Collapse feeds <ChevronUp size={14} />
+                      Collapse sources <ChevronUp size={14} />
                     </>
                   )}
                 </button>
               </div>
 
               <AnimatePresence initial={false}>
-                {!isFeedListCollapsed ? (
+                {!isSourceListCollapsed ? (
                   <motion.div
-                    key="workflow-feed-list"
-                    id="workflow-feed-list"
+                    key="workflow-source-list"
+                    id="workflow-source-list"
                     className="get-rows"
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
@@ -484,37 +506,56 @@ export default function WorkflowPage({
                   </motion.div>
                 ) : (
                   <motion.div
-                    key="workflow-feed-list-collapsed"
-                    className="workflow-event-list-collapsed"
+                    key="workflow-source-list-collapsed"
+                    className="workflow-project-list-collapsed"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
-                    Feed URLs are collapsed. Expand them to edit or review the source list.
+                    Source URLs are collapsed. Expand them to edit or review the source list.
                   </motion.div>
                 )}
               </AnimatePresence>
 
               <Link
-                to="/feeds"
+                to="/sources"
                 className="add-row-btn"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}
               >
                 <Plus size={18} /> Add Source
               </Link>
 
-              <button
-                className="btn-primary"
-                style={{ marginTop: '15px', opacity: isScraping ? 0.7 : 1 }}
-                onClick={() => onRunScraper?.(selectedEventIds)}
-                disabled={isScraping || selectedEventCount === 0}
-              >
-                {isScraping ? (
-                  <><RefreshCw size={16} className="spin" /> Running...</>
-                ) : (
-                  runLabel
-                )}
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                <button
+                  className="btn-primary"
+                  style={{ opacity: isScraping ? 0.7 : 1, flex: 1 }}
+                  onClick={() => onRunScraper?.(selectedProjectIds)}
+                  disabled={isScraping || selectedProjectCount === 0 || !canRunScraper}
+                  title={canRunScraper ? undefined : 'Requires the pipeline.run permission.'}
+                >
+                  {isScraping ? (
+                    <><RefreshCw size={16} className="spin" /> Running...</>
+                  ) : (
+                    runLabel
+                  )}
+                </button>
+
+                {activeRun ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleStopRun}
+                    disabled={isStopping || !canStopScraper}
+                    title={canStopScraper ? undefined : 'Requires the pipeline.stop permission.'}
+                  >
+                    {isStopping ? (
+                      <><RefreshCw size={16} className="spin" /> Stopping...</>
+                    ) : (
+                      <><Square size={16} /> Stop</>
+                    )}
+                  </button>
+                ) : null}
+              </div>
             </motion.div>
 
             <div className="workflow-arrow">
@@ -620,6 +661,10 @@ export default function WorkflowPage({
                     <div className="summary-stat">
                       <span className="summary-label">Neutral Sentiment</span>
                       <span className="summary-value" style={{ color: '#9aa0aa' }}>{stats.neutral} Articles</span>
+                    </div>
+                    <div className="summary-stat">
+                      <span className="summary-label">Mixed Sentiment</span>
+                      <span className="summary-value" style={{ color: '#f59e0b' }}>{stats.mixed} Articles</span>
                     </div>
                     <div className="summary-stat">
                       <span className="summary-label">Unique Sources</span>
@@ -767,6 +812,10 @@ export default function WorkflowPage({
                   <strong style={{ color: '#9aa0aa' }}>{stats.neutral.toLocaleString()}</strong>
                 </div>
                 <div className="mini-list-row">
+                  <span>Mixed</span>
+                  <strong style={{ color: '#f59e0b' }}>{stats.mixed.toLocaleString()}</strong>
+                </div>
+                <div className="mini-list-row">
                   <span>Unique Sources</span>
                   <strong style={{ color: 'var(--secondary-color)' }}>{stats.sources.toLocaleString()}</strong>
                 </div>
@@ -800,8 +849,8 @@ export default function WorkflowPage({
                       <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
                         {article.sentiment || 'Neutral'}
                       </span>
-                      {article.event_similarity_score != null && (
-                        <span className="badge score">Match {formatMatchScore(article.event_similarity_score)}</span>
+                      {article.project_similarity_score != null && (
+                        <span className="badge score">Match {formatMatchScore(article.project_similarity_score)}</span>
                       )}
                     </div>
                       <div className="article-preview-title">{article.title || article.url}</div>

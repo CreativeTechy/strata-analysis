@@ -10,6 +10,8 @@ export default function ConfirmModal({
   confirmButtonStyle,
   onConfirm,
   onClose,
+  hideCancel = false,
+  children,
 }) {
   if (!open) return null;
 
@@ -34,15 +36,21 @@ export default function ConfirmModal({
           </button>
         </div>
 
-        <p id="confirm-modal-message" className="confirm-modal-message">
-          {message}
-        </p>
+        {message && (
+          <p id="confirm-modal-message" className="confirm-modal-message">
+            {message}
+          </p>
+        )}
+
+        {children}
 
         <div className="confirm-modal-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            {cancelLabel}
-          </button>
-          <button type="button" className="btn-primary" onClick={onConfirm} style={confirmButtonStyle}>
+          {!hideCancel && (
+            <button type="button" className="btn-secondary" onClick={onClose}>
+              {cancelLabel}
+            </button>
+          )}
+          <button type="button" className="btn-primary" onClick={onConfirm || onClose} style={confirmButtonStyle}>
             {confirmLabel}
           </button>
         </div>

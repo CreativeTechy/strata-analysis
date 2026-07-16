@@ -5,42 +5,62 @@ The four stages live in their own modules:
   enricher -> enrich.py
   saver    -> store.py
 
-This API triggers the jobs and exposes configured feeds to the dashboard.
+This API triggers the jobs and exposes configured sources to the dashboard.
 """
 
 import asyncio
+import contextlib
 import json
-import os
-import subprocess
-import sys
 import uuid
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
-from event_discovery import discover_event_links
-from events_ai import suggest_event_metadata
-from articles_store import export_articles, get_article_stats, list_articles
-from articles_store import get_brand_sentiment_rollup
+import permissions_store
+import sessions_store
+import users_store
+from auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
+from project_discovery import discover_project_links
+from projects_ai import suggest_project_metadata
+from articles_store import compute_overall_tone, export_articles, get_article_stats, list_articles
 from llm_client import chat_completion
-from events_store import (
-    create_event,
-    delete_event,
-    diagnose_event_setup,
-    list_events,
-    list_events_page,
-    list_feeds_for_event,
-    persist_event_embedding_for_id,
-    set_event_feeds,
-    update_event,
+from projects_store import (
+    create_project,
+    delete_project,
+    diagnose_project_setup,
+    list_project_ids_for_user,
+    list_projects,
+    list_projects_page,
+    list_sources_for_project,
+    persist_project_embedding_for_id,
+    project_ids_by_user_map,
+    record_run_completion,
+    set_project_sources,
+    set_project_users,
+    update_project,
 )
-from feeds_store import bootstrap_feeds, create_feed, delete_feed, diagnose_feed_setup, list_feeds_page, update_feed
-from pipeline_runs import create_pipeline_run, list_pipeline_runs, update_pipeline_run
+from sources_store import (
+    bootstrap_sources,
+    create_source,
+    delete_source,
+    diagnose_source_setup,
+    list_sources_page,
+    update_source,
+)
+from pipeline import cancel_pipeline_run, run_scraper_pipeline
+from pipeline_runs import (
+    ACTIVE_STATUSES,
+    create_pipeline_run,
+    get_active_run_for_project,
+    get_pipeline_run,
+    list_pipeline_runs,
+    update_pipeline_run,
+)
+from scheduler import scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
@@ -60,169 +80,108 @@ app = FastAPI(title="Strata Scraper API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-def _load_pipeline_stats(stats_file: Path):
-    if not stats_file.exists():
-        return {}
-    try:
-        return json.loads(stats_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    # Shape every raised HTTPException (401/403/404/...) like this API's
+    # existing ad hoc error bodies ({"error": ...}) so the dashboard's
+    # shared formatApiError() handles them without special-casing.
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
 
 
-def _format_event_context(event: dict | None) -> str:
-    if not isinstance(event, dict):
+def _format_project_context(project: dict | None) -> str:
+    if not isinstance(project, dict):
         return ""
 
     parts = []
-    name = (event.get("name") or "").strip()
+    name = (project.get("name") or "").strip()
     if name:
         parts.append(f"Name: {name}")
 
-    status = (event.get("status") or "").strip()
+    status = (project.get("status") or "").strip()
     if status:
         parts.append(f"Status: {status}")
 
-    start_date = event.get("start_date")
+    start_date = project.get("start_date")
     if start_date:
         parts.append(f"Start date: {start_date}")
 
-    end_date = event.get("end_date")
+    end_date = project.get("end_date")
     if end_date:
         parts.append(f"End date: {end_date}")
 
-    location = (event.get("location") or "").strip()
+    location = (project.get("location") or "").strip()
     if location:
         parts.append(f"Location: {location}")
 
-    target_audience = (event.get("target_audience") or "").strip()
+    location_type = (project.get("location_type") or "").strip()
+    if location_type:
+        parts.append(f"Location type: {location_type}")
+
+    target_audience = (project.get("target_audience") or "").strip()
     if target_audience:
         parts.append(f"Target audience: {target_audience}")
 
-    hashtags = event.get("hashtags") or []
+    hashtags = project.get("hashtags") or []
     if isinstance(hashtags, str):
         hashtags = [hashtags]
     hashtags = [str(item).strip() for item in hashtags if str(item).strip()]
     if hashtags:
         parts.append(f"Hashtags: {', '.join(hashtags)}")
 
-    keywords = event.get("keywords") or []
+    keywords = project.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [keywords]
     keywords = [str(item).strip() for item in keywords if str(item).strip()]
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
 
-    usernames = event.get("usernames") or []
+    usernames = project.get("usernames") or []
     if isinstance(usernames, str):
         usernames = [usernames]
     usernames = [str(item).strip() for item in usernames if str(item).strip()]
     if usernames:
         parts.append(f"Usernames: {', '.join(usernames)}")
 
-    description = (event.get("description") or "").strip()
+    first_run_at = project.get("first_run_at")
+    if first_run_at:
+        parts.append(f"First run at: {first_run_at}")
+
+    description = (project.get("description") or "").strip()
     if description:
         parts.append(f"Description: {description}")
 
     return "\n".join(parts)
 
 
-def run_scraper_pipeline(run_id: str, event_id: int | None = None):
-    """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
-    env = os.environ.copy()
-    env["PIPELINE_RUN_ID"] = run_id
-    if event_id is not None:
-        env["PIPELINE_EVENT_ID"] = str(event_id)
-    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
-        run_path = Path(run_dir)
-        raw_file = run_path / "articles.raw.json"
-        enriched_file = run_path / "articles.enriched.json"
-        stats_file = run_path / "pipeline.stats.json"
-        env["PIPELINE_WORKDIR"] = str(run_path)
-        env["PIPELINE_RAW_FILE"] = str(raw_file)
-        env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
-        env["PIPELINE_STATS_FILE"] = str(stats_file)
+@app.on_event("startup")
+async def _bootstrap_admin():
+    users_store.bootstrap_admin()
 
-        if event_id is not None:
-            try:
-                feeds = list_feeds_for_event(event_id)
-                feed_urls = [feed.get("url") for feed in feeds if feed.get("url")]
-                if feed_urls:
-                    env["FEEDS"] = ",".join(feed_urls)
-                else:
-                    update_pipeline_run(
-                        run_id,
-                        status="failed",
-                        stage="error",
-                        message="Selected event has no feeds assigned.",
-                        error="No feeds assigned to the selected event.",
-                        finished_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                    return
-            except Exception:
-                pass
 
-        try:
-            update_pipeline_run(
-                run_id,
-                status="running",
-                stage="scrape",
-                message="Starting scrape...",
-                started_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("1. Scraping configured sources...")
-            subprocess.run(
-                ["scrapy", "crawl", "source_rss", "-O", str(raw_file)],
-                cwd=BASE_DIR,
-                check=True,
-                env=env,
-            )
-            update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
-            print("2. Enriching + saving...")
-            subprocess.run([sys.executable, "enrich.py"], cwd=BASE_DIR, check=True, env=env)
-            stats = _load_pipeline_stats(stats_file)
-            update_pipeline_run(
-                run_id,
-                status="success",
-                stage="done",
-                message="Pipeline complete.",
-                articles_scraped=int(stats.get("articles_scraped") or 0),
-                articles_cleaned=int(stats.get("articles_cleaned") or 0),
-                articles_saved=int(stats.get("articles_saved") or 0),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("Pipeline complete!")
-        except subprocess.CalledProcessError as e:
-            update_pipeline_run(
-                run_id,
-                status="failed",
-                stage="error",
-                message="Pipeline failed.",
-                error=str(e),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print(f"Pipeline failed: {e}")
-        except Exception as e:
-            update_pipeline_run(
-                run_id,
-                status="failed",
-                stage="error",
-                message="Pipeline crashed.",
-                error=str(e),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print(f"Pipeline crashed: {e}")
+@app.on_event("startup")
+async def _start_scheduler():
+    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_scheduler():
+    task = getattr(app.state, "scheduler_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 @app.get("/")
 def root():
-    return {"service": "Strata Spider API", "ok": True, "see": "/api/health"}
+    return {"service": "Strata Media API", "ok": True, "see": "/api/health"}
 
 
 @app.get("/api/health")
@@ -230,133 +189,396 @@ def health_check():
     return {"status": "healthy", "service": "Strata Scraper API"}
 
 
-@app.get("/api/feeds")
-def get_feeds(limit: int | None = None, offset: int = 0):
+# --- Auth --------------------------------------------------------------
+
+
+def _public_user(user: dict) -> dict:
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "status": user.get("status"),
+        "permissions": sorted(permissions_store.user_permission_keys(user)),
+    }
+
+
+@app.post("/api/auth/login")
+def login(payload: dict, response: Response):
+    payload = payload or {}
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+
+    row = users_store.get_user_by_login(username)
+    if not row or row.get("status") != "active" or not users_store.verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    raw_token, csrf_token, expires_at = sessions_store.create_session(row["id"])
+    users_store.record_login(row["id"])
+    set_auth_cookies(response, raw_token, csrf_token, expires_at)
+    return {"user": _public_user(row)}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response, user: dict = Depends(require_permission())):
+    raw_token = request.cookies.get(config.SESSION_COOKIE_NAME)
+    sessions_store.delete_session(raw_token)
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = Depends(get_current_user)):
+    return {"user": _public_user(user)}
+
+
+# --- User management ------------------------------------------------------
+
+
+@app.get("/api/users/linkable")
+def get_linkable_users(user: dict = Depends(require_permission("projects.link_users"))):
+    """Roster used by the project<->user linkage UI - gated only by
+    projects.link_users so it works for admins who manage linkage without
+    also holding users.view."""
+    project_ids_by_user = project_ids_by_user_map()
+    users = [
+        {**candidate, "project_ids": project_ids_by_user.get(int(candidate["id"]), [])}
+        for candidate in users_store.list_users()
+    ]
+    return {"users": users}
+
+
+@app.get("/api/users")
+def get_users(user: dict = Depends(require_permission("users.view"))):
+    return {"users": users_store.list_users()}
+
+
+@app.post("/api/users")
+def add_user(payload: dict, user: dict = Depends(require_permission("users.create"))):
+    payload = payload or {}
+    username = str(payload.get("username") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    password = str(payload.get("password") or "")
+    role_name = str(payload.get("role") or "viewer").strip().lower()
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    role = permissions_store.get_role_by_name(role_name)
+    if not role:
+        raise HTTPException(status_code=400, detail=f"Unknown role: {role_name}")
+
+    try:
+        created = users_store.create_user(username, email, password, role["id"])
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to create user: {e}")
+    if not created:
+        raise HTTPException(status_code=409, detail="Unable to create user.")
+    return {"user": created}
+
+
+@app.patch("/api/users/{user_id}")
+def edit_user(user_id: int, payload: dict, user: dict = Depends(require_permission("users.update"))):
+    payload = payload or {}
+    role_name = payload.get("role")
+    status = payload.get("status")
+    if role_name is not None:
+        role_name = str(role_name).strip().lower()
+    if status is not None:
+        status = str(status).strip().lower()
+
+    if user_id == user["id"] and (role_name is not None or status == "disabled"):
+        raise HTTPException(status_code=400, detail="You cannot change your own role or disable yourself.")
+
+    role_id = None
+    if role_name is not None:
+        role = permissions_store.get_role_by_name(role_name)
+        if not role:
+            raise HTTPException(status_code=400, detail=f"Unknown role: {role_name}")
+        role_id = role["id"]
+
+    try:
+        updated = users_store.update_user(user_id, role_id=role_id, status=status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if status == "disabled":
+        sessions_store.delete_sessions_for_user(user_id)
+    return {"user": updated}
+
+
+@app.delete("/api/users/{user_id}")
+def remove_user(user_id: int, user: dict = Depends(require_permission("users.delete"))):
+    if user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+    sessions_store.delete_sessions_for_user(user_id)
+    deleted = users_store.delete_user(user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"ok": True}
+
+
+# --- Role management --------------------------------------------------------
+
+
+@app.get("/api/permissions")
+def get_permissions(user: dict = Depends(require_permission("roles.view"))):
+    return {"permissions": permissions_store.list_permissions()}
+
+
+@app.get("/api/roles")
+def get_roles(user: dict = Depends(require_permission("roles.view"))):
+    return {"roles": permissions_store.list_roles_with_permissions()}
+
+
+@app.post("/api/roles")
+def add_role(payload: dict, user: dict = Depends(require_permission("roles.create"))):
+    payload = payload or {}
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    permission_keys = payload.get("permissions") or []
+    if not name:
+        raise HTTPException(status_code=400, detail="Role name is required.")
+
+    try:
+        role = permissions_store.create_role(name, description, permission_keys)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to create role: {e}")
+    if not role:
+        raise HTTPException(status_code=409, detail="Unable to create role.")
+    return {"role": role}
+
+
+@app.patch("/api/roles/{role_id}")
+def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permission("roles.update"))):
+    payload = payload or {}
+    name = payload.get("name")
+    description = payload.get("description")
+    permission_keys = payload.get("permissions")
+
+    role = permissions_store.get_role_by_id(role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found.")
+
+    try:
+        if name is not None or description is not None:
+            permissions_store.update_role(role_id, name=name, description=description)
+        if permission_keys is not None and not role.get("full_access"):
+            permissions_store.set_role_permissions(role_id, permission_keys)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=f"Unable to update role: {e}")
+
+    return {"role": permissions_store.get_role_with_permissions(role_id)}
+
+
+@app.delete("/api/roles/{role_id}")
+def remove_role(role_id: int, user: dict = Depends(require_permission("roles.delete"))):
+    try:
+        deleted = permissions_store.delete_role(role_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Role not found.")
+    return {"ok": True}
+
+
+@app.get("/api/sources")
+def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("sources.view"))):
     """Configured sources for the dashboard sidebar."""
     if limit is None:
-        feeds = bootstrap_feeds()
-        source = feeds[0].get("source", "database") if feeds else "database"
-        return {"feeds": feeds, "source": source}
+        sources = bootstrap_sources()
+        source = sources[0].get("source", "database") if sources else "database"
+        return {"sources": sources, "source": source}
 
-    page = list_feeds_page(limit=limit, offset=offset)
-    source = page["feeds"][0].get("source", "database") if page["feeds"] else "database"
+    page = list_sources_page(limit=limit, offset=offset)
+    source = page["sources"][0].get("source", "database") if page["sources"] else "database"
     return {**page, "source": source}
 
 
-@app.get("/api/events")
-def get_events(limit: int | None = None, offset: int = 0):
+def _visible_project_ids_or_none(user: dict):
+    """None means "no restriction" (admin/full_access); otherwise the list of
+    project ids this user is linked to via project_users."""
+    if permissions_store.user_is_full_access(user):
+        return None
+    return list_project_ids_for_user(user["id"])
+
+
+def _ensure_project_visible(project_id: int, user: dict) -> None:
+    """Defense-in-depth for project-scoped mutations: a non-admin acting on a
+    project they can't see gets a 404, same as if it didn't exist."""
+    if permissions_store.user_is_full_access(user):
+        return
+    if int(project_id) not in set(list_project_ids_for_user(user["id"])):
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+
+@app.get("/api/projects")
+def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("projects.view"))):
+    visible_ids = _visible_project_ids_or_none(user)
     if limit is None:
-        return {"events": list_events()}
-    return list_events_page(limit=limit, offset=offset)
+        return {"projects": list_projects(visible_project_ids=visible_ids)}
+    return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
 
 
-def _default_discovery_result(event):
-    feed_ids = []
-    for value in event.get("feed_ids") or []:
+def _default_discovery_result(project):
+    source_ids = []
+    for value in project.get("source_ids") or []:
         try:
-            feed_ids.append(int(value))
+            source_ids.append(int(value))
         except Exception:
             continue
     return {
         "search_terms": [],
         "candidates": [],
         "suggested_links": [],
-        "feed_ids": feed_ids,
-        "feeds": [],
+        "source_ids": source_ids,
+        "sources": [],
     }
 
 
-def _save_event_with_discovery(event):
-    if not isinstance(event, dict):
+def _save_project_with_discovery(project):
+    if not isinstance(project, dict):
         return None, {}
 
     discovery = (
-        discover_event_links(event)
-        if (event.get("hashtags") or event.get("keywords") or event.get("usernames"))
-        else _default_discovery_result(event)
+        discover_project_links(project)
+        if (project.get("hashtags") or project.get("keywords") or project.get("usernames"))
+        else _default_discovery_result(project)
     )
-    if discovery.get("feed_ids") is not None:
-        event = {**event, "feed_ids": discovery.get("feed_ids") or event.get("feed_ids") or []}
-    return event, discovery
+    if discovery.get("source_ids") is not None:
+        project = {**project, "source_ids": discovery.get("source_ids") or project.get("source_ids") or []}
+    return project, discovery
 
 
-@app.post("/api/events/discover")
-def discover_event(payload: dict):
+@app.post("/api/projects/discover")
+def discover_project(payload: dict, user: dict = Depends(require_permission("projects.create"))):
     if not isinstance(payload, dict):
         payload = {}
-    discovery = discover_event_links(payload)
+    discovery = discover_project_links(payload)
     return {"discovery": discovery}
 
 
-@app.post("/api/events")
-def add_event(background_tasks: BackgroundTasks, payload: dict):
-    try:
-        event = create_event(payload or {}, embed=False)
-    except Exception as e:
-        detail = diagnose_event_setup()
-        return {
-            "error": "Unable to create event. Check database connection settings.",
-            "detail": detail or str(e),
-        }
-    if not event:
-        detail = diagnose_event_setup()
-        return {
-            "error": "Unable to create event. Check database connection settings.",
-            "detail": detail or "The event request did not return a row.",
-        }
-    background_tasks.add_task(persist_event_embedding_for_id, event.get("id"))
-    return {"event": event}
+def _strip_unauthorized_user_ids(payload: dict, user: dict) -> dict:
+    """Drop `user_ids` from a project payload unless the caller holds
+    projects.link_users, so link management stays gated to that permission
+    even though project create/update itself only needs projects.create/update."""
+    if not isinstance(payload, dict) or "user_ids" not in payload:
+        return payload or {}
+    if "projects.link_users" in permissions_store.user_permission_keys(user):
+        return payload
+    payload = dict(payload)
+    payload.pop("user_ids", None)
+    return payload
 
 
-@app.put("/api/events/{event_id}")
-def edit_event(event_id: int, background_tasks: BackgroundTasks, payload: dict):
+@app.post("/api/projects")
+def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.create"))):
+    payload = _strip_unauthorized_user_ids(payload, user)
     try:
-        event = update_event(event_id, payload or {}, embed=False)
+        project = create_project(payload or {}, embed=False)
+    except ValueError as e:
+        return {"error": "Invalid project payload.", "detail": str(e)}
     except Exception as e:
-        detail = diagnose_event_setup()
+        detail = diagnose_project_setup()
         return {
-            "error": "Unable to update event. Check database connection settings.",
+            "error": "Unable to create project. Check database connection settings.",
             "detail": detail or str(e),
         }
-    if not event:
-        detail = diagnose_event_setup()
+    if not project:
+        detail = diagnose_project_setup()
         return {
-            "error": "Unable to update event. Check database connection settings.",
+            "error": "Unable to create project. Check database connection settings.",
+            "detail": detail or "The project request did not return a row.",
+        }
+    background_tasks.add_task(persist_project_embedding_for_id, project.get("id"))
+    return {"project": project}
+
+
+@app.put("/api/projects/{project_id}")
+def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
+    payload = _strip_unauthorized_user_ids(payload, user)
+    try:
+        project = update_project(project_id, payload or {}, embed=False)
+    except ValueError as e:
+        return {"error": "Invalid project payload.", "detail": str(e)}
+    except Exception as e:
+        detail = diagnose_project_setup()
+        return {
+            "error": "Unable to update project. Check database connection settings.",
+            "detail": detail or str(e),
+        }
+    if not project:
+        detail = diagnose_project_setup()
+        return {
+            "error": "Unable to update project. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
-    background_tasks.add_task(persist_event_embedding_for_id, event_id)
-    event, discovery = _save_event_with_discovery(event)
-    return {"event": event, "discovery": discovery}
+    background_tasks.add_task(persist_project_embedding_for_id, project_id)
+    project, discovery = _save_project_with_discovery(project)
+    return {"project": project, "discovery": discovery}
 
 
-@app.post("/api/events/suggest")
-def suggest_event(payload: dict):
+@app.post("/api/projects/suggest")
+def suggest_project(payload: dict, user: dict = Depends(require_any_permission("projects.create", "projects.update"))):
     if not isinstance(payload, dict):
         payload = {}
     name = str(payload.get("name") or "").strip()
     description = str(payload.get("description") or "").strip()
     if not name:
         return {
-            "error": "Event name is required.",
-            "detail": "Provide the event name before requesting AI suggestions.",
+            "error": "Project name is required.",
+            "detail": "Provide the project name before requesting AI suggestions.",
         }
-    return {"suggestions": suggest_event_metadata(name, description)}
+    return {"suggestions": suggest_project_metadata(name, description)}
 
 
-@app.delete("/api/events/{event_id}")
-def remove_event(event_id: int):
-    if not delete_event(event_id):
-        detail = diagnose_event_setup()
+@app.delete("/api/projects/{project_id}")
+def remove_project(project_id: int, user: dict = Depends(require_permission("projects.delete"))):
+    _ensure_project_visible(project_id, user)
+    if not delete_project(project_id):
+        detail = diagnose_project_setup()
         return {
-            "error": "Unable to delete event. Check database connection settings.",
+            "error": "Unable to delete project. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
 
 
 @app.get("/api/pipeline-runs")
-def get_pipeline_runs(limit: int = 10):
+def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_permission("pipeline.view"))):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+
+
+@app.post("/api/pipeline-runs/{run_id}/stop")
+def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipeline.stop"))):
+    run = get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found.")
+
+    if run["status"] not in ACTIVE_STATUSES:
+        return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
+
+    cancel_pipeline_run(run_id)
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated = update_pipeline_run(
+        run_id,
+        status="cancelled",
+        stage="cancelled",
+        message="Cancelled by user.",
+        cancel_requested_at=now,
+        cancelled_at=now,
+        finished_at=now,
+    )
+    if run.get("project_id") is not None:
+        record_run_completion(run["project_id"], status="cancelled", completed_at=datetime.now(timezone.utc))
+
+    return {"run": updated or run, "message": "Pipeline run cancelled."}
 
 
 @app.get("/api/articles")
@@ -364,16 +586,17 @@ def get_articles(
     search: str | None = None,
     sentiment: str | None = None,
     category: str | None = None,
-    event_id: int | None = None,
+    project_id: int | None = None,
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
+    user: dict = Depends(require_permission("articles.view")),
 ):
     return list_articles(
         search=search,
         sentiment=sentiment,
         category=category,
-        event_id=event_id,
+        project_id=project_id,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -384,9 +607,10 @@ def get_articles(
 def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
-    event_id: int | None = None,
+    project_id: int | None = None,
+    user: dict = Depends(require_permission("articles.view")),
 ):
-    return get_article_stats(search=search, category=category, event_id=event_id)
+    return get_article_stats(search=search, category=category, project_id=project_id)
 
 
 @app.get("/api/articles/export")
@@ -394,14 +618,15 @@ def export_articles_jsonl(
     search: str | None = None,
     sentiment: str | None = None,
     category: str | None = None,
-    event_id: int | None = None,
+    project_id: int | None = None,
     sort: str = "published.desc",
+    user: dict = Depends(require_permission("articles.view")),
 ):
     rows = export_articles(
         search=search,
         sentiment=sentiment,
         category=category,
-        event_id=event_id,
+        project_id=project_id,
         sort=sort,
     )
 
@@ -417,149 +642,100 @@ def export_articles_jsonl(
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
 
 
-@app.post("/api/feeds")
-def add_feed(payload: dict):
-    """Create or update a feed record in local PostgreSQL."""
-    feed = create_feed(payload or {})
-    if not feed:
-        detail = diagnose_feed_setup()
+@app.post("/api/sources")
+def add_source(payload: dict, user: dict = Depends(require_permission("sources.create"))):
+    """Create or update a source record in local PostgreSQL."""
+    source = create_source(payload or {})
+    if not source:
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to create feed. Check database connection settings.",
-            "detail": detail or "The feed request did not return a row.",
+            "error": "Unable to create source. Check database connection settings.",
+            "detail": detail or "The source request did not return a row.",
         }
-    return {"feed": feed}
+    return {"source": source}
 
 
-@app.put("/api/feeds/{feed_id}")
-def edit_feed(feed_id: int, payload: dict):
-    """Update a feed record in local PostgreSQL."""
-    feed = update_feed(feed_id, payload or {})
-    if not feed:
-        detail = diagnose_feed_setup()
+@app.put("/api/sources/{source_id}")
+def edit_source(source_id: int, payload: dict, user: dict = Depends(require_permission("sources.update"))):
+    """Update a source record in local PostgreSQL."""
+    source = update_source(source_id, payload or {})
+    if not source:
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to update feed. Check database connection settings.",
+            "error": "Unable to update source. Check database connection settings.",
             "detail": detail or "The update request did not return a row.",
         }
-    return {"feed": feed}
+    return {"source": source}
 
 
-@app.delete("/api/feeds/{feed_id}")
-def remove_feed(feed_id: int):
-    """Delete a feed record from local PostgreSQL."""
-    if not delete_feed(feed_id):
-        detail = diagnose_feed_setup()
+@app.delete("/api/sources/{source_id}")
+def remove_source(source_id: int, user: dict = Depends(require_permission("sources.delete"))):
+    """Delete a source record from local PostgreSQL."""
+    if not delete_source(source_id):
+        detail = diagnose_source_setup()
         return {
-            "error": "Unable to delete feed. Check database connection settings.",
+            "error": "Unable to delete source. Check database connection settings.",
             "detail": detail or "The delete request failed.",
         }
     return {"ok": True}
 
 
-@app.post("/api/events/{event_id}/feeds")
-def replace_event_feeds(event_id: int, payload: dict):
-    feed_ids = payload.get("feed_ids") if isinstance(payload, dict) else []
-    assigned = set_event_feeds(event_id, feed_ids or [])
-    return {"event_id": event_id, "feed_ids": assigned}
+@app.post("/api/projects/{project_id}/sources")
+def replace_project_sources(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.update"))):
+    _ensure_project_visible(project_id, user)
+    source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
+    assigned = set_project_sources(project_id, source_ids or [])
+    return {"project_id": project_id, "source_ids": assigned}
+
+
+@app.post("/api/projects/{project_id}/users")
+def replace_project_users(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.link_users"))):
+    _ensure_project_visible(project_id, user)
+    user_ids = payload.get("user_ids") if isinstance(payload, dict) else []
+    assigned = set_project_users(project_id, user_ids or [])
+    return {"project_id": project_id, "user_ids": assigned}
 
 
 @app.post("/scrape")
-def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None):
+def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None, user: dict = Depends(require_permission("pipeline.run"))):
     payload = payload or {}
-    event_id = payload.get("event_id")
+    project_id = payload.get("project_id")
     try:
-        event_id = int(event_id) if event_id is not None else None
+        project_id = int(project_id) if project_id is not None else None
     except Exception:
-        event_id = None
-    if event_id is None:
-        events = list_events()
-        if len(events) == 1:
-            event_id = events[0].get("id")
-        elif not events:
-            raise HTTPException(status_code=400, detail="Create an event before running the scraper.")
+        project_id = None
+    if project_id is None:
+        projects = list_projects()
+        if len(projects) == 1:
+            project_id = projects[0].get("id")
+        elif not projects:
+            raise HTTPException(status_code=400, detail="Create a project before running the scraper.")
         else:
-            raise HTTPException(status_code=400, detail="Select an event before running the scraper.")
+            raise HTTPException(status_code=400, detail="Select a project before running the scraper.")
 
-    if not list_feeds_for_event(event_id):
-        raise HTTPException(status_code=400, detail="Assign at least one feed to the selected event before scraping.")
+    if not list_sources_for_project(project_id):
+        raise HTTPException(status_code=400, detail="Assign at least one source to the selected project before scraping.")
 
-    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", event_id=event_id)
+    active_run = get_active_run_for_project(project_id)
+    if active_run:
+        return {
+            "message": "A pipeline run is already active for this project.",
+            "run_id": active_run["id"],
+            "project_id": project_id,
+        }
+
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
     run_id = run["id"] if run else uuid.uuid4().hex
-    background_tasks.add_task(run_scraper_pipeline, run_id, event_id)
+    background_tasks.add_task(run_scraper_pipeline, run_id, project_id)
     return {
         "message": "Scraper pipeline triggered. It will save to local PostgreSQL when finished.",
         "run_id": run_id,
-        "event_id": event_id,
+        "project_id": project_id,
     }
 
 
-@app.get("/api/spider/stream")
-async def spider_stream(seed: str, depth: int = 2, pages: int = 300, save: int = 0):
-    """Server-Sent Events: live deep crawl for the Spider Mode page."""
-    depth = max(1, min(int(depth), 4))
-    pages = max(10, min(int(pages), 2000))
-
-    async def gen():
-        try:
-            from spider import deep_crawl_stream
-            from store import save_crawl_pages
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Spider engine unavailable: {e}'})}\n\n"
-            return
-
-        crawl_id = uuid.uuid4().hex
-        fetched_at = datetime.now(timezone.utc).isoformat()
-        buffer, saved = [], 0
-
-        async def flush():
-            nonlocal buffer, saved
-            if not buffer:
-                return saved
-            rows, buffer = buffer, []
-            saved += await asyncio.to_thread(save_crawl_pages, rows)
-            return saved
-
-        try:
-            async for ev in deep_crawl_stream(seed, depth, pages):
-                if ev.get("type") == "node":
-                    text = ev.pop("_text", "")
-                    if save and ev.get("is_article") and text:
-                        buffer.append(
-                            {
-                                "crawl_id": crawl_id,
-                                "url": ev["url"],
-                                "source": ev.get("source"),
-                                "seed": seed,
-                                "title": ev.get("title"),
-                                "text": text,
-                                "words": ev.get("words"),
-                                "depth": ev.get("depth"),
-                                "fetched_at": fetched_at,
-                            }
-                        )
-                        if len(buffer) >= 50:
-                            s = await flush()
-                            yield f"data: {json.dumps({'type': 'saved', 'count': s})}\n\n"
-                    yield f"data: {json.dumps(ev)}\n\n"
-                elif ev.get("type") == "done":
-                    if save:
-                        s = await flush()
-                        ev["stats"]["saved"] = s
-                        yield f"data: {json.dumps({'type': 'saved', 'count': s})}\n\n"
-                    yield f"data: {json.dumps(ev)}\n\n"
-                else:
-                    yield f"data: {json.dumps(ev)}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
 @app.delete("/api/articles")
-def delete_articles():
+def delete_articles(user: dict = Depends(require_permission("articles.delete"))):
     """Delete all stored articles from Postgres."""
     from store import delete_all_articles
 
@@ -573,54 +749,46 @@ def delete_articles():
     return {"ok": True}
 
 
-@app.get("/api/crawl-count")
-def get_crawl_count():
-    try:
-        from db import fetch_one
-
-        row = fetch_one("select count(*)::int as crawl_count from crawl_pages")
-        return {"crawl_count": int((row or {}).get("crawl_count") or 0)}
-    except Exception:
-        return {"crawl_count": 0}
-
-
-@app.get("/api/brand-sentiment")
-def brand_sentiment(limit: int = 50):
-    return get_brand_sentiment_rollup(limit=limit)
-
-
 @app.post("/api/chat")
-async def chat(payload: dict):
-    """Intelligence Copilot -> local LLM over the filtered articles."""
+async def chat(payload: dict, user: dict = Depends(require_permission())):
+    """Intelligence Copilot -> DeepSeek over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
     articles = (payload.get("articles") or [])[:80]
     total = int(payload.get("total") or len(articles))
-    event = payload.get("event") if isinstance(payload, dict) else None
-    if not isinstance(event, dict):
-        event_id = payload.get("event_id") if isinstance(payload, dict) else None
+    project = payload.get("project") if isinstance(payload, dict) else None
+    if not isinstance(project, dict):
+        project_id = payload.get("project_id") if isinstance(payload, dict) else None
         try:
-            event_id = int(event_id) if event_id is not None else None
+            project_id = int(project_id) if project_id is not None else None
         except Exception:
-            event_id = None
-        event = None
-        if event_id is not None:
-            events = list_events()
-            event = next((item for item in events if int(item.get("id") or -1) == event_id), None)
+            project_id = None
+        project = None
+        if project_id is not None:
+            projects = list_projects()
+            project = next((item for item in projects if int(item.get("id") or -1) == project_id), None)
 
-    event_context = _format_event_context(event)
+    project_context = _format_project_context(project)
+
+    def _article_tone_line(a):
+        writer_tone = a.get('writer_tone') or (a.get('insight_json') or {}).get('writer_tone', 'neutral')
+        article_tone = a.get('article_tone') or (a.get('insight_json') or {}).get('article_tone', 'neutral')
+        overall_tone = compute_overall_tone(article_tone, writer_tone)
+        return f"writer tone: {writer_tone} | article tone: {article_tone} | overall tone: {overall_tone}"
 
     context = "\n".join(
         f"{i + 1}. [{a.get('source', '?')} | {a.get('sentiment', 'neutral')} | "
-        f"{a.get('article_category') or a.get('category', 'general_article')} | score {a.get('relevance_score', '?')}] "
+        f"{a.get('article_category') or a.get('category', 'general_article')} | "
+        f"{_article_tone_line(a)} | "
+        f"score {a.get('relevance_score', '?')}] "
         f"{a.get('title', '')}\n   {a.get('summary', '') or (a.get('insight_json') or {}).get('summary', '')}"
         for i, a in enumerate(articles)
     )
     user_prompt = (
-        (f"Event context:\n{event_context}\n\n" if event_context else "")
+        (f"Project context:\n{project_context}\n\n" if project_context else "")
         + f"There are {total} articles in the current view.\n\n"
-        + "Use the event context as background when interpreting sentiment, tone, and relevance.\n\n"
+        + "Use the project context as background when interpreting sentiment, tone, and relevance.\n\n"
         + f"{context or '(none)'}\n\nQuestion: {question}"
     )
 
@@ -630,7 +798,6 @@ async def chat(payload: dict):
                 {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            model=config.LOCAL_LLM_MODEL,
             temperature=0.3,
             max_tokens=700,
             timeout=60,

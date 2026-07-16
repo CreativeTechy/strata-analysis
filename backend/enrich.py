@@ -1,4 +1,4 @@
-"""The ENRICHER stage: clean scraped articles, tag them with the local LLM,
+"""The ENRICHER stage: clean scraped articles, tag them with DeepSeek,
 and hand them to the saver (store.save_articles). Reads articles.json, writes
 enriched_articles.json, then upserts to local PostgreSQL.
 """
@@ -13,14 +13,14 @@ from pathlib import Path
 
 import config
 from embeddings import build_article_embedding_text, get_embedding
-from events_store import get_event
+from projects_store import get_project
 from llm_client import chat_completion
 from pipeline_runs import update_pipeline_run
 from store import save_articles
 
 MIN_TEXT_LENGTH = 200
-PROMPT_VERSION = "2026-06-30"
-MODEL_NAME = config.LOCAL_LLM_MODEL
+PROMPT_VERSION = "2026-07-15"
+MODEL_NAME = config.DEEPSEEK_CHAT_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
     "review",
@@ -31,19 +31,37 @@ VALID_CATEGORIES = {
     "buying_guide",
     "general_article",
 }
+VALID_TONES = {
+    "neutral",
+    "positive",
+    "enthusiastic",
+    "optimistic",
+    "critical",
+    "skeptical",
+    "negative",
+    "concerned",
+    "angry",
+    "sarcastic",
+    "humorous",
+    "formal",
+    "informal",
+}
 STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
-PIPELINE_EVENT_ID = os.environ.get("PIPELINE_EVENT_ID", "").strip()
+PIPELINE_PROJECT_ID = os.environ.get("PIPELINE_PROJECT_ID", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
-# Used when the local LLM is unavailable so the pipeline still produces
+# Used when DeepSeek enrichment fails so the pipeline still produces
 # rows that satisfy the local PostgreSQL schema instead of crashing.
 DEFAULT_ENRICHMENT = {
     "topic": "",
     "article_category": "general_article",
     "overall_sentiment": "neutral",
+    "writer_tone": "neutral",
+    "article_tone": "neutral",
+    "overall_tone": "neutral",
     "summary": "",
     "positive_feedback": [],
     "negative_feedback": [],
@@ -80,58 +98,64 @@ DEFAULT_ENRICHMENT = {
 }
 
 
-def _load_event_context():
-    if not PIPELINE_EVENT_ID:
+def _load_project_context():
+    if not PIPELINE_PROJECT_ID:
         return ""
     try:
-        event = get_event(int(PIPELINE_EVENT_ID))
+        project = get_project(int(PIPELINE_PROJECT_ID))
     except Exception:
-        event = None
-    if not event:
+        project = None
+    if not project:
         return ""
 
     parts = []
-    name = (event.get("name") or "").strip()
+    name = (project.get("name") or "").strip()
     if name:
         parts.append(f"Name: {name}")
-    status = (event.get("status") or "").strip()
+    status = (project.get("status") or "").strip()
     if status:
         parts.append(f"Status: {status}")
-    start_date = event.get("start_date")
+    start_date = project.get("start_date")
     if start_date:
         parts.append(f"Start date: {start_date}")
-    end_date = event.get("end_date")
+    end_date = project.get("end_date")
     if end_date:
         parts.append(f"End date: {end_date}")
-    location = (event.get("location") or "").strip()
+    location = (project.get("location") or "").strip()
     if location:
         parts.append(f"Location: {location}")
-    target_audience = (event.get("target_audience") or "").strip()
+    location_type = (project.get("location_type") or "").strip()
+    if location_type:
+        parts.append(f"Location type: {location_type}")
+    first_run_at = project.get("first_run_at")
+    if first_run_at:
+        parts.append(f"First run at: {first_run_at}")
+    target_audience = (project.get("target_audience") or "").strip()
     if target_audience:
         parts.append(f"Target audience: {target_audience}")
-    hashtags = event.get("hashtags") or []
+    hashtags = project.get("hashtags") or []
     if isinstance(hashtags, str):
         hashtags = [hashtags]
     hashtags = [str(item).strip() for item in hashtags if str(item).strip()]
     if hashtags:
         parts.append(f"Hashtags: {', '.join(hashtags)}")
-    keywords = event.get("keywords") or []
+    keywords = project.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [keywords]
     keywords = [str(item).strip() for item in keywords if str(item).strip()]
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
-    description = (event.get("description") or "").strip()
+    description = (project.get("description") or "").strip()
     if description:
         parts.append(f"Description: {description}")
     return "\n".join(parts)
 
 
-def _load_event():
-    if not PIPELINE_EVENT_ID:
+def _load_project():
+    if not PIPELINE_PROJECT_ID:
         return None
     try:
-        return get_event(int(PIPELINE_EVENT_ID))
+        return get_project(int(PIPELINE_PROJECT_ID))
     except Exception:
         return None
 
@@ -178,18 +202,18 @@ def _article_published_date(article):
     return None
 
 
-def _event_date_window(event):
-    if not isinstance(event, dict):
+def _project_date_window(project):
+    if not isinstance(project, dict):
         return None, None
-    return _coerce_date(event.get("start_date")), _coerce_date(event.get("end_date"))
+    return _coerce_date(project.get("start_date")), _coerce_date(project.get("end_date"))
 
 
-def _article_matches_event_window(article, event):
+def _article_matches_project_window(article, project):
     article_date = _article_published_date(article)
     if article_date is None:
         return True
 
-    start_date, end_date = _event_date_window(event)
+    start_date, end_date = _project_date_window(project)
     if start_date and article_date < start_date:
         return False
     if end_date and article_date > end_date:
@@ -266,6 +290,53 @@ def _normalize_category(value):
 def _normalize_sentiment(value):
     sentiment = _as_text(value).lower()
     return sentiment if sentiment in VALID_SENTIMENTS else "neutral"
+
+
+def _normalize_tone(value):
+    tone = _as_text(value).lower()
+    return tone if tone in VALID_TONES else "neutral"
+
+
+def _compute_overall_tone(article_tone, writer_tone):
+    """Deterministic overall_tone for a single article. Never guessed by the AI."""
+    article_tone = _normalize_tone(article_tone)
+    writer_tone = _normalize_tone(writer_tone)
+    if article_tone == writer_tone:
+        return article_tone
+    if article_tone == "neutral" and writer_tone != "neutral":
+        return writer_tone
+    if writer_tone == "neutral" and article_tone != "neutral":
+        return article_tone
+    return "mixed"
+
+
+def _group_overall_tone(article_tone_counts, writer_tone_counts):
+    """Deterministic overall_tone for a collection of articles (project rollup).
+
+    Prefers the most frequent non-neutral article_tone; falls back to
+    writer_tone only as a tie-breaker/fallback; "mixed" on conflict.
+    """
+    non_neutral_article = [(tone, count) for tone, count in article_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_article:
+        top_count = max(count for _, count in non_neutral_article)
+        top_tones = {tone for tone, count in non_neutral_article if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        tie_break = [(tone, count) for tone, count in writer_tone_counts.items() if tone in top_tones and count]
+        if tie_break:
+            tie_break.sort(key=lambda item: -item[1])
+            return tie_break[0][0]
+        return "mixed"
+
+    non_neutral_writer = [(tone, count) for tone, count in writer_tone_counts.items() if tone != "neutral" and count]
+    if non_neutral_writer:
+        top_count = max(count for _, count in non_neutral_writer)
+        top_tones = {tone for tone, count in non_neutral_writer if count == top_count}
+        if len(top_tones) == 1:
+            return next(iter(top_tones))
+        return "mixed"
+
+    return "neutral"
 
 
 def _normalize_feedback_list(value):
@@ -368,6 +439,10 @@ def _validate_enrichment(payload):
     if sentiment == "neutral" and article_category in {"complaint"}:
         sentiment = "negative"
 
+    writer_tone = _normalize_tone(payload.get("writer_tone"))
+    article_tone = _normalize_tone(payload.get("article_tone"))
+    overall_tone = _compute_overall_tone(article_tone, writer_tone)
+
     organizations = _as_list(payload.get("organizations") or payload.get("brands"))
     entities = _as_list(payload.get("entities") or payload.get("car_models"))
     topics = _as_list(payload.get("topics"))
@@ -392,6 +467,9 @@ def _validate_enrichment(payload):
         "topic": _as_text(payload.get("topic")),
         "article_category": article_category,
         "overall_sentiment": sentiment,
+        "writer_tone": writer_tone,
+        "article_tone": article_tone,
+        "overall_tone": overall_tone,
         "summary": summary,
         "positive_feedback": positive_feedback,
         "negative_feedback": negative_feedback,
@@ -418,6 +496,9 @@ def _validate_enrichment(payload):
         "topic": insight_json["topic"],
         "article_category": article_category,
         "overall_sentiment": sentiment,
+        "writer_tone": writer_tone,
+        "article_tone": article_tone,
+        "overall_tone": overall_tone,
         "summary": summary,
         "positive_feedback": positive_feedback,
         "negative_feedback": negative_feedback,
@@ -505,8 +586,12 @@ def build_topic_insight(articles, topic_name=""):
         return {
             "topic": topic_name or "",
             "overall_sentiment": "neutral",
+            "overall_mood": "neutral",
+            "overall_tone": "neutral",
             "summary": "",
             "article_category_breakdown": [],
+            "writer_tone_breakdown": [],
+            "article_tone_breakdown": [],
             "positive_feedback": [],
             "negative_feedback": [],
             "nice_to_have_features": [],
@@ -524,6 +609,8 @@ def build_topic_insight(articles, topic_name=""):
 
     category_counts = Counter()
     sentiment_counts = Counter()
+    writer_tone_counts = Counter()
+    article_tone_counts = Counter()
     topic_counter = Counter()
 
     positive_feedback = []
@@ -547,6 +634,8 @@ def build_topic_insight(articles, topic_name=""):
         article_category = _normalize_category(article.get("article_category") or insight.get("article_category") or article.get("category"))
         category_counts[article_category] += 1
         sentiment_counts[_normalize_sentiment(article.get("sentiment") or insight.get("overall_sentiment"))] += 1
+        writer_tone_counts[_normalize_tone(article.get("writer_tone") or insight.get("writer_tone"))] += 1
+        article_tone_counts[_normalize_tone(article.get("article_tone") or insight.get("article_tone"))] += 1
         topic = _as_text(article.get("topic") or insight.get("topic"))
         if topic:
             topic_counter[topic] += 1
@@ -616,6 +705,9 @@ def build_topic_insight(articles, topic_name=""):
     else:
         overall_sentiment = "neutral"
 
+    overall_mood = article_tone_counts.most_common(1)[0][0] if article_tone_counts else "neutral"
+    overall_tone = _group_overall_tone(article_tone_counts, writer_tone_counts)
+
     summary_bits = []
     if positive_items:
         summary_bits.append(f"People like {positive_items[0]['text'].rstrip('.')}.")
@@ -631,10 +723,20 @@ def build_topic_insight(articles, topic_name=""):
         "topic": dominant_topic,
         "article_category": dominant_category,
         "overall_sentiment": overall_sentiment,
+        "overall_mood": overall_mood,
+        "overall_tone": overall_tone,
         "summary": summary,
         "article_category_breakdown": [
             {"category": category, "count": count}
             for category, count in category_counts.most_common()
+        ],
+        "writer_tone_breakdown": [
+            {"tone": tone, "count": count}
+            for tone, count in writer_tone_counts.most_common()
+        ],
+        "article_tone_breakdown": [
+            {"tone": tone, "count": count}
+            for tone, count in article_tone_counts.most_common()
         ],
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
@@ -652,7 +754,7 @@ def build_topic_insight(articles, topic_name=""):
     }
 
 
-def enrich_article(article, event_context=""):
+def enrich_article(article, project_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:5000]
     prompt = (
@@ -660,8 +762,8 @@ def enrich_article(article, event_context=""):
         .replace("{title}", title)
         .replace("{text}", text)
     )
-    if event_context:
-        prompt = f"{prompt}\n\nEvent context:\n{event_context}\n\nUse this context only to help interpret the article. Do not invent facts."
+    if project_context:
+        prompt = f"{prompt}\n\nProject context:\n{project_context}\n\nUse this context only to help interpret the article. Do not invent facts."
 
     try:
         raw = chat_completion(
@@ -749,23 +851,23 @@ def main():
         )
         return
 
-    event = _load_event()
-    event_context = _load_event_context()
-    event_name = ""
-    if event_context:
-        for line in event_context.splitlines():
+    project = _load_project()
+    project_context = _load_project_context()
+    project_name = ""
+    if project_context:
+        for line in project_context.splitlines():
             if line.startswith("Name: "):
-                event_name = line.replace("Name: ", "", 1).strip()
+                project_name = line.replace("Name: ", "", 1).strip()
                 break
 
-    if event:
-        matching_articles = [article for article in articles if _article_matches_event_window(article, event)]
+    if project:
+        matching_articles = [article for article in articles if _article_matches_project_window(article, project)]
     else:
         matching_articles = articles
 
     filtered_out = len(articles) - len(matching_articles)
     if filtered_out:
-        print(f"Filtered out {filtered_out} articles outside the event date window.")
+        print(f"Filtered out {filtered_out} articles outside the project date window.")
     articles = matching_articles
 
     enriched = []
@@ -782,7 +884,7 @@ def main():
             message=f"Cleaning articles {idx + 1}/{len(articles)}...",
         )
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
-        enrichment = enrich_article(article, event_context=event_context)
+        enrichment = enrich_article(article, project_context=project_context)
         if enrichment is None:
             enrichment = dict(DEFAULT_ENRICHMENT)
         time.sleep(0.5)
@@ -795,13 +897,18 @@ def main():
             enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched.append({**article, **enrichment})
 
-    topic_insight = build_topic_insight(enriched, topic_name=event_name or "general")
+    topic_insight = build_topic_insight(enriched, topic_name=project_name or "general")
     for article in enriched:
         if not article.get("insight_json"):
             article["insight_json"] = {
                 "topic": article.get("topic", ""),
                 "article_category": article.get("article_category", article.get("category", "general_article")),
                 "overall_sentiment": article.get("overall_sentiment", article.get("sentiment", "neutral")),
+                "writer_tone": article.get("writer_tone", "neutral"),
+                "article_tone": article.get("article_tone", "neutral"),
+                "overall_tone": article.get("overall_tone") or _compute_overall_tone(
+                    article.get("article_tone"), article.get("writer_tone")
+                ),
                 "summary": article.get("summary", ""),
             }
 

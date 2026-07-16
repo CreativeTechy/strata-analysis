@@ -1,8 +1,8 @@
-"""Event link discovery for hashtags, keywords, and usernames.
+"""Project link discovery for hashtags, keywords, and usernames.
 
-DeepSeek proposes feed sources directly from the event terms, then we validate
+DeepSeek proposes sources directly from the project terms, then we validate
 those URLs, resolve domains/RSS pages, and upsert the selected links as
-reusable feed records.
+reusable source records.
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ import requests
 from parsel import Selector
 
 import config
-from feeds_store import create_feed
-from events_store import set_event_feeds
+from sources_store import create_source
+from projects_store import set_project_sources
 
 SEARCH_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 StrataEventDiscovery"
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 StrataProjectDiscovery"
     )
 }
 
@@ -61,8 +61,8 @@ def _search_term(value):
     return text
 
 
-def _event_context(event):
-    if not isinstance(event, dict):
+def _project_context(project):
+    if not isinstance(project, dict):
         return ""
 
     parts = []
@@ -70,22 +70,23 @@ def _event_context(event):
         ("name", "Name"),
         ("status", "Status"),
         ("location", "Location"),
+        ("location_type", "Location type"),
         ("target_audience", "Target audience"),
         ("description", "Description"),
     ):
-        value = str(event.get(key) or "").strip()
+        value = str(project.get(key) or "").strip()
         if value:
             parts.append(f"{label}: {value}")
 
-    hashtags = _clean_terms(event.get("hashtags"))
+    hashtags = _clean_terms(project.get("hashtags"))
     if hashtags:
         parts.append(f"Hashtags: {', '.join(hashtags)}")
 
-    keywords = _clean_terms(event.get("keywords"))
+    keywords = _clean_terms(project.get("keywords"))
     if keywords:
         parts.append(f"Keywords: {', '.join(keywords)}")
 
-    usernames = _clean_terms(event.get("usernames"))
+    usernames = _clean_terms(project.get("usernames"))
     if usernames:
         parts.append(f"Usernames: {', '.join(usernames)}")
 
@@ -202,13 +203,13 @@ def _search_bing(query, limit=5):
     return results
 
 
-def _build_queries(event):
+def _build_queries(project):
     terms = []
-    terms.extend(_clean_terms(event.get("hashtags")))
-    terms.extend(_clean_terms(event.get("keywords")))
-    terms.extend(_clean_terms(event.get("usernames")))
-    name = str(event.get("name") or "").strip()
-    description = str(event.get("description") or "").strip()
+    terms.extend(_clean_terms(project.get("hashtags")))
+    terms.extend(_clean_terms(project.get("keywords")))
+    terms.extend(_clean_terms(project.get("usernames")))
+    name = str(project.get("name") or "").strip()
+    description = str(project.get("description") or "").strip()
 
     combined = []
     for term in terms:
@@ -232,12 +233,12 @@ def _build_queries(event):
     return combined[:12]
 
 
-def _fallback_candidates(event):
-    name = str(event.get("name") or "").strip()
+def _fallback_candidates(project):
+    name = str(project.get("name") or "").strip()
     terms = []
-    terms.extend(_clean_terms(event.get("hashtags")))
-    terms.extend(_clean_terms(event.get("keywords")))
-    terms.extend(_clean_terms(event.get("usernames")))
+    terms.extend(_clean_terms(project.get("hashtags")))
+    terms.extend(_clean_terms(project.get("keywords")))
+    terms.extend(_clean_terms(project.get("usernames")))
     terms = [_search_term(term) for term in terms if _search_term(term)]
 
     candidates = []
@@ -266,9 +267,9 @@ def _fallback_candidates(event):
     return candidates
 
 
-def _collect_candidates(event):
+def _collect_candidates(project):
     candidates = OrderedDict()
-    queries = _build_queries(event)
+    queries = _build_queries(project)
     for query in queries:
         for result in _search_duckduckgo(query, limit=5) + _search_bing(query, limit=5):
             url = result.get("url")
@@ -279,7 +280,7 @@ def _collect_candidates(event):
             candidates[url] = result
     collected = list(candidates.values())
     if not collected:
-        collected = _fallback_candidates(event)
+        collected = _fallback_candidates(project)
     return queries, collected
 
 
@@ -296,21 +297,21 @@ def _extract_json_blob(text):
     return match.group(0).strip() if match else ""
 
 
-def _deepseek_source_suggestions(event):
+def _deepseek_source_suggestions(project):
     if not config.DEEPSEEK_API_KEY:
         return []
 
-    event_context = _event_context(event)
+    project_context = _project_context(project)
     prompt = (
-        "You are helping discover feed sources for an event.\n"
-        "Use only the event hashtags, keywords, and usernames to propose likely feed sources.\n"
+        "You are helping discover sources for a project.\n"
+        "Use only the project hashtags, keywords, and usernames to propose likely sources.\n"
         "Return ONLY JSON with this shape:\n"
         '{ "suggested_sources": [ { "kind": "url|domain|rss", "value": "https://...", "title": "...", "reason": "..." } ], "links": ["https://..."] }\n'
         "Return 5 to 10 suggestions when possible.\n"
         "Suggested sources may be full article URLs, RSS feed URLs, publisher domains, or official social profile URLs.\n"
         "Prefer official publisher or source URLs. Do not include Bing, DuckDuckGo, or generic search results.\n"
         "If you return a domain, make it the publisher's main domain or homepage. If you return rss, make it the actual feed URL.\n\n"
-        f"Event context:\n{event_context or '(none)'}\n"
+        f"Project context:\n{project_context or '(none)'}\n"
     )
 
     try:
@@ -370,7 +371,7 @@ def _lightweight_fetch(url):
     if not url:
         return None
 
-    headers = {"User-Agent": "StrataEventDiscovery/1.0", "Accept": "*/*"}
+    headers = {"User-Agent": "StrataProjectDiscovery/1.0", "Accept": "*/*"}
     try:
         resp = requests.head(url, headers=headers, allow_redirects=True, timeout=10)
         if resp.status_code not in {401, 403, 405}:
@@ -499,15 +500,15 @@ def _resolve_source(item):
     return resolved
 
 
-def discover_event_links(event):
-    """Ask DeepSeek for event sources, validate them, and create reusable feeds."""
-    if not isinstance(event, dict):
-        return {"suggested_sources": [], "feed_ids": [], "feeds": [], "resolved_urls": []}
+def discover_project_links(project):
+    """Ask DeepSeek for project sources, validate them, and create reusable source records."""
+    if not isinstance(project, dict):
+        return {"suggested_sources": [], "source_ids": [], "sources": [], "resolved_urls": []}
 
-    suggestions = _deepseek_source_suggestions(event)
+    suggestions = _deepseek_source_suggestions(project)
     resolved_sources = []
     seen_urls = set()
-    usernames = _clean_terms(event.get("usernames"))
+    usernames = _clean_terms(project.get("usernames"))
     for username in usernames:
         profile_url = _username_profile_url(username)
         if not profile_url or profile_url in seen_urls:
@@ -517,8 +518,8 @@ def discover_event_links(event):
             {
                 "url": profile_url,
                 "title": f"@{_normalize_username(username)}",
-                "reason": "Resolved from event usernames.",
-                "source_type": "social",
+                "reason": "Resolved from project usernames.",
+                "source_type": "username",
             }
         )
     for item in suggestions:
@@ -529,8 +530,8 @@ def discover_event_links(event):
             seen_urls.add(url)
             resolved_sources.append(resolved)
 
-    feed_ids = []
-    feeds = []
+    source_ids = []
+    sources = []
     for item in resolved_sources:
         url = (item.get("url") or "").strip()
         if not url:
@@ -539,33 +540,32 @@ def discover_event_links(event):
             "url": url,
             "name": (item.get("title") or "").strip() or urlparse(url).netloc or url,
             "source_type": item.get("source_type") or config._infer_source_type(url),
-            "category": "discovered",
             "enabled": True,
         }
-        feed = create_feed(payload)
-        if feed and feed.get("id"):
-            feed_ids.append(int(feed["id"]))
-            feeds.append(feed)
+        source = create_source(payload)
+        if source and source.get("id"):
+            source_ids.append(int(source["id"]))
+            sources.append(source)
 
     merged_ids = []
     seen = set()
-    for value in list(event.get("feed_ids") or []) + feed_ids:
+    for value in list(project.get("source_ids") or []) + source_ids:
         try:
-            feed_id = int(value)
+            source_id = int(value)
         except Exception:
             continue
-        if feed_id in seen:
+        if source_id in seen:
             continue
-        seen.add(feed_id)
-        merged_ids.append(feed_id)
+        seen.add(source_id)
+        merged_ids.append(source_id)
 
-    event_id = event.get("id")
-    if event_id is not None and merged_ids:
-        set_event_feeds(event_id, merged_ids)
+    project_id = project.get("id")
+    if project_id is not None and merged_ids:
+        set_project_sources(project_id, merged_ids)
 
     return {
         "suggested_sources": suggestions,
         "resolved_urls": [item.get("url") for item in resolved_sources if item.get("url")],
-        "feed_ids": merged_ids,
-        "feeds": feeds,
+        "source_ids": merged_ids,
+        "sources": sources,
     }

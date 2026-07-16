@@ -1,6 +1,6 @@
 """Central configuration for the generic source pipeline.
 
-Single source of truth for the dynamic feed list and for the credentials each
+Single source of truth for the dynamic source list and for the credentials each
 stage needs. Everything reads from here so swapping sources or rotating keys is
 a one-place change.
 """
@@ -44,11 +44,44 @@ DATABASE_URL = db.get_database_url()
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_CHAT_BASE_URL = os.environ.get("DEEPSEEK_CHAT_BASE_URL", "https://api.deepseek.com/chat/completions")
 DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
-LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
-LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
-LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:14b-instruct")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
+
+SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 30)
+SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- Auth -------------------------------------------------------------------
+SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "strata_session")
+CSRF_COOKIE_NAME = os.environ.get("CSRF_COOKIE_NAME", "strata_csrf")
+SESSION_TTL_HOURS = int(os.environ.get("SESSION_TTL_HOURS", "12") or 12)
+# Cookies default to Secure (HTTPS-only). Set COOKIE_SECURE=false for plain-http
+# local/dev deployments (e.g. this repo's docker-compose, which has no TLS
+# termination configured) - the browser silently drops Secure cookies over http.
+COOKIE_SECURE = _env_bool("COOKIE_SECURE", True)
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").strip().lower()
+
+# Comma-separated list of origins allowed to make credentialed cross-origin
+# requests. The dashboard is normally served same-origin behind nginx/Vite's
+# proxy, so this is mainly for local dev where the Vite dev server runs on a
+# different port than uvicorn.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
+# Bootstrap admin, created on startup if the users table is empty.
+ADMIN_BOOTSTRAP_USERNAME = os.environ.get("ADMIN_BOOTSTRAP_USERNAME", "").strip()
+ADMIN_BOOTSTRAP_EMAIL = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip()
+ADMIN_BOOTSTRAP_PASSWORD = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "").strip()
 
 
 def _looks_like_feed_url(url: str) -> bool:
@@ -93,20 +126,36 @@ def _infer_source_type(url: str) -> str:
     return "web"
 
 
+KNOWN_SOURCE_TYPES = {"rss", "web", "social", "hashtag", "keyword", "username"}
+
+
+def _resolve_source_type(source_type_input: str, url: str) -> str:
+    """Pick the source_type to store, trusting an explicit known value.
+
+    Legacy rows stored as rss/web whose URL is actually a social profile get
+    upgraded to social, same as before this was centralized. hashtag/keyword/
+    username are never overridden even though their derived URLs live on
+    x.com/google.com (which would otherwise infer as social/web).
+    """
+    source_type_input = (source_type_input or "").strip().lower()
+    inferred_type = _infer_source_type(url)
+    if source_type_input in KNOWN_SOURCE_TYPES:
+        if source_type_input in {"rss", "web"} and inferred_type == "social":
+            return "social"
+        return source_type_input
+    return inferred_type or "rss"
+
+
 def _normalize_source_record(row):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip()
-    inferred_type = _infer_source_type(url)
-    source_type = (row.get("source_type") or inferred_type or "rss").strip().lower() or "rss"
-    if inferred_type == "social":
-        source_type = "social"
+    source_type = _resolve_source_type(row.get("source_type") or "", url)
     return {
         "id": row.get("id"),
         "url": url,
         "name": name,
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
-        "category": (row.get("category") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source": row.get("source", "database"),
@@ -129,9 +178,9 @@ def _discover_feed_urls(url: str):
 
 def load_source_records():
     """Return configured source records with source_type preserved."""
-    env_feeds = os.environ.get("FEEDS", "").strip()
-    if env_feeds:
-        raw_urls = [u.strip() for u in env_feeds.split(",") if u.strip()]
+    env_sources = os.environ.get("SOURCES", "").strip()
+    if env_sources:
+        raw_urls = [u.strip() for u in env_sources.split(",") if u.strip()]
         return [
             _normalize_source_record(
                 {
@@ -139,7 +188,6 @@ def load_source_records():
                     "name": urlparse(url).netloc or url,
                     "enabled": True,
                     "source_type": _infer_source_type(url),
-                    "category": "",
                     "source": "env",
                 }
             )
@@ -152,8 +200,8 @@ def load_source_records():
     try:
         records = db.fetch_all(
             """
-            select id, url, name, enabled, source_type, category, created_at, updated_at
-            from feeds
+            select id, url, name, enabled, source_type, created_at, updated_at
+            from sources
             order by created_at asc
             """
         )

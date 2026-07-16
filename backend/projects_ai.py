@@ -1,4 +1,4 @@
-"""AI helpers for event metadata drafting."""
+"""AI helpers for project metadata drafting."""
 
 from __future__ import annotations
 
@@ -170,8 +170,8 @@ def _fallback_metadata(name, description):
     }
 
 
-def suggest_event_metadata(name, description):
-    """Return suggested target audience, hashtags, keywords, and usernames for an event."""
+def suggest_project_metadata(name, description):
+    """Return suggested target audience, hashtags, keywords, and usernames for a project."""
     name = _clean_text(name)
     description = _clean_text(description)
 
@@ -180,19 +180,19 @@ def suggest_event_metadata(name, description):
         return fallback
 
     prompt = (
-        "You are helping craft metadata for a news/event tracking workspace.\n"
-        "Given the event name and description, return ONLY JSON with this shape:\n"
+        "You are helping craft metadata for a news/project tracking workspace.\n"
+        "Given the project name and description, return ONLY JSON with this shape:\n"
         '{ "target_audience": "string", "hashtags": ["string"], "keywords": ["string"], "usernames": ["string"] }\n'
         "Rules:\n"
-        "- Keep hashtags and keywords tightly related to the event.\n"
+        "- Keep hashtags and keywords tightly related to the project.\n"
         "- Return usernames as bare handles or @handles for official social profiles only when they are strongly relevant.\n"
         "- Normalize usernames to X/Twitter profile handles, not full URLs.\n"
         "- Return 3 to 6 hashtags and 4 to 8 keywords.\n"
         "- Return 0 to 5 usernames.\n"
         "- Target audience should be a short plain-English phrase.\n"
         "- Do not include markdown or commentary.\n\n"
-        f"Event name: {name}\n"
-        f"Event description: {description or '(none)'}\n"
+        f"Project name: {name}\n"
+        f"Project description: {description or '(none)'}\n"
     )
 
     try:

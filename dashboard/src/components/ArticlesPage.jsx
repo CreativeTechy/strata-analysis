@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import { useAuth } from '../auth/useAuth.js';
+import { computeOverallTone } from '../lib/tone.js';
 
-const SENTIMENTS = ['all', 'positive', 'negative', 'neutral'];
+const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
 const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
 const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },
@@ -56,21 +58,21 @@ function SkeletonArticleCard() {
   );
 }
 
-export default function ArticlesPage({ event = null, eventId = null, events = [] }) {
-  const normalizedEventId = useMemo(() => {
-    if (eventId == null) return null;
-    if (typeof eventId === 'object') {
-      const nestedId = Number(eventId?.id);
+export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
+  const normalizedProjectId = useMemo(() => {
+    if (projectId == null) return null;
+    if (typeof projectId === 'object') {
+      const nestedId = Number(projectId?.id);
       return Number.isFinite(nestedId) ? nestedId : null;
     }
-    const parsed = Number(eventId);
+    const parsed = Number(projectId);
     return Number.isFinite(parsed) ? parsed : null;
-  }, [eventId]);
+  }, [projectId]);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sentiment, setSentiment] = useState('all');
   const [category, setCategory] = useState('all');
-  const [eventFilter, setEventFilter] = useState(() => (normalizedEventId != null ? String(normalizedEventId) : 'all'));
+  const [projectFilter, setProjectFilter] = useState(() => (normalizedProjectId != null ? String(normalizedProjectId) : 'all'));
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -83,6 +85,8 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const hasArticlesRef = useRef(false);
+  const { hasPermission } = useAuth();
+  const canDeleteAll = hasPermission('articles.delete');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -91,12 +95,12 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, category, eventFilter, limit, sort]);
+  }, [search, sentiment, category, projectFilter, limit, sort]);
 
-  const activeEvent = useMemo(() => {
-    if (eventFilter === 'all') return null;
-    return events.find((item) => String(item.id) === String(eventFilter)) || null;
-  }, [events, eventFilter]);
+  const activeProject = useMemo(() => {
+    if (projectFilter === 'all') return null;
+    return projects.find((item) => String(item.id) === String(projectFilter)) || null;
+  }, [projects, projectFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -108,7 +112,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
         if (search) params.set('search', search);
         if (sentiment !== 'all') params.set('sentiment', sentiment);
         if (category !== 'all') params.set('category', category);
-        if (eventFilter !== 'all') params.set('event_id', String(eventFilter));
+        if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -136,7 +140,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, eventFilter, limit, offset, sort, reloadToken]);
+  }, [search, sentiment, category, projectFilter, limit, offset, sort, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -148,7 +152,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
   const hasNext = offset + limit < total;
   const isInitialLoading = loading && articles.length === 0;
   const isRefreshing = loading && articles.length > 0;
-  const scopeLabel = eventFilter === 'all' ? 'All events' : (activeEvent?.name || 'Selected event');
+  const scopeLabel = projectFilter === 'all' ? 'All projects' : (activeProject?.name || 'Selected project');
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
 
@@ -166,7 +170,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
       setSearch('');
       setSentiment('all');
       setCategory('all');
-      setEventFilter(normalizedEventId != null ? String(normalizedEventId) : 'all');
+      setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -185,7 +189,7 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
       if (search) params.set('search', search);
       if (sentiment !== 'all') params.set('sentiment', sentiment);
       if (category !== 'all') params.set('category', category);
-      if (eventFilter !== 'all') params.set('event_id', String(eventFilter));
+      if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
       params.set('sort', sort);
 
       const res = await fetch(`/api/articles/export?${params.toString()}`);
@@ -222,21 +226,23 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
             </div>
             <h1 className="admin-page-title">Articles</h1>
             <p className="admin-page-subtitle">
-              Server-side search, sentiment, category, event, sort, and pagination powered by the API.
-              {event ? ` Dashboard event: ${event.name}.` : ' Showing all events.'}
+              Server-side search, sentiment, category, project, sort, and pagination powered by the API.
+              {project ? ` Dashboard project: ${project.name}.` : ' Showing all projects.'}
             </p>
           </div>
 
           <div className="dashboard-hero-actions">
-            <button
-              className="btn-secondary"
-              onClick={() => setShowDeleteAllModal(true)}
-              disabled={loading || deletingAll}
-              style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
-            >
-              <Trash2 size={16} />
-              {deletingAll ? 'Deleting...' : 'Delete All Articles'}
-            </button>
+            {canDeleteAll && (
+              <button
+                className="btn-secondary"
+                onClick={() => setShowDeleteAllModal(true)}
+                disabled={loading || deletingAll}
+                style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+              >
+                <Trash2 size={16} />
+                {deletingAll ? 'Deleting...' : 'Delete All Articles'}
+              </button>
+            )}
             <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
               Back to Dashboard
             </Link>
@@ -275,9 +281,9 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
             />
           </label>
 
-          <select className="filter-select" value={eventFilter} onChange={(e) => setEventFilter(e.target.value)}>
-            <option value="all">All events</option>
-            {events.map((item) => (
+          <select className="filter-select" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
+            <option value="all">All projects</option>
+            {projects.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.status || 'draft'})
               </option>
@@ -386,11 +392,20 @@ export default function ArticlesPage({ event = null, eventId = null, events = []
                         <span className="badge category">
                           {prettyLabel(article.article_category || article.category || 'general_article')}
                         </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
+                          Writer: {prettyLabel(article.writer_tone || 'neutral')}
+                        </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
+                          Article: {prettyLabel(article.article_tone || 'neutral')}
+                        </span>
+                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
+                          Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
+                        </span>
                         {article.relevance_score != null && (
                           <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
                         )}
-                        {article.event_similarity_score != null && (
-                          <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
+                        {article.project_similarity_score != null && (
+                          <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
                         )}
                       </div>
                     </div>

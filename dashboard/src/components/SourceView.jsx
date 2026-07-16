@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag } from 'lucide-react';
 
-export default function FeedView({ articles, isScraping }) {
+export default function SourceView({ articles, isScraping }) {
   const [filterSentiment, setFilterSentiment] = useState('All');
   const [filterCategory, setFilterCategory] = useState('All');
   const [visibleCount, setVisibleCount] = useState(9);
@@ -17,9 +17,9 @@ export default function FeedView({ articles, isScraping }) {
 
   const filteredArticles = useMemo(() => {
     return articles.filter(article => {
-      const matchSentiment = filterSentiment === 'All' || 
+      const matchSentiment = filterSentiment === 'All' ||
         (article.sentiment && article.sentiment.toLowerCase() === filterSentiment.toLowerCase());
-      const matchCategory = filterCategory === 'All' || 
+      const matchCategory = filterCategory === 'All' ||
         article.category === filterCategory;
       return matchSentiment && matchCategory;
     }).sort((a, b) => new Date(b.published) - new Date(a.published));
@@ -38,20 +38,21 @@ export default function FeedView({ articles, isScraping }) {
   return (
     <div>
       <div className="filters">
-        <select 
-          className="filter-select" 
-          value={filterSentiment} 
+        <select
+          className="filter-select"
+          value={filterSentiment}
           onChange={(e) => setFilterSentiment(e.target.value)}
         >
           <option value="All">All Sentiments</option>
           <option value="Positive">Positive</option>
           <option value="Negative">Negative</option>
           <option value="Neutral">Neutral</option>
+          <option value="Mixed">Mixed</option>
         </select>
 
-        <select 
-          className="filter-select" 
-          value={filterCategory} 
+        <select
+          className="filter-select"
+          value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
         >
           {categories.map(c => (
@@ -63,7 +64,7 @@ export default function FeedView({ articles, isScraping }) {
       <div className="articles-grid">
         <AnimatePresence>
           {filteredArticles.slice(0, visibleCount).map((article, i) => (
-            <motion.div 
+            <motion.div
               key={article.url}
               layout
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -83,8 +84,8 @@ export default function FeedView({ articles, isScraping }) {
                   {article.relevance_score > 0 && (
                     <span className="badge score">Score: {article.relevance_score}/10</span>
                   )}
-                  {article.event_similarity_score != null && (
-                    <span className="badge score">Event match: {formatMatchScore(article.event_similarity_score)}</span>
+                  {article.project_similarity_score != null && (
+                    <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
                   )}
                 </div>
               </div>
@@ -122,11 +123,11 @@ export default function FeedView({ articles, isScraping }) {
           ))}
         </AnimatePresence>
       </div>
-      
+
       {visibleCount < filteredArticles.length && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '30px' }}>
-          <button 
-            className="btn-secondary" 
+          <button
+            className="btn-secondary"
             onClick={() => setVisibleCount(prev => prev + 9)}
             style={{ padding: '12px 30px', fontSize: '1rem' }}
           >
@@ -134,7 +135,7 @@ export default function FeedView({ articles, isScraping }) {
           </button>
         </div>
       )}
-      
+
       {filteredArticles.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px', color: 'var(--text-light)' }}>
           No articles found matching the current filters.

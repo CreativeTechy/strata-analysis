@@ -1,30 +1,31 @@
 # Strata Media - Source Intelligence
 
-Strata Media ingests content from configured feeds, enriches it with AI, stores
+Strata Media ingests content from configured sources, enriches it with AI, stores
 it in Supabase, and surfaces it in the dashboard.
 
 ## Pipeline
 
-- `backend/scraper/` - Scrapy project for feed and page extraction
+- `backend/scraper/` - Scrapy project for source and page extraction
 - `backend/enrich.py` - AI enrichment stage
 - `backend/store.py` - Supabase upsert layer
-- `backend/main.py` - FastAPI API for scraping, feeds, events, and chat
+- `backend/main.py` - FastAPI API for scraping, sources, projects, and chat
 - `dashboard/` - React + Vite dashboard
 
 ## Stages
 
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
-   Supabase `feeds` or the `FEEDS` env var override, discovers article links,
+   Supabase `sources` or the `SOURCES` env var override, discovers article links,
    and extracts clean title/date/text with trafilatura.
-2. Enricher - `backend/enrich.py`. Cleans and tags each article with the local
-   LLM, then falls back to neutral defaults when the local model is
-   unavailable.
+2. Enricher - `backend/enrich.py`. Cleans and tags each article with DeepSeek,
+   then falls back to neutral defaults if the request fails.
 3. Saver - `backend/store.py`. Upserts enriched articles into Supabase.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
    backend API.
 
-DeepSeek is still used in `backend/events_ai.py` and `backend/event_discovery.py`
-for hashtag, keyword, username, and feed discovery.
+DeepSeek is used everywhere in this app for AI: article enrichment
+(`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
+hashtag/keyword/username/source discovery (`backend/projects_ai.py` and
+`backend/project_discovery.py`).
 
 ## Clone And Run
 
@@ -55,54 +56,10 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 Set at minimum:
 
 - `DATABASE_URL`
-- `DEEPSEEK_API_KEY` if you want event/source discovery
-- `LOCAL_LLM_BASE_URL`
-- `LOCAL_LLM_MODEL`
+- `DEEPSEEK_API_KEY` - required for enrichment, Intelligence Copilot chat, and
+  project/source discovery
 
-For local article enrichment and Intelligence Copilot, this project defaults to:
-
-- `LOCAL_LLM_BASE_URL=http://localhost:11434/v1`
-- `LOCAL_LLM_MODEL=qwen2.5:14b-instruct`
-
-### 3. Download a local model
-
-The local LLM runs through Ollama. Pick a model size based on your available
-memory and how much latency you can tolerate.
-
-Rule of thumb, based on the hardware you have available:
-
-- `8 GB RAM` or a small laptop GPU: use a 3B model
-- `16 GB RAM`: use a 7B model
-- `32 GB RAM` or better: use a 14B model
-
-These are practical starting points, not hard limits. The exact fit depends on
-your quantization, context length, and whether the machine is also doing other
-work.
-
-Good default choices:
-
-- Fastest / lightest:
-
-  ```bash
-  ollama pull qwen2.5:3b-instruct
-  ```
-
-- Balanced:
-
-  ```bash
-  ollama pull qwen2.5:7b-instruct
-  ```
-
-- Higher quality:
-
-  ```bash
-  ollama pull qwen2.5:14b-instruct
-  ```
-
-If you are unsure, start with `qwen2.5:7b-instruct`. Move up to `14b` only if
-your machine has enough headroom and you want better output quality.
-
-### 4. Run the backend locally
+### 3. Run the backend locally
 
 ```bash
 python -m venv .venv
@@ -112,10 +69,10 @@ pip install -r requirements-optional.txt
 uvicorn main:app --port 8000
 ```
 
-If you only want the core API and not Spider Mode, you can skip the optional
-requirements file.
+If you don't need local embeddings, you can skip the optional requirements
+file.
 
-### 5. Run the dashboard locally
+### 4. Run the dashboard locally
 
 Open a second terminal:
 
@@ -131,7 +88,7 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 The dashboard expects the backend on `http://localhost:8000` unless you set
 `VITE_API_TARGET`.
 
-### 6. Run the pipeline manually
+### 5. Run the pipeline manually
 
 You can run the scrape/enrich/save flow directly from the backend folder:
 
@@ -145,7 +102,6 @@ python enrich.py
 This repo includes a full Docker stack:
 
 - `db` runs PostgreSQL 16
-- `ollama` runs the local model server in its own container
 - `backend` runs the FastAPI API
 - `frontend` builds the React dashboard
 - `nginx` exposes the public app on port 80
@@ -169,22 +125,8 @@ docker compose up --build
 The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- `LOCAL_LLM_BASE_URL=http://ollama:11434/v1`
-- `LOCAL_LLM_MODEL=qwen2.5:7b-instruct` for a safer default on modest hardware
-- `DEEPSEEK_API_KEY=...` if you want event/source discovery enabled
-
-The Docker stack already includes Ollama, so you do not need to install it on
-your machine for the containerized setup.
-
-To download the model into the Ollama container after the stack starts, use
-the model size that matches your machine:
-
-```bash
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-```
-
-If Ollama is unavailable or errors out, the backend will fall back to DeepSeek
-for chat and enrichment requests as long as `DEEPSEEK_API_KEY` is set.
+- `DEEPSEEK_API_KEY=...` - required for enrichment, Intelligence Copilot chat,
+  and project/source discovery
 
 ### Adminer login
 
@@ -208,14 +150,26 @@ To remove the Postgres volume as well:
 docker compose down -v
 ```
 
+### Reset the database (fresh start)
+
+`schema.sql` only runs automatically against an empty Postgres volume, so if
+your local schema ever drifts from `schema.sql` (e.g. leftover tables from a
+rename), drop the volume and rebuild:
+
+```bash
+docker compose down -v
+docker compose up --build -d
+```
+
+This deletes all local data and recreates the database from the current
+`schema.sql` on next startup.
+
 ## Deployment Notes
 
 For a production-style deployment, the important pieces are:
 
 - PostgreSQL must be reachable by the backend container
-- `backend/.env` must include the database URL and LLM settings
-- the local LLM endpoint must be reachable from the backend
-- `DEEPSEEK_API_KEY` is only needed if you want feed/source discovery enabled
+- `backend/.env` must include the database URL and `DEEPSEEK_API_KEY`
 
 The current Docker setup is suitable for a single-server deployment where the
 database, backend, frontend, and reverse proxy all run together.
@@ -223,7 +177,41 @@ database, backend, frontend, and reverse proxy all run together.
 If you deploy the backend separately from the dashboard, keep the API base URL
 consistent with the frontend's `VITE_API_TARGET` setting.
 
-## Spider Mode
+## Authentication & Roles
 
-Spider Mode is the separate deep-crawl view powered by `backend/spider.py` and
-`GET /api/spider/stream`.
+The dashboard and API require a logged-in session (cookie-based, not tokens
+in localStorage). The first admin is created on backend startup from
+`ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD`
+in `backend/.env`, but only if the `users` table is still empty - it will not
+touch an existing account. Log in with either the username or the email.
+
+Every authenticated user, regardless of role, can view the dashboard, articles,
+sources, projects, pipeline runs, and the Intelligence Copilot chat. Roles add
+specific write/action permissions on top of that shared read access (`admin` is
+the only role that automatically satisfies every check below -
+`viewer`/`editor`/`operator` are otherwise independent, not a ladder):
+
+- **viewer** - read-only. No create, update, delete, or pipeline actions.
+- **editor** - create, update, and delete sources and projects; link sources to
+  projects; use AI project discovery/suggestions.
+- **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, and
+  delete all stored articles.
+- **admin** - everything above, plus user management: create, delete, change
+  roles for, and enable/disable users (`/admin/users` in the dashboard, or the
+  `/api/users` endpoints); and role management: create, edit, and delete roles
+  (`/admin/roles` in the dashboard, or the `/api/roles` endpoints).
+
+Role administration is gated by its own granular permissions rather than one
+combined "manage roles" permission:
+
+- `roles.view` - view roles and their permission assignments.
+- `roles.create` - create new roles.
+- `roles.update` - rename a role, edit its description, or change its
+  permission assignments.
+- `roles.delete` - delete a role (blocked for the system `admin` role, and for
+  any role still assigned to a user).
+
+Similarly, user administration has a dedicated `users.delete` permission
+alongside `users.view`/`users.create`/`users.update`. Deleting a user removes
+their account and any active sessions; a user can never delete their own
+account, from either the dashboard or the API.

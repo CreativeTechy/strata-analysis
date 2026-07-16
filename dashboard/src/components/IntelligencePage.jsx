@@ -4,19 +4,20 @@ import { Send, Bot, User, X, FileText, ChevronRight, ChevronLeft, Filter } from 
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { computeOverallTone } from '../lib/tone.js';
 
 const MATCHES_PAGE_SIZE = 4;
 
-export default function IntelligencePage({ event = null, eventId = null }) {
-  const normalizedEventId = useMemo(() => {
-    if (eventId == null) return null;
-    if (typeof eventId === 'object') {
-      const nestedId = Number(eventId?.id);
+export default function IntelligencePage({ project = null, projectId = null }) {
+  const normalizedProjectId = useMemo(() => {
+    if (projectId == null) return null;
+    if (typeof projectId === 'object') {
+      const nestedId = Number(projectId?.id);
       return Number.isFinite(nestedId) ? nestedId : null;
     }
-    const parsed = Number(eventId);
+    const parsed = Number(projectId);
     return Number.isFinite(parsed) ? parsed : null;
-  }, [eventId]);
+  }, [projectId]);
   const [articles, setArticles] = useState([]);
   const [matchesPage, setMatchesPage] = useState(1);
 
@@ -29,7 +30,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
   const [chatHistory, setChatHistory] = useState([
     {
       role: 'bot',
-      text: 'Hello! I am your Intelligence Copilot. Select an event or browse all events, then ask me to summarize or analyze the articles.',
+      text: 'Hello! I am your Intelligence Copilot. Select a project or browse all projects, then ask me to summarize or analyze the articles.',
     },
   ]);
 
@@ -49,8 +50,8 @@ export default function IntelligencePage({ event = null, eventId = null }) {
           offset: '0',
           sort: 'published.desc',
         });
-        if (normalizedEventId != null) {
-          params.set('event_id', String(normalizedEventId));
+        if (normalizedProjectId != null) {
+          params.set('project_id', String(normalizedProjectId));
         }
         const res = await fetch(`/api/articles?${params.toString()}`);
         const data = await res.json().catch(() => ({}));
@@ -66,7 +67,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
       }
     }
     fetchData();
-  }, [normalizedEventId]);
+  }, [normalizedProjectId]);
 
   const filteredArticles = useMemo(() => {
     let result = articles;
@@ -91,7 +92,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
 
   const sites = [...new Set(articles.map((a) => a.source).filter(Boolean))];
   const categories = [...new Set(articles.map((a) => a.category).filter(Boolean))];
-  const sentiments = ['positive', 'negative', 'neutral'];
+  const sentiments = ['positive', 'negative', 'neutral', 'mixed'];
 
   const toggleFilter = (setFn, currentList, value) => {
     if (currentList.includes(value)) {
@@ -118,31 +119,33 @@ export default function IntelligencePage({ event = null, eventId = null }) {
         body: JSON.stringify({
           question,
           total: filteredArticles.length,
-          event: event
+          project: project
             ? {
-                id: event.id,
-                name: event.name,
-                status: event.status,
-                start_date: event.start_date,
-                end_date: event.end_date,
-                description: event.description,
-                location: event.location,
-                target_audience: event.target_audience,
-                hashtags: event.hashtags,
-                keywords: event.keywords,
+                id: project.id,
+                name: project.name,
+                status: project.status,
+                start_date: project.start_date,
+                end_date: project.end_date,
+                description: project.description,
+                location: project.location,
+                target_audience: project.target_audience,
+                hashtags: project.hashtags,
+                keywords: project.keywords,
               }
             : null,
-          event_id: eventId,
+          project_id: projectId,
           articles: filteredArticles.map((a) => ({
             source: a.source,
             sentiment: a.sentiment,
             category: a.category,
             article_category: a.article_category,
+            writer_tone: a.writer_tone,
+            article_tone: a.article_tone,
             title: a.title,
             summary: a.summary,
             insight_json: a.insight_json,
             relevance_score: a.relevance_score,
-            event_similarity_score: a.event_similarity_score,
+            project_similarity_score: a.project_similarity_score,
           })),
         }),
       });
@@ -171,7 +174,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
         </h2>
 
         <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginBottom: '12px' }}>
-          {event ? `Current event: ${event.name}` : 'Showing all events.'}
+          {project ? `Current project: ${project.name}` : 'Showing all projects.'}
         </div>
 
         <div className="filter-group">
@@ -231,7 +234,7 @@ export default function IntelligencePage({ event = null, eventId = null }) {
           </h2>
           <p className="subtitle" style={{ fontSize: '0.9rem' }}>
             Chatting over {filteredArticles.length} articles
-            {event ? ` - ${event.name}` : ' - all events'}
+            {project ? ` - ${project.name}` : ' - all projects'}
           </p>
         </div>
 
@@ -319,9 +322,18 @@ export default function IntelligencePage({ event = null, eventId = null }) {
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
                   {article.sentiment || 'Neutral'}
                 </span>
-                {article.event_similarity_score != null && (
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Writer tone">
+                  Writer: {article.writer_tone || 'neutral'}
+                </span>
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Article tone">
+                  Article: {article.article_tone || 'neutral'}
+                </span>
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Overall tone (derived from writer + article tone)">
+                  Overall: {computeOverallTone(article.article_tone, article.writer_tone)}
+                </span>
+                {article.project_similarity_score != null && (
                   <span className="badge score" style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                    Match: {formatMatchScore(article.event_similarity_score)}
+                    Match: {formatMatchScore(article.project_similarity_score)}
                   </span>
                 )}
               </div>
@@ -381,9 +393,14 @@ export default function IntelligencePage({ event = null, eventId = null }) {
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
                 <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
+                <span className="badge category" title="Writer tone">Writer tone: {selectedArticle.writer_tone || 'neutral'}</span>
+                <span className="badge category" title="Article tone">Article tone: {selectedArticle.article_tone || 'neutral'}</span>
+                <span className="badge category" title="Overall tone (derived from writer + article tone)">
+                  Overall tone: {computeOverallTone(selectedArticle.article_tone, selectedArticle.writer_tone)}
+                </span>
                 <span className="badge score">Score: {selectedArticle.relevance_score}/10</span>
-                {selectedArticle.event_similarity_score != null && (
-                  <span className="badge score">Event match: {formatMatchScore(selectedArticle.event_similarity_score)}</span>
+                {selectedArticle.project_similarity_score != null && (
+                  <span className="badge score">Project match: {formatMatchScore(selectedArticle.project_similarity_score)}</span>
                 )}
               </div>
 
