@@ -68,7 +68,7 @@ export default function RoleEditPage() {
 
   if (!loading && !role) {
     return (
-      <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
+      <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
         <div className="glass-card" style={{ padding: 20 }}>
           {loadError || 'Role not found.'}
         </div>
@@ -77,7 +77,7 @@ export default function RoleEditPage() {
   }
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
+    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
       <header style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: '1.8rem' }}>
           <Pencil size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />

@@ -122,7 +122,7 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
+    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
       <header style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: '1.8rem' }}><UsersIcon size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />Users</h2>
         <p className="subtitle">Create and manage dashboard accounts.</p>
