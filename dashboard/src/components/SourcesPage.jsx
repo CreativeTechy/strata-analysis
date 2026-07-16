@@ -22,7 +22,6 @@ const emptyDraft = {
   url: '',
   name: '',
   source_type: 'rss',
-  category: '',
   enabled: true,
   limited: false,
   project_ids: [],
@@ -36,6 +35,8 @@ const SOURCE_TYPE_OPTIONS = [
   { value: 'keyword', label: 'Keyword' },
   { value: 'username', label: 'X Account' },
 ];
+
+const SOURCE_TYPE_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
 
 const TERM_SOURCE_TYPES = new Set(['hashtag', 'keyword', 'username']);
 
@@ -57,7 +58,6 @@ function normalizeDraftForCompare(value) {
     url: String(value?.url || '').trim(),
     name: String(value?.name || '').trim(),
     source_type: String(value?.source_type || 'rss').trim().toLowerCase(),
-    category: String(value?.category || '').trim(),
     enabled: Boolean(value?.enabled),
     limited: Boolean(value?.limited),
     project_ids: Array.isArray(value?.project_ids)
@@ -96,6 +96,7 @@ export default function SourcesPage({
   const [typeFilter, setTypeFilter] = useState('all');
   const [reachFilter, setReachFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [projectAssignQuery, setProjectAssignQuery] = useState('');
   const [initialDraft, setInitialDraft] = useState(emptyDraft);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -106,8 +107,11 @@ export default function SourcesPage({
       setInitialDraft(emptyDraft);
       setShowCancelModal(false);
       setDeleteTarget(null);
+      setProjectAssignQuery('');
       return;
     }
+
+    setProjectAssignQuery('');
 
     if (isEditRoute) {
       if (!currentSource) {
@@ -124,7 +128,6 @@ export default function SourcesPage({
         url: currentSource.url || '',
         name: currentSource.name || '',
         source_type: currentSource.source_type || 'rss',
-        category: currentSource.category || '',
         enabled: currentSource.enabled ?? true,
         limited: currentSource.limited ?? false,
         project_ids: assignedProjectIds,
@@ -133,7 +136,6 @@ export default function SourcesPage({
         url: currentSource.url || '',
         name: currentSource.name || '',
         source_type: currentSource.source_type || 'rss',
-        category: currentSource.category || '',
         enabled: currentSource.enabled ?? true,
         limited: currentSource.limited ?? false,
         project_ids: assignedProjectIds,
@@ -157,6 +159,14 @@ export default function SourcesPage({
     return map;
   }, [projects]);
 
+  const visibleAssignableProjects = useMemo(() => {
+    const needle = projectAssignQuery.trim().toLowerCase();
+    if (!needle) return projects;
+    return projects.filter((project) =>
+      [project.name, project.status, project.description].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle))
+    );
+  }, [projects, projectAssignQuery]);
+
   const stats = useMemo(() => {
     const total = sources.length;
     const enabled = sources.filter((source) => source.enabled).length;
@@ -165,13 +175,13 @@ export default function SourcesPage({
     return { total, enabled, assigned, rss };
   }, [sources, sourceProjectsById]);
 
-  const visibleSources = useMemo(() => {
+  const sourcesMatchingFilters = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return sources.filter((source) => {
       const sourceProjects = sourceProjectsById.get(Number(source.id)) || [];
       const matchesQuery =
         !needle ||
-        [source.name, source.url, source.category, source.source_type, ...sourceProjects.map((project) => project.name)]
+        [source.name, source.url, source.source_type, ...sourceProjects.map((project) => project.name)]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(needle));
       const matchesStatus =
@@ -180,14 +190,28 @@ export default function SourcesPage({
         (statusFilter === 'disabled' && !source.enabled) ||
         (statusFilter === 'assigned' && sourceProjects.length > 0) ||
         (statusFilter === 'unassigned' && sourceProjects.length === 0);
-      const matchesType = typeFilter === 'all' || (source.source_type || 'rss') === typeFilter;
       const matchesReach =
         reachFilter === 'all' ||
         (reachFilter === 'limited' && source.limited) ||
         (reachFilter === 'global' && !source.limited);
-      return matchesQuery && matchesStatus && matchesType && matchesReach;
+      return matchesQuery && matchesStatus && matchesReach;
     });
-  }, [sources, sourceProjectsById, query, statusFilter, typeFilter, reachFilter]);
+  }, [sources, sourceProjectsById, query, statusFilter, reachFilter]);
+
+  // Tab counts reflect the search/status/reach filters that are still applied
+  // alongside the tabs, same as the source-type tabs elsewhere in the app.
+  const sourceTypeTabCounts = useMemo(() => {
+    const counts = { all: sourcesMatchingFilters.length };
+    SOURCE_TYPE_OPTIONS.forEach((option) => {
+      counts[option.value] = sourcesMatchingFilters.filter((source) => (source.source_type || 'rss') === option.value).length;
+    });
+    return counts;
+  }, [sourcesMatchingFilters]);
+
+  const visibleSources = useMemo(() => {
+    if (typeFilter === 'all') return sourcesMatchingFilters;
+    return sourcesMatchingFilters.filter((source) => (source.source_type || 'rss') === typeFilter);
+  }, [sourcesMatchingFilters, typeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(visibleSources.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -213,6 +237,7 @@ export default function SourcesPage({
   const discardChanges = () => {
     setShowCancelModal(false);
     setDraft(emptyDraft);
+    setProjectAssignQuery('');
     navigate('/sources');
   };
 
@@ -222,7 +247,6 @@ export default function SourcesPage({
       url: isTermType ? '' : draft.url.trim(),
       name: draft.name.trim(),
       source_type: draft.source_type,
-      category: draft.category.trim(),
       enabled: Boolean(draft.enabled),
       limited: Boolean(draft.limited),
       project_ids: draft.project_ids,
@@ -303,20 +327,26 @@ export default function SourcesPage({
             <span className="panel-chip">{isEditRoute ? 'Updating existing source' : 'Create a new source'}</span>
           </div>
 
-          <label style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Source type</span>
-            <select
-              className="filter-select"
-              value={draft.source_type}
-              onChange={(e) => setDraft((prev) => ({ ...prev, source_type: e.target.value }))}
-            >
-              {SOURCE_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="source-type-tabs" role="tablist" aria-label="Choose source type">
+              {SOURCE_TYPE_OPTIONS.map((option) => {
+                const isActive = draft.source_type === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`source-type-tab ${isActive ? 'active' : ''}`}
+                    onClick={() => setDraft((prev) => ({ ...prev, source_type: option.value }))}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {!TERM_SOURCE_TYPES.has(draft.source_type) && (
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Source URL</span>
@@ -330,23 +360,15 @@ export default function SourcesPage({
             </label>
           )}
           <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Display name</span>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>
+              Display name{!TERM_SOURCE_TYPES.has(draft.source_type) && <span style={{ textTransform: 'none', letterSpacing: 0 }}> (optional)</span>}
+            </span>
             <input
               type="text"
               className="source-input"
               placeholder={TERM_SOURCE_PLACEHOLDERS[draft.source_type] || 'Display name'}
               value={draft.name}
               onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-            />
-          </label>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Category</span>
-            <input
-              type="text"
-              className="source-input"
-              placeholder="Category"
-              value={draft.category}
-              onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value }))}
             />
           </label>
           <div
@@ -421,25 +443,61 @@ export default function SourcesPage({
             </button>
           </div>
 
-          <div style={{ padding: '8px 0 2px', fontSize: '0.86rem', color: 'var(--text-light)' }}>Assign to projects</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
-            {projects.length === 0 ? (
-              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No projects yet. Create a project first.</div>
-            ) : (
-              projects.map((project) => (
-                <label
-                  key={project.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-dark)' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={draft.project_ids.includes(Number(project.id))}
-                    onChange={() => toggleProject(project.id)}
-                  />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
-                </label>
-              ))
-            )}
+          <div className="assign-sources-panel">
+            <div className="assign-sources-header">
+              <div>
+                <div className="assign-sources-kicker">Assign projects</div>
+                <strong className="assign-sources-title">Choose the projects this source should power</strong>
+              </div>
+              <div className="assign-sources-summary">
+                <span className="panel-chip">{draft.project_ids.length} selected</span>
+              </div>
+            </div>
+
+            <div className="assign-sources-toolbar">
+              <label className="assign-sources-search">
+                <Search size={14} />
+                <input
+                  type="text"
+                  value={projectAssignQuery}
+                  onChange={(e) => setProjectAssignQuery(e.target.value)}
+                  placeholder="Filter projects by name"
+                />
+              </label>
+            </div>
+
+            <div className="assign-sources-list">
+              {projects.length === 0 ? (
+                <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No projects yet. Create a project first.</div>
+              ) : visibleAssignableProjects.length === 0 ? (
+                <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                  <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
+                    <Search size={16} />
+                  </div>
+                  <strong>No matching projects</strong>
+                  <span>Try a different search term in this assignment box.</span>
+                </div>
+              ) : (
+                visibleAssignableProjects.map((project) => {
+                  const isSelected = draft.project_ids.includes(Number(project.id));
+                  return (
+                    <label key={project.id} className={`assign-source-item ${isSelected ? 'selected' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleProject(project.id)}
+                      />
+                      <div className="assign-source-copy">
+                        <div className="assign-source-topline">
+                          <strong className="assign-source-name">{project.name}</strong>
+                          <span className="panel-chip">{project.status || 'draft'}</span>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
@@ -542,6 +600,25 @@ export default function SourcesPage({
         </div>
       </div>
 
+      <div className="source-type-tabs" role="tablist" aria-label="Filter sources by type">
+        {SOURCE_TYPE_TABS.map((tab) => {
+          const isActive = typeFilter === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`source-type-tab ${isActive ? 'active' : ''}`}
+              onClick={() => setTypeFilter(tab.value)}
+            >
+              {tab.label}
+              <span className="source-type-tab-count">{sourceTypeTabCounts[tab.value] || 0}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="admin-toolbar-row">
         <label className="admin-search">
           <Search size={16} />
@@ -549,7 +626,7 @@ export default function SourcesPage({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search sources, URLs, categories, or project names"
+            placeholder="Search sources, URLs, or project names"
           />
         </label>
 
@@ -559,15 +636,6 @@ export default function SourcesPage({
           <option value="disabled">Disabled</option>
           <option value="assigned">Assigned</option>
           <option value="unassigned">Unassigned</option>
-        </select>
-
-        <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="all">All types</option>
-          {SOURCE_TYPE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
         </select>
 
         <select className="filter-select" value={reachFilter} onChange={(e) => setReachFilter(e.target.value)}>
@@ -624,7 +692,6 @@ export default function SourcesPage({
                     <div className="admin-item-url">{source.url}</div>
                     <div className="admin-item-meta">
                       <span>{sourceTypeLabel(source.source_type)}</span>
-                      {source.category ? <span>{source.category}</span> : null}
                       <span>
                         {sourceProjects.length} project{sourceProjects.length === 1 ? '' : 's'}
                       </span>

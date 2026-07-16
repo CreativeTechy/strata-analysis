@@ -156,7 +156,6 @@ def _normalize_source_record(row):
         "name": name,
         "enabled": bool(row.get("enabled", True)),
         "source_type": source_type,
-        "category": (row.get("category") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "source": row.get("source", "database"),
@@ -189,7 +188,6 @@ def load_source_records():
                     "name": urlparse(url).netloc or url,
                     "enabled": True,
                     "source_type": _infer_source_type(url),
-                    "category": "",
                     "source": "env",
                 }
             )
@@ -202,7 +200,7 @@ def load_source_records():
     try:
         records = db.fetch_all(
             """
-            select id, url, name, enabled, source_type, category, created_at, updated_at
+            select id, url, name, enabled, source_type, created_at, updated_at
             from sources
             order by created_at asc
             """

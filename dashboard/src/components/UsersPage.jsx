@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
-import { UserPlus, Users as UsersIcon, Ban, CheckCircle2 } from 'lucide-react';
+import { UserPlus, Users as UsersIcon, Ban, CheckCircle2, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
+import ConfirmModal from './ConfirmModal';
 
 const emptyDraft = { username: '', email: '', password: '', role: '' };
 
 export default function UsersPage() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, hasPermission } = useAuth();
+  const canDelete = hasPermission('users.delete');
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(emptyDraft);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -99,6 +103,24 @@ export default function UsersPage() {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setError('');
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/users/${target.id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Failed to delete user (${res.status})`);
+      setDeleteTarget(null);
+      await loadUsers();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto', paddingTop: 80 }}>
       <header style={{ marginBottom: 20 }}>
@@ -172,15 +194,28 @@ export default function UsersPage() {
                   </td>
                   <td style={{ padding: 12 }}>{u.status}</td>
                   <td style={{ padding: 12 }}>
-                    {u.status === 'active' ? (
-                      <button className="btn-secondary" disabled={isSelf} onClick={() => setStatus(u.id, 'disabled')}>
-                        <Ban size={14} /> Disable
-                      </button>
-                    ) : (
-                      <button className="btn-secondary" onClick={() => setStatus(u.id, 'active')}>
-                        <CheckCircle2 size={14} /> Enable
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {u.status === 'active' ? (
+                        <button className="btn-secondary" disabled={isSelf} onClick={() => setStatus(u.id, 'disabled')}>
+                          <Ban size={14} /> Disable
+                        </button>
+                      ) : (
+                        <button className="btn-secondary" onClick={() => setStatus(u.id, 'active')}>
+                          <CheckCircle2 size={14} /> Enable
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          className="btn-secondary"
+                          disabled={isSelf}
+                          title={isSelf ? 'You cannot delete your own account.' : undefined}
+                          onClick={() => setDeleteTarget(u)}
+                          style={{ color: isSelf ? undefined : '#ff4757' }}
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -188,6 +223,20 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title={`Delete user "${deleteTarget?.username || ''}"?`}
+        message="This permanently removes the user account and signs them out of any active sessions."
+        confirmLabel={deleting ? 'Deleting...' : 'Delete user'}
+        cancelLabel="Keep user"
+        confirmButtonStyle={{
+          background: 'linear-gradient(135deg, #ff4757, #e03131)',
+          boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
+        }}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

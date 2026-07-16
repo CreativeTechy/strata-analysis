@@ -311,6 +311,17 @@ def edit_user(user_id: int, payload: dict, user: dict = Depends(require_permissi
     return {"user": updated}
 
 
+@app.delete("/api/users/{user_id}")
+def remove_user(user_id: int, user: dict = Depends(require_permission("users.delete"))):
+    if user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+    sessions_store.delete_sessions_for_user(user_id)
+    deleted = users_store.delete_user(user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"ok": True}
+
+
 # --- Role management --------------------------------------------------------
 
 
@@ -325,7 +336,7 @@ def get_roles(user: dict = Depends(require_permission("roles.view"))):
 
 
 @app.post("/api/roles")
-def add_role(payload: dict, user: dict = Depends(require_permission("roles.manage"))):
+def add_role(payload: dict, user: dict = Depends(require_permission("roles.create"))):
     payload = payload or {}
     name = str(payload.get("name") or "").strip()
     description = str(payload.get("description") or "").strip()
@@ -343,7 +354,7 @@ def add_role(payload: dict, user: dict = Depends(require_permission("roles.manag
 
 
 @app.patch("/api/roles/{role_id}")
-def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permission("roles.manage"))):
+def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permission("roles.update"))):
     payload = payload or {}
     name = payload.get("name")
     description = payload.get("description")
@@ -365,7 +376,7 @@ def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permissi
 
 
 @app.delete("/api/roles/{role_id}")
-def remove_role(role_id: int, user: dict = Depends(require_permission("roles.manage"))):
+def remove_role(role_id: int, user: dict = Depends(require_permission("roles.delete"))):
     try:
         deleted = permissions_store.delete_role(role_id)
     except ValueError as e:

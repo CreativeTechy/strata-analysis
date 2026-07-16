@@ -24,7 +24,6 @@ const emptyNewSourceDraft = {
   url: '',
   name: '',
   source_type: 'rss',
-  category: '',
 };
 
 const SOURCE_TYPE_OPTIONS = [
@@ -70,7 +69,6 @@ function sourceMatchesQuery(source, needle) {
   return [
     source.name,
     source.url,
-    source.category,
     source.source_type,
     source.enabled ? 'enabled' : 'disabled',
   ]
@@ -730,7 +728,6 @@ export default function ProjectsPage({
       url: isTermType ? '' : newSourceDraft.url.trim(),
       name: newSourceDraft.name.trim(),
       source_type: newSourceDraft.source_type,
-      category: newSourceDraft.category.trim(),
       enabled: true,
       project_ids: [],
     };
@@ -770,7 +767,7 @@ export default function ProjectsPage({
     try {
       const created = await Promise.all(
         terms.map(({ term, source_type }) =>
-          onCreateSource({ name: term, source_type, category: '', enabled: true, project_ids: [] }).catch(() => null)
+          onCreateSource({ name: term, source_type, enabled: true, project_ids: [] }).catch(() => null)
         )
       );
       const ids = created
@@ -1506,7 +1503,7 @@ export default function ProjectsPage({
                       type="text"
                       value={sourceAssignQuery}
                       onChange={(e) => setSourceAssignQuery(e.target.value)}
-                      placeholder="Filter sources by name, URL, or category"
+                      placeholder="Filter sources by name or URL"
                       disabled={isSaving}
                     />
                   </label>
@@ -1576,28 +1573,18 @@ export default function ProjectsPage({
                       onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, name: e.target.value }))}
                       disabled={isCreatingSource}
                     />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                      <select
-                        className="filter-select"
-                        value={newSourceDraft.source_type}
-                        onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, source_type: e.target.value }))}
-                        disabled={isCreatingSource}
-                      >
-                        {SOURCE_TYPE_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        className="source-input"
-                        placeholder="Category"
-                        value={newSourceDraft.category}
-                        onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, category: e.target.value }))}
-                        disabled={isCreatingSource}
-                      />
-                    </div>
+                    <select
+                      className="filter-select"
+                      value={newSourceDraft.source_type}
+                      onChange={(e) => setNewSourceDraft((prev) => ({ ...prev, source_type: e.target.value }))}
+                      disabled={isCreatingSource}
+                    >
+                      {SOURCE_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                     {newSourceError && (
                       <div
                         style={{
@@ -1694,7 +1681,6 @@ export default function ProjectsPage({
                             <div className="assign-source-url">{source.url}</div>
                             <div className="assign-source-meta">
                               <span>{sourceTypeLabel(source.source_type)}</span>
-                              {source.category ? <span>{source.category}</span> : null}
                               <span>
                                 {projectCount} project{projectCount === 1 ? '' : 's'}
                               </span>

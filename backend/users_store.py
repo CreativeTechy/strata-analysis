@@ -133,6 +133,13 @@ def update_user(user_id, role_id: int | None = None, status: str | None = None):
     return get_user_by_id(user_id)
 
 
+def delete_user(user_id) -> bool:
+    if not get_user_by_id(user_id):
+        return False
+    db.execute("delete from users where id = %s", (user_id,))
+    return True
+
+
 def record_login(user_id) -> None:
     db.execute("update users set last_login_at = now() where id = %s", (user_id,))
 

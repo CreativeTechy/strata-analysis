@@ -849,7 +849,7 @@ export default function App() {
           path="/admin/roles/new"
           element={(
             <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
-              <RequirePermission permissions={['roles.manage']}>
+              <RequirePermission permissions={['roles.create']}>
                 <RoleCreatePage />
               </RequirePermission>
             </RouteShell>
@@ -859,7 +859,7 @@ export default function App() {
           path="/admin/roles/:roleId/edit"
           element={(
             <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
-              <RequirePermission permissions={['roles.manage']}>
+              <RequirePermission permissions={['roles.update']}>
                 <RoleEditPage />
               </RequirePermission>
             </RouteShell>

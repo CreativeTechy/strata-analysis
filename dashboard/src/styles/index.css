@@ -1767,3 +1767,140 @@ h1, h2, h3 {
     height: 180px;
   }
 }
+
+/* Role form (create/edit) */
+.role-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 880px;
+}
+
+.role-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.role-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.role-field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.role-textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.role-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.permission-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.permission-group-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+}
+
+.permission-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.permission-group-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dark);
+}
+
+.permission-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--secondary-color);
+  cursor: pointer;
+  user-select: none;
+}
+
+.permission-group-toggle input {
+  accent-color: var(--secondary-color);
+  cursor: pointer;
+}
+
+.permission-group-body {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 16px 10px;
+}
+
+.permission-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 4px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--text-dark);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.permission-row:hover {
+  background: rgba(249, 115, 22, 0.06);
+}
+
+.permission-row input {
+  accent-color: var(--primary-color);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.role-form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 4px;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+@media (max-width: 720px) {
+  .permission-groups {
+    grid-template-columns: 1fr;
+  }
+}
