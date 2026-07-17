@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
-import Sidebar from './components/Sidebar';
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import AppShell from './components/AppShell';
 import StatsOverview from './components/StatsOverview';
 import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
@@ -20,19 +20,6 @@ import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
 import { RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-function RouteShell({ children, backTo, backLabel, backStyle }) {
-  return (
-    <div style={{ position: 'relative' }}>
-      <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000 }}>
-        <Link to={backTo} className="btn-secondary" style={{ ...backStyle, textDecoration: 'none' }}>
-          {backLabel}
-        </Link>
-      </div>
-      {children}
-    </div>
-  );
-}
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -108,7 +95,6 @@ export default function App() {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedProjectId') : null;
     return stored ? Number(stored) : null;
   });
-  const [appNow, setAppNow] = useState(() => new Date());
   const pollIntervalRef = useRef(null);
   const pipelineRunsPollRef = useRef(null);
 
@@ -148,7 +134,6 @@ export default function App() {
     () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
     [pipelineRuns]
   );
-  const activePipelineStartedAt = activePipelineRun?.started_at || activePipelineRun?.created_at || null;
 
   const coerceProjectId = (value) => {
     if (value == null) return null;
@@ -448,22 +433,6 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const timer = setInterval(() => setAppNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const formatElapsed = (startedAt, now) => {
-    if (!startedAt) return '00:00:00';
-    const started = new Date(startedAt);
-    if (Number.isNaN(started.getTime())) return '00:00:00';
-    const totalSeconds = Math.max(0, Math.floor((now.getTime() - started.getTime()) / 1000));
-    const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-    const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-    const seconds = String(totalSeconds % 60).padStart(2, '0');
-    return `${hours}:${minutes}:${seconds}`;
-  };
-
   const createSource = async (payload) => {
     try {
       const res = await fetch('/api/sources', {
@@ -584,124 +553,83 @@ export default function App() {
   };
 
   const renderDashboardView = () => (
-    <div className="layout">
-      <div className="bg-pattern"></div>
-
-      <Sidebar
-        onToggleSource={(source) => updateSource(source.id, { ...source, enabled: !source.enabled })}
-      />
-
-      <main className="main-content">
-        <div className="content-shell">
-          <header className="dashboard-hero">
-            <div>
-              <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
-              <p className="subtitle">
-                Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
-              </p>
-            </div>
-
-            <div className="dashboard-hero-actions">
-              <select
-                className="filter-select"
-                value={selectedProjectId ?? ''}
-                onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                disabled={isLoadingProjects || projects.length === 0}
-                style={{ minWidth: '220px' }}
-              >
-                <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name} ({project.status || 'draft'})
-                  </option>
-                ))}
-              </select>
-              <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
-                <RefreshCw size={16} /> Refresh Reports
-              </button>
-            </div>
-          </header>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-            {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
-              <span className="panel-chip warning">
-                <RefreshCw size={12} className="spin" />
-                Loading dashboard
-              </span>
-            ) : (
-              <span className="panel-chip success">Dashboard ready</span>
-            )}
-          </div>
-
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <StatsOverview
-              stats={reportStats}
-              scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
-              loading={isLoadingReportStats}
-            />
-          </motion.div>
+    <div className="content-shell">
+      <header className="dashboard-hero">
+        <div>
+          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
+          <p className="subtitle">
+            Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
+          </p>
         </div>
-      </main>
+
+        <div className="dashboard-hero-actions">
+          <select
+            className="filter-select"
+            value={selectedProjectId ?? ''}
+            onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+            disabled={isLoadingProjects || projects.length === 0}
+            style={{ minWidth: '220px' }}
+          >
+            <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name} ({project.status || 'draft'})
+              </option>
+            ))}
+          </select>
+          <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
+            <RefreshCw size={16} /> Refresh Reports
+          </button>
+        </div>
+      </header>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
+          <span className="panel-chip warning">
+            <RefreshCw size={12} className="spin" />
+            Loading dashboard
+          </span>
+        ) : (
+          <span className="panel-chip success">Dashboard ready</span>
+        )}
+      </div>
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+        <StatsOverview
+          stats={reportStats}
+          scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
+          loading={isLoadingReportStats}
+        />
+      </motion.div>
     </div>
   );
 
   const renderWorkflowRoute = () => (
-    <div style={{ position: 'relative' }}>
-      <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 1000, display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <Link to="/dashboard" className="btn-secondary" style={{ background: 'white', textDecoration: 'none' }}>
-          To Dashboard
-        </Link>
-      </div>
-
-      <WorkflowPage
-        articles={workflowArticles}
-        isScraping={isScraping}
-        onRunScraper={runScraper}
-        sources={workflowSelectedSourceUrls}
-        projects={projects}
-        selectedProjects={workflowSelectedProjects}
-        selectedProjectIds={workflowSelectedProjectIds}
-        onChangeSelectedProjectIds={setWorkflowSelectedProjectIds}
-        activeRun={activePipelineRun}
-        onStopRun={stopPipelineRun}
-      />
-    </div>
+    <WorkflowPage
+      articles={workflowArticles}
+      isScraping={isScraping}
+      onRunScraper={runScraper}
+      sources={workflowSelectedSourceUrls}
+      projects={projects}
+      selectedProjects={workflowSelectedProjects}
+      selectedProjectIds={workflowSelectedProjectIds}
+      onChangeSelectedProjectIds={setWorkflowSelectedProjectIds}
+      activeRun={activePipelineRun}
+      onStopRun={stopPipelineRun}
+    />
   );
 
   return (
-    <div>
-      <div
-        style={{
-          position: 'fixed',
-          top: 14,
-          right: 14,
-          zIndex: 2000,
-          padding: '10px 14px',
-          borderRadius: 999,
-          background: 'rgba(15, 23, 42, 0.92)',
-          color: 'white',
-          boxShadow: '0 10px 24px rgba(15, 23, 42, 0.18)',
-          backdropFilter: 'blur(12px)',
-          fontSize: '0.8rem',
-          display: 'flex',
-          gap: 10,
-          alignItems: 'center',
-        }}
-      >
-        <span style={{ opacity: 0.72, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live timer</span>
-        <strong>{formatElapsed(activePipelineStartedAt, appNow)}</strong>
-      </div>
-
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route element={<RequireAuth />}>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={renderDashboardView()} />
-        <Route path="/articles" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} /></RouteShell>} />
-        <Route path="/pipeline-runs" element={<RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}><PipelineRunsPage /></RouteShell>} />
-        <Route
-          path="/sources"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<RequireAuth />}>
+        <Route element={<AppShell />}>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={renderDashboardView()} />
+          <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
+          <Route path="/pipeline-runs" element={<PipelineRunsPage />} />
+          <Route
+            path="/sources"
+            element={(
               <SourcesPage
                 sources={sources}
                 projects={projects}
@@ -711,13 +639,11 @@ export default function App() {
                 onDeleteSource={deleteSource}
                 isLoadingSources={isLoadingSources}
               />
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/sources/new"
-          element={(
-            <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/sources/new"
+            element={(
               <RequirePermission permissions={['sources.create']}>
                 <SourcesPage
                   sources={sources}
@@ -729,13 +655,11 @@ export default function App() {
                   isLoadingSources={isLoadingSources}
                 />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/sources/:sourceId/edit"
-          element={(
-            <RouteShell backTo="/sources" backLabel="Back to Sources" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/sources/:sourceId/edit"
+            element={(
               <RequirePermission permissions={['sources.update']}>
                 <SourcesPage
                   sources={sources}
@@ -747,13 +671,11 @@ export default function App() {
                   isLoadingSources={isLoadingSources}
                 />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/projects"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/projects"
+            element={(
               <ProjectsPage
                 projects={projects}
                 sources={sources}
@@ -762,13 +684,11 @@ export default function App() {
                 onUpdateProject={updateProject}
                 isLoadingProjects={isLoadingProjects}
               />
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/projects/new"
-          element={(
-            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/projects/new"
+            element={(
               <RequirePermission permissions={['projects.create']}>
                 <ProjectsPage
                   projects={projects}
@@ -781,13 +701,11 @@ export default function App() {
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/projects/:projectId/edit"
-          element={(
-            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/projects/:projectId/edit"
+            element={(
               <RequirePermission permissions={['projects.update']}>
                 <ProjectsPage
                   projects={projects}
@@ -800,75 +718,59 @@ export default function App() {
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/projects/:projectId"
-          element={(
-            <RouteShell backTo="/projects" backLabel="Back to Projects" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/projects/:projectId"
+            element={(
               <ProjectDetailPage
                 projects={projects}
                 sources={sources}
                 users={users}
                 onDeleteProject={deleteProject}
               />
-            </RouteShell>
-          )}
-        />
-        <Route path="/workflow" element={renderWorkflowRoute()} />
-        <Route
-          path="/intelligence"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
-              <IntelligencePage key={selectedProjectId ?? 'all'} project={selectedProject} projectId={selectedProjectId} />
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/users"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route path="/workflow" element={renderWorkflowRoute()} />
+          <Route
+            path="/intelligence"
+            element={<IntelligencePage key={selectedProjectId ?? 'all'} project={selectedProject} projectId={selectedProjectId} />}
+          />
+          <Route
+            path="/admin/users"
+            element={(
               <RequirePermission permissions={['users.view']}>
                 <UsersPage />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/roles"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/roles"
+            element={(
               <RequirePermission permissions={['roles.view']}>
                 <RolesListPage />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/roles/new"
-          element={(
-            <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/roles/new"
+            element={(
               <RequirePermission permissions={['roles.create']}>
                 <RoleCreatePage />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/roles/:roleId/edit"
-          element={(
-            <RouteShell backTo="/admin/roles" backLabel="Back to Roles" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/roles/:roleId/edit"
+            element={(
               <RequirePermission permissions={['roles.update']}>
                 <RoleEditPage />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/project-linkage"
-          element={(
-            <RouteShell backTo="/dashboard" backLabel="Back to Dashboard" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/project-linkage"
+            element={(
               <RequirePermission permissions={['projects.link_users']}>
                 <ProjectLinkageListPage
                   projects={projects}
@@ -877,32 +779,27 @@ export default function App() {
                   isLoadingUsers={isLoadingUsers}
                 />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/project-linkage/:projectId"
-          element={(
-            <RouteShell backTo="/admin/project-linkage" backLabel="Back to Project Linkage" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/project-linkage/:projectId"
+            element={(
               <RequirePermission permissions={['projects.link_users']}>
                 <ProjectLinkageDetailPage projects={projects} users={users} />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route
-          path="/admin/project-linkage/:projectId/edit"
-          element={(
-            <RouteShell backTo="/admin/project-linkage" backLabel="Back to Project Linkage" backStyle={{ background: 'white' }}>
+            )}
+          />
+          <Route
+            path="/admin/project-linkage/:projectId/edit"
+            element={(
               <RequirePermission permissions={['projects.link_users']}>
                 <ProjectLinkageEditPage projects={projects} users={users} onSetProjectUsers={setProjectUsers} />
               </RequirePermission>
-            </RouteShell>
-          )}
-        />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            )}
+          />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
-      </Routes>
-    </div>
+      </Route>
+    </Routes>
   );
 }
