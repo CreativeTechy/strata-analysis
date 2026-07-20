@@ -1,4 +1,4 @@
-"""The ENRICHER stage: clean scraped articles, tag them with DeepSeek,
+"""The ENRICHER stage: clean scraped articles, tag them with AI,
 and hand them to the saver (store.save_articles). Reads articles.json, writes
 enriched_articles.json, then upserts to local PostgreSQL.
 """
@@ -20,7 +20,7 @@ from store import save_articles
 
 MIN_TEXT_LENGTH = 200
 PROMPT_VERSION = "2026-07-15"
-MODEL_NAME = config.DEEPSEEK_CHAT_MODEL
+MODEL_NAME = config.OPENAI_CHAT_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
     "review",
@@ -53,7 +53,7 @@ INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
-# Used when DeepSeek enrichment fails so the pipeline still produces
+# Used when AI enrichment fails so the pipeline still produces
 # rows that satisfy the local PostgreSQL schema instead of crashing.
 DEFAULT_ENRICHMENT = {
     "topic": "",

@@ -1,8 +1,8 @@
 """Project link discovery for hashtags, keywords, and usernames.
 
-DeepSeek proposes sources directly from the project terms, then we validate
-those URLs, resolve domains/RSS pages, and upsert the selected links as
-reusable source records.
+The configured AI model proposes sources directly from the project terms,
+then we validate those URLs, resolve domains/RSS pages, and upsert the
+selected links as reusable source records.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import requests
 from parsel import Selector
 
 import config
+from llm_client import chat_completion
 from sources_store import create_source
 from projects_store import set_project_sources
 
@@ -297,8 +298,8 @@ def _extract_json_blob(text):
     return match.group(0).strip() if match else ""
 
 
-def _deepseek_source_suggestions(project):
-    if not config.DEEPSEEK_API_KEY:
+def _ai_source_suggestions(project):
+    if not config.OPENAI_API_KEY:
         return []
 
     project_context = _project_context(project)
@@ -315,22 +316,12 @@ def _deepseek_source_suggestions(project):
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 700,
-            },
+        content = chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=700,
             timeout=45,
         )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
         payload = json.loads(_extract_json_blob(content))
     except Exception:
         return []
@@ -435,7 +426,7 @@ def _resolve_source(item):
                     {
                         "url": _normalize_url(feed_url),
                         "title": title or _default_name(root_url),
-                        "reason": reason or "Resolved from DeepSeek domain suggestion.",
+                        "reason": reason or "Resolved from AI domain suggestion.",
                         "source_type": "rss",
                     }
                 )
@@ -459,7 +450,7 @@ def _resolve_source(item):
                 {
                     "url": _normalize_url(feed_url),
                     "title": title or _default_name(feed_url),
-                    "reason": reason or "Resolved from DeepSeek feed suggestion.",
+                    "reason": reason or "Resolved from AI feed suggestion.",
                     "source_type": "rss",
                 }
             )
@@ -470,7 +461,7 @@ def _resolve_source(item):
             {
                 "url": final_url,
                 "title": title or _default_name(final_url),
-                "reason": reason or "Resolved from DeepSeek social suggestion.",
+                "reason": reason or "Resolved from AI social suggestion.",
                 "source_type": "social",
             }
         )
@@ -483,7 +474,7 @@ def _resolve_source(item):
                 {
                     "url": _normalize_url(feed_url),
                     "title": title or _default_name(feed_url),
-                    "reason": reason or "Resolved from DeepSeek page suggestion.",
+                    "reason": reason or "Resolved from AI page suggestion.",
                     "source_type": "rss",
                 }
             )
@@ -493,7 +484,7 @@ def _resolve_source(item):
         {
             "url": final_url,
             "title": title or _default_name(final_url),
-            "reason": reason or "Resolved from DeepSeek page suggestion.",
+            "reason": reason or "Resolved from AI page suggestion.",
             "source_type": "web",
         }
     )
@@ -501,11 +492,11 @@ def _resolve_source(item):
 
 
 def discover_project_links(project):
-    """Ask DeepSeek for project sources, validate them, and create reusable source records."""
+    """Ask the configured AI model for project sources, validate them, and create reusable source records."""
     if not isinstance(project, dict):
         return {"suggested_sources": [], "source_ids": [], "sources": [], "resolved_urls": []}
 
-    suggestions = _deepseek_source_suggestions(project)
+    suggestions = _ai_source_suggestions(project)
     resolved_sources = []
     seen_urls = set()
     usernames = _clean_terms(project.get("usernames"))
