@@ -16,13 +16,13 @@ it in Supabase, and surfaces it in the dashboard.
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
    Supabase `sources` or the `SOURCES` env var override, discovers article links,
    and extracts clean title/date/text with trafilatura.
-2. Enricher - `backend/enrich.py`. Cleans and tags each article with DeepSeek,
+2. Enricher - `backend/enrich.py`. Cleans and tags each article with AI,
    then falls back to neutral defaults if the request fails.
 3. Saver - `backend/store.py`. Upserts enriched articles into Supabase.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
    backend API.
 
-DeepSeek is used everywhere in this app for AI: article enrichment
+OpenAI is used everywhere in this app for AI: article enrichment
 (`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
 hashtag/keyword/username/source discovery (`backend/projects_ai.py` and
 `backend/project_discovery.py`).
@@ -56,8 +56,8 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 Set at minimum:
 
 - `DATABASE_URL`
-- `DEEPSEEK_API_KEY` - required for enrichment, Intelligence Copilot chat, and
-  project/source discovery
+- `OPENAI_API_KEY` - OpenAI API key, required for enrichment, Intelligence
+  Copilot chat, and project/source discovery
 
 ### 3. Run the backend locally
 
@@ -125,8 +125,8 @@ docker compose up --build
 The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- `DEEPSEEK_API_KEY=...` - required for enrichment, Intelligence Copilot chat,
-  and project/source discovery
+- `OPENAI_API_KEY=...` - OpenAI API key, required for enrichment,
+  Intelligence Copilot chat, and project/source discovery
 
 ### Adminer login
 
@@ -169,7 +169,7 @@ This deletes all local data and recreates the database from the current
 For a production-style deployment, the important pieces are:
 
 - PostgreSQL must be reachable by the backend container
-- `backend/.env` must include the database URL and `DEEPSEEK_API_KEY`
+- `backend/.env` must include the database URL and `OPENAI_API_KEY`
 
 The current Docker setup is suitable for a single-server deployment where the
 database, backend, frontend, and reverse proxy all run together.

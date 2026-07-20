@@ -6,9 +6,8 @@ import json
 import re
 from collections import Counter
 
-import requests
-
 import config
+from llm_client import chat_completion
 
 STOPWORDS = {
     "a",
@@ -176,7 +175,7 @@ def suggest_project_metadata(name, description):
     description = _clean_text(description)
 
     fallback = _fallback_metadata(name, description)
-    if not config.DEEPSEEK_API_KEY or not name:
+    if not config.OPENAI_API_KEY or not name:
         return fallback
 
     prompt = (
@@ -196,22 +195,12 @@ def suggest_project_metadata(name, description):
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {config.DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 400,
-            },
+        content = chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=400,
             timeout=35,
         )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
         payload = json.loads(_extract_json_blob(content))
         if not isinstance(payload, dict):
             return fallback
@@ -229,5 +218,5 @@ def suggest_project_metadata(name, description):
         "keywords": keywords or fallback["keywords"],
         "usernames": usernames or fallback["usernames"],
         "profile_urls": _username_profile_urls(usernames or fallback["usernames"]),
-        "source": "deepseek",
+        "source": "openai",
     }
