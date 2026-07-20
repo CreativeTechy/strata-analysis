@@ -8,6 +8,22 @@ import { computeOverallTone } from '../lib/tone.js';
 
 const MATCHES_PAGE_SIZE = 4;
 
+// Backend error codes (see backend/llm_client.py) mapped to short, friendly,
+// provider-neutral copy. Never surface raw provider/stack trace text here.
+const LLM_ERROR_MESSAGES = {
+  llm_config_error: "The AI assistant isn't set up yet. Please contact your administrator.",
+  llm_auth_error: "The AI assistant isn't configured correctly. Please contact your administrator.",
+  llm_rate_limited: 'The assistant is busy right now. Please wait a moment and try again.',
+  llm_timeout: 'The assistant took too long to respond. Please try again.',
+  llm_unavailable: 'The assistant service is temporarily unavailable. Please try again shortly.',
+  llm_bad_request: "That request couldn't be processed. Try rephrasing your question.",
+  llm_invalid_response: "The assistant couldn't produce a usable answer. Try rephrasing your question.",
+  llm_provider_error: 'The assistant hit an unexpected error. Please try again.',
+  network_error: "Can't reach the Copilot service right now. Please check your connection and try again.",
+};
+
+const DEFAULT_ERROR_MESSAGE = 'Something went wrong. Please try again.';
+
 export default function IntelligencePage({ project = null, projectId = null }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
@@ -103,13 +119,13 @@ export default function IntelligencePage({ project = null, projectId = null }) {
     setMatchesPage(1);
   };
 
-  const handleSendMessage = async (presetText) => {
+  const handleSendMessage = async (presetText, { skipUserBubble = false } = {}) => {
     const question = (presetText ?? chatInput).trim();
     if (!question || isThinking) return;
 
-    const newHistory = [...chatHistory, { role: 'user', text: question }];
-    setChatHistory(newHistory);
-    setChatInput('');
+    const baseHistory = skipUserBubble ? chatHistory : [...chatHistory, { role: 'user', text: question }];
+    setChatHistory(baseHistory);
+    if (!skipUserBubble) setChatInput('');
     setIsThinking(true);
 
     try {
@@ -150,18 +166,25 @@ export default function IntelligencePage({ project = null, projectId = null }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      const text = res.ok
-        ? (data.reply || 'No response.')
-        : `Error: ${data.error || `Copilot request failed (${res.status}).`}`;
-      setChatHistory([...newHistory, { role: 'bot', text }]);
+      if (res.ok) {
+        setChatHistory([...baseHistory, { role: 'bot', text: data.reply || 'No response.' }]);
+      } else {
+        const text = (data?.error_code && LLM_ERROR_MESSAGES[data.error_code]) || data?.error || DEFAULT_ERROR_MESSAGE;
+        setChatHistory([...baseHistory, { role: 'bot', text, isError: true, retryText: question }]);
+      }
     } catch {
       setChatHistory([
-        ...newHistory,
-        { role: 'bot', text: 'Error: Could not reach the Copilot backend. Is the Worker deployed with DEEPSEEK_API_KEY set?' },
+        ...baseHistory,
+        { role: 'bot', text: LLM_ERROR_MESSAGES.network_error, isError: true, retryText: question },
       ]);
     } finally {
       setIsThinking(false);
     }
+  };
+
+  const handleRetry = (question) => {
+    if (!question || isThinking) return;
+    handleSendMessage(question, { skipUserBubble: true });
   };
 
   return (
@@ -255,6 +278,17 @@ export default function IntelligencePage({ project = null, projectId = null }) {
                 {msg.role === 'bot' ? (
                   <div className="md-content">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                    {msg.isError && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ marginTop: '8px', fontSize: '0.8rem', padding: '4px 10px' }}
+                        disabled={isThinking}
+                        onClick={() => handleRetry(msg.retryText)}
+                      >
+                        Retry
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>

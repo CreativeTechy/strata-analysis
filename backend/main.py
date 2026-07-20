@@ -11,6 +11,7 @@ This API triggers the jobs and exposes configured sources to the dashboard.
 import asyncio
 import contextlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +28,7 @@ from auth import clear_auth_cookies, get_current_user, require_any_permission, r
 from project_discovery import discover_project_links
 from projects_ai import suggest_project_metadata
 from articles_store import compute_overall_tone, export_articles, get_article_stats, list_articles
-from llm_client import chat_completion
+from llm_client import LLMError, chat_completion
 from projects_store import (
     create_project,
     delete_project,
@@ -75,6 +76,8 @@ def _load_text_asset(filename, fallback=""):
 
 
 COPILOT_SYSTEM_PROMPT = _load_text_asset("copilot_system_prompt.txt")
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Strata Scraper API")
 
@@ -751,7 +754,7 @@ def delete_articles(user: dict = Depends(require_permission("articles.delete")))
 
 @app.post("/api/chat")
 async def chat(payload: dict, user: dict = Depends(require_permission())):
-    """Intelligence Copilot -> DeepSeek over the filtered articles."""
+    """Intelligence Copilot -> OpenAI over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
@@ -803,5 +806,12 @@ async def chat(payload: dict, user: dict = Depends(require_permission())):
             timeout=60,
         )
         return {"reply": reply}
-    except Exception as e:
-        return {"error": f"LLM request failed: {e}"}
+    except LLMError as e:
+        logger.warning("Copilot chat failed (%s): %s", e.code, e.detail or e)
+        return {"error": e.user_message, "error_code": e.code}
+    except Exception:
+        logger.exception("Copilot chat failed unexpectedly")
+        return {
+            "error": "Something went wrong while generating a response. Please try again.",
+            "error_code": "llm_provider_error",
+        }

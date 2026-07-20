@@ -41,9 +41,9 @@ _load_dotenv()
 
 
 DATABASE_URL = db.get_database_url()
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_CHAT_BASE_URL = os.environ.get("DEEPSEEK_CHAT_BASE_URL", "https://api.deepseek.com/chat/completions")
-DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_CHAT_BASE_URL = os.environ.get("OPENAI_CHAT_BASE_URL", "https://api.openai.com/v1/chat/completions")
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5.5-2026-04-23")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
