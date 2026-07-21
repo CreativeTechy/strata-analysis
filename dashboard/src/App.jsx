@@ -316,6 +316,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (pathname !== '/pipeline-runs') return undefined;
+    // Keeps repeat schedules (next_run_at) fresh so the upcoming-run placeholder
+    // stays accurate while this page is open, without polling project data elsewhere.
+    const interval = setInterval(refreshProjects, 15000);
+    return () => clearInterval(interval);
+  }, [pathname]);
+
+  useEffect(() => {
     if (projects.length === 0) {
       if (selectedProjectId != null) {
         setSelectedProjectId(null);
@@ -626,7 +634,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
-          <Route path="/pipeline-runs" element={<PipelineRunsPage />} />
+          <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route
             path="/sources"
             element={(
