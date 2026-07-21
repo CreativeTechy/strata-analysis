@@ -62,16 +62,39 @@ class LLMInvalidResponseError(LLMError):
     code = "llm_invalid_response"
     user_message = "The assistant couldn't produce a usable answer. Try rephrasing your question."
 
+    def __init__(self, detail="", *, code=None, user_message=None, finish_reason=None):
+        super().__init__(detail, code=code, user_message=user_message)
+        self.finish_reason = finish_reason
+
 
 def _extract_chat_content(payload) -> str:
     choices = payload.get("choices") or []
     if not choices:
         raise LLMInvalidResponseError("LLM returned no choices")
-    message = choices[0].get("message") or {}
+    choice = choices[0]
+    message = choice.get("message") or {}
     content = message.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise LLMInvalidResponseError("LLM returned an empty message")
-    return content.strip()
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+
+    # The provider accepted the request (2xx) but sent back nothing usable -
+    # a refusal, a tool-call-only turn, a content-filtered response, or a
+    # reasoning model burning its whole token budget on hidden reasoning
+    # before it could write any visible content (finish_reason="length" with
+    # an empty message) all look like this. Surface finish_reason/refusal so
+    # the caller's log line says *why*, and so it can pick a retry strategy.
+    finish_reason = choice.get("finish_reason", "unknown")
+    refusal = message.get("refusal")
+    if refusal:
+        raise LLMInvalidResponseError(
+            f"LLM refused the request (finish_reason={finish_reason}): {refusal}",
+            finish_reason=finish_reason,
+        )
+    raise LLMInvalidResponseError(
+        f"LLM returned an empty message (finish_reason={finish_reason}, "
+        f"message_keys={sorted(message.keys())})",
+        finish_reason=finish_reason,
+    )
 
 
 def _error_message(resp) -> str:
@@ -149,4 +172,24 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
         else:
             raise
 
-    return _extract_chat_content(payload)
+    try:
+        return _extract_chat_content(payload)
+    except LLMInvalidResponseError as exc:
+        retry_body = body
+        if exc.finish_reason == "length":
+            # The model spent its entire max_completion_tokens budget on
+            # hidden reasoning and never got to write visible content -
+            # retrying with the same budget would just hit the same wall.
+            # Give it more room instead.
+            current = int(body.get("max_completion_tokens") or max_tokens)
+            retry_body = {**body, "max_completion_tokens": min(current * 2, 4000)}
+            print(
+                f"llm_client: empty response from truncation ({exc.detail}); "
+                f"retrying once with max_completion_tokens={retry_body['max_completion_tokens']}"
+            )
+        else:
+            # Otherwise treat it as a transient glitch (stray tool-call/refusal
+            # turn) and retry once with the same request.
+            print(f"llm_client: empty/invalid response ({exc.detail}); retrying once")
+        payload = _post(url, retry_body, timeout)
+        return _extract_chat_content(payload)

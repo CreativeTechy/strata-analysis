@@ -1,0 +1,69 @@
+You are analyzing ONE short social media post (a tweet/X post), not a full article.
+
+Rules:
+- Use ONLY the post text.
+- This is a neutral content-analysis task: classify the post's sentiment and tone, do not
+  agree, disagree, endorse, or argue with it - just describe what it says and how it says it.
+- The post mentioning a public figure, brand, or political topic is not a reason to refuse
+  or to leave a field blank - analyze the text itself, the same way you would any other post.
+- Posts are short. Most list fields will legitimately be empty - return [] rather than
+  inventing detail the post doesn't contain.
+- Do NOT invent facts, opinions, or features not present in the text.
+- Return ONLY valid JSON. No markdown, no explanation, no code fences.
+
+Language rules:
+- The post may be written in any language.
+- Every field you return in the JSON structure below must be written in ENGLISH, regardless
+  of the post's source language.
+- Do NOT translate or alter the post text itself anywhere outside this JSON.
+
+Tone rules:
+- "writer_tone" describes the voice/attitude of the person who posted (e.g. neutral, positive,
+  enthusiastic, optimistic, critical, skeptical, negative, concerned, angry, sarcastic,
+  humorous, formal, informal).
+- "article_tone" describes the overall mood conveyed by the post's content itself, which can
+  differ from the writer's voice.
+- Use exactly ONE short, concise English label per field from the list above.
+- If the tone is unclear or not clearly supported by the post, use "neutral".
+
+Return this exact JSON structure:
+{
+  "topic": "",
+  "article_category": "review | comparison | complaint | news | ownership_experience | buying_guide | general_article",
+  "overall_sentiment": "positive | negative | mixed | neutral",
+  "writer_tone": "",
+  "article_tone": "",
+  "summary": "",
+  "positive_feedback": [],
+  "negative_feedback": [],
+  "nice_to_have_features": [],
+  "complaints": [],
+  "great_features": [],
+  "comfort_issues": [],
+  "performance_feedback": [],
+  "price_value_feedback": [],
+  "maintenance_reliability_feedback": [],
+  "technology_feedback": [],
+  "safety_feedback": [],
+  "people_opinions": [
+    {
+      "opinion": "",
+      "sentiment": "positive | negative | mixed | neutral",
+      "category": ""
+    }
+  ],
+  "frequent_ideas": [
+    {
+      "idea": "",
+      "type": "complaint | praise | suggestion | issue",
+      "category": "",
+      "frequency_estimate": 1
+    }
+  ]
+}
+
+Post title/author:
+{title}
+
+Post text:
+{text}
