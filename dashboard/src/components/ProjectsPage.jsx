@@ -978,11 +978,11 @@ export default function ProjectsPage({
       ? discoveredSources.slice(0, discoveryPreviewLimit).map((source) => ({ name: source.name || source.url, url: source.url }))
       : discoveredResolvedUrls.slice(0, discoveryPreviewLimit).map((url) => ({ name: url, url }));
     const stepMeta = {
-      basics: { label: 'Project basics', detail: 'Name, location, and dates', complete: step1Complete },
+      basics: { label: 'Project basics', detail: 'Name, location, and description', complete: step1Complete },
       users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
       discovery: { label: 'Discovery details', detail: 'Manual or AI fill', complete: step2Complete },
       schedule: { label: 'Schedule', detail: 'Status and automatic runs', complete: step3Complete },
-      sources: { label: 'Sources', detail: isEditRoute ? 'Assign sources and save' : 'Assign sources and create', complete: true },
+      sources: { label: 'Sources', detail: isEditRoute ? 'Assign sources, data window, and save' : 'Assign sources, data window, and create', complete: true },
     };
     const stepOrder = Object.keys(STEP).sort((a, b) => STEP[a] - STEP[b]);
 
@@ -1107,29 +1107,6 @@ export default function ProjectsPage({
                     placeholder="Location"
                     value={draft.location}
                     onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
-                    disabled={isSaving}
-                  />
-                </label>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
-                  <input
-                    type="date"
-                    className="source-input"
-                    value={draft.start_date}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
-                    disabled={isSaving}
-                  />
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
-                  <input
-                    type="date"
-                    className="source-input"
-                    value={draft.end_date}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
                     disabled={isSaving}
                   />
                 </label>
@@ -1462,6 +1439,37 @@ export default function ProjectsPage({
             </div>
 
             <div style={{ display: 'grid', gap: 14 }}>
+              <div className="admin-item-card" style={{ margin: 0 }}>
+                <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                  <strong style={{ fontSize: '0.94rem' }}>Data retrieval window</strong>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
+                    <input
+                      type="date"
+                      className="source-input"
+                      value={draft.start_date}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, start_date: e.target.value }))}
+                      disabled={isSaving}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>End date</span>
+                    <input
+                      type="date"
+                      className="source-input"
+                      value={draft.end_date}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, end_date: e.target.value }))}
+                      disabled={isSaving}
+                    />
+                  </label>
+                </div>
+                <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                  These dates scope which article publish dates get retrieved when the sources below are scraped - they don't set how long the project itself runs.
+                </div>
+              </div>
+
               <div className="assign-sources-panel">
                 <div className="assign-sources-header">
                   <div>
