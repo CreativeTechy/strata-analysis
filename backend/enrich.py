@@ -10,8 +10,10 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import config
+from content_guard import is_blocked_article
 from embeddings import build_article_embedding_text, get_embedding
 from projects_store import get_project
 from llm_client import chat_completion
@@ -233,6 +235,11 @@ def clean_articles(articles):
             continue
         if not a.get("title"):
             continue
+        # Secondary safeguard: the scraper already rejects Google consent/search
+        # pages (see content_guard.py), but this also catches rows coming from
+        # an articles.json produced before that guard existed.
+        if is_blocked_article(url, a.get("title")):
+            continue
         seen_urls.add(url)
         cleaned.append(a)
     print(f"Cleaned: {len(articles)} -> {len(cleaned)} articles")
@@ -250,6 +257,32 @@ def _load_prompt_template():
             "Return ONLY valid JSON with the exact structure requested.\n"
             "Article title:\n{title}\n\nArticle text:\n{text}"
         )
+
+
+_SOCIAL_DOMAINS = {"x.com", "twitter.com"}
+
+
+def _is_social_post(article):
+    """True for scraped X/Twitter posts, which are short and get a lighter prompt."""
+    if not isinstance(article, dict):
+        return False
+    url_host = urlparse(article.get("url") or "").netloc.lower()
+    if url_host.startswith("www."):
+        url_host = url_host[4:]
+    if url_host in _SOCIAL_DOMAINS:
+        return True
+    source_host = (article.get("source") or "").split("/")[0].strip().lower()
+    return source_host in _SOCIAL_DOMAINS
+
+
+def _load_social_prompt_template():
+    prompt_file = STORAGE_DIR / "social_enrichment_prompt.txt"
+    try:
+        return prompt_file.read_text(encoding="utf-8")
+    except Exception:
+        # Fall back to the full article prompt rather than failing - it's a
+        # worse fit for a short post but still produces valid enrichment.
+        return _load_prompt_template()
 
 
 def _strip_code_fences(raw: str) -> str:
@@ -757,8 +790,9 @@ def build_topic_insight(articles, topic_name=""):
 def enrich_article(article, project_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:5000]
+    template = _load_social_prompt_template() if _is_social_post(article) else _load_prompt_template()
     prompt = (
-        _load_prompt_template()
+        template
         .replace("{title}", title)
         .replace("{text}", text)
     )

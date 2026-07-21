@@ -23,6 +23,7 @@ import trafilatura
 from trafilatura.feeds import find_feed_urls
 
 from config import load_source_records
+from content_guard import is_blocked_domain, is_consent_title
 from pipeline_runs import update_pipeline_run
 
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
@@ -120,7 +121,10 @@ class SourceRssSpider(scrapy.Spider):
             or response.xpath("//entry").get()
         )
 
-        if source_type == "rss" and is_feed_like:
+        if is_feed_like:
+            # Feed content is unambiguous regardless of the configured source_type -
+            # e.g. a "keyword" source now points at a Google News RSS search feed
+            # (see sources_store._derive_term_url), not a plain web page.
             yield from self.parse_feed(response)
             return
 
@@ -240,6 +244,13 @@ class SourceRssSpider(scrapy.Spider):
             )
 
     def _yield_article(self, response):
+        if is_blocked_domain(response.url):
+            # Google's own domains (search, consent, accounts, policy pages)
+            # never host editorial content - skip before spending time on
+            # trafilatura extraction.
+            self.logger.info("Skipping Google domain (not an article): %s", response.url)
+            return
+
         status_match = TWEET_STATUS_RE.search(response.url or "")
         if status_match:
             tweet = self._hydrate_tweet(response.url)
@@ -261,6 +272,13 @@ class SourceRssSpider(scrapy.Spider):
 
         doc = json.loads(extracted)
         text = (doc.get("text") or "").strip()
+        title = doc.get("title") or ""
+        if is_consent_title(title):
+            # Defense in depth: a cookie/consent interstitial reached via
+            # redirect (e.g. from a link that ends up on google.com) can carry
+            # a non-Google response.url, so also check the extracted title.
+            self.logger.info("Skipping consent/interstitial page (title match): %s", response.url)
+            return
         if len(text) < 300:  # skip stubs/galleries/redirect shells
             return
 
