@@ -35,7 +35,17 @@ def _derive_term_url(source_type, term):
         tag = re.sub(r"[^A-Za-z0-9_]", "", tag)
         return f"https://x.com/hashtag/{tag}" if tag else ""
     if source_type == "keyword":
-        return f"https://news.google.com/search?q={quote_plus(text)}"
+        # Use the RSS search endpoint, not the HTML search UI
+        # (news.google.com/search). The HTML page is meant for a logged-in
+        # browser and frequently serves a cookie/consent interstitial instead
+        # of results when scraped, which used to get saved as a fake article
+        # ("Before you continue to Google", "Personalization settings &
+        # cookies" - see content_guard.py). The RSS feed returns real
+        # <item><link> entries that redirect straight to the publisher
+        # article, and the spider parses feed-like responses as a feed
+        # regardless of source_type, so keyword sources are crawled the same
+        # way as any other RSS source.
+        return f"https://news.google.com/rss/search?q={quote_plus(text)}"
     return ""
 
 
