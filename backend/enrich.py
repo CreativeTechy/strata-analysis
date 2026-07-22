@@ -908,7 +908,7 @@ def main():
 
     push_run_progress(
         stats,
-        stage="enrich",
+        stage="clean",
         message="Scrape complete. Cleaning articles...",
     )
 
@@ -958,7 +958,12 @@ def main():
     kept_by_source = Counter(_source_key(article) for article in articles)
 
     clean_finished_at = datetime.now(timezone.utc).isoformat()
-    _set_run_timestamps(clean_finished_at=clean_finished_at, enrich_started_at=clean_finished_at)
+    _set_run_timestamps(
+        clean_finished_at=clean_finished_at,
+        enrich_started_at=clean_finished_at,
+        stage="enrich",
+        message="Cleaning complete. Enriching articles...",
+    )
 
     enriched = []
     enriched_by_source = Counter()
@@ -972,7 +977,7 @@ def main():
         push_run_progress(
             progress,
             stage="enrich",
-            message=f"Cleaning articles {idx + 1}/{len(articles)}...",
+            message=f"Enriching articles {idx + 1}/{len(articles)}...",
         )
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
         enrichment = enrich_article(article, project_context=project_context)

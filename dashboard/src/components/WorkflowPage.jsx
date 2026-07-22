@@ -249,9 +249,12 @@ export default function WorkflowPage({
       }
       return currentRun.message || '';
     }
+    if ((currentRun.stage || '').toLowerCase() === 'clean') {
+      return currentRun.message || 'Cleaning articles...';
+    }
     if ((currentRun.stage || '').toLowerCase() === 'enrich') {
-      if (scraped > 0) return `Cleaning articles ${Math.min(Math.max(cleaned, 0), scraped)}/${scraped}`;
-      return 'Cleaning articles...';
+      if (scraped > 0) return `Enriching articles ${Math.min(Math.max(cleaned, 0), scraped)}/${scraped}`;
+      return 'Enriching articles...';
     }
     if ((currentRun.stage || '').toLowerCase() === 'scrape') {
       return scraped > 0 ? `Scraping sources ${Math.max(1, currentRun.crawl_pages || 0)} pages / ${scraped} articles` : 'Scraping sources...';

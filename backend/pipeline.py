@@ -204,11 +204,11 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
 
             update_pipeline_run(
                 run_id,
-                stage="enrich",
-                message="Scrape complete. Enriching articles...",
+                stage="clean",
+                message="Scrape complete. Cleaning articles...",
                 scrape_finished_at=datetime.now(timezone.utc).isoformat(),
             )
-            print("2. Enriching + saving...")
+            print("2. Cleaning + enriching + saving...")
             _run_step(run_id, [sys.executable, "enrich.py"], BASE_DIR, env)
 
             if _is_cancel_requested(run_id):
