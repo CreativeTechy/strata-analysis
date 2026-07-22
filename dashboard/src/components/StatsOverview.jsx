@@ -1,6 +1,7 @@
 import { Activity, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3, Smile, Mic } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { motion } from 'framer-motion';
+import '../styles/Stats.css';
 
 const COLORS = ['#16a34a', '#e11d48', '#64748b', '#f59e0b'];
 
@@ -132,11 +133,11 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
 
   if (loading) {
     return (
-      <section className="stats-grid">
+      <section className="stats-grid stats-overview">
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
-        <div className="glass-card stat-card sentiment-report stat-report-skeleton" aria-hidden="true">
+        <div className="glass-card stat-card sentiment-report sentiment-report-card stat-report-skeleton" aria-hidden="true">
           <div className="sentiment-report-layout">
             <div className="sentiment-report-top">
               <article className="sentiment-visual">
@@ -189,7 +190,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
               </article>
 
               <div className="sentiment-report-breakdown">
-                {Array.from({ length: 4 }).map((_, index) => (
+                {Array.from({ length: 6 }).map((_, index) => (
                   <div key={index} className="sentiment-row">
                     <div className="sentiment-row-top">
                       <div className="skeleton-line skeleton-shimmer" style={{ width: '42%', height: 14 }} />
@@ -210,7 +211,7 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
   }
 
   return (
-    <section className="stats-grid">
+    <section className="stats-grid stats-overview">
       <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
         <div className="stat-icon">
           <Activity size={24} />
@@ -245,11 +246,10 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
       </motion.article>
 
       <motion.article
-        className="glass-card stat-card sentiment-report"
+        className="glass-card stat-card sentiment-report sentiment-report-card"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        style={{ minHeight: 560 }}
       >
         <div className="sentiment-report-layout">
           <div className="sentiment-report-top">
@@ -269,8 +269,8 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
                   <PieChart>
                     <Pie
                       data={data}
-                      innerRadius={68}
-                      outerRadius={96}
+                      innerRadius="42%"
+                      outerRadius="60%"
                       paddingAngle={4}
                       dataKey="value"
                       stroke="none"
@@ -336,18 +336,20 @@ export default function StatsOverview({ stats = {}, scopeLabel = 'Current projec
               </div>
 
               <div className="sentiment-chart-bars">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={categoryData} layout="vertical" margin={{ top: 4, right: 18, bottom: 4, left: 12 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.06)" horizontal={false} />
-                    <XAxis type="number" allowDecimals={false} hide />
-                    <YAxis type="category" dataKey="category" width={130} tick={{ fontSize: 12 }} />
-                    <Tooltip
-                      labelFormatter={(label) => label}
-                      formatter={(value) => [`${Number(value).toLocaleString()} articles`, 'Articles']}
-                    />
-                    <Bar dataKey="count" fill="#f97316" radius={[0, 8, 8, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="sentiment-chart-bars-inner">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={categoryData} layout="vertical" margin={{ top: 4, right: 18, bottom: 4, left: 12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.06)" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} hide />
+                      <YAxis type="category" dataKey="category" width={130} tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        labelFormatter={(label) => label}
+                        formatter={(value) => [`${Number(value).toLocaleString()} articles`, 'Articles']}
+                      />
+                      <Bar dataKey="count" fill="#f97316" radius={[0, 8, 8, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </article>
           </div>

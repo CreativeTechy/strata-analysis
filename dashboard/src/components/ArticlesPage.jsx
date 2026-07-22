@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
+import '../styles/Articles.css';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
 const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
@@ -216,7 +217,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   };
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell articles-page-shell">
       <div className="content-shell">
         <div className="admin-page-header">
           <div>
@@ -324,14 +325,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
         </div>
 
         <div className="admin-toolbar-row" style={{ justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexWrap: 'wrap' }}>
+          <div className="articles-toolbar-summary">
             <span>{loading ? 'Loading articles...' : `${total.toLocaleString()} articles total, showing ${visibleRange}`}</span>
             <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
               <Filter size={12} />
               {scopeLabel}
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="articles-pager-actions">
             <button className="btn-secondary" onClick={handleExportJsonl} disabled={loading || exporting || deletingAll}>
               <Download size={16} />
               {exporting ? 'Exporting...' : 'Export JSONL'}
@@ -346,8 +347,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
         </div>
 
         {error ? (
-          <div className="glass-card" style={{ color: '#b42318', borderLeft: '4px solid #ff4757', marginBottom: 18 }}>
-            {error}
+          <div className="glass-card articles-error-banner">
+            <AlertTriangle size={18} />
+            <span>{error}</span>
           </div>
         ) : null}
 
@@ -457,8 +459,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
             </div>
 
             {articles.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '50px', color: 'var(--text-light)' }}>
-                No articles found for the current filters.
+              <div className="glass-card">
+                <div className="admin-empty-state">
+                  <div className="admin-empty-state-icon">
+                    <Search size={18} />
+                  </div>
+                  <strong>No articles found</strong>
+                  <span>Try adjusting your search, sentiment, category, or project filters.</span>
+                </div>
               </div>
             )}
           </>

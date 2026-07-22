@@ -5,11 +5,13 @@ import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import {
   ArrowLeft,
+  BarChart3,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   Hash,
   Link2,
+  Loader2,
   MapPin,
   AtSign,
   Tag,
@@ -17,6 +19,7 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
+import '../styles/ProjectDetail.css';
 
 const SOURCES_PAGE_SIZE = 3;
 
@@ -158,7 +161,7 @@ export default function ProjectDetailPage({
 
   if (!project) {
     return (
-      <div className="admin-page-shell">
+      <div className="admin-page-shell project-detail-page">
         <div className="glass-card" style={{ maxWidth: 960, margin: '0 auto' }}>
           <div className="admin-empty-state" style={{ padding: '34px 20px' }}>
             <div className="admin-empty-state-icon">
@@ -182,7 +185,7 @@ export default function ProjectDetailPage({
   };
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell project-detail-page">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
@@ -394,7 +397,7 @@ export default function ProjectDetailPage({
                   <div className="admin-item-top">
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        <strong className="admin-item-title">{source.name || source.url}</strong>
+                        <strong className="admin-item-title project-detail-break-text">{source.name || source.url}</strong>
                         <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
                           {source.enabled ? 'Enabled' : 'Disabled'}
                         </span>
@@ -496,9 +499,14 @@ export default function ProjectDetailPage({
         </div>
 
         {statsLoading ? (
-          <div style={{ color: 'var(--text-light)', fontSize: '0.86rem' }}>Loading article insights...</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.86rem', padding: '12px 0' }}>
+            <Loader2 size={16} className="spin" /> Loading article insights...
+          </div>
         ) : !articleStats?.total ? (
           <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
+            <div className="admin-empty-state-icon">
+              <BarChart3 size={18} />
+            </div>
             <strong>No analyzed articles yet</strong>
             <span>Run the pipeline for this project to see tone and sentiment insights here.</span>
           </div>

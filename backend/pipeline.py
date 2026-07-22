@@ -190,18 +190,25 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 pass
 
         try:
+            scrape_start = datetime.now(timezone.utc).isoformat()
             update_pipeline_run(
                 run_id,
                 status="running",
                 stage="scrape",
                 message="Starting scrape...",
-                started_at=datetime.now(timezone.utc).isoformat(),
+                started_at=scrape_start,
+                scrape_started_at=scrape_start,
             )
             print("1. Scraping configured sources...")
             _run_step(run_id, ["scrapy", "crawl", "source_rss", "-O", str(raw_file)], BASE_DIR, env)
 
-            update_pipeline_run(run_id, stage="enrich", message="Scrape complete. Enriching articles...")
-            print("2. Enriching + saving...")
+            update_pipeline_run(
+                run_id,
+                stage="clean",
+                message="Scrape complete. Cleaning articles...",
+                scrape_finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print("2. Cleaning + enriching + saving...")
             _run_step(run_id, [sys.executable, "enrich.py"], BASE_DIR, env)
 
             if _is_cancel_requested(run_id):

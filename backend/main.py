@@ -58,6 +58,7 @@ from pipeline_runs import (
     create_pipeline_run,
     get_active_run_for_project,
     get_pipeline_run,
+    get_pipeline_run_sources,
     list_pipeline_runs,
     update_pipeline_run,
 )
@@ -427,36 +428,6 @@ def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends
     return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
 
 
-def _default_discovery_result(project):
-    source_ids = []
-    for value in project.get("source_ids") or []:
-        try:
-            source_ids.append(int(value))
-        except Exception:
-            continue
-    return {
-        "search_terms": [],
-        "candidates": [],
-        "suggested_links": [],
-        "source_ids": source_ids,
-        "sources": [],
-    }
-
-
-def _save_project_with_discovery(project):
-    if not isinstance(project, dict):
-        return None, {}
-
-    discovery = (
-        discover_project_links(project)
-        if (project.get("hashtags") or project.get("keywords") or project.get("usernames"))
-        else _default_discovery_result(project)
-    )
-    if discovery.get("source_ids") is not None:
-        project = {**project, "source_ids": discovery.get("source_ids") or project.get("source_ids") or []}
-    return project, discovery
-
-
 @app.post("/api/projects/discover")
 def discover_project(payload: dict, user: dict = Depends(require_permission("projects.create"))):
     if not isinstance(payload, dict):
@@ -522,8 +493,7 @@ def edit_project(project_id: int, background_tasks: BackgroundTasks, payload: di
             "detail": detail or "The update request did not return a row.",
         }
     background_tasks.add_task(persist_project_embedding_for_id, project_id)
-    project, discovery = _save_project_with_discovery(project)
-    return {"project": project, "discovery": discovery}
+    return {"project": project}
 
 
 @app.post("/api/projects/suggest")
@@ -555,6 +525,14 @@ def remove_project(project_id: int, user: dict = Depends(require_permission("pro
 @app.get("/api/pipeline-runs")
 def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_permission("pipeline.view"))):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+
+
+@app.get("/api/pipeline-runs/{run_id}")
+def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission("pipeline.view"))):
+    run = get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found.")
+    return {"run": run, "sources": get_pipeline_run_sources(run_id) if run.get("has_detail") else []}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")

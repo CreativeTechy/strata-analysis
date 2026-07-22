@@ -67,7 +67,7 @@ def _normalize_record(row, include_project_ids=False):
     }
 
 
-def _upsert_payload(source):
+def _upsert_payload(source, default_limited=True):
     if isinstance(source, str):
         source = {"url": source}
     elif not isinstance(source, dict):
@@ -87,7 +87,7 @@ def _upsert_payload(source):
         "name": name or _default_name(url),
         "enabled": bool(source.get("enabled", True)),
         "source_type": source_type,
-        "limited": bool(source.get("limited", False)),
+        "limited": bool(source.get("limited", default_limited)),
     }
 
 
@@ -198,7 +198,9 @@ def update_source(source_id, source):
     if not config.DATABASE_URL:
         return None
 
-    payload = _upsert_payload(source)
+    existing = _fetch_source_by_id(source_id)
+    default_limited = existing["limited"] if existing else False
+    payload = _upsert_payload(source, default_limited=default_limited)
     project_ids = source.get("project_ids") if isinstance(source, dict) else None
 
     try:

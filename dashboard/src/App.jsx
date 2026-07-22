@@ -491,6 +491,16 @@ export default function App() {
     }
   };
 
+  // The backend echoes back the fully-normalized project (including resolved
+  // source_ids/user_ids), so we can patch it into local state directly instead
+  // of waiting on a full projects refetch. Sources themselves only need a
+  // refetch if the save referenced a source_id we haven't seen yet.
+  const hasUnknownSourceIds = (sourceIds) => {
+    if (!Array.isArray(sourceIds) || sourceIds.length === 0) return false;
+    const known = new Set(sources.map((source) => Number(source.id)));
+    return sourceIds.some((id) => !known.has(Number(id)));
+  };
+
   const createProject = async (payload) => {
     try {
       const res = await fetch('/api/projects', {
@@ -500,8 +510,15 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add project (${res.status})`));
-      await refreshProjects();
-      await refreshSources();
+      const created = data?.project ?? null;
+      if (created) {
+        setProjects((prev) => [...prev, created]);
+      } else {
+        refreshProjects();
+      }
+      if (hasUnknownSourceIds(payload?.source_ids)) {
+        refreshSources();
+      }
       return data ?? null;
     } catch (error) {
       console.error('Failed to add project:', error);
@@ -518,8 +535,15 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update project (${res.status})`));
-      await refreshProjects();
-      await refreshSources();
+      const updated = data?.project ?? null;
+      if (updated) {
+        setProjects((prev) => prev.map((project) => (Number(project.id) === Number(projectId) ? updated : project)));
+      } else {
+        refreshProjects();
+      }
+      if (hasUnknownSourceIds(payload?.source_ids)) {
+        refreshSources();
+      }
       return data ?? null;
     } catch (error) {
       console.error('Failed to update project:', error);

@@ -51,6 +51,9 @@ export default function IntelligencePage({ project = null, projectId = null }) {
   ]);
 
   const [selectedArticle, setSelectedArticle] = useState(null);
+  // Below the 960px breakpoint the filters sidebar and matches preview become
+  // slide-in drawers instead of permanent grid columns; null means both closed.
+  const [mobilePanel, setMobilePanel] = useState(null); // 'filters' | 'matches' | null
 
   const formatMatchScore = (value) => {
     const score = Number(value);
@@ -191,7 +194,12 @@ export default function IntelligencePage({ project = null, projectId = null }) {
     <div className="intelligence-layout">
       <div className="bg-pattern"></div>
 
-      <div className="intell-sidebar">
+      {mobilePanel && <div className="intell-mobile-backdrop" onClick={() => setMobilePanel(null)} />}
+
+      <div className={`intell-sidebar ${mobilePanel === 'filters' ? 'mobile-open' : ''}`}>
+        <button type="button" className="intell-mobile-close" onClick={() => setMobilePanel(null)}>
+          <X size={16} /> Close
+        </button>
         <h2 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Filter size={18} /> Filters
         </h2>
@@ -244,14 +252,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
       </div>
 
       <div className="intell-chat">
-        <div
-          style={{
-            padding: '20px 40px',
-            borderBottom: '1px solid rgba(0,0,0,0.05)',
-            background: 'rgba(255,255,255,0.4)',
-            backdropFilter: 'blur(10px)',
-          }}
-        >
+        <div className="intell-chat-header">
           <h2 className="title" style={{ fontSize: '1.5rem' }}>
             Strata Intelligence Copilot
           </h2>
@@ -259,6 +260,15 @@ export default function IntelligencePage({ project = null, projectId = null }) {
             Chatting over {filteredArticles.length} articles
             {project ? ` - ${project.name}` : ' - all projects'}
           </p>
+
+          <div className="intell-mobile-toggle-row">
+            <button type="button" className="btn-secondary" onClick={() => setMobilePanel('filters')}>
+              <Filter size={14} /> Filters
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => setMobilePanel('matches')}>
+              <FileText size={14} /> Matches ({filteredArticles.length})
+            </button>
+          </div>
         </div>
 
         <div className="chat-history">
@@ -320,7 +330,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
               <Send size={18} />
             </button>
           </div>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '15px', justifyContent: 'center' }}>
+          <div className="chat-quick-actions">
             <button
               className="btn-secondary"
               style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}
@@ -341,7 +351,10 @@ export default function IntelligencePage({ project = null, projectId = null }) {
         </div>
       </div>
 
-      <div className="intell-preview">
+      <div className={`intell-preview ${mobilePanel === 'matches' ? 'mobile-open' : ''}`}>
+        <button type="button" className="intell-mobile-close" onClick={() => setMobilePanel(null)}>
+          <X size={16} /> Close
+        </button>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '10px', color: 'var(--text-light)' }}>
           Matches ({filteredArticles.length})
         </h3>
@@ -350,7 +363,15 @@ export default function IntelligencePage({ project = null, projectId = null }) {
           <div className="preview-empty">No matching articles for the current filters.</div>
         ) : (
           pagedArticles.map((article) => (
-            <motion.div key={article.url} layout className="preview-card" onClick={() => setSelectedArticle(article)}>
+            <motion.div
+              key={article.url}
+              layout
+              className="preview-card"
+              onClick={() => {
+                setSelectedArticle(article);
+                setMobilePanel(null);
+              }}
+            >
               <div className="preview-meta">
                 <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{article.source}</span>
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
@@ -424,7 +445,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
             </button>
 
             <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+              <div className="article-meta-badges">
                 <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
                 <span className="badge category" title="Writer tone">Writer tone: {selectedArticle.writer_tone || 'neutral'}</span>
@@ -439,7 +460,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
               </div>
 
               <h1 style={{ fontSize: '2rem', marginBottom: '10px' }}>{selectedArticle.title}</h1>
-              <div style={{ color: 'var(--text-light)', marginBottom: '30px', display: 'flex', gap: '15px' }}>
+              <div className="article-byline">
                 <span>{selectedArticle.source}</span>
                 {selectedArticle.published && <span>{new Date(selectedArticle.published).toLocaleDateString()}</span>}
                 {selectedArticle.author && <span>By {selectedArticle.author}</span>}

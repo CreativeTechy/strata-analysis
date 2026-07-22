@@ -6,7 +6,7 @@ import config
 import db
 
 
-RUN_COLUMNS = "id,pipeline,project_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
+RUN_COLUMNS = "id,pipeline,project_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,has_detail,scrape_started_at,scrape_finished_at,clean_started_at,clean_finished_at,enrich_started_at,enrich_finished_at,created_at,updated_at"
 # INSERT/UPDATE ... RETURNING can only reference the table being written, so those
 # statements use RUN_COLUMNS unqualified; anything reading via a join uses RUN_SELECT.
 RUN_SELECT = ",".join(f"pr.{column}" for column in RUN_COLUMNS.split(",")) + ",p.name as project_name"
@@ -34,8 +34,28 @@ def _normalize(row):
         "finished_at": row.get("finished_at"),
         "cancel_requested_at": row.get("cancel_requested_at"),
         "cancelled_at": row.get("cancelled_at"),
+        "has_detail": bool(row.get("has_detail")),
+        "scrape_started_at": row.get("scrape_started_at"),
+        "scrape_finished_at": row.get("scrape_finished_at"),
+        "clean_started_at": row.get("clean_started_at"),
+        "clean_finished_at": row.get("clean_finished_at"),
+        "enrich_started_at": row.get("enrich_started_at"),
+        "enrich_finished_at": row.get("enrich_finished_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+    }
+
+
+def _normalize_source_stat(row):
+    return {
+        "source": row.get("source"),
+        "scraped": row.get("scraped") or 0,
+        "duplicate": row.get("duplicate") or 0,
+        "blocked": row.get("blocked") or 0,
+        "date_filtered": row.get("date_filtered") or 0,
+        "kept": row.get("kept") or 0,
+        "enriched": row.get("enriched") or 0,
+        "saved": row.get("saved") or 0,
     }
 
 
@@ -122,14 +142,15 @@ def create_pipeline_run(run_id=None, pipeline="scrape", project_id=None, status=
     try:
         db.fetch_one(
             f"""
-            insert into pipeline_runs (id, pipeline, project_id, status, stage, message)
-            values (%s, %s, %s, %s, %s, %s)
+            insert into pipeline_runs (id, pipeline, project_id, status, stage, message, has_detail)
+            values (%s, %s, %s, %s, %s, %s, true)
             on conflict (id) do update set
               pipeline = excluded.pipeline,
               project_id = excluded.project_id,
               status = excluded.status,
               stage = excluded.stage,
               message = excluded.message,
+              has_detail = true,
               updated_at = now()
             returning {RUN_COLUMNS}
             """,
@@ -166,6 +187,12 @@ def update_pipeline_run(run_id, **fields):
         "finished_at",
         "cancel_requested_at",
         "cancelled_at",
+        "scrape_started_at",
+        "scrape_finished_at",
+        "clean_started_at",
+        "clean_finished_at",
+        "enrich_started_at",
+        "enrich_finished_at",
     }
     keys = [key for key in fields.keys() if key in allowed]
     if not keys:
@@ -188,4 +215,67 @@ def update_pipeline_run(run_id, **fields):
         return _fetch_by_id(run_id)
     except Exception:
         return None
+
+
+def get_pipeline_run_sources(run_id):
+    """Per-source breakdown for one run, ordered by scraped count. Empty for
+    legacy runs (no rows were ever written) or runs that failed before enrich.py
+    could record anything."""
+    if not config.DATABASE_URL or not run_id:
+        return []
+
+    try:
+        rows = db.fetch_all(
+            """
+            select source, scraped, duplicate, blocked, date_filtered, kept, enriched, saved
+            from pipeline_run_sources
+            where run_id = %s
+            order by scraped desc, source asc
+            """,
+            (run_id,),
+        )
+        return [_normalize_source_stat(row) for row in rows]
+    except Exception:
+        return []
+
+
+def upsert_pipeline_run_source_stats(run_id, source_stats):
+    """Persist the per-source breakdown for a run. `source_stats` is a dict of
+    source name -> {scraped, duplicate, blocked, date_filtered, kept, enriched, saved}.
+    Called once at the end of enrich.py for runs that have has_detail=true."""
+    if not config.DATABASE_URL or not run_id or not source_stats:
+        return
+
+    try:
+        for source, counts in source_stats.items():
+            source_name = (source or "unknown").strip() or "unknown"
+            db.execute(
+                """
+                insert into pipeline_run_sources
+                    (run_id, source, scraped, duplicate, blocked, date_filtered, kept, enriched, saved)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (run_id, source) do update set
+                    scraped = excluded.scraped,
+                    duplicate = excluded.duplicate,
+                    blocked = excluded.blocked,
+                    date_filtered = excluded.date_filtered,
+                    kept = excluded.kept,
+                    enriched = excluded.enriched,
+                    saved = excluded.saved,
+                    updated_at = now()
+                """,
+                (
+                    run_id,
+                    source_name,
+                    int(counts.get("scraped") or 0),
+                    int(counts.get("duplicate") or 0),
+                    int(counts.get("blocked") or 0),
+                    int(counts.get("date_filtered") or 0),
+                    int(counts.get("kept") or 0),
+                    int(counts.get("enriched") or 0),
+                    int(counts.get("saved") or 0),
+                ),
+            )
+    except Exception as exc:
+        print(f"Failed to persist per-source pipeline stats: {exc}")
 

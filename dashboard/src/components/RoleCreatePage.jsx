@@ -54,18 +54,26 @@ export default function RoleCreatePage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: '1.8rem' }}>
-          <ShieldPlus size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-          New role
-        </h2>
-        <p className="subtitle">Name the role and choose which permissions it grants.</p>
-      </header>
+    <div className="admin-page-shell">
+      <div className="admin-page-header">
+        <div>
+          <div className="admin-page-kicker">
+            <ShieldPlus size={14} /> Access control
+          </div>
+          <h1 className="admin-page-title">New role</h1>
+          <p className="admin-page-subtitle">Name the role and choose which permissions it grants.</p>
+        </div>
+      </div>
 
       {loadError && (
         <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
           {loadError}
+        </div>
+      )}
+
+      {loading && (
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
+          <div className="loading-spinner" /> Loading permissions...
         </div>
       )}
 
