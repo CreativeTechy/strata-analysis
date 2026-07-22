@@ -6,7 +6,10 @@ import config
 import db
 
 
-RUN_SELECT = "id,pipeline,project_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
+RUN_COLUMNS = "id,pipeline,project_id,status,stage,message,articles_scraped,articles_cleaned,articles_saved,crawl_pages,error,started_at,finished_at,cancel_requested_at,cancelled_at,created_at,updated_at"
+# INSERT/UPDATE ... RETURNING can only reference the table being written, so those
+# statements use RUN_COLUMNS unqualified; anything reading via a join uses RUN_SELECT.
+RUN_SELECT = ",".join(f"pr.{column}" for column in RUN_COLUMNS.split(",")) + ",p.name as project_name"
 
 # Runs in these statuses are still in flight; anything else (success, failed,
 # cancelled) is terminal and must not block a new run for the same project.
@@ -18,6 +21,7 @@ def _normalize(row):
         "id": row.get("id"),
         "pipeline": row.get("pipeline") or "scrape",
         "project_id": row.get("project_id"),
+        "project_name": row.get("project_name"),
         "status": row.get("status") or "queued",
         "stage": row.get("stage") or "queued",
         "message": row.get("message") or "",
@@ -36,7 +40,10 @@ def _normalize(row):
 
 
 def _fetch_by_id(run_id):
-    row = db.fetch_one(f"select {RUN_SELECT} from pipeline_runs where id = %s limit 1", (run_id,))
+    row = db.fetch_one(
+        f"select {RUN_SELECT} from pipeline_runs pr left join projects p on p.id = pr.project_id where pr.id = %s limit 1",
+        (run_id,),
+    )
     return _normalize(row) if row else None
 
 
@@ -63,11 +70,12 @@ def get_active_run_for_project(project_id):
         row = db.fetch_one(
             f"""
             select {RUN_SELECT}
-            from pipeline_runs
-            where project_id = %s
-              and status = any(%s)
-              and created_at > now() - (%s || ' minutes')::interval
-            order by created_at desc
+            from pipeline_runs pr
+            left join projects p on p.id = pr.project_id
+            where pr.project_id = %s
+              and pr.status = any(%s)
+              and pr.created_at > now() - (%s || ' minutes')::interval
+            order by pr.created_at desc
             limit 1
             """,
             (int(project_id), list(ACTIVE_STATUSES), config.SCHEDULER_STALE_RUN_MINUTES),
@@ -85,8 +93,9 @@ def list_pipeline_runs(limit=10):
         rows = db.fetch_all(
             f"""
             select {RUN_SELECT}
-            from pipeline_runs
-            order by created_at desc
+            from pipeline_runs pr
+            left join projects p on p.id = pr.project_id
+            order by pr.created_at desc
             limit %s
             """,
             (limit,),
@@ -111,7 +120,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", project_id=None, status=
     }
 
     try:
-        row = db.fetch_one(
+        db.fetch_one(
             f"""
             insert into pipeline_runs (id, pipeline, project_id, status, stage, message)
             values (%s, %s, %s, %s, %s, %s)
@@ -122,7 +131,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", project_id=None, status=
               stage = excluded.stage,
               message = excluded.message,
               updated_at = now()
-            returning {RUN_SELECT}
+            returning {RUN_COLUMNS}
             """,
             (
                 payload["id"],
@@ -133,7 +142,7 @@ def create_pipeline_run(run_id=None, pipeline="scrape", project_id=None, status=
                 payload["message"],
             ),
         )
-        return _normalize(row) if row else _fetch_by_id(run_id)
+        return _fetch_by_id(run_id)
     except Exception:
         return None
 
@@ -166,17 +175,17 @@ def update_pipeline_run(run_id, **fields):
     params = [fields[key] for key in keys] + [run_id]
 
     try:
-        row = db.fetch_one(
+        db.fetch_one(
             f"""
             update pipeline_runs
             set {assignments},
                 updated_at = now()
             where id = %s
-            returning {RUN_SELECT}
+            returning {RUN_COLUMNS}
             """,
             params,
         )
-        return _normalize(row) if row else _fetch_by_id(run_id)
+        return _fetch_by_id(run_id)
     except Exception:
         return None
 
