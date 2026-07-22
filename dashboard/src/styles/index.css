@@ -1291,6 +1291,50 @@ h1, h2, h3 {
   background: rgba(0, 0, 0, 0.08);
 }
 
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+.run-detail-modal {
+  width: min(100%, 760px);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.run-detail-body {
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 14px;
+}
+
+.run-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.run-detail-section {
+  margin-bottom: 18px;
+}
+
+.run-detail-section-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.run-detail-fallback {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 10px;
+  padding: 12px;
+}
+
 .project-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);

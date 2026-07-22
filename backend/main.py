@@ -58,6 +58,7 @@ from pipeline_runs import (
     create_pipeline_run,
     get_active_run_for_project,
     get_pipeline_run,
+    get_pipeline_run_sources,
     list_pipeline_runs,
     update_pipeline_run,
 )
@@ -524,6 +525,14 @@ def remove_project(project_id: int, user: dict = Depends(require_permission("pro
 @app.get("/api/pipeline-runs")
 def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_permission("pipeline.view"))):
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+
+
+@app.get("/api/pipeline-runs/{run_id}")
+def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission("pipeline.view"))):
+    run = get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found.")
+    return {"run": run, "sources": get_pipeline_run_sources(run_id) if run.get("has_detail") else []}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")

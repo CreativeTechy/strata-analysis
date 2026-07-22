@@ -23,7 +23,7 @@ const emptyDraft = {
   name: '',
   source_type: 'rss',
   enabled: true,
-  limited: false,
+  limited: true,
   project_ids: [],
 };
 

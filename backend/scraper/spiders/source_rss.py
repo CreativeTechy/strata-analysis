@@ -156,7 +156,7 @@ class SourceRssSpider(scrapy.Spider):
                 yield response.follow(
                     url,
                     callback=self.parse_article,
-                    meta={"source_url": response.url},
+                    meta={"source_url": response.url, "source_name": response.meta.get("source_name")},
                 )
 
     def parse_homepage(self, response):
@@ -171,7 +171,11 @@ class SourceRssSpider(scrapy.Spider):
 
         if discovered_feeds:
             for feed_url in discovered_feeds:
-                yield response.follow(feed_url, callback=self.parse_feed, meta={"source_url": feed_url})
+                yield response.follow(
+                    feed_url,
+                    callback=self.parse_feed,
+                    meta={"source_url": feed_url, "source_name": response.meta.get("source_name")},
+                )
             return
 
         yield from self.parse_page(response, follow_links=True)
@@ -216,7 +220,11 @@ class SourceRssSpider(scrapy.Spider):
             yield response.follow(
                 link,
                 callback=self.parse_article,
-                meta={"source_url": response.url, "source_type": "web"},
+                meta={
+                    "source_url": response.url,
+                    "source_type": "web",
+                    "source_name": response.meta.get("source_name"),
+                },
             )
 
     def parse_social_page(self, response):
@@ -240,7 +248,12 @@ class SourceRssSpider(scrapy.Spider):
             yield response.follow(
                 link,
                 callback=self.parse_article,
-                meta={"source_url": response.url, "source_type": "social", "dont_obey_robotstxt": True},
+                meta={
+                    "source_url": response.url,
+                    "source_type": "social",
+                    "source_name": response.meta.get("source_name"),
+                    "dont_obey_robotstxt": True,
+                },
             )
 
     def _yield_article(self, response):
@@ -251,10 +264,13 @@ class SourceRssSpider(scrapy.Spider):
             self.logger.info("Skipping Google domain (not an article): %s", response.url)
             return
 
+        source_name = response.meta.get("source_name") or urlparse(response.url).netloc
+
         status_match = TWEET_STATUS_RE.search(response.url or "")
         if status_match:
             tweet = self._hydrate_tweet(response.url)
             if tweet:
+                tweet["source_name"] = source_name
                 yield tweet
                 self._progress_articles += 1
                 self._push_progress()
@@ -286,6 +302,7 @@ class SourceRssSpider(scrapy.Spider):
             "url": response.url,
             "source": urlparse(response.url).netloc,
             "source_url": response.meta.get("source_url"),
+            "source_name": source_name,
             "title": doc.get("title"),
             "author": doc.get("author"),
             "published": doc.get("date"),

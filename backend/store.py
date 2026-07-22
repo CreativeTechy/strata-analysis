@@ -215,12 +215,18 @@ def _upsert_article_row(article):
     )
 
 
+def _source_key(article):
+    return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
+
+
 def save_articles(articles, batch_size=50):
+    """Upserts articles and returns (total_saved, saved_count_by_source)."""
     if not config.DATABASE_URL:
         print("Database credentials not set, skipping upload.")
-        return 0
+        return 0, {}
 
     sent = 0
+    saved_by_source = defaultdict(int)
     project_id = None
     try:
         from os import environ
@@ -263,6 +269,7 @@ def save_articles(articles, batch_size=50):
                 if row:
                     persisted.append((article, row))
                     sent += 1
+                    saved_by_source[_source_key(article)] += 1
 
             for article, row in persisted:
                 if not isinstance(row, dict):
@@ -359,6 +366,7 @@ def save_articles(articles, batch_size=50):
                         )
                         if row:
                             persisted.append((article, row))
+                            saved_by_source[_source_key(article)] += 1
                     sent += len(legacy_batch)
                     print(
                         f"  Uploaded batch {i // batch_size + 1} ({len(legacy_batch)} articles) using legacy article schema fallback"
@@ -373,7 +381,7 @@ def save_articles(articles, batch_size=50):
         for linked_project_id, article_ids in linked_articles.items():
             set_article_projects(sorted(article_ids), linked_project_id, similarity_scores=linked_scores.get(linked_project_id, {}))
 
-    return sent
+    return sent, dict(saved_by_source)
 
 
 def delete_all_articles():

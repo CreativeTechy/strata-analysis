@@ -17,7 +17,7 @@ from content_guard import is_blocked_article
 from embeddings import build_article_embedding_text, get_embedding
 from projects_store import get_project
 from llm_client import chat_completion
-from pipeline_runs import update_pipeline_run
+from pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
 from store import save_articles
 
 MIN_TEXT_LENGTH = 200
@@ -223,27 +223,62 @@ def _article_matches_project_window(article, project):
     return True
 
 
+def _source_key(article):
+    return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
+
+
+def _set_run_timestamps(**fields):
+    if not PIPELINE_RUN_ID:
+        return
+    try:
+        update_pipeline_run(PIPELINE_RUN_ID, **fields)
+    except Exception as e:
+        print(f"Pipeline timestamp update failed: {e}")
+
+
+def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved):
+    if not PIPELINE_RUN_ID:
+        return
+    sources = set(scraped) | set(removed) | set(date_filtered) | set(kept) | set(enriched) | set(saved)
+    source_stats = {}
+    for source in sources:
+        removed_counts = removed.get(source) or {}
+        source_stats[source] = {
+            "scraped": scraped.get(source, 0),
+            "duplicate": removed_counts.get("duplicate", 0),
+            "blocked": removed_counts.get("blocked", 0),
+            "date_filtered": date_filtered.get(source, 0),
+            "kept": kept.get(source, 0),
+            "enriched": enriched.get(source, 0),
+            "saved": saved.get(source, 0),
+        }
+    upsert_pipeline_run_source_stats(PIPELINE_RUN_ID, source_stats)
+
+
 def clean_articles(articles):
+    """Returns (cleaned_articles, removed_counts_by_source), the latter tallying
+    why an article didn't make it past dedup/quality filtering (see
+    pipeline_run_sources - "duplicate" and "blocked" buckets)."""
     seen_urls = set()
     cleaned = []
+    removed_by_source = defaultdict(lambda: {"duplicate": 0, "blocked": 0})
     for a in articles:
+        source = _source_key(a)
         url = a.get("url", "")
         text = a.get("text", "")
         if url in seen_urls:
-            continue
-        if len(text) < MIN_TEXT_LENGTH:
-            continue
-        if not a.get("title"):
+            removed_by_source[source]["duplicate"] += 1
             continue
         # Secondary safeguard: the scraper already rejects Google consent/search
         # pages (see content_guard.py), but this also catches rows coming from
         # an articles.json produced before that guard existed.
-        if is_blocked_article(url, a.get("title")):
+        if len(text) < MIN_TEXT_LENGTH or not a.get("title") or is_blocked_article(url, a.get("title")):
+            removed_by_source[source]["blocked"] += 1
             continue
         seen_urls.add(url)
         cleaned.append(a)
     print(f"Cleaned: {len(articles)} -> {len(cleaned)} articles")
-    return cleaned
+    return cleaned, removed_by_source
 
 
 def _load_prompt_template():
@@ -855,11 +890,15 @@ def push_run_progress(stats, stage, message, final=False):
 
 
 def main():
+    clean_started_at = datetime.now(timezone.utc).isoformat()
+    _set_run_timestamps(clean_started_at=clean_started_at)
+
     print(f"Loading articles from {INPUT_FILE}...")
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
         raw_articles = json.load(f)
 
-    articles = clean_articles(raw_articles)
+    scraped_by_source = Counter(_source_key(article) for article in raw_articles)
+    articles, removed_by_source = clean_articles(raw_articles)
     stats = {
         "articles_scraped": len(raw_articles),
         "articles_cleaned": len(articles),
@@ -877,6 +916,13 @@ def main():
         print("No articles to process after cleaning.")
         write_output([])
         write_pipeline_stats(stats)
+        clean_finished_at = datetime.now(timezone.utc).isoformat()
+        _set_run_timestamps(
+            clean_finished_at=clean_finished_at,
+            enrich_started_at=clean_finished_at,
+            enrich_finished_at=clean_finished_at,
+        )
+        _persist_source_stats(scraped_by_source, removed_by_source, {}, {}, {}, {})
         push_run_progress(
             stats,
             stage="done",
@@ -894,8 +940,14 @@ def main():
                 project_name = line.replace("Name: ", "", 1).strip()
                 break
 
+    date_filtered_by_source = Counter()
     if project:
-        matching_articles = [article for article in articles if _article_matches_project_window(article, project)]
+        matching_articles = []
+        for article in articles:
+            if _article_matches_project_window(article, project):
+                matching_articles.append(article)
+            else:
+                date_filtered_by_source[_source_key(article)] += 1
     else:
         matching_articles = articles
 
@@ -903,8 +955,13 @@ def main():
     if filtered_out:
         print(f"Filtered out {filtered_out} articles outside the project date window.")
     articles = matching_articles
+    kept_by_source = Counter(_source_key(article) for article in articles)
+
+    clean_finished_at = datetime.now(timezone.utc).isoformat()
+    _set_run_timestamps(clean_finished_at=clean_finished_at, enrich_started_at=clean_finished_at)
 
     enriched = []
+    enriched_by_source = Counter()
     for idx, article in enumerate(articles):
         title = article.get("title", "")[:60]
         progress = {
@@ -919,7 +976,9 @@ def main():
         )
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
         enrichment = enrich_article(article, project_context=project_context)
-        if enrichment is None:
+        if enrichment is not None:
+            enriched_by_source[_source_key(article)] += 1
+        else:
             enrichment = dict(DEFAULT_ENRICHMENT)
         time.sleep(0.5)
         if not enrichment.get("embedding_json"):
@@ -958,9 +1017,10 @@ def main():
 
     write_output(enriched)
 
+    saved_by_source = {}
     if enriched:
         print("Saving to local PostgreSQL...")
-        stats["articles_saved"] = save_articles(enriched)
+        stats["articles_saved"], saved_by_source = save_articles(enriched)
         print("Done.")
         push_run_progress(
             stats,
@@ -968,6 +1028,16 @@ def main():
             message="Pipeline complete.",
             final=True,
         )
+
+    _set_run_timestamps(enrich_finished_at=datetime.now(timezone.utc).isoformat())
+    _persist_source_stats(
+        scraped_by_source,
+        removed_by_source,
+        date_filtered_by_source,
+        kept_by_source,
+        enriched_by_source,
+        saved_by_source,
+    )
 
     write_pipeline_stats(stats)
 
