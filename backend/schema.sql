@@ -70,13 +70,13 @@ create table if not exists public.sources (
     name         text,
     enabled      boolean not null default true,
     source_type  text not null default 'rss',
-    limited      boolean not null default false,
+    limited      boolean not null default true,
     created_at   timestamptz default now(),
     updated_at   timestamptz default now()
 );
 
 alter table public.sources
-    add column if not exists limited boolean not null default false;
+    add column if not exists limited boolean not null default true;
 
 alter table public.sources
     drop column if exists category;
@@ -104,6 +104,35 @@ create table if not exists public.pipeline_runs (
 alter table public.pipeline_runs
     add column if not exists cancel_requested_at timestamptz,
     add column if not exists cancelled_at timestamptz;
+
+-- Per-stage timing + a has_detail flag are only ever populated for runs created
+-- after this migration; older rows keep has_detail = false so the dashboard can
+-- show a "details unavailable for legacy run" fallback instead of guessing.
+alter table public.pipeline_runs
+    add column if not exists has_detail boolean not null default false,
+    add column if not exists scrape_started_at timestamptz,
+    add column if not exists scrape_finished_at timestamptz,
+    add column if not exists clean_started_at timestamptz,
+    add column if not exists clean_finished_at timestamptz,
+    add column if not exists enrich_started_at timestamptz,
+    add column if not exists enrich_finished_at timestamptz;
+
+-- Per-source breakdown for a single run (scraped/kept/enriched/saved counts).
+-- Only written by new runs (see enrich.py); rows simply don't exist for legacy runs.
+create table if not exists public.pipeline_run_sources (
+    run_id         text not null references public.pipeline_runs(id) on delete cascade,
+    source         text not null,
+    scraped        integer not null default 0,
+    duplicate      integer not null default 0,
+    blocked        integer not null default 0,
+    date_filtered  integer not null default 0,
+    kept           integer not null default 0,
+    enriched       integer not null default 0,
+    saved          integer not null default 0,
+    created_at     timestamptz default now(),
+    updated_at     timestamptz default now(),
+    primary key (run_id, source)
+);
 
 create table if not exists public.articles (
     id              bigint generated always as identity primary key,
@@ -318,6 +347,8 @@ create index if not exists sources_created_idx on public.sources (created_at des
 create index if not exists pipeline_runs_created_idx on public.pipeline_runs (created_at desc);
 create index if not exists pipeline_runs_status_idx on public.pipeline_runs (status);
 
+create index if not exists pipeline_run_sources_run_idx on public.pipeline_run_sources (run_id);
+
 create index if not exists articles_published_idx on public.articles (published desc);
 create index if not exists articles_sentiment_idx on public.articles (sentiment);
 create index if not exists articles_article_category_idx on public.articles (article_category);
@@ -351,9 +382,16 @@ before update on public.pipeline_runs
 for each row
 execute function public.set_updated_at();
 
+drop trigger if exists set_pipeline_run_sources_updated_at on public.pipeline_run_sources;
+create trigger set_pipeline_run_sources_updated_at
+before update on public.pipeline_run_sources
+for each row
+execute function public.set_updated_at();
+
 alter table public.projects enable row level security;
 alter table public.sources enable row level security;
 alter table public.pipeline_runs enable row level security;
+alter table public.pipeline_run_sources enable row level security;
 alter table public.articles enable row level security;
 alter table public.project_sources enable row level security;
 alter table public.article_projects enable row level security;
@@ -376,6 +414,13 @@ using (true);
 drop policy if exists "Public read access" on public.pipeline_runs;
 create policy "Public read access"
 on public.pipeline_runs
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.pipeline_run_sources;
+create policy "Public read access"
+on public.pipeline_run_sources
 for select
 to anon, authenticated
 using (true);

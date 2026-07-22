@@ -1,0 +1,77 @@
+/*
+  ProjectLinkage.css
+  Scoped, additive styles for ProjectLinkageListPage.jsx,
+  ProjectLinkageDetailPage.jsx and ProjectLinkageEditPage.jsx.
+  Shared classes owned by src/styles/index.css (.admin-page-shell,
+  .admin-stats-grid, .admin-split-layout, .admin-item-card,
+  .assign-source-item, .project-detail-layout, etc.) are intentionally left
+  alone since they're used by other admin pages too - this file only adds
+  the responsive behavior those primitives don't already cover, following
+  the same pattern as styles/Sources.css and styles/AdminUsers.css.
+*/
+
+/* Project names, emails and usernames can come back as long, space-free
+   strings; follow the same overflow protection already used for the
+   project detail page (see .project-detail-break-text in ProjectDetail.css)
+   so a long value never forces horizontal scroll on narrow screens. */
+.project-linkage-page .admin-page-title,
+.project-linkage-page .admin-item-title,
+.project-linkage-page .assign-source-name,
+.project-linkage-page .admin-item-meta span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* List page pagination footer: the nav cluster (Previous / page chip / Next)
+   had no wrap of its own, so on narrow phones it could overflow instead of
+   wrapping onto its own row under the "Showing X-Y of Z" label. */
+.project-linkage-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* List/edit page compact action buttons (View/Edit, Previous/Next) trade
+   vertical padding for density on desktop; restore a touch-friendly ~40px
+   tap target once we're at phone widths. */
+.project-linkage-compact-btn {
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .project-linkage-compact-btn {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+  }
+
+  .project-linkage-pagination-controls {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Edit page save/cancel row: stack full-width with the primary action on
+   top for easier thumb reach, matching the pattern used by
+   .role-form-actions in AdminUsers.css. */
+.project-linkage-form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .project-linkage-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .project-linkage-form-actions .btn-primary,
+  .project-linkage-form-actions .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+}

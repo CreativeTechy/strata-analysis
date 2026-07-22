@@ -17,13 +17,14 @@ import {
   CheckCircle2,
   Layers3,
 } from 'lucide-react';
+import '../styles/Sources.css';
 
 const emptyDraft = {
   url: '',
   name: '',
   source_type: 'rss',
   enabled: true,
-  limited: false,
+  limited: true,
   project_ids: [],
 };
 
@@ -371,20 +372,8 @@ export default function SourcesPage({
               onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
             />
           </label>
-          <div
-            style={{
-              padding: '14px 16px',
-              borderRadius: 14,
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              background: 'rgba(255, 255, 255, 0.7)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
+          <div className="source-toggle-row">
+            <div className="source-toggle-copy">
               <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Source status</strong>
               <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
                 Disable this source to keep it in the library without using it in pipelines.
@@ -393,10 +382,8 @@ export default function SourcesPage({
             <button
               type="button"
               onClick={() => setDraft((prev) => ({ ...prev, enabled: !prev.enabled }))}
-              className={`btn-secondary ${draft.enabled ? 'active' : ''}`}
+              className={`btn-secondary source-toggle-btn ${draft.enabled ? 'active' : ''}`}
               style={{
-                minWidth: 160,
-                justifyContent: 'center',
                 background: draft.enabled ? 'rgba(46, 213, 115, 0.12)' : 'rgba(116, 125, 140, 0.12)',
                 borderColor: draft.enabled ? 'rgba(46, 213, 115, 0.24)' : 'rgba(116, 125, 140, 0.16)',
                 color: draft.enabled ? '#1e9e57' : '#5f6b7a',
@@ -407,20 +394,8 @@ export default function SourcesPage({
             </button>
           </div>
 
-          <div
-            style={{
-              padding: '14px 16px',
-              borderRadius: 14,
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              background: 'rgba(255, 255, 255, 0.7)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
+          <div className="source-toggle-row">
+            <div className="source-toggle-copy">
               <strong style={{ display: 'block', fontSize: '0.9rem', color: 'var(--text-dark)' }}>Source reach</strong>
               <span style={{ display: 'block', marginTop: 4, fontSize: '0.82rem', color: 'var(--text-light)' }}>
                 Limited sources stay out of the assignable list on project create/edit pages unless already attached to that project.
@@ -429,10 +404,8 @@ export default function SourcesPage({
             <button
               type="button"
               onClick={() => setDraft((prev) => ({ ...prev, limited: !prev.limited }))}
-              className={`btn-secondary ${draft.limited ? 'active' : ''}`}
+              className={`btn-secondary source-toggle-btn ${draft.limited ? 'active' : ''}`}
               style={{
-                minWidth: 160,
-                justifyContent: 'center',
                 background: draft.limited ? 'rgba(255, 159, 67, 0.14)' : 'rgba(46, 134, 222, 0.1)',
                 borderColor: draft.limited ? 'rgba(255, 159, 67, 0.28)' : 'rgba(46, 134, 222, 0.24)',
                 color: draft.limited ? 'var(--primary-color)' : '#2e86de',
@@ -468,7 +441,13 @@ export default function SourcesPage({
 
             <div className="assign-sources-list">
               {projects.length === 0 ? (
-                <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No projects yet. Create a project first.</div>
+                <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                  <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
+                    <Layers3 size={16} />
+                  </div>
+                  <strong>No projects yet</strong>
+                  <span>Create a project first, then come back to assign this source.</span>
+                </div>
               ) : visibleAssignableProjects.length === 0 ? (
                 <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
                   <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
@@ -500,8 +479,8 @@ export default function SourcesPage({
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn-primary" onClick={submit} style={{ flex: 1 }}>
+          <div className="source-form-actions">
+            <button className="btn-primary" onClick={submit}>
               {editingId ? (
                 <>
                   <Check size={18} /> {buttonLabel}
@@ -512,7 +491,7 @@ export default function SourcesPage({
                 </>
               )}
             </button>
-            <button className="btn-secondary" type="button" onClick={handleCancel} style={{ flexShrink: 0 }}>
+            <button className="btn-secondary" type="button" onClick={handleCancel}>
               <X size={18} /> Cancel
             </button>
           </div>
@@ -744,22 +723,11 @@ export default function SourcesPage({
         </div>
 
         {visibleSources.length > 0 && (
-          <div
-            style={{
-              marginTop: 14,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 12,
-              flexWrap: 'wrap',
-              paddingTop: 12,
-              borderTop: '1px solid rgba(15, 23, 42, 0.08)',
-            }}
-          >
-            <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+          <div className="source-pagination">
+            <div className="source-pagination-info">
               Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleSources.length)} of {visibleSources.length}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="source-pagination-controls">
               <button
                 className="btn-secondary"
                 onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}

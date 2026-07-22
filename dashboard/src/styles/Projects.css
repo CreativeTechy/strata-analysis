@@ -1,0 +1,174 @@
+/* Projects page — responsive layout rules for the project list, the create/edit
+   wizard, and the inline source-creation form. Reuses shared primitives already
+   defined in src/styles/index.css (glass-card, btn-primary/btn-secondary,
+   admin-page-*, admin-item-*, admin-stats-grid, assign-sources-*, panel-chip,
+   admin-empty-state, source-input, filter-select, etc.) — this file only adds
+   Projects-specific structure and the media queries needed to keep it responsive.
+
+   Breakpoints match the rest of the app: 1180 / 960 / 720 / 640 / 480. */
+
+/* ---------- Project creation/edit wizard shell ---------- */
+
+.project-wizard-shell {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.project-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.project-wizard-step-btn {
+  justify-content: flex-start;
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.project-wizard-panel {
+  padding: 24px;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* Two-column form rows used across the wizard steps (location, dates, repeat interval) */
+.form-row-location,
+.form-row-even {
+  display: grid;
+  gap: 10px;
+}
+
+.form-row-location {
+  grid-template-columns: 1fr 2fr;
+}
+
+.form-row-even {
+  grid-template-columns: 1fr 1fr;
+}
+
+.wizard-term-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+/* Back/Continue footer rows */
+.project-wizard-nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.project-wizard-nav-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wizard-btn-back {
+  min-width: 120px;
+}
+
+.wizard-btn-continue {
+  min-width: 180px;
+}
+
+/* Final step's Back / Prefill with AI / Create / Cancel row */
+.project-wizard-final-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wizard-btn-fixed {
+  flex-shrink: 0;
+}
+
+.wizard-btn-grow {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+/* ---------- Card / list text overflow safety ---------- */
+
+.project-item-title,
+.project-term-name {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* ---------- Responsive breakpoints ---------- */
+
+@media (max-width: 1180px) {
+  .project-wizard-shell {
+    padding: 26px;
+  }
+}
+
+@media (max-width: 960px) {
+  .project-wizard-shell {
+    padding: 22px;
+  }
+}
+
+@media (max-width: 720px) {
+  .form-row-location,
+  .form-row-even {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-wizard-shell {
+    padding: 18px;
+    gap: 16px;
+  }
+
+  .project-wizard-panel {
+    padding: 18px;
+  }
+
+  .project-wizard-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-wizard-nav-row,
+  .project-wizard-nav-actions,
+  .project-wizard-final-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wizard-btn-back,
+  .wizard-btn-continue,
+  .wizard-btn-fixed,
+  .wizard-btn-grow {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .wizard-term-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .project-wizard-shell {
+    padding: 14px;
+  }
+
+  .project-wizard-panel {
+    padding: 14px;
+  }
+
+  .project-wizard-steps {
+    grid-template-columns: 1fr;
+  }
+}

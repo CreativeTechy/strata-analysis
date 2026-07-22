@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Pencil } from 'lucide-react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { Pencil, ShieldAlert, ArrowLeft } from 'lucide-react';
 import RoleForm from './RoleForm';
 
 // Edit-only: loads one existing role and its permission set and saves changes
@@ -68,27 +68,44 @@ export default function RoleEditPage() {
 
   if (!loading && !role) {
     return (
-      <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <div className="glass-card" style={{ padding: 20 }}>
-          {loadError || 'Role not found.'}
+      <div className="admin-page-shell">
+        <div className="glass-card" style={{ maxWidth: 960, margin: '0 auto' }}>
+          <div className="admin-empty-state" style={{ padding: '34px 20px' }}>
+            <div className="admin-empty-state-icon">
+              <ShieldAlert size={18} />
+            </div>
+            <strong>Role not found</strong>
+            <span>{loadError || 'It may have been removed, or you may not have access to it.'}</span>
+            <Link to="/admin/roles" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
+              <ArrowLeft size={16} /> Back to Roles
+            </Link>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: '1.8rem' }}>
-          <Pencil size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-          Edit role{role ? `: ${role.name}` : ''}
-        </h2>
-        <p className="subtitle">Rename the role or adjust the permissions it grants.</p>
-      </header>
+    <div className="admin-page-shell">
+      <div className="admin-page-header">
+        <div>
+          <div className="admin-page-kicker">
+            <Pencil size={14} /> Access control
+          </div>
+          <h1 className="admin-page-title">Edit role{role ? `: ${role.name}` : ''}</h1>
+          <p className="admin-page-subtitle">Rename the role or adjust the permissions it grants.</p>
+        </div>
+      </div>
 
       {loadError && (
         <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
           {loadError}
+        </div>
+      )}
+
+      {loading && (
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
+          <div className="loading-spinner" /> Loading role...
         </div>
       )}
 

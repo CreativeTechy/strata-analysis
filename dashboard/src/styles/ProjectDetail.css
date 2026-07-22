@@ -1,0 +1,25 @@
+/* Page-specific styles for the single-project detail/drilldown screen.
+   Shared layout primitives (.project-detail-layout, .project-detail-summary-grid,
+   .admin-page-shell, .admin-item-card, etc.) live in src/styles/index.css -
+   this file only covers what's specific to ProjectDetailPage. */
+
+/* Source names fall back to the raw URL when no name is set, and hashtags/
+   keywords/usernames can come back as long, space-free strings. Follow the
+   same overflow protection already used for .admin-item-url so a long value
+   never forces horizontal scroll on narrow screens. */
+.project-detail-page .project-detail-break-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.project-detail-page .admin-item-chips .admin-tag {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 480px) {
+  .project-detail-page .admin-item-card {
+    padding: 16px;
+  }
+}

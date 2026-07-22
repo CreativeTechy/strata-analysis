@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Eye, Layers3, Link2, Pencil, Search, Users } from 'lucide-react';
+import '../styles/ProjectLinkage.css';
 
 const STATUS_OPTIONS = ['draft', 'active', 'archived'];
 const PAGE_SIZE = 10;
@@ -47,7 +48,7 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
   }, [currentPage, totalPages]);
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell project-linkage-page">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
@@ -170,16 +171,14 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
 
                   <div className="admin-item-actions">
                     <Link
-                      className="btn-secondary"
+                      className="btn-secondary project-linkage-compact-btn"
                       to={`/admin/project-linkage/${project.id}`}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
                       <Eye size={14} /> View
                     </Link>
                     <Link
-                      className="btn-secondary"
+                      className="btn-secondary project-linkage-compact-btn"
                       to={`/admin/project-linkage/${project.id}/edit`}
-                      style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
                       <Pencil size={14} /> Edit
                     </Link>
@@ -217,12 +216,11 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
               Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleProjects.length)} of{' '}
               {visibleProjects.length}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="project-linkage-pagination-controls">
               <button
-                className="btn-secondary"
+                className="btn-secondary project-linkage-compact-btn"
                 onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
                 disabled={safePage <= 1}
-                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
               >
                 Previous
               </button>
@@ -230,10 +228,9 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
                 Page {safePage} of {totalPages}
               </span>
               <button
-                className="btn-secondary"
+                className="btn-secondary project-linkage-compact-btn"
                 onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
                 disabled={safePage >= totalPages}
-                style={{ padding: '8px 10px', fontSize: '0.8rem' }}
               >
                 Next
               </button>

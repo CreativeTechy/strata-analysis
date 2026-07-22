@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, ShieldPlus, Trash2, Pencil } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
+import '../styles/AdminUsers.css';
 
 // List-only: the entry point for role administration. Create/edit happen on
 // their own routed pages (RoleCreatePage/RoleEditPage); this page never
@@ -59,21 +60,27 @@ export default function RolesListPage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+    <div className="admin-page-shell">
+      <div className="admin-page-header">
         <div>
-          <h2 style={{ fontSize: '1.8rem' }}>
-            <ShieldCheck size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-            Roles &amp; Permissions
-          </h2>
-          <p className="subtitle">Roles are named permission sets assigned to users.</p>
+          <div className="admin-page-kicker">
+            <ShieldCheck size={14} /> Access control
+          </div>
+          <h1 className="admin-page-title">Roles &amp; Permissions</h1>
+          <p className="admin-page-subtitle">Roles are named permission sets assigned to users.</p>
         </div>
-        {canCreate && (
-          <Link to="/admin/roles/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-            <ShieldPlus size={16} /> New role
-          </Link>
-        )}
-      </header>
+        <div className="admin-page-toolbar">
+          <div className="admin-page-toolbar-meta">
+            <span>Total roles</span>
+            <strong>{roles.length.toLocaleString()}</strong>
+          </div>
+          {canCreate && (
+            <Link to="/admin/roles/new" className="btn-primary" style={{ textDecoration: 'none' }}>
+              <ShieldPlus size={16} /> New role
+            </Link>
+          )}
+        </div>
+      </div>
 
       {error && (
         <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
@@ -82,68 +89,88 @@ export default function RolesListPage() {
       )}
 
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
-              <th style={{ padding: 12 }}>Role</th>
-              <th style={{ padding: 12 }}>Description</th>
-              <th style={{ padding: 12 }}>Permissions</th>
-              <th style={{ padding: 12 }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td colSpan={4} style={{ padding: 16 }}>Loading...</td></tr>
-            )}
-            {!loading && roles.length === 0 && (
-              <tr><td colSpan={4} style={{ padding: 16 }}>No roles yet.</td></tr>
-            )}
-            {!loading && roles.map((role) => (
-              <tr key={role.id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-                <td style={{ padding: 12 }}>
-                  <strong>{role.name}</strong>
-                  {role.is_system && <span className="panel-chip" style={{ marginLeft: 8 }}>System</span>}
-                </td>
-                <td style={{ padding: 12 }}>{role.description || '-'}</td>
-                <td style={{ padding: 12 }}>
-                  {role.full_access ? (
-                    <span className="panel-chip">Full access</span>
-                  ) : (
-                    `${role.permissions?.length || 0} permission${role.permissions?.length === 1 ? '' : 's'}`
-                  )}
-                </td>
-                <td style={{ padding: 12 }}>
-                  {(canUpdate || canDelete) ? (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {canUpdate && (
-                        <Link
-                          className="btn-secondary"
-                          to={`/admin/roles/${role.id}/edit`}
-                          style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
-                        >
-                          <Pencil size={14} /> Edit
-                        </Link>
-                      )}
-                      {canDelete && (
-                        <button
-                          className="btn-secondary"
-                          disabled={role.is_system}
-                          title={role.is_system ? 'System roles cannot be deleted.' : undefined}
-                          onClick={() => setDeleteTarget(role)}
-                          style={{ padding: '8px 10px', fontSize: '0.8rem', color: role.is_system ? undefined : '#ff4757' }}
-                        >
-                          <Trash2 size={14} /> Delete
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="subtitle">View only</span>
-                  )}
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
+                <th style={{ padding: 12 }}>Role</th>
+                <th className="admin-table-col-optional" style={{ padding: 12 }}>Description</th>
+                <th style={{ padding: 12 }}>Permissions</th>
+                <th style={{ padding: 12 }}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={4} style={{ padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
+                      <div className="loading-spinner" /> Loading roles...
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!loading && roles.length === 0 && (
+                <tr>
+                  <td colSpan={4} style={{ padding: 0 }}>
+                    <div className="admin-empty-state">
+                      <div className="admin-empty-state-icon">
+                        <ShieldCheck size={18} />
+                      </div>
+                      <strong>No roles yet</strong>
+                      <span>
+                        {canCreate ? 'Create a role to start assigning permission sets to users.' : 'No roles have been created yet.'}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!loading && roles.map((role) => (
+                <tr key={role.id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                  <td style={{ padding: 12 }}>
+                    <strong>{role.name}</strong>
+                    {role.is_system && <span className="panel-chip" style={{ marginLeft: 8 }}>System</span>}
+                  </td>
+                  <td className="admin-table-col-optional" style={{ padding: 12 }}>{role.description || '-'}</td>
+                  <td style={{ padding: 12 }}>
+                    {role.full_access ? (
+                      <span className="panel-chip">Full access</span>
+                    ) : (
+                      `${role.permissions?.length || 0} permission${role.permissions?.length === 1 ? '' : 's'}`
+                    )}
+                  </td>
+                  <td style={{ padding: 12 }}>
+                    {(canUpdate || canDelete) ? (
+                      <div className="admin-row-actions">
+                        {canUpdate && (
+                          <Link
+                            className="btn-secondary"
+                            to={`/admin/roles/${role.id}/edit`}
+                            style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
+                          >
+                            <Pencil size={14} /> Edit
+                          </Link>
+                        )}
+                        {canDelete && (
+                          <button
+                            className="btn-secondary"
+                            disabled={role.is_system}
+                            title={role.is_system ? 'System roles cannot be deleted.' : undefined}
+                            onClick={() => setDeleteTarget(role)}
+                            style={{ padding: '8px 10px', fontSize: '0.8rem', color: role.is_system ? undefined : '#ff4757' }}
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="subtitle">View only</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <ConfirmModal

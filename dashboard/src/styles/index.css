@@ -230,6 +230,7 @@ body::after {
 
   .sidebar.sidebar-mobile-open {
     transform: translateX(0);
+    max-width: 85vw;
   }
 
   .main-content,
@@ -239,6 +240,12 @@ body::after {
 
   .mobile-nav-toggle {
     display: flex;
+  }
+
+  /* Larger tap target once the toggle doubles as the drawer's close button */
+  .sidebar-toggle-btn {
+    width: 40px;
+    height: 40px;
   }
 }
 
@@ -348,9 +355,23 @@ h1, h2, h3 {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
 }
 
+/* Wrap any <table> in this so dense data scrolls horizontally instead of
+   blowing out the page width on narrow screens. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
 .articles-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1.5fr) repeat(5, minmax(140px, 1fr));
+  grid-template-columns: minmax(240px, 1.4fr) repeat(auto-fit, minmax(150px, 1fr));
   gap: 14px;
   align-items: center;
   margin-bottom: 16px;
@@ -541,8 +562,8 @@ h1, h2, h3 {
 
 .content-shell {
   width: 100%;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
 }
 
 .dashboard-hero {
@@ -614,8 +635,9 @@ h1, h2, h3 {
 .admin-page-shell {
   min-height: 100vh;
   padding: 32px 28px 40px;
-  max-width: 1400px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .admin-page-header {
@@ -1291,6 +1313,50 @@ h1, h2, h3 {
   background: rgba(0, 0, 0, 0.08);
 }
 
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+.run-detail-modal {
+  width: min(100%, 760px);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.run-detail-body {
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 14px;
+}
+
+.run-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.run-detail-section {
+  margin-bottom: 18px;
+}
+
+.run-detail-section-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.run-detail-fallback {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 10px;
+  padding: 12px;
+}
+
 .project-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
@@ -1766,6 +1832,20 @@ h1, h2, h3 {
   font-size: 0.9rem;
 }
 
+@media (max-width: 1180px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stats-grid > .stat-card:not(.sentiment-report) {
+    grid-column: span 1;
+  }
+
+  .admin-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
   .main-content {
     padding: 24px 20px 32px;
@@ -1792,6 +1872,10 @@ h1, h2, h3 {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .admin-page-shell {
+    padding: 24px 20px 32px;
   }
 
   .project-detail-layout,
@@ -1863,6 +1947,14 @@ h1, h2, h3 {
     padding: 18px 14px 24px;
   }
 
+  .admin-page-shell {
+    padding: 18px 14px 28px;
+  }
+
+  .admin-page-title {
+    font-size: 1.55rem;
+  }
+
   .dashboard-hero-actions {
     width: 100%;
   }
@@ -1894,6 +1986,25 @@ h1, h2, h3 {
 
   .sentiment-chart-bars {
     height: 180px;
+  }
+
+  /* Comfortable tap targets for form controls on phones */
+  .filter-select,
+  .admin-search input,
+  .assign-sources-search input,
+  .source-input {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .admin-page-toolbar,
+  .admin-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-page-toolbar-meta {
+    width: 100%;
   }
 }
 

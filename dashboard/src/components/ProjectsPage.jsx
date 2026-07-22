@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
+import '../styles/Projects.css';
 import {
   CalendarDays,
   Eye,
@@ -234,7 +235,7 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
             <span
               key={value}
               className="panel-chip"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', overflowWrap: 'anywhere' }}
             >
               {value}
               <button
@@ -402,7 +403,7 @@ function UserAssignField({ users, selectedIds, onToggle, query, onQueryChange, d
                 />
                 <div className="assign-source-copy">
                   <div className="assign-source-topline">
-                    <strong className="assign-source-name">{user.username}</strong>
+                    <strong className="assign-source-name project-term-name">{user.username}</strong>
                     <span className={`panel-chip role-${user.role}`}>{user.role}</span>
                   </div>
                   <div className="assign-source-url">{user.email || 'No email on file'}</div>
@@ -1012,8 +1013,8 @@ export default function ProjectsPage({
           </div>
         </div>
 
-        <div className="glass-card" style={{ maxWidth: 1320, margin: '0 auto', padding: 32, display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${totalSteps}, minmax(0, 1fr))`, gap: 10 }}>
+        <div className="glass-card project-wizard-shell">
+          <div className="project-wizard-steps">
             {stepOrder.map((key) => {
               const item = stepMeta[key];
               const step = STEP[key];
@@ -1029,10 +1030,8 @@ export default function ProjectsPage({
                       setWizardStep(step);
                     }
                   }}
-                  className="btn-secondary"
+                  className="btn-secondary project-wizard-step-btn"
                   style={{
-                    justifyContent: 'flex-start',
-                    padding: '14px 16px',
                     borderColor: active ? 'rgba(46, 134, 222, 0.28)' : 'rgba(0,0,0,0.08)',
                     background: active ? 'rgba(46, 134, 222, 0.08)' : 'rgba(255,255,255,0.72)',
                   }}
@@ -1052,7 +1051,7 @@ export default function ProjectsPage({
           </div>
 
           {wizardStep === STEP.basics && (
-          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+          <div className="glass-card project-wizard-panel">
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: '1rem' }}>Step {STEP.basics}. Project basics</strong>
               <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
@@ -1082,7 +1081,7 @@ export default function ProjectsPage({
                 />
               </label>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+              <div className="form-row-location">
                 <label style={{ display: 'grid', gap: 6 }}>
                   <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location type</span>
                   <select
@@ -1112,16 +1111,15 @@ export default function ProjectsPage({
                 </label>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <div className="project-wizard-nav-row">
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
                   Use a clear working title and a short description. We’ll use these to seed the AI suggestions and source discovery.
                 </span>
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-primary wizard-btn-continue"
                   onClick={() => setWizardStep(STEP.users || STEP.discovery)}
                   disabled={!step1Complete || isSaving}
-                  style={{ minWidth: 180 }}
                 >
                   Continue
                 </button>
@@ -1131,7 +1129,7 @@ export default function ProjectsPage({
           )}
 
           {canLinkUsers && wizardStep === STEP.users && (
-          <div className="glass-card" style={{ padding: 24, boxShadow: 'none', background: 'rgba(255,255,255,0.55)' }}>
+          <div className="glass-card project-wizard-panel">
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: '1rem' }}>Step {STEP.users}. Linked users</strong>
               <span className="panel-chip">{draft.user_ids.length} selected</span>
@@ -1146,16 +1144,15 @@ export default function ProjectsPage({
                 disabled={isSaving}
               />
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.basics)} disabled={isSaving} style={{ minWidth: 120 }}>
+              <div className="project-wizard-nav-row">
+                <button type="button" className="btn-secondary wizard-btn-back" onClick={() => setWizardStep(STEP.basics)} disabled={isSaving}>
                   Back
                 </button>
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-primary wizard-btn-continue"
                   onClick={() => setWizardStep(STEP.discovery)}
                   disabled={isSaving}
-                  style={{ minWidth: 180 }}
                 >
                   Continue
                 </button>
@@ -1166,13 +1163,8 @@ export default function ProjectsPage({
 
           {wizardStep === STEP.discovery && (
           <div
-            className="glass-card"
-            style={{
-              padding: 24,
-              boxShadow: 'none',
-              background: 'rgba(255,255,255,0.55)',
-              opacity: step1Complete ? 1 : 0.7,
-            }}
+            className="glass-card project-wizard-panel"
+            style={{ opacity: step1Complete ? 1 : 0.7 }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: '1rem' }}>Step {STEP.discovery}. Discovery details</strong>
@@ -1236,7 +1228,7 @@ export default function ProjectsPage({
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                <div className="wizard-term-fields">
                   <TermChipsField
                     label="X Accounts"
                     placeholder="Add an X account, without @"
@@ -1263,29 +1255,27 @@ export default function ProjectsPage({
                   />
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div className="project-wizard-nav-row">
                   <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5, maxWidth: 480 }}>
                     The AI step gives you a starting point. You can still reshape handles, tags, and keywords before creating the project.
                   </span>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <div className="project-wizard-nav-actions">
                     <button
                       type="button"
-                      className="btn-secondary"
+                      className="btn-secondary wizard-btn-back"
                       onClick={() => setWizardStep(STEP.users || STEP.basics)}
                       disabled={isSaving || isGeneratingMetadata}
-                      style={{ minWidth: 120 }}
                     >
                       Back
                     </button>
                     <button
                       type="button"
-                      className="btn-primary"
+                      className="btn-primary wizard-btn-continue"
                       onClick={async () => {
                         await syncTermSourcesToDraft();
                         setWizardStep(STEP.schedule);
                       }}
                       disabled={!canContinueFromStep2 || isSaving || isSyncingSources}
-                      style={{ minWidth: 180 }}
                     >
                       {isSyncingSources ? (
                         <>
@@ -1304,13 +1294,8 @@ export default function ProjectsPage({
 
           {wizardStep === STEP.schedule && (
           <div
-            className="glass-card"
-            style={{
-              padding: 24,
-              boxShadow: 'none',
-              background: 'rgba(255,255,255,0.55)',
-              opacity: step1Complete && step2Complete ? 1 : 0.7,
-            }}
+            className="glass-card project-wizard-panel"
+            style={{ opacity: step1Complete && step2Complete ? 1 : 0.7 }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: '1rem' }}>Step {STEP.schedule}. Schedule and automatic runs</strong>
@@ -1365,7 +1350,7 @@ export default function ProjectsPage({
                 </label>
                 {draft.repeat_enabled && (
                   <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div className="form-row-even">
                       <label style={{ display: 'grid', gap: 6 }}>
                         <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Repeat every</span>
                         <input
@@ -1405,16 +1390,15 @@ export default function ProjectsPage({
                 )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                <button type="button" className="btn-secondary" onClick={() => setWizardStep(STEP.discovery)} disabled={isSaving} style={{ minWidth: 120 }}>
+              <div className="project-wizard-nav-row">
+                <button type="button" className="btn-secondary wizard-btn-back" onClick={() => setWizardStep(STEP.discovery)} disabled={isSaving}>
                   Back
                 </button>
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-primary wizard-btn-continue"
                   onClick={() => setWizardStep(STEP.sources)}
                   disabled={!step3Complete || isSaving}
-                  style={{ minWidth: 180 }}
                 >
                   Continue
                 </button>
@@ -1425,13 +1409,8 @@ export default function ProjectsPage({
 
           {wizardStep === STEP.sources && (
           <div
-            className="glass-card"
-            style={{
-              padding: 24,
-              boxShadow: 'none',
-              background: 'rgba(255,255,255,0.55)',
-              opacity: step1Complete && step2Complete && step3Complete ? 1 : 0.7,
-            }}
+            className="glass-card project-wizard-panel"
+            style={{ opacity: step1Complete && step2Complete && step3Complete ? 1 : 0.7 }}
           >
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: '1rem' }}>Step {STEP.sources}. Assign sources and {isEditRoute ? 'save' : 'create'}</strong>
@@ -1443,7 +1422,7 @@ export default function ProjectsPage({
                 <div className="panel-header-tight" style={{ marginBottom: 10 }}>
                   <strong style={{ fontSize: '0.94rem' }}>Data retrieval window</strong>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-row-even">
                   <label style={{ display: 'grid', gap: 6 }}>
                     <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Start date</span>
                     <input
@@ -1681,7 +1660,7 @@ export default function ProjectsPage({
                           />
                           <div className="assign-source-copy">
                             <div className="assign-source-topline">
-                              <strong className="assign-source-name">{source.name || source.url}</strong>
+                              <strong className="assign-source-name project-term-name">{source.name || source.url}</strong>
                               <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
                                 {source.enabled ? 'Enabled' : 'Disabled'}
                               </span>
@@ -1793,16 +1772,15 @@ export default function ProjectsPage({
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button className="btn-secondary" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving} style={{ flexShrink: 0 }}>
+              <div className="project-wizard-final-actions">
+                <button className="btn-secondary wizard-btn-fixed" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving}>
                   Back
                 </button>
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="btn-secondary wizard-btn-grow"
                   onClick={() => discoverSourcesFromDraft()}
                   disabled={!step1Complete || !step2Complete || isSaving || discoveryPhase !== 'idle' || isGeneratingMetadata}
-                  style={{ flex: 1, minWidth: 220 }}
                 >
                   {discoveryPhase !== 'idle' ? (
                     <>
@@ -1815,7 +1793,7 @@ export default function ProjectsPage({
                     </>
                   )}
                 </button>
-                <button className="btn-primary" onClick={submit} style={{ flex: 1, minWidth: 220 }} disabled={isSaving || !step1Complete || !step3Complete}>
+                <button className="btn-primary wizard-btn-grow" onClick={submit} disabled={isSaving || !step1Complete || !step3Complete}>
                   {isSaving ? (
                     <>
                       <RefreshCw size={18} className="spin" />
@@ -1827,7 +1805,7 @@ export default function ProjectsPage({
                     </>
                   )}
                 </button>
-                <button className="btn-secondary" type="button" onClick={handleCancel} style={{ flexShrink: 0 }}>
+                <button className="btn-secondary wizard-btn-fixed" type="button" onClick={handleCancel}>
                   <X size={18} /> Cancel
                 </button>
               </div>
@@ -1999,6 +1977,16 @@ export default function ProjectsPage({
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {isLoadingProjects && projects.length === 0 && (
+            <div className="admin-empty-state">
+              <div className="admin-empty-state-icon">
+                <RefreshCw size={18} className="spin" />
+              </div>
+              <strong>Loading projects...</strong>
+              <span>Fetching the latest project list from the workspace.</span>
+            </div>
+          )}
+
           {projects.length === 0 && !isLoadingProjects && (
             <div className="admin-empty-state">
               <div className="admin-empty-state-icon">
@@ -2028,7 +2016,7 @@ export default function ProjectsPage({
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title">{project.name}</strong>
+                      <strong className="admin-item-title project-item-title">{project.name}</strong>
                       <span className={`panel-chip ${isActive ? 'success' : project.status === 'archived' ? 'muted' : 'warning'}`}>
                         {(project.status || 'draft').toUpperCase()}
                       </span>
@@ -2049,7 +2037,7 @@ export default function ProjectsPage({
                       )}
                       {project.last_run_at && <span>Last run: {formatDateTime(project.last_run_at)}</span>}
                     </div>
-                    <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                    <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                       {project.description || 'Open the project to see assigned sources, tags, and metadata.'}
                     </div>
                   </div>

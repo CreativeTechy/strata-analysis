@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search } from 'lucide-react';
+import '../styles/Sources.css';
 
 export default function SourceView({ articles, isScraping }) {
   const [filterSentiment, setFilterSentiment] = useState('All');
@@ -113,11 +114,11 @@ export default function SourceView({ articles, isScraping }) {
                 </div>
               )}
 
-              <div className="article-footer">
+              <div className="article-footer source-article-footer">
                 <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <Calendar size={14} /> {new Date(article.published).toLocaleDateString()}
                 </span>
-                <span>{article.source}</span>
+                <span className="source-article-source">{article.source}</span>
               </div>
             </motion.div>
           ))}
@@ -137,8 +138,12 @@ export default function SourceView({ articles, isScraping }) {
       )}
 
       {filteredArticles.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '50px', color: 'var(--text-light)' }}>
-          No articles found matching the current filters.
+        <div className="admin-empty-state">
+          <div className="admin-empty-state-icon">
+            <Search size={18} />
+          </div>
+          <strong>No articles found</strong>
+          <span>Try a different sentiment or category filter.</span>
         </div>
       )}
     </div>
