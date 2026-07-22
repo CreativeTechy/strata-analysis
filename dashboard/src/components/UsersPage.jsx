@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { UserPlus, Users as UsersIcon, Ban, CheckCircle2, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
+import '../styles/AdminUsers.css';
 
 const emptyDraft = { username: '', email: '', password: '', role: '' };
 
@@ -122,11 +123,22 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="content-shell" style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <header style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: '1.8rem' }}><UsersIcon size={22} style={{ marginRight: 8, verticalAlign: 'middle' }} />Users</h2>
-        <p className="subtitle">Create and manage dashboard accounts.</p>
-      </header>
+    <div className="admin-page-shell">
+      <div className="admin-page-header">
+        <div>
+          <div className="admin-page-kicker">
+            <UsersIcon size={14} /> User management
+          </div>
+          <h1 className="admin-page-title">Users</h1>
+          <p className="admin-page-subtitle">Create and manage dashboard accounts.</p>
+        </div>
+        <div className="admin-page-toolbar">
+          <div className="admin-page-toolbar-meta">
+            <span>Total users</span>
+            <strong>{users.length.toLocaleString()}</strong>
+          </div>
+        </div>
+      </div>
 
       {error && (
         <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
@@ -134,20 +146,20 @@ export default function UsersPage() {
         </div>
       )}
 
-      <form onSubmit={createUser} className="glass-card" style={{ padding: 28, marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <form onSubmit={createUser} className="glass-card user-create-form" style={{ marginBottom: 24 }}>
+        <label className="user-create-field">
           <span style={{ fontSize: '0.8rem' }}>Username</span>
           <input className="filter-select" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} required />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <label className="user-create-field">
           <span style={{ fontSize: '0.8rem' }}>Email</span>
           <input className="filter-select" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <label className="user-create-field">
           <span style={{ fontSize: '0.8rem' }}>Password</span>
           <input className="filter-select" type="password" value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} minLength={8} required />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <label className="user-create-field">
           <span style={{ fontSize: '0.8rem' }}>Role</span>
           <select className="filter-select" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
             {roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
@@ -159,69 +171,87 @@ export default function UsersPage() {
       </form>
 
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
-              <th style={{ padding: 12 }}>Username</th>
-              <th style={{ padding: 12 }}>Email</th>
-              <th style={{ padding: 12 }}>Role</th>
-              <th style={{ padding: 12 }}>Status</th>
-              <th style={{ padding: 12 }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td colSpan={5} style={{ padding: 16 }}>Loading...</td></tr>
-            )}
-            {!loading && users.length === 0 && (
-              <tr><td colSpan={5} style={{ padding: 16 }}>No users yet.</td></tr>
-            )}
-            {users.map((u) => {
-              const isSelf = currentUser && Number(currentUser.id) === Number(u.id);
-              return (
-                <tr key={u.id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-                  <td style={{ padding: 12 }}>{u.username}{isSelf && ' (you)'}</td>
-                  <td style={{ padding: 12 }}>{u.email || '-'}</td>
-                  <td style={{ padding: 12 }}>
-                    <select
-                      className="filter-select"
-                      value={u.role}
-                      disabled={isSelf}
-                      onChange={(e) => setRole(u.id, e.target.value)}
-                    >
-                      {roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
-                    </select>
-                  </td>
-                  <td style={{ padding: 12 }}>{u.status}</td>
-                  <td style={{ padding: 12 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {u.status === 'active' ? (
-                        <button className="btn-secondary" disabled={isSelf} onClick={() => setStatus(u.id, 'disabled')}>
-                          <Ban size={14} /> Disable
-                        </button>
-                      ) : (
-                        <button className="btn-secondary" onClick={() => setStatus(u.id, 'active')}>
-                          <CheckCircle2 size={14} /> Enable
-                        </button>
-                      )}
-                      {canDelete && (
-                        <button
-                          className="btn-secondary"
-                          disabled={isSelf}
-                          title={isSelf ? 'You cannot delete your own account.' : undefined}
-                          onClick={() => setDeleteTarget(u)}
-                          style={{ color: isSelf ? undefined : '#ff4757' }}
-                        >
-                          <Trash2 size={14} /> Delete
-                        </button>
-                      )}
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
+                <th style={{ padding: 12 }}>Username</th>
+                <th className="admin-table-col-optional" style={{ padding: 12 }}>Email</th>
+                <th style={{ padding: 12 }}>Role</th>
+                <th style={{ padding: 12 }}>Status</th>
+                <th style={{ padding: 12 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={5} style={{ padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
+                      <div className="loading-spinner" /> Loading users...
                     </div>
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              )}
+              {!loading && users.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={{ padding: 0 }}>
+                    <div className="admin-empty-state">
+                      <div className="admin-empty-state-icon">
+                        <UsersIcon size={18} />
+                      </div>
+                      <strong>No users yet</strong>
+                      <span>Create the first dashboard account using the form above.</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {users.map((u) => {
+                const isSelf = currentUser && Number(currentUser.id) === Number(u.id);
+                return (
+                  <tr key={u.id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                    <td style={{ padding: 12 }}>{u.username}{isSelf && ' (you)'}</td>
+                    <td className="admin-table-col-optional" style={{ padding: 12 }}>{u.email || '-'}</td>
+                    <td style={{ padding: 12 }}>
+                      <select
+                        className="filter-select"
+                        value={u.role}
+                        disabled={isSelf}
+                        onChange={(e) => setRole(u.id, e.target.value)}
+                      >
+                        {roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ padding: 12 }}>{u.status}</td>
+                    <td style={{ padding: 12 }}>
+                      <div className="admin-row-actions">
+                        {u.status === 'active' ? (
+                          <button className="btn-secondary" disabled={isSelf} onClick={() => setStatus(u.id, 'disabled')}>
+                            <Ban size={14} /> Disable
+                          </button>
+                        ) : (
+                          <button className="btn-secondary" onClick={() => setStatus(u.id, 'active')}>
+                            <CheckCircle2 size={14} /> Enable
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            className="btn-secondary"
+                            disabled={isSelf}
+                            title={isSelf ? 'You cannot delete your own account.' : undefined}
+                            onClick={() => setDeleteTarget(u)}
+                            style={{ color: isSelf ? undefined : '#ff4757' }}
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <ConfirmModal

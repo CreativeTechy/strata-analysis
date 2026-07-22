@@ -1,0 +1,104 @@
+/* Users / Roles admin section — layout tweaks specific to these pages.
+   Shared admin-* primitives (admin-page-shell, admin-page-header,
+   table-scroll, role-form, permission-groups, etc.) live in styles/index.css
+   and are intentionally not duplicated here; this file only adds the
+   responsive behavior those primitives don't already cover. */
+
+/* Users: "create user" form fields stack on narrow screens instead of
+   relying solely on flex-wrap, which can leave a lone control awkwardly
+   isolated on its own line at in-between widths. */
+.user-create-form {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.user-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.user-create-field input,
+.user-create-field select {
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .user-create-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-create-field {
+    min-width: 0;
+  }
+
+  .user-create-form > .btn-primary {
+    width: 100%;
+  }
+}
+
+/* Table row actions: stack vertically on narrow screens so the actions
+   column doesn't force extra width inside the horizontally-scrolling
+   table (see .table-scroll in index.css, which remains the primary fix). */
+.admin-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .admin-row-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-row-actions .btn-secondary {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+/* Lowest-priority table columns (email, description) drop off on phones;
+   table-scroll remains the primary fix, this just trims how far a phone
+   has to scroll to see the rest of the row. */
+@media (max-width: 480px) {
+  .admin-table-col-optional {
+    display: none;
+  }
+}
+
+/* Role permission checklist: bigger tap targets once we're at touch sizes. */
+@media (max-width: 640px) {
+  .permission-row {
+    padding: 11px 8px;
+    min-height: 44px;
+  }
+
+  .permission-row input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .permission-group-toggle {
+    padding: 6px 2px;
+  }
+}
+
+/* Role form actions: stack full-width like the rest of the app's forms,
+   with the primary action on top for easier thumb reach. */
+@media (max-width: 640px) {
+  .role-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .role-form-actions .btn-primary,
+  .role-form-actions .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+}

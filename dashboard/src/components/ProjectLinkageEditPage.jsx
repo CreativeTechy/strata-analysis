@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Link2, RefreshCw, Save, Search, X } from 'lucide-react';
+import { ArrowLeft, Link2, RefreshCw, Save, Search, Users, X } from 'lucide-react';
+import '../styles/ProjectLinkage.css';
 
 // Edit-only: changes which dashboard users are linked to one project. Viewing
 // the current linkage lives on ProjectLinkageDetailPage; this page only
@@ -59,7 +60,7 @@ export default function ProjectLinkageEditPage({ projects = [], users = [], onSe
 
   if (!project) {
     return (
-      <div className="admin-page-shell">
+      <div className="admin-page-shell project-linkage-page">
         <div className="glass-card" style={{ maxWidth: 960, margin: '0 auto' }}>
           <div className="admin-empty-state" style={{ padding: '34px 20px' }}>
             <div className="admin-empty-state-icon">
@@ -77,7 +78,7 @@ export default function ProjectLinkageEditPage({ projects = [], users = [], onSe
   }
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell project-linkage-page">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
@@ -137,7 +138,13 @@ export default function ProjectLinkageEditPage({ projects = [], users = [], onSe
 
           <div className="assign-sources-list">
             {users.length === 0 ? (
-              <div style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>No dashboard users yet.</div>
+              <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
+                  <Users size={16} />
+                </div>
+                <strong>No dashboard users yet</strong>
+                <span>Create dashboard users first, then link them to this project.</span>
+              </div>
             ) : visibleUsers.length === 0 ? (
               <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
                 <div className="admin-empty-state-icon" style={{ width: 36, height: 36 }}>
@@ -172,7 +179,7 @@ export default function ProjectLinkageEditPage({ projects = [], users = [], onSe
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+        <div className="project-linkage-form-actions">
           <button
             type="button"
             className="btn-secondary"

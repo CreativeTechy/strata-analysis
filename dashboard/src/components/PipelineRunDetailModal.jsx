@@ -214,7 +214,7 @@ export default function PipelineRunDetailModal({ open, runId, projectName, onClo
                     No per-source data recorded for this run yet.
                   </div>
                 ) : (
-                  <div style={{ overflowX: 'auto' }}>
+                  <div className="table-scroll">
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                       <thead>
                         <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import '../styles/AdminUsers.css';
 
 const CATEGORY_LABELS = {
   articles: 'Articles',

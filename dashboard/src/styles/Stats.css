@@ -1,0 +1,69 @@
+/* Page-specific responsive/overflow fixes for the Dashboard stats screen
+   (src/components/StatsOverview.jsx). Shared layout primitives
+   (.stats-grid, .stat-card, .sentiment-report, .mini-list-row, etc.) live in
+   src/styles/index.css - this file only patches gaps found during the
+   responsive pass below. Everything here is scoped under .stats-overview
+   (the root <section>) so it can't leak into other screens that happen to
+   reuse similarly-named classes. */
+
+/* Stat cards: .stat-info has no min-width in index.css, so inside the flex
+   .stat-card row a long, unbreakable string (e.g. a big "1,234,567" count)
+   can force the card - and the whole grid - wider than the viewport. */
+.stats-overview .stat-info {
+  min-width: 0;
+}
+
+.stats-overview .stat-info h4,
+.stats-overview .stat-info p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* The sentiment report card used a fixed inline min-height sized for the
+   desktop two-column top layout. Below 960px everything stacks into one
+   column and the real content (chart + category chart + six insight lists)
+   is always much taller than 560px anyway, so keep the floor for desktop
+   only - on mobile it just adds dead space above the fold. */
+.stats-overview .sentiment-report-card {
+  min-height: 560px;
+}
+
+@media (max-width: 960px) {
+  .stats-overview .sentiment-report-card {
+    min-height: 0;
+  }
+}
+
+/* Article-category bar chart: the Y axis reserves a fixed pixel width for
+   category labels, which can squash the bars illegibly on narrow phones.
+   Rather than truncate the labels, let this one chart scroll horizontally
+   within its own card so labels and bars stay legible - the page itself
+   never scrolls (JSX wraps the chart in .sentiment-chart-bars-inner). */
+.stats-overview .sentiment-chart-bars {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.stats-overview .sentiment-chart-bars-inner {
+  height: 100%;
+}
+
+@media (max-width: 640px) {
+  .stats-overview .sentiment-chart-bars-inner {
+    min-width: 320px;
+  }
+}
+
+/* Insight list rows (top praised features, complaints, etc.): the category
+   chip next to the row text doesn't shrink (flex-shrink: 0 in index.css) and
+   can overflow a narrow phone card when the category name is long. Let it
+   drop to its own line instead of pushing past the card edge. */
+@media (max-width: 480px) {
+  .stats-overview .mini-list-row-copy {
+    flex-wrap: wrap;
+  }
+
+  .stats-overview .mini-list-row-subtle {
+    max-width: 100%;
+  }
+}

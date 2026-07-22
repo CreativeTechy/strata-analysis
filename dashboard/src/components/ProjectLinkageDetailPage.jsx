@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, Link2, Pencil } from 'lucide-react';
+import '../styles/ProjectLinkage.css';
 
 function formatDate(value) {
   if (!value) return 'Not set';
@@ -27,7 +28,7 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
 
   if (!project) {
     return (
-      <div className="admin-page-shell">
+      <div className="admin-page-shell project-linkage-page">
         <div className="glass-card" style={{ maxWidth: 960, margin: '0 auto' }}>
           <div className="admin-empty-state" style={{ padding: '34px 20px' }}>
             <div className="admin-empty-state-icon">
@@ -49,7 +50,7 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
   const isArchived = status === 'archived';
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell project-linkage-page">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
@@ -107,8 +108,8 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
                 <span>Location</span>
                 <span>Audience</span>
               </div>
-              <strong style={{ fontSize: '0.98rem' }}>{project.location || 'Not set'}</strong>
-              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>
+              <strong style={{ fontSize: '0.98rem', overflowWrap: 'anywhere' }}>{project.location || 'Not set'}</strong>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4, overflowWrap: 'anywhere' }}>
                 {project.target_audience || 'No audience specified'}
               </div>
             </div>
@@ -118,7 +119,7 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
               <strong style={{ fontSize: '0.94rem' }}>Description</strong>
             </div>
-            <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+            <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
               {project.description || 'No description has been added for this project yet.'}
             </div>
           </div>
