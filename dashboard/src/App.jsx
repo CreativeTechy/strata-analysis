@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import StatsOverview from './components/StatsOverview';
+import DashboardOverview from './components/DashboardOverview';
 import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
@@ -18,16 +19,8 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw, FolderKanban, Database, CalendarClock, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
+import { RefreshCw, FolderKanban, CalendarClock, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-const PIPELINE_STATUS_COLORS = {
-  success: '#2ed573',
-  failed: '#ff4757',
-  running: '#ffb13b',
-  queued: '#9aa0aa',
-  cancelled: '#9aa0aa',
-};
 
 const SENTIMENT_COLORS = {
   positive: '#16a34a',
@@ -61,15 +54,6 @@ const REPORT_PERIODS = [
 // Non-overlapping, back-to-back windows: offsetWindows=0 is "now minus N
 // days through now", offsetWindows=1 is the equal-length window right
 // before that - what "compare to previous period" diffs against.
-function reportPeriodWindow(periodKey, offsetWindows = 0) {
-  const period = REPORT_PERIODS.find((entry) => entry.key === periodKey);
-  if (!period?.days) return { dateFrom: null, dateTo: null };
-  const windowMs = period.days * 24 * 60 * 60 * 1000;
-  const to = Date.now() - offsetWindows * windowMs;
-  const from = to - windowMs;
-  return { dateFrom: new Date(from).toISOString(), dateTo: new Date(to).toISOString() };
-}
-
 function timeAgo(dateString) {
   if (!dateString) return null;
   const diffMs = Date.now() - new Date(dateString).getTime();
@@ -81,29 +65,6 @@ function timeAgo(dateString) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-function findNextScheduledRun(projects) {
-  const now = Date.now();
-  const candidates = projects
-    .filter((project) => project.repeat_enabled && project.next_run_at)
-    .map((project) => ({ project, nextRunAt: new Date(project.next_run_at).getTime() }))
-    .filter(({ nextRunAt }) => Number.isFinite(nextRunAt) && nextRunAt > now)
-    .sort((a, b) => a.nextRunAt - b.nextRunAt);
-  return candidates[0] || null;
-}
-
-function formatCountdown(targetMs) {
-  const diffMs = targetMs - Date.now();
-  if (diffMs <= 0) return 'starting shortly';
-  const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) return 'in under a minute';
-  if (minutes === 1) return 'in 1 minute';
-  if (minutes < 60) return `in ${minutes} minutes`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
-  const days = Math.floor(hours / 24);
-  return `in ${days}d ${hours % 24}h`;
 }
 
 function RequireAuth() {
@@ -146,15 +107,6 @@ export default function App() {
   const isAuthenticated = !authLoading && !!user;
 
   const [projects, setProjects] = useState([]);
-  const [reportStats, setReportStats] = useState({
-    total: 0,
-    positive: 0,
-    negative: 0,
-    neutral: 0,
-    mixed: 0,
-    article_category_breakdown: [],
-    insights: {},
-  });
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState([]);
@@ -164,12 +116,12 @@ export default function App() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
-  const [reportStatsError, setReportStatsError] = useState(null);
-  const [lastReportSyncAt, setLastReportSyncAt] = useState(null);
+  const [lastIntelligenceSyncAt, setLastIntelligenceSyncAt] = useState(null);
   const [reportPeriod, setReportPeriod] = useState('all');
-  const [reportCompareEnabled, setReportCompareEnabled] = useState(false);
-  const [reportCompareStats, setReportCompareStats] = useState(null);
+  const [dashboardPeriod, setDashboardPeriod] = useState('30d');
+  const [intelligence, setIntelligence] = useState(null);
+  const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false);
+  const [intelligenceError, setIntelligenceError] = useState(null);
   const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
     if (stored) {
@@ -198,15 +150,6 @@ export default function App() {
     [projects, selectedProjectId]
   );
 
-  const selectedProjectSourceIds = useMemo(
-    () => (selectedProject?.source_ids || []).map(Number),
-    [selectedProject]
-  );
-
-  const selectedProjectSources = useMemo(
-    () => sources.filter((source) => selectedProjectSourceIds.includes(Number(source.id))),
-    [sources, selectedProjectSourceIds]
-  );
 
   const workflowSelectedProjects = useMemo(() => {
     const selectedIds = new Set(workflowSelectedProjectIds.map((id) => Number(id)));
@@ -230,20 +173,16 @@ export default function App() {
     [pipelineRuns]
   );
 
-  const pipelineHealth = useMemo(() => {
-    const sorted = [...pipelineRuns].sort(
-      (a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime()
-    );
-    const counts = { queued: 0, running: 0, success: 0, failed: 0, cancelled: 0 };
-    pipelineRuns.forEach((run) => {
-      const status = String(run?.status || '').toLowerCase();
-      if (status in counts) counts[status] += 1;
-    });
-    const lastFinished = sorted.find((run) => run?.finished_at) || null;
-    return { lastRun: sorted[0] || null, counts, lastFinished };
-  }, [pipelineRuns]);
+  const selectedPipelineHealth = useMemo(() => {
+    const scoped = pipelineRuns
+      .filter((run) => Number(run?.project_id) === Number(selectedProjectId))
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
+    return {
+      lastRun: scoped[0] || null,
+      lastFinished: scoped.find((run) => run?.finished_at) || null,
+    };
+  }, [pipelineRuns, selectedProjectId]);
 
-  const nextScheduledRun = useMemo(() => findNextScheduledRun(projects), [projects]);
 
   const coerceProjectId = (value) => {
     if (value == null) return null;
@@ -341,59 +280,24 @@ export default function App() {
     return fallback;
   };
 
-  const fetchReportStatsForRange = async (scopedProjectId, { dateFrom, dateTo } = {}) => {
-    const params = new URLSearchParams();
-    if (scopedProjectId != null) {
-      params.set('project_id', String(scopedProjectId));
-    }
-    if (dateFrom) params.set('date_from', dateFrom);
-    if (dateTo) params.set('date_to', dateTo);
-    const res = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
-    if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
-    const data = await res.json();
-    return {
-      total: Number(data?.total) || 0,
-      positive: Number(data?.positive) || 0,
-      negative: Number(data?.negative) || 0,
-      neutral: Number(data?.neutral) || 0,
-      mixed: Number(data?.mixed) || 0,
-      article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
-      insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
-    };
-  };
-
-  const loadReportStats = async (projectId = selectedProjectId) => {
+  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod) => {
     const scopedProjectId = coerceProjectId(projectId);
-    setIsLoadingReportStats(true);
-    setReportStatsError(null);
-    const shouldCompare = reportCompareEnabled && reportPeriod !== 'all';
+    if (scopedProjectId == null) {
+      setIntelligence(null);
+      return;
+    }
+    setIsLoadingIntelligence(true);
+    setIntelligenceError(null);
     try {
-      // Fetched independently of the (optional) compare request below: a
-      // failure comparing against the previous period shouldn't cost the
-      // user the primary numbers they actually asked to see.
-      const current = await fetchReportStatsForRange(scopedProjectId, reportPeriodWindow(reportPeriod, 0));
-      setReportStats(current);
-      setLastReportSyncAt(new Date().toISOString());
-
-      if (shouldCompare) {
-        try {
-          const previous = await fetchReportStatsForRange(scopedProjectId, reportPeriodWindow(reportPeriod, 1));
-          setReportCompareStats(previous);
-        } catch (compareError) {
-          console.error('Failed to load comparison period stats', compareError);
-          setReportCompareStats(null);
-        }
-      } else {
-        setReportCompareStats(null);
-      }
+      const res = await fetch(`/api/projects/${scopedProjectId}/intelligence?period=${encodeURIComponent(period)}`);
+      if (!res.ok) throw new Error(`Intelligence request failed: ${res.status}`);
+      setIntelligence(await res.json());
+      setLastIntelligenceSyncAt(new Date().toISOString());
     } catch (error) {
-      // Deliberately leave reportStats/reportCompareStats untouched: keeping
-      // the last known-good numbers on screen alongside a clear error state
-      // reads better than blanking the report to a misleading "0 articles".
-      console.error('Failed to load report stats', error);
-      setReportStatsError(error?.message || 'Failed to load reports');
+      console.error('Failed to load project intelligence', error);
+      setIntelligenceError(error?.message || 'Failed to load project intelligence');
     } finally {
-      setIsLoadingReportStats(false);
+      setIsLoadingIntelligence(false);
     }
   };
 
@@ -501,7 +405,7 @@ export default function App() {
   }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
-    if (!isAuthenticated || pathname !== '/reports') return;
+    if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname)) return;
 
     // Reports is project-scoped only (no "all projects" aggregate), so pick a
     // default project as soon as one is available instead of showing an empty state.
@@ -510,8 +414,9 @@ export default function App() {
       return;
     }
 
-    loadReportStats(selectedProjectId);
-  }, [isAuthenticated, pathname, selectedProjectId, projects, reportPeriod, reportCompareEnabled]);
+    const period = pathname === '/dashboard' ? dashboardPeriod : reportPeriod;
+    loadIntelligence(selectedProjectId, period);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod]);
 
   useEffect(() => {
     if (!isAuthenticated || pathname !== '/workflow') return;
@@ -733,109 +638,38 @@ export default function App() {
   };
 
   const renderDashboardView = () => (
-    <div className="content-shell">
-      <header className="dashboard-hero">
-        <div>
-          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Dashboard</h2>
-          <p className="subtitle">Quick snapshot of your workspace</p>
-        </div>
-      </header>
-
-      <section className="stats-grid" style={{ marginTop: 28 }}>
-        <motion.article
-          className="glass-card stat-card"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <div className="stat-icon">
-            <FolderKanban size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Total Projects</h4>
-            <p>{isLoadingProjects ? '—' : projects.length.toLocaleString()}</p>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Across your workspace</span>
-          </div>
-        </motion.article>
-
-        <motion.article
-          className="glass-card stat-card"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <div
-            className="stat-icon"
-            style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(56, 189, 248, 0.1))', color: '#6366f1' }}
-          >
-            <Database size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Pipeline Health</h4>
-            <p style={{ color: pipelineHealth.lastRun ? PIPELINE_STATUS_COLORS[String(pipelineHealth.lastRun.status || '').toLowerCase()] : 'var(--text-dark)' }}>
-              {pipelineHealth.lastRun
-                ? pipelineHealth.lastRun.status.charAt(0).toUpperCase() + pipelineHealth.lastRun.status.slice(1)
-                : 'No runs yet'}
-            </p>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
-              {pipelineHealth.lastFinished
-                ? `Last completed ${timeAgo(pipelineHealth.lastFinished.finished_at)}`
-                : 'No completed runs yet'}
-            </span>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <span className="panel-chip success">{pipelineHealth.counts.success} success</span>
-              <span className="panel-chip warning">{pipelineHealth.counts.running + pipelineHealth.counts.queued} running</span>
-              <span className="panel-chip" style={{ background: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' }}>
-                {pipelineHealth.counts.failed} failed
-              </span>
-            </div>
-          </div>
-        </motion.article>
-
-        <motion.article
-          className="glass-card stat-card"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-        >
-          <div
-            className="stat-icon"
-            style={{ background: 'linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(255, 159, 67, 0.1))', color: '#ff6b35' }}
-          >
-            <CalendarClock size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Next Run</h4>
-            <p style={{ fontSize: '1.4rem' }}>
-              {nextScheduledRun
-                ? nextScheduledRun.project.name || `Project #${nextScheduledRun.project.id}`
-                : 'None scheduled'}
-            </p>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
-              {nextScheduledRun
-                ? `Runs ${formatCountdown(nextScheduledRun.nextRunAt)} - ${new Date(nextScheduledRun.nextRunAt).toLocaleString()}`
-                : 'Enable a repeat schedule on a project to see it here'}
-            </span>
-          </div>
-        </motion.article>
-      </section>
-    </div>
+    <DashboardOverview
+      projects={projects}
+      selectedProjectId={selectedProjectId}
+      onProjectChange={setSelectedProjectId}
+      period={dashboardPeriod}
+      onPeriodChange={setDashboardPeriod}
+      intelligence={intelligence}
+      loading={isLoadingIntelligence}
+      error={intelligenceError}
+      totalProjects={projects.length}
+      pipelineHealth={selectedPipelineHealth}
+      nextScheduledRun={selectedProject?.repeat_enabled && selectedProject?.next_run_at
+        ? { project: selectedProject, nextRunAt: new Date(selectedProject.next_run_at).getTime() }
+        : null}
+    />
   );
 
   const renderReportsView = () => {
     const hasProjects = projects.length > 0;
-    const dominantSentiment = dominantSentimentFromStats(reportStats);
-    const totalArticles = Number(reportStats.total) || 0;
+    const liveReport = intelligence || {};
+    const dominantSentiment = dominantSentimentFromStats(liveReport);
+    const totalArticles = Number(liveReport.total) || 0;
 
     let syncStatus;
-    if (reportStatsError) {
+    if (intelligenceError) {
       syncStatus = {
         tone: 'error',
         icon: <AlertCircle size={13} />,
         label: 'Sync failed',
-        detail: reportStatsError,
+        detail: intelligenceError,
       };
-    } else if (isLoadingReportStats) {
+    } else if (isLoadingIntelligence) {
       syncStatus = {
         tone: 'loading',
         icon: <RefreshCw size={13} className="spin" />,
@@ -847,7 +681,7 @@ export default function App() {
         tone: 'success',
         icon: <CheckCircle2 size={13} />,
         label: 'Up to date',
-        detail: lastReportSyncAt ? `Updated ${timeAgo(lastReportSyncAt)}` : 'Not synced yet',
+        detail: lastIntelligenceSyncAt ? `Updated ${timeAgo(lastIntelligenceSyncAt)}` : 'Not synced yet',
       };
     }
 
@@ -898,12 +732,12 @@ export default function App() {
               <button
                 type="button"
                 className="btn-secondary toolbar-button report-refresh-btn"
-                onClick={() => loadReportStats()}
-                disabled={isLoadingReportStats || !hasProjects}
-                aria-busy={isLoadingReportStats}
+                onClick={() => loadIntelligence(selectedProjectId, reportPeriod)}
+                disabled={isLoadingIntelligence || !hasProjects}
+                aria-busy={isLoadingIntelligence}
               >
-                <RefreshCw size={16} className={isLoadingReportStats ? 'spin' : ''} />
-                {isLoadingReportStats ? 'Refreshing...' : 'Refresh'}
+                <RefreshCw size={16} className={isLoadingIntelligence ? 'spin' : ''} />
+                {isLoadingIntelligence ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
           </div>
@@ -924,15 +758,6 @@ export default function App() {
               ))}
             </div>
 
-            <label className={`report-compare-toggle ${reportPeriod === 'all' ? 'disabled' : ''}`}>
-              <input
-                type="checkbox"
-                checked={reportCompareEnabled}
-                disabled={reportPeriod === 'all'}
-                onChange={(e) => setReportCompareEnabled(e.target.checked)}
-              />
-              Compare to previous period
-            </label>
           </div>
 
           <ul className="report-summary-chips" aria-label="Report summary">
@@ -956,7 +781,6 @@ export default function App() {
               <span className="report-chip-label">Range</span>
               <strong>
                 {REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
-                {reportCompareEnabled && reportPeriod !== 'all' ? ' (compared)' : ''}
               </strong>
             </li>
             <li
@@ -973,16 +797,11 @@ export default function App() {
 
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <StatsOverview
-            stats={reportStats}
-            compareStats={reportCompareEnabled && reportPeriod !== 'all' ? reportCompareStats : null}
-            comparePeriodLabel={(() => {
-              const period = REPORT_PERIODS.find((entry) => entry.key === reportPeriod);
-              return period?.days ? `${period.days}-day period` : null;
-            })()}
+            intelligence={liveReport}
             scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
-            loading={isLoadingReportStats}
-            error={reportStatsError}
-            onRetry={() => loadReportStats()}
+            loading={isLoadingIntelligence}
+            error={intelligenceError}
+            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
           />
         </motion.div>
       </div>
