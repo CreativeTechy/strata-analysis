@@ -33,6 +33,7 @@ from projects_store import (
     create_project,
     delete_project,
     diagnose_project_setup,
+    get_project,
     list_project_ids_for_user,
     list_projects,
     list_projects_page,
@@ -44,6 +45,7 @@ from projects_store import (
     set_project_users,
     update_project,
 )
+from intelligence import get_project_intelligence, normalize_period
 from sources_store import (
     bootstrap_sources,
     create_source,
@@ -589,9 +591,24 @@ def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
-    return get_article_stats(search=search, category=category, project_id=project_id)
+    return get_article_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+
+
+@app.get("/api/projects/{project_id}/intelligence")
+def get_project_intelligence_view(
+    project_id: int,
+    period: str = "30d",
+    user: dict = Depends(require_permission("articles.view")),
+):
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return get_project_intelligence(project, normalize_period(period))
 
 
 @app.get("/api/articles/export")

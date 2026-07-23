@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard,
+  BarChart3,
   GitMerge,
   MessageSquare,
   Rss,
@@ -20,6 +21,7 @@ import { useAuth } from '../auth/useAuth.js';
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/reports', label: 'Reports', icon: BarChart3 },
   { to: '/articles', label: 'Articles', icon: Newspaper },
   { to: '/sources', label: 'Sources', icon: Rss },
   { to: '/projects', label: 'Projects', icon: CalendarDays },

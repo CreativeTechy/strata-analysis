@@ -1,387 +1,60 @@
-import { Activity, Sparkles, MessageCircle, ThumbsUp, ThumbsDown, ListOrdered, Layers3, Smile, Mic } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { motion } from 'framer-motion';
-import '../styles/Stats.css';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, ArrowUpRight, CircleMinus, Heart, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import '../styles/IntelligenceDashboard.css';
 
-const COLORS = ['#16a34a', '#e11d48', '#64748b', '#f59e0b'];
+const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
 
-const prettyLabel = (value) => String(value || '')
-  .replace(/_/g, ' ')
-  .replace(/\b\w/g, (char) => char.toUpperCase());
+function percent(value, total) { return total ? Math.round((Number(value || 0) / total) * 100) : 0; }
+function formatDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 
-function StatSkeleton() {
-  return (
-    <div className="glass-card stat-card stat-card-skeleton" aria-hidden="true">
-      <div className="stat-icon skeleton-shimmer" />
-      <div className="stat-info">
-        <div className="skeleton-line skeleton-shimmer stat-skeleton-title" />
-        <div className="skeleton-line skeleton-shimmer stat-skeleton-value" />
-        <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" />
-      </div>
-    </div>
-  );
+function Section({ number, title, children }) {
+  return <section className="report-brief-section"><header><span>{number}</span><h3>{title}</h3></header>{children}</section>;
 }
 
-export default function StatsOverview({ stats = {}, scopeLabel = 'Current project', loading = false }) {
-  const total = Number(stats.total) || 0;
-  const positive = Number(stats.positive) || 0;
-  const negative = Number(stats.negative) || 0;
-  const neutral = Number(stats.neutral) || 0;
-  const mixed = Number(stats.mixed) || 0;
-  const insights = stats.insights || {};
-  const categoryBreakdown = Array.isArray(insights.article_category_breakdown) ? insights.article_category_breakdown : [];
-  const positiveFeedback = Array.isArray(insights.positive_feedback) ? insights.positive_feedback : [];
-  const negativeFeedback = Array.isArray(insights.negative_feedback) ? insights.negative_feedback : [];
-  const requests = Array.isArray(insights.nice_to_have_features) ? insights.nice_to_have_features : [];
-  const frequentIdeas = Array.isArray(insights.frequent_ideas) ? insights.frequent_ideas : [];
-  const writerToneBreakdown = Array.isArray(insights.writer_tone_breakdown) ? insights.writer_tone_breakdown : [];
-  const articleToneBreakdown = Array.isArray(insights.article_tone_breakdown) ? insights.article_tone_breakdown : [];
-  const summary = insights.summary || '';
-  const dominantInsight = prettyLabel(insights.article_category || 'general_article');
-  const overallMood = prettyLabel(insights.overall_mood || 'neutral');
-  const overallTone = prettyLabel(insights.overall_tone || 'neutral');
-  const positivePct = total ? Math.round((positive / total) * 100) : 0;
-  const negativePct = total ? Math.round((negative / total) * 100) : 0;
-  const neutralPct = total ? Math.round((neutral / total) * 100) : 0;
-  const mixedPct = total ? Math.round((mixed / total) * 100) : 0;
-  const dominant = total ? [
-    { label: 'Positive', value: positive, pct: positivePct, color: '#16a34a' },
-    { label: 'Negative', value: negative, pct: negativePct, color: '#e11d48' },
-    { label: 'Neutral', value: neutral, pct: neutralPct, color: '#64748b' },
-    { label: 'Mixed', value: mixed, pct: mixedPct, color: '#f59e0b' },
-  ].sort((a, b) => b.value - a.value)[0] : { label: 'Positive', pct: 0 };
+function FeedbackColumn({ title, icon, tone, items }) {
+  return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => <li key={item.text || item.idea}>{item.text || item.idea}<strong>{item.count || item.frequency_estimate || 1}</strong></li>)}</ul> : <p>No signals in this category yet.</p>}</article>;
+}
 
-  const data = [
-    { name: 'Positive', value: positive },
-    { name: 'Negative', value: negative },
-    { name: 'Neutral', value: neutral },
-    { name: 'Mixed', value: mixed },
-  ];
+export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry }) {
+  if (loading) return <section className="report-brief glass-card intelligence-loading">Loading the live intelligence brief…</section>;
+  if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>Couldn’t load this report</strong><p className="subtitle">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>Try again</button>}</div></section>;
 
-  const categoryData = categoryBreakdown.map((item) => ({
-    category: prettyLabel(item.category || 'general_article'),
-    count: Number(item.count) || 0,
-  }));
+  const total = Number(intelligence.total || 0);
+  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>No analyzed articles yet</strong><p className="subtitle">Run the pipeline for {scopeLabel || 'this project'} or broaden the date range to generate a report.</p><Link to="/workflow" className="btn-secondary">Go to Workflow</Link></div></section>;
 
-  const maxInsightCount = Math.max(
-    1,
-    ...positiveFeedback.map((item) => Number(item.count) || 0),
-    ...negativeFeedback.map((item) => Number(item.count) || 0),
-    ...requests.map((item) => Number(item.count) || 0),
-    ...frequentIdeas.map((item) => Number(item.frequency_estimate) || 0),
-    ...writerToneBreakdown.map((item) => Number(item.count) || 0),
-    ...articleToneBreakdown.map((item) => Number(item.count) || 0)
-  );
+  const sentiments = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(intelligence[name] || 0) }));
+  const insights = intelligence.insights || {};
+  const leadingIdea = insights.frequent_ideas?.[0]?.idea;
+  const leadingConcern = insights.negative_feedback?.[0]?.text || insights.complaints?.[0]?.text;
+  const headline = leadingIdea
+    ? `${scopeLabel} generated ${total.toLocaleString()} analyzed articles. The leading conversation theme is ${leadingIdea}${leadingConcern ? `, while ${leadingConcern} is the primary concern` : ''}.`
+    : `${scopeLabel} generated ${total.toLocaleString()} analyzed articles with a net sentiment of ${intelligence.net_sentiment >= 0 ? '+' : ''}${intelligence.net_sentiment}.`;
 
-  const renderInsightList = (title, icon, items, color, tone = 'neutral') => (
-    <section className="source-mini-list" style={{ marginTop: 14 }}>
-      <div className="mini-list-title">
-        <span className="mini-list-title-icon" style={{ color }}>{icon}</span>
-        <span>{title}</span>
+  return <section className="report-brief">
+    <Section number="01" title="Executive summary">
+      <p className="report-brief-summary">{headline}</p>
+      <div className="report-brief-metrics">
+        <div><strong>{total.toLocaleString()}</strong><span>Analyzed articles</span></div>
+        <div><strong className={intelligence.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{intelligence.net_sentiment >= 0 ? '+' : ''}{intelligence.net_sentiment}</strong><span>Net sentiment</span></div>
+        <div><strong>{Number(intelligence.active_sources || 0).toLocaleString()}</strong><span>Active sources</span></div>
       </div>
-      {items.length ? (
-        items.slice(0, 4).map((item) => {
-          const text = item.text || item.idea || item.opinion || (item.tone ? prettyLabel(item.tone) : 'Unknown');
-          const count = Number(item.count || item.frequency_estimate) || 1;
-          const pct = Math.max(12, Math.round((count / maxInsightCount) * 100));
-          const category = item.category ? prettyLabel(item.category) : '';
-          return (
-            <article key={`${title}-${text}`} className={`mini-list-row tone-${tone}`}>
-              <div className="mini-list-row-top">
-                <div className="mini-list-row-copy">
-                  <span className="mini-list-row-text">{text}</span>
-                  {category ? <span className="mini-list-row-subtle">{category}</span> : null}
-                </div>
-                <div className="mini-list-row-meta">
-                  <span className="mini-list-row-badge" style={{ background: `${color}14`, color }}>
-                    {count}
-                  </span>
-                </div>
-              </div>
-              <div className="mini-list-row-track">
-                <div className="mini-list-row-fill" style={{ width: `${pct}%`, background: color }} />
-              </div>
-              {Array.isArray(item.sources) && item.sources.length ? (
-                <div className="mini-list-row-sources">
-                  {item.sources.slice(0, 3).map((source) => {
-                    const href = source.url || '';
-                    const label = source.title || href;
-                    if (!href) return null;
-                    return (
-                      <a
-                        key={`${text}-${href}`}
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mini-list-source-link"
-                        title={label}
-                      >
-                        {label}
-                      </a>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </article>
-          );
-        })
-      ) : (
-        <div className="mini-empty">No items yet.</div>
-      )}
-    </section>
-  );
+    </Section>
 
-  if (loading) {
-    return (
-      <section className="stats-grid stats-overview">
-        <StatSkeleton />
-        <StatSkeleton />
-        <StatSkeleton />
-        <div className="glass-card stat-card sentiment-report sentiment-report-card stat-report-skeleton" aria-hidden="true">
-          <div className="sentiment-report-layout">
-            <div className="sentiment-report-top">
-              <article className="sentiment-visual">
-                <div className="sentiment-visual-head">
-                  <div>
-                    <div className="skeleton-line skeleton-shimmer stat-skeleton-title" style={{ width: '52%' }} />
-                    <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" style={{ width: '72%', marginTop: 10 }} />
-                  </div>
-                </div>
-                <div className="sentiment-chart-shell">
-                  <div className="sentiment-chart-skeleton skeleton-shimmer" />
-                  <div className="sentiment-center-copy">
-                    <div className="skeleton-line skeleton-shimmer" style={{ width: '38%', height: 24 }} />
-                    <div className="skeleton-line skeleton-shimmer" style={{ width: '26%', height: 12, marginTop: 8 }} />
-                  </div>
-                </div>
-                <div className="sentiment-chip-row">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <div key={index} className="sentiment-chip">
-                      <div className="skeleton-line skeleton-shimmer" style={{ width: 72, height: 14 }} />
-                    </div>
-                  ))}
-                </div>
-              </article>
+    <Section number="02" title="Sentiment analysis">
+      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [`${value} articles`, name]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{entry.name}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{percent(entry.value, total)}%</strong></div>)}<p>Sentiment is calculated from the analyzed article content already stored for this project.</p></div></div>
+    </Section>
 
-              <article className="sentiment-visual">
-                <div className="sentiment-visual-head">
-                  <div>
-                    <div className="skeleton-line skeleton-shimmer stat-skeleton-title" style={{ width: '48%' }} />
-                    <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" style={{ width: '64%', marginTop: 10 }} />
-                  </div>
-                </div>
-                <div className="sentiment-chart-bars-skeleton">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <div
-                      key={index}
-                      className="skeleton-line skeleton-shimmer"
-                      style={{ width: `${84 - index * 10}%`, height: 16, borderRadius: 999 }}
-                    />
-                  ))}
-                </div>
-              </article>
-            </div>
+    <Section number="03" title="Volume trend">
+      <ResponsiveContainer width="100%" height={285}><LineChart data={intelligence.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={formatDate} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} /><Legend /><Line dataKey="total" name="Total" type="monotone" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line dataKey="positive" name="Positive" type="monotone" stroke={COLORS.positive} strokeWidth={2} dot={false} /><Line dataKey="negative" name="Negative" type="monotone" stroke={COLORS.negative} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+    </Section>
 
-            <aside className="sentiment-report-aside sentiment-report-bottom">
-              <article className="sentiment-summary-card">
-                <div className="skeleton-line skeleton-shimmer stat-skeleton-title" style={{ width: '36%' }} />
-                <div className="skeleton-line skeleton-shimmer stat-skeleton-value" style={{ width: '88%', marginTop: 8 }} />
-                <div className="skeleton-line skeleton-shimmer stat-skeleton-subtitle" style={{ width: '74%', marginTop: 8 }} />
-              </article>
+    <Section number="04" title="Categorized feedback">
+      <div className="report-feedback-grid"><FeedbackColumn title="Positive drivers" icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} /><FeedbackColumn title="Negative drivers" icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} /><FeedbackColumn title="Neutral / mixed" icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} /></div>
+    </Section>
 
-              <div className="sentiment-report-breakdown">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <div key={index} className="sentiment-row">
-                    <div className="sentiment-row-top">
-                      <div className="skeleton-line skeleton-shimmer" style={{ width: '42%', height: 14 }} />
-                      <div className="skeleton-line skeleton-shimmer" style={{ width: '18%', height: 14 }} />
-                    </div>
-                    <div className="sentiment-bar-track">
-                      <div className="sentiment-bar-fill skeleton-shimmer" style={{ width: '72%' }} />
-                    </div>
-                    <div className="skeleton-line skeleton-shimmer" style={{ width: '28%', height: 12 }} />
-                  </div>
-                ))}
-              </div>
-            </aside>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="stats-grid stats-overview">
-      <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-        <div className="stat-icon">
-          <Activity size={24} />
-        </div>
-        <div className="stat-info">
-          <h4>Analyzed Articles</h4>
-          <p>{total.toLocaleString()}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
-        </div>
-      </motion.article>
-
-      <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(245, 158, 11, 0.1))', color: '#f97316' }}>
-          <Smile size={24} />
-        </div>
-        <div className="stat-info">
-          <h4>Overall Mood</h4>
-          <p>{overallMood}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
-        </div>
-      </motion.article>
-
-      <motion.article className="glass-card stat-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, rgba(46, 134, 222, 0.1), rgba(22, 163, 74, 0.1))', color: '#2e86de' }}>
-          <Mic size={24} />
-        </div>
-        <div className="stat-info">
-          <h4>Overall Tone</h4>
-          <p>{overallTone}</p>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{scopeLabel}</span>
-        </div>
-      </motion.article>
-
-      <motion.article
-        className="glass-card stat-card sentiment-report sentiment-report-card"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-      >
-        <div className="sentiment-report-layout">
-          <div className="sentiment-report-top">
-            <article className="sentiment-visual sentiment-visual-mix">
-              <div className="sentiment-visual-head">
-                <div className="stat-info">
-                  <h4>Sentiment Mix</h4>
-                  <p>{total.toLocaleString()}</p>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
-                    {dominant.label} leads with {dominant.pct}% of the current set
-                  </span>
-                </div>
-              </div>
-
-              <div className="sentiment-chart-shell">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={data}
-                      innerRadius="42%"
-                      outerRadius="60%"
-                      paddingAngle={4}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {data.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value, name) => [`${Number(value).toLocaleString()} articles`, name]}
-                      contentStyle={{
-                        borderRadius: '10px',
-                        border: 'none',
-                        boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-
-                <div className="sentiment-center-copy">
-                  <strong>{total.toLocaleString()}</strong>
-                  <span>articles</span>
-                </div>
-              </div>
-
-              <aside className="sentiment-legend-panel">
-                <div className="mini-list-title" style={{ margin: 0 }}>
-                  <Sparkles size={14} />
-                  <span>Legend & stats</span>
-                </div>
-
-                <div className="sentiment-legend-list">
-                  {[
-                    { label: 'Positive', pct: positivePct, value: positive, color: '#16a34a' },
-                    { label: 'Negative', pct: negativePct, value: negative, color: '#e11d48' },
-                    { label: 'Neutral', pct: neutralPct, value: neutral, color: '#64748b' },
-                    { label: 'Mixed', pct: mixedPct, value: mixed, color: '#f59e0b' },
-                  ].map((item) => (
-                    <div key={item.label} className="sentiment-legend-row">
-                      <div className="sentiment-legend-label">
-                        <span className="sentiment-dot" style={{ background: item.color }} />
-                        <div>
-                          <strong>{item.label}</strong>
-                          <span>{item.value.toLocaleString()} articles</span>
-                        </div>
-                      </div>
-                      <strong>{item.pct}%</strong>
-                      <div className="sentiment-legend-track">
-                        <div className="sentiment-legend-fill" style={{ width: `${Math.max(item.pct, 8)}%`, background: item.color }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </aside>
-            </article>
-
-            <article className="sentiment-visual">
-              <div className="sentiment-visual-head">
-                <div className="mini-list-title" style={{ margin: 0 }}>
-                  <Layers3 size={14} />
-                  <span>Article categories</span>
-                </div>
-              </div>
-
-              <div className="sentiment-chart-bars">
-                <div className="sentiment-chart-bars-inner">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={categoryData} layout="vertical" margin={{ top: 4, right: 18, bottom: 4, left: 12 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.06)" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} hide />
-                      <YAxis type="category" dataKey="category" width={130} tick={{ fontSize: 12 }} />
-                      <Tooltip
-                        labelFormatter={(label) => label}
-                        formatter={(value) => [`${Number(value).toLocaleString()} articles`, 'Articles']}
-                      />
-                      <Bar dataKey="count" fill="#f97316" radius={[0, 8, 8, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <aside className="sentiment-report-aside sentiment-report-bottom">
-            <article className="sentiment-summary-card">
-              <div className="panel-kicker" style={{ marginBottom: 10 }}>
-                <Sparkles size={14} /> Insight summary
-              </div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 700, lineHeight: 1.45, color: 'var(--text-dark)' }}>
-                {summary || 'No summary insight was generated for this scope yet.'}
-              </div>
-              <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.82rem' }}>
-                Dominant article category: <strong style={{ color: 'var(--secondary-color)' }}>{dominantInsight}</strong>
-              </div>
-              <div style={{ marginTop: 6, color: 'var(--text-light)', fontSize: '0.82rem' }}>
-                Overall mood: <strong style={{ color: 'var(--secondary-color)' }}>{overallMood}</strong>
-              </div>
-              <div style={{ marginTop: 6, color: 'var(--text-light)', fontSize: '0.82rem' }}>
-                Overall tone: <strong style={{ color: 'var(--secondary-color)' }}>{overallTone}</strong>
-              </div>
-            </article>
-
-            {renderInsightList('Top praised features', <ThumbsUp size={14} color="#16a34a" />, positiveFeedback, '#16a34a', 'positive')}
-            {renderInsightList('Top complaints', <ThumbsDown size={14} color="#e11d48" />, negativeFeedback, '#e11d48', 'negative')}
-            {renderInsightList('Requested improvements', <MessageCircle size={14} color="#f59e0b" />, requests, '#f59e0b', 'requested')}
-            {renderInsightList('Repeated ideas', <ListOrdered size={14} color="#64748b" />, frequentIdeas, '#64748b', 'neutral')}
-            {renderInsightList('Writer tone breakdown', <Mic size={14} color="#2e86de" />, writerToneBreakdown, '#2e86de', 'neutral')}
-            {renderInsightList('Article tone breakdown', <Smile size={14} color="#f97316" />, articleToneBreakdown, '#f97316', 'neutral')}
-          </aside>
-        </div>
-      </motion.article>
-    </section>
-  );
+    <Section number="05" title="Most talked-about ideas">
+      <div className="report-idea-list">{(insights.frequent_ideas || []).slice(0, 8).map((idea) => <article key={idea.idea} className={idea.type || 'issue'}><span>{idea.type === 'praise' ? <Heart size={16} /> : <ArrowUpRight size={16} />}</span><div><strong>{idea.idea}</strong><small>{idea.category || idea.type || 'Theme'}</small></div><b>{idea.frequency_estimate || 1}</b></article>)}{!(insights.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas have been detected yet.</p>}</div>
+    </Section>
+  </section>;
 }

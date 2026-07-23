@@ -1,4 +1,4 @@
-"""Thin client for the configured OpenAI-compatible chat completions API."""
+"""Thin client for the configured OpenAI-compatible Responses API."""
 
 from __future__ import annotations
 
@@ -67,33 +67,66 @@ class LLMInvalidResponseError(LLMError):
         self.finish_reason = finish_reason
 
 
-def _extract_chat_content(payload) -> str:
-    choices = payload.get("choices") or []
-    if not choices:
-        raise LLMInvalidResponseError("LLM returned no choices")
-    choice = choices[0]
-    message = choice.get("message") or {}
-    content = message.get("content")
-    if isinstance(content, str) and content.strip():
-        return content.strip()
+def _split_instructions(messages):
+    """Split chat-style messages into Responses `instructions` + `input`.
+
+    The Responses API has no "system" role in `input`; system/developer
+    messages become the top-level `instructions` string instead, in the
+    order they appeared. Everything else is passed through as-is - the
+    Responses API accepts the same simple {"role", "content"} shape chat
+    completions used for user/assistant turns.
+    """
+    instructions_parts = []
+    input_items = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+        if role in ("system", "developer"):
+            if content:
+                instructions_parts.append(content)
+        else:
+            input_items.append({"role": role, "content": content})
+    instructions = "\n\n".join(instructions_parts) if instructions_parts else None
+    return instructions, input_items
+
+
+def _extract_output_text(payload) -> str:
+    status = payload.get("status", "unknown")
+    output = payload.get("output") or []
+
+    texts = []
+    refusal = None
+    for item in output:
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            content_type = content.get("type")
+            if content_type == "output_text":
+                text = content.get("text")
+                if text:
+                    texts.append(text)
+            elif content_type == "refusal":
+                refusal = content.get("refusal")
+
+    joined = "\n".join(text.strip() for text in texts if text and text.strip()).strip()
+    if joined:
+        return joined
 
     # The provider accepted the request (2xx) but sent back nothing usable -
-    # a refusal, a tool-call-only turn, a content-filtered response, or a
-    # reasoning model burning its whole token budget on hidden reasoning
-    # before it could write any visible content (finish_reason="length" with
-    # an empty message) all look like this. Surface finish_reason/refusal so
-    # the caller's log line says *why*, and so it can pick a retry strategy.
-    finish_reason = choice.get("finish_reason", "unknown")
-    refusal = message.get("refusal")
+    # a refusal, a response cut short by the token budget, or a
+    # reasoning model burning its whole budget on hidden reasoning before it
+    # could write any visible content all look like this. Surface the
+    # incomplete reason/refusal so the caller's log line says *why*, and so
+    # it can pick a retry strategy.
+    incomplete_reason = (payload.get("incomplete_details") or {}).get("reason", "unknown")
     if refusal:
         raise LLMInvalidResponseError(
-            f"LLM refused the request (finish_reason={finish_reason}): {refusal}",
-            finish_reason=finish_reason,
+            f"LLM refused the request (status={status}): {refusal}",
+            finish_reason=incomplete_reason,
         )
     raise LLMInvalidResponseError(
-        f"LLM returned an empty message (finish_reason={finish_reason}, "
-        f"message_keys={sorted(message.keys())})",
-        finish_reason=finish_reason,
+        f"LLM returned an empty response (status={status}, incomplete_reason={incomplete_reason})",
+        finish_reason=incomplete_reason,
     )
 
 
@@ -142,9 +175,18 @@ def _post(url, body, timeout):
         _raise_for_status(resp)
 
     try:
-        return resp.json()
+        payload = resp.json()
     except ValueError as exc:
         raise LLMInvalidResponseError(f"Non-JSON response from LLM: {exc}") from exc
+
+    # The Responses API can return 2xx with status="failed" (e.g. a
+    # provider-side error surfaced mid-request) - treat that the same as an
+    # HTTP error rather than trying to extract text from it.
+    if payload.get("status") == "failed":
+        error = payload.get("error") or {}
+        raise LLMError(f"LLM response failed: {error.get('message') or error}")
+
+    return payload
 
 
 def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60):
@@ -152,14 +194,16 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
     if not config.OPENAI_API_KEY or not url:
         raise LLMConfigError("OPENAI_API_KEY is not configured")
 
-    # max_completion_tokens is the current OpenAI chat-completions parameter;
-    # some models (e.g. reasoning models) reject the legacy max_tokens name.
+    instructions, input_items = _split_instructions(messages)
+
     body = {
         "model": model or config.OPENAI_CHAT_MODEL,
-        "messages": messages,
+        "input": input_items,
         "temperature": temperature,
-        "max_completion_tokens": max_tokens,
+        "max_output_tokens": max_tokens,
     }
+    if instructions:
+        body["instructions"] = instructions
 
     try:
         payload = _post(url, body, timeout)
@@ -173,23 +217,23 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
             raise
 
     try:
-        return _extract_chat_content(payload)
+        return _extract_output_text(payload)
     except LLMInvalidResponseError as exc:
         retry_body = body
-        if exc.finish_reason == "length":
-            # The model spent its entire max_completion_tokens budget on
-            # hidden reasoning and never got to write visible content -
-            # retrying with the same budget would just hit the same wall.
-            # Give it more room instead.
-            current = int(body.get("max_completion_tokens") or max_tokens)
-            retry_body = {**body, "max_completion_tokens": min(current * 2, 4000)}
+        if exc.finish_reason == "max_output_tokens":
+            # The model spent its entire max_output_tokens budget on hidden
+            # reasoning and never got to write visible content - retrying
+            # with the same budget would just hit the same wall. Give it
+            # more room instead.
+            current = int(body.get("max_output_tokens") or max_tokens)
+            retry_body = {**body, "max_output_tokens": min(current * 2, 4000)}
             print(
                 f"llm_client: empty response from truncation ({exc.detail}); "
-                f"retrying once with max_completion_tokens={retry_body['max_completion_tokens']}"
+                f"retrying once with max_output_tokens={retry_body['max_output_tokens']}"
             )
         else:
-            # Otherwise treat it as a transient glitch (stray tool-call/refusal
-            # turn) and retry once with the same request.
+            # Otherwise treat it as a transient glitch (stray refusal turn)
+            # and retry once with the same request.
             print(f"llm_client: empty/invalid response ({exc.detail}); retrying once")
         payload = _post(url, retry_body, timeout)
-        return _extract_chat_content(payload)
+        return _extract_output_text(payload)

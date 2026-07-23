@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import StatsOverview from './components/StatsOverview';
+import DashboardOverview from './components/DashboardOverview';
 import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
@@ -18,8 +19,53 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, FolderKanban, CalendarClock, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+const SENTIMENT_COLORS = {
+  positive: '#16a34a',
+  negative: '#e11d48',
+  neutral: '#64748b',
+  mixed: '#f59e0b',
+};
+
+function dominantSentimentFromStats(stats) {
+  const total = Number(stats?.total) || 0;
+  if (!total) {
+    return { label: 'No data yet', color: 'var(--text-light)', pct: 0 };
+  }
+  const entries = [
+    { label: 'Positive', key: 'positive', value: Number(stats.positive) || 0 },
+    { label: 'Negative', key: 'negative', value: Number(stats.negative) || 0 },
+    { label: 'Neutral', key: 'neutral', value: Number(stats.neutral) || 0 },
+    { label: 'Mixed', key: 'mixed', value: Number(stats.mixed) || 0 },
+  ].sort((a, b) => b.value - a.value);
+  const top = entries[0];
+  const pct = Math.round((top.value / total) * 100);
+  return { label: `${top.label} - ${pct}%`, color: SENTIMENT_COLORS[top.key] };
+}
+
+const REPORT_PERIODS = [
+  { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '30d', label: 'Last 30 days', days: 30 },
+  { key: 'all', label: 'All time', days: null },
+];
+
+// Non-overlapping, back-to-back windows: offsetWindows=0 is "now minus N
+// days through now", offsetWindows=1 is the equal-length window right
+// before that - what "compare to previous period" diffs against.
+function timeAgo(dateString) {
+  if (!dateString) return null;
+  const diffMs = Date.now() - new Date(dateString).getTime();
+  if (!Number.isFinite(diffMs)) return null;
+  if (diffMs < 60000) return 'just now';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -54,17 +100,13 @@ export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
   const workflowSelectionStorageKey = 'strata.workflowSelectedProjectIds';
+  const { user, loading: authLoading } = useAuth();
+  // App mounts once at the router root and never unmounts across login/logout,
+  // so data-loading effects must key off this (not `[]`) or they run before the
+  // session cookie is confirmed and never refetch once auth resolves.
+  const isAuthenticated = !authLoading && !!user;
 
   const [projects, setProjects] = useState([]);
-  const [reportStats, setReportStats] = useState({
-    total: 0,
-    positive: 0,
-    negative: 0,
-    neutral: 0,
-    mixed: 0,
-    article_category_breakdown: [],
-    insights: {},
-  });
   const [workflowArticles, setWorkflowArticles] = useState([]);
   const [isScraping, setIsScraping] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState([]);
@@ -74,7 +116,12 @@ export default function App() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
+  const [lastIntelligenceSyncAt, setLastIntelligenceSyncAt] = useState(null);
+  const [reportPeriod, setReportPeriod] = useState('all');
+  const [dashboardPeriod, setDashboardPeriod] = useState('30d');
+  const [intelligence, setIntelligence] = useState(null);
+  const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false);
+  const [intelligenceError, setIntelligenceError] = useState(null);
   const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
     if (stored) {
@@ -103,15 +150,6 @@ export default function App() {
     [projects, selectedProjectId]
   );
 
-  const selectedProjectSourceIds = useMemo(
-    () => (selectedProject?.source_ids || []).map(Number),
-    [selectedProject]
-  );
-
-  const selectedProjectSources = useMemo(
-    () => sources.filter((source) => selectedProjectSourceIds.includes(Number(source.id))),
-    [sources, selectedProjectSourceIds]
-  );
 
   const workflowSelectedProjects = useMemo(() => {
     const selectedIds = new Set(workflowSelectedProjectIds.map((id) => Number(id)));
@@ -134,6 +172,17 @@ export default function App() {
     () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
     [pipelineRuns]
   );
+
+  const selectedPipelineHealth = useMemo(() => {
+    const scoped = pipelineRuns
+      .filter((run) => Number(run?.project_id) === Number(selectedProjectId))
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
+    return {
+      lastRun: scoped[0] || null,
+      lastFinished: scoped.find((run) => run?.finished_at) || null,
+    };
+  }, [pipelineRuns, selectedProjectId]);
+
 
   const coerceProjectId = (value) => {
     if (value == null) return null;
@@ -231,31 +280,24 @@ export default function App() {
     return fallback;
   };
 
-  const loadReportStats = async (projectId = selectedProjectId) => {
+  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod) => {
     const scopedProjectId = coerceProjectId(projectId);
-    setIsLoadingReportStats(true);
+    if (scopedProjectId == null) {
+      setIntelligence(null);
+      return;
+    }
+    setIsLoadingIntelligence(true);
+    setIntelligenceError(null);
     try {
-      const params = new URLSearchParams();
-      if (scopedProjectId != null) {
-        params.set('project_id', String(scopedProjectId));
-      }
-      const scopedRes = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
-      if (!scopedRes.ok) throw new Error(`Stats request failed: ${scopedRes.status}`);
-      const data = await scopedRes.json();
-      setReportStats({
-        total: Number(data?.total) || 0,
-        positive: Number(data?.positive) || 0,
-        negative: Number(data?.negative) || 0,
-        neutral: Number(data?.neutral) || 0,
-        mixed: Number(data?.mixed) || 0,
-        article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
-        insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
-      });
+      const res = await fetch(`/api/projects/${scopedProjectId}/intelligence?period=${encodeURIComponent(period)}`);
+      if (!res.ok) throw new Error(`Intelligence request failed: ${res.status}`);
+      setIntelligence(await res.json());
+      setLastIntelligenceSyncAt(new Date().toISOString());
     } catch (error) {
-      console.error('Failed to load report stats', error);
-      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0, mixed: 0, article_category_breakdown: [], insights: {} });
+      console.error('Failed to load project intelligence', error);
+      setIntelligenceError(error?.message || 'Failed to load project intelligence');
     } finally {
-      setIsLoadingReportStats(false);
+      setIsLoadingIntelligence(false);
     }
   };
 
@@ -303,25 +345,27 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
     refreshSources();
     refreshProjects();
     refreshUsers();
     return () => stopPolling();
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
     loadPipelineRuns();
     pipelineRunsPollRef.current = setInterval(loadPipelineRuns, 5000);
     return () => stopPipelineRunsPolling();
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    if (pathname !== '/pipeline-runs') return undefined;
+    if (!isAuthenticated || pathname !== '/pipeline-runs') return undefined;
     // Keeps repeat schedules (next_run_at) fresh so the upcoming-run placeholder
     // stays accurate while this page is open, without polling project data elsewhere.
     const interval = setInterval(refreshProjects, 15000);
     return () => clearInterval(interval);
-  }, [pathname]);
+  }, [isAuthenticated, pathname]);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -361,14 +405,23 @@ export default function App() {
   }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
-    if (pathname === '/dashboard' || pathname === '/') {
-      loadReportStats(selectedProjectId);
+    if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname)) return;
+
+    // Reports is project-scoped only (no "all projects" aggregate), so pick a
+    // default project as soon as one is available instead of showing an empty state.
+    if (selectedProjectId == null && projects.length > 0) {
+      setSelectedProjectId(Number(projects[0].id));
+      return;
     }
 
-    if (pathname === '/workflow') {
-      loadWorkflowArticles(workflowSelectedProjectIds);
-    }
-  }, [pathname, selectedProjectId, workflowSelectedProjectIds]);
+    const period = pathname === '/dashboard' ? dashboardPeriod : reportPeriod;
+    loadIntelligence(selectedProjectId, period);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod]);
+
+  useEffect(() => {
+    if (!isAuthenticated || pathname !== '/workflow') return;
+    loadWorkflowArticles(workflowSelectedProjectIds);
+  }, [isAuthenticated, pathname, workflowSelectedProjectIds]);
 
   const runScraper = async (projectIds = workflowSelectedProjectIds) => {
     const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
@@ -585,55 +638,175 @@ export default function App() {
   };
 
   const renderDashboardView = () => (
-    <div className="content-shell">
-      <header className="dashboard-hero">
-        <div>
-          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
-          <p className="subtitle">
-            Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
-          </p>
-        </div>
-
-        <div className="dashboard-hero-actions">
-          <select
-            className="filter-select"
-            value={selectedProjectId ?? ''}
-            onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-            disabled={isLoadingProjects || projects.length === 0}
-            style={{ minWidth: '220px' }}
-          >
-            <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name} ({project.status || 'draft'})
-              </option>
-            ))}
-          </select>
-          <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
-            <RefreshCw size={16} /> Refresh Reports
-          </button>
-        </div>
-      </header>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-        {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
-          <span className="panel-chip warning">
-            <RefreshCw size={12} className="spin" />
-            Loading dashboard
-          </span>
-        ) : (
-          <span className="panel-chip success">Dashboard ready</span>
-        )}
-      </div>
-
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-        <StatsOverview
-          stats={reportStats}
-          scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
-          loading={isLoadingReportStats}
-        />
-      </motion.div>
-    </div>
+    <DashboardOverview
+      projects={projects}
+      selectedProjectId={selectedProjectId}
+      onProjectChange={setSelectedProjectId}
+      period={dashboardPeriod}
+      onPeriodChange={setDashboardPeriod}
+      intelligence={intelligence}
+      loading={isLoadingIntelligence}
+      error={intelligenceError}
+      totalProjects={projects.length}
+      pipelineHealth={selectedPipelineHealth}
+      nextScheduledRun={selectedProject?.repeat_enabled && selectedProject?.next_run_at
+        ? { project: selectedProject, nextRunAt: new Date(selectedProject.next_run_at).getTime() }
+        : null}
+    />
   );
+
+  const renderReportsView = () => {
+    const hasProjects = projects.length > 0;
+    const liveReport = intelligence || {};
+    const dominantSentiment = dominantSentimentFromStats(liveReport);
+    const totalArticles = Number(liveReport.total) || 0;
+
+    let syncStatus;
+    if (intelligenceError) {
+      syncStatus = {
+        tone: 'error',
+        icon: <AlertCircle size={13} />,
+        label: 'Sync failed',
+        detail: intelligenceError,
+      };
+    } else if (isLoadingIntelligence) {
+      syncStatus = {
+        tone: 'loading',
+        icon: <RefreshCw size={13} className="spin" />,
+        label: 'Syncing',
+        detail: 'Fetching latest data...',
+      };
+    } else {
+      syncStatus = {
+        tone: 'success',
+        icon: <CheckCircle2 size={13} />,
+        label: 'Up to date',
+        detail: lastIntelligenceSyncAt ? `Updated ${timeAgo(lastIntelligenceSyncAt)}` : 'Not synced yet',
+      };
+    }
+
+    return (
+      <div className="content-shell">
+        <header className="report-header">
+          <div className="report-header-top">
+            <div className="report-heading">
+              <span className="report-kicker">
+                <BarChart3 size={13} /> Reports
+              </span>
+              <h2 className="report-title">
+                {selectedProject ? selectedProject.name : 'Select a project'}
+              </h2>
+              <p className="subtitle">
+                Sentiment, categories, and audience insights generated from analyzed articles.
+              </p>
+            </div>
+
+            <div className="report-header-actions">
+              <div className="report-project-control">
+                <label className="report-project-control-label" htmlFor="reports-project-select">
+                  <FolderKanban size={13} /> Project scope
+                </label>
+                <div className="report-project-select-wrap">
+                  <FolderKanban size={16} aria-hidden="true" />
+                  <select
+                    id="reports-project-select"
+                    className="filter-select report-project-select"
+                    value={selectedProjectId ?? ''}
+                    onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                    disabled={isLoadingProjects || !hasProjects}
+                    aria-label="Project scope for this report"
+                  >
+                    {hasProjects ? (
+                      projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name} ({project.status || 'draft'})
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No projects yet</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-secondary toolbar-button report-refresh-btn"
+                onClick={() => loadIntelligence(selectedProjectId, reportPeriod)}
+                disabled={isLoadingIntelligence || !hasProjects}
+                aria-busy={isLoadingIntelligence}
+              >
+                <RefreshCw size={16} className={isLoadingIntelligence ? 'spin' : ''} />
+                {isLoadingIntelligence ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          <div className="report-filter-row">
+            <div className="source-type-tabs" role="tablist" aria-label="Report date range">
+              {REPORT_PERIODS.map((period) => (
+                <button
+                  key={period.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={reportPeriod === period.key}
+                  className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
+                  onClick={() => setReportPeriod(period.key)}
+                >
+                  {period.label}
+                </button>
+              ))}
+            </div>
+
+          </div>
+
+          <ul className="report-summary-chips" aria-label="Report summary">
+            <li className="report-chip">
+              <FolderKanban size={13} aria-hidden="true" />
+              <span className="report-chip-label">Project</span>
+              <strong>{selectedProject ? selectedProject.name : 'None selected'}</strong>
+            </li>
+            <li className="report-chip">
+              <Activity size={13} aria-hidden="true" />
+              <span className="report-chip-label">Articles analyzed</span>
+              <strong>{totalArticles.toLocaleString()}</strong>
+            </li>
+            <li className="report-chip">
+              <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
+              <span className="report-chip-label">Dominant sentiment</span>
+              <strong style={{ color: dominantSentiment.color }}>{dominantSentiment.label}</strong>
+            </li>
+            <li className="report-chip">
+              <CalendarClock size={13} aria-hidden="true" />
+              <span className="report-chip-label">Range</span>
+              <strong>
+                {REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
+              </strong>
+            </li>
+            <li
+              className={`report-chip report-sync-chip report-sync-${syncStatus.tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              {syncStatus.icon}
+              <span className="report-chip-label">{syncStatus.label}</span>
+              <strong>{syncStatus.detail}</strong>
+            </li>
+          </ul>
+        </header>
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <StatsOverview
+            intelligence={liveReport}
+            scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
+            loading={isLoadingIntelligence}
+            error={intelligenceError}
+            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
+          />
+        </motion.div>
+      </div>
+    );
+  };
 
   const renderWorkflowRoute = () => (
     <WorkflowPage
@@ -657,6 +830,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
+          <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route
@@ -766,7 +940,14 @@ export default function App() {
           <Route path="/workflow" element={renderWorkflowRoute()} />
           <Route
             path="/intelligence"
-            element={<IntelligencePage key={selectedProjectId ?? 'all'} project={selectedProject} projectId={selectedProjectId} />}
+            element={
+              <IntelligencePage
+                key={selectedProjectId ?? 'all'}
+                project={selectedProject}
+                projectId={selectedProjectId}
+                projects={projects}
+              />
+            }
           />
           <Route
             path="/admin/users"

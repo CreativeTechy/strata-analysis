@@ -1,12 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
 import '../styles/Intelligence.css';
-import { Send, Bot, User, X, FileText, ChevronRight, ChevronLeft, Filter } from 'lucide-react';
+import {
+  Send,
+  Bot,
+  User,
+  X,
+  FileText,
+  ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
+  ChevronDown,
+  Filter,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { computeOverallTone } from '../lib/tone.js';
 
 const MATCHES_PAGE_SIZE = 4;
+
+// Local-date helpers for the date-range filter. Using local (not UTC)
+// components keeps `YYYY-MM-DD` strings round-tripping consistently between
+// the <input type="date"> values, the week/month presets, and the filter.
+function formatLocalDate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDate(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
 
 // Backend error codes (see backend/llm_client.py) mapped to short, friendly,
 // provider-neutral copy. Never surface raw provider/stack trace text here.
@@ -24,7 +51,7 @@ const LLM_ERROR_MESSAGES = {
 
 const DEFAULT_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 
-export default function IntelligencePage({ project = null, projectId = null }) {
+export default function IntelligencePage({ project = null, projectId = null, projects = [] }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
     if (typeof projectId === 'object') {
@@ -41,6 +68,24 @@ export default function IntelligencePage({ project = null, projectId = null }) {
   const [selectedSentiments, setSelectedSentiments] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
 
+  // Route-scoped project filter, following the same pattern as ArticlesPage:
+  // seeded from the dashboard's selected project but overridable on this page.
+  const [projectFilter, setProjectFilter] = useState(() => (normalizedProjectId != null ? String(normalizedProjectId) : 'all'));
+  const activeProject = useMemo(() => {
+    if (projectFilter === 'all') return null;
+    return projects.find((item) => String(item.id) === String(projectFilter)) || project;
+  }, [projects, projectFilter, project]);
+
+  // Each filter section collapses independently; matches panel collapses as a whole.
+  // All start collapsed.
+  const [openSections, setOpenSections] = useState({ site: false, sentiment: false, topic: false, date: false });
+  const toggleSection = (key) => setOpenSections((current) => ({ ...current, [key]: !current[key] }));
+  const [matchesCollapsed, setMatchesCollapsed] = useState(true);
+
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+  const [datePreset, setDatePreset] = useState('');
+
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [chatHistory, setChatHistory] = useState([
@@ -54,6 +99,9 @@ export default function IntelligencePage({ project = null, projectId = null }) {
   // Below the 960px breakpoint the filters sidebar and matches preview become
   // slide-in drawers instead of permanent grid columns; null means both closed.
   const [mobilePanel, setMobilePanel] = useState(null); // 'filters' | 'matches' | null
+  // On mobile the matches drawer always renders fully expanded; only the
+  // desktop rail collapses (same pattern as the main app Sidebar).
+  const showMatchesCollapsed = matchesCollapsed && mobilePanel !== 'matches';
 
   const formatMatchScore = (value) => {
     const score = Number(value);
@@ -69,8 +117,8 @@ export default function IntelligencePage({ project = null, projectId = null }) {
           offset: '0',
           sort: 'published.desc',
         });
-        if (normalizedProjectId != null) {
-          params.set('project_id', String(normalizedProjectId));
+        if (projectFilter !== 'all') {
+          params.set('project_id', String(projectFilter));
         }
         const res = await fetch(`/api/articles?${params.toString()}`);
         const data = await res.json().catch(() => ({}));
@@ -86,7 +134,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
       }
     }
     fetchData();
-  }, [normalizedProjectId]);
+  }, [projectFilter]);
 
   const filteredArticles = useMemo(() => {
     let result = articles;
@@ -99,8 +147,17 @@ export default function IntelligencePage({ project = null, projectId = null }) {
     if (selectedCategories.length > 0) {
       result = result.filter((a) => selectedCategories.includes(a.category));
     }
+    if (dateStart) {
+      const startTime = parseLocalDate(dateStart).getTime();
+      result = result.filter((a) => a.published && new Date(a.published).getTime() >= startTime);
+    }
+    if (dateEnd) {
+      // Treat the end date as inclusive of the whole day.
+      const endTime = parseLocalDate(dateEnd).getTime() + 24 * 60 * 60 * 1000 - 1;
+      result = result.filter((a) => a.published && new Date(a.published).getTime() <= endTime);
+    }
     return result;
-  }, [articles, selectedSites, selectedSentiments, selectedCategories]);
+  }, [articles, selectedSites, selectedSentiments, selectedCategories, dateStart, dateEnd]);
 
   const totalMatchesPages = Math.max(1, Math.ceil(filteredArticles.length / MATCHES_PAGE_SIZE));
   const safeMatchesPage = Math.min(matchesPage, totalMatchesPages);
@@ -122,6 +179,42 @@ export default function IntelligencePage({ project = null, projectId = null }) {
     setMatchesPage(1);
   };
 
+  const applyDatePreset = (preset) => {
+    const now = new Date();
+    let start;
+    let end;
+    if (preset === 'week') {
+      const daysSinceMonday = (now.getDay() + 6) % 7;
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    } else if (preset === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    } else {
+      setDatePreset('');
+      setDateStart('');
+      setDateEnd('');
+      setMatchesPage(1);
+      return;
+    }
+    setDatePreset(preset);
+    setDateStart(formatLocalDate(start));
+    setDateEnd(formatLocalDate(end));
+    setMatchesPage(1);
+  };
+
+  const handleDateStartChange = (value) => {
+    setDateStart(value);
+    setDatePreset('');
+    setMatchesPage(1);
+  };
+
+  const handleDateEndChange = (value) => {
+    setDateEnd(value);
+    setDatePreset('');
+    setMatchesPage(1);
+  };
+
   const handleSendMessage = async (presetText, { skipUserBubble = false } = {}) => {
     const question = (presetText ?? chatInput).trim();
     if (!question || isThinking) return;
@@ -138,21 +231,21 @@ export default function IntelligencePage({ project = null, projectId = null }) {
         body: JSON.stringify({
           question,
           total: filteredArticles.length,
-          project: project
+          project: activeProject
             ? {
-                id: project.id,
-                name: project.name,
-                status: project.status,
-                start_date: project.start_date,
-                end_date: project.end_date,
-                description: project.description,
-                location: project.location,
-                target_audience: project.target_audience,
-                hashtags: project.hashtags,
-                keywords: project.keywords,
+                id: activeProject.id,
+                name: activeProject.name,
+                status: activeProject.status,
+                start_date: activeProject.start_date,
+                end_date: activeProject.end_date,
+                description: activeProject.description,
+                location: activeProject.location,
+                target_audience: activeProject.target_audience,
+                hashtags: activeProject.hashtags,
+                keywords: activeProject.keywords,
               }
             : null,
-          project_id: projectId,
+          project_id: activeProject ? activeProject.id : null,
           articles: filteredArticles.map((a) => ({
             source: a.source,
             sentiment: a.sentiment,
@@ -191,7 +284,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
   };
 
   return (
-    <div className="intelligence-layout">
+    <div className={`intelligence-layout ${showMatchesCollapsed ? 'matches-collapsed' : ''}`}>
       <div className="bg-pattern"></div>
 
       {mobilePanel && <div className="intell-mobile-backdrop" onClick={() => setMobilePanel(null)} />}
@@ -204,50 +297,141 @@ export default function IntelligencePage({ project = null, projectId = null }) {
           <Filter size={18} /> Filters
         </h2>
 
-        <div style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginBottom: '12px' }}>
-          {project ? `Current project: ${project.name}` : 'Showing all projects.'}
+        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: '16px' }}>
+          Project
+          <select
+            className="filter-select"
+            style={{ display: 'block', width: '100%', marginTop: '6px' }}
+            value={projectFilter}
+            onChange={(e) => {
+              setProjectFilter(e.target.value);
+              setMatchesPage(1);
+            }}
+          >
+            <option value="all">All projects</option>
+            {projects.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} ({item.status || 'draft'})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="filter-group">
+          <button type="button" className="filter-group-header" onClick={() => toggleSection('site')}>
+            <h4>By Site</h4>
+            <ChevronDown size={16} className={`filter-group-chevron ${openSections.site ? 'open' : ''}`} />
+          </button>
+          {openSections.site && (
+            <div className="filter-group-content">
+              {sites.map((site) => (
+                <label key={site} className="filter-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedSites.includes(site)}
+                    onChange={() => toggleFilter(setSelectedSites, selectedSites, site)}
+                  />
+                  {site}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="filter-group">
-          <h4>By Site</h4>
-          {sites.map((site) => (
-            <label key={site} className="filter-option">
-              <input
-                type="checkbox"
-                checked={selectedSites.includes(site)}
-                onChange={() => toggleFilter(setSelectedSites, selectedSites, site)}
-              />
-              {site}
-            </label>
-          ))}
+          <button type="button" className="filter-group-header" onClick={() => toggleSection('sentiment')}>
+            <h4>By Sentiment</h4>
+            <ChevronDown size={16} className={`filter-group-chevron ${openSections.sentiment ? 'open' : ''}`} />
+          </button>
+          {openSections.sentiment && (
+            <div className="filter-group-content">
+              {sentiments.map((sent) => (
+                <label key={sent} className="filter-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedSentiments.includes(sent)}
+                    onChange={() => toggleFilter(setSelectedSentiments, selectedSentiments, sent)}
+                  />
+                  <span style={{ textTransform: 'capitalize' }}>{sent}</span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="filter-group">
-          <h4>By Sentiment</h4>
-          {sentiments.map((sent) => (
-            <label key={sent} className="filter-option">
-              <input
-                type="checkbox"
-                checked={selectedSentiments.includes(sent)}
-                onChange={() => toggleFilter(setSelectedSentiments, selectedSentiments, sent)}
-              />
-              <span style={{ textTransform: 'capitalize' }}>{sent}</span>
-            </label>
-          ))}
+          <button type="button" className="filter-group-header" onClick={() => toggleSection('topic')}>
+            <h4>By Topic</h4>
+            <ChevronDown size={16} className={`filter-group-chevron ${openSections.topic ? 'open' : ''}`} />
+          </button>
+          {openSections.topic && (
+            <div className="filter-group-content">
+              {categories.map((cat) => (
+                <label key={cat} className="filter-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedCategories.includes(cat)}
+                    onChange={() => toggleFilter(setSelectedCategories, selectedCategories, cat)}
+                  />
+                  {cat}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="filter-group">
-          <h4>By Topic</h4>
-          {categories.map((cat) => (
-            <label key={cat} className="filter-option">
-              <input
-                type="checkbox"
-                checked={selectedCategories.includes(cat)}
-                onChange={() => toggleFilter(setSelectedCategories, selectedCategories, cat)}
-              />
-              {cat}
-            </label>
-          ))}
+          <button type="button" className="filter-group-header" onClick={() => toggleSection('date')}>
+            <h4>By Date (published)</h4>
+            <ChevronDown size={16} className={`filter-group-chevron ${openSections.date ? 'open' : ''}`} />
+          </button>
+          {openSections.date && (
+            <div className="filter-group-content">
+              <div className="date-filter-presets">
+                <button
+                  type="button"
+                  className={`btn-secondary ${datePreset === 'week' ? 'active' : ''}`}
+                  onClick={() => applyDatePreset(datePreset === 'week' ? '' : 'week')}
+                >
+                  This Week
+                </button>
+                <button
+                  type="button"
+                  className={`btn-secondary ${datePreset === 'month' ? 'active' : ''}`}
+                  onClick={() => applyDatePreset(datePreset === 'month' ? '' : 'month')}
+                >
+                  This Month
+                </button>
+                {(dateStart || dateEnd) && (
+                  <button type="button" className="btn-secondary" onClick={() => applyDatePreset('')}>
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="date-filter-inputs">
+                <label>
+                  From
+                  <input
+                    type="date"
+                    className="filter-select date-input"
+                    value={dateStart}
+                    max={dateEnd || undefined}
+                    onChange={(e) => handleDateStartChange(e.target.value)}
+                  />
+                </label>
+                <label>
+                  To
+                  <input
+                    type="date"
+                    className="filter-select date-input"
+                    value={dateEnd}
+                    min={dateStart || undefined}
+                    onChange={(e) => handleDateEndChange(e.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -258,7 +442,7 @@ export default function IntelligencePage({ project = null, projectId = null }) {
           </h2>
           <p className="subtitle" style={{ fontSize: '0.9rem' }}>
             Chatting over {filteredArticles.length} articles
-            {project ? ` - ${project.name}` : ' - all projects'}
+            {activeProject ? ` - ${activeProject.name}` : ' - all projects'}
           </p>
 
           <div className="intell-mobile-toggle-row">
@@ -351,14 +535,38 @@ export default function IntelligencePage({ project = null, projectId = null }) {
         </div>
       </div>
 
-      <div className={`intell-preview ${mobilePanel === 'matches' ? 'mobile-open' : ''}`}>
+      <div
+        className={`intell-preview ${mobilePanel === 'matches' ? 'mobile-open' : ''} ${showMatchesCollapsed ? 'intell-preview-collapsed' : ''}`}
+      >
         <button type="button" className="intell-mobile-close" onClick={() => setMobilePanel(null)}>
           <X size={16} /> Close
         </button>
-        <h3 style={{ fontSize: '1.1rem', marginBottom: '10px', color: 'var(--text-light)' }}>
-          Matches ({filteredArticles.length})
-        </h3>
 
+        <div className="matches-panel-header">
+          <button
+            type="button"
+            className="matches-collapse-btn"
+            onClick={() => setMatchesCollapsed((value) => !value)}
+            title={matchesCollapsed ? 'Expand matches panel' : 'Collapse matches panel'}
+            aria-label={matchesCollapsed ? 'Expand matches panel' : 'Collapse matches panel'}
+          >
+            {showMatchesCollapsed ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
+          </button>
+          {!showMatchesCollapsed && (
+            <h3 style={{ fontSize: '1.1rem', color: 'var(--text-light)', margin: 0 }}>
+              Matches ({filteredArticles.length})
+            </h3>
+          )}
+        </div>
+
+        {showMatchesCollapsed && (
+          <span className="matches-collapsed-count" title={`${filteredArticles.length} matches`}>
+            {filteredArticles.length}
+          </span>
+        )}
+
+        {!showMatchesCollapsed && (
+        <>
         {pagedArticles.length === 0 ? (
           <div className="preview-empty">No matching articles for the current filters.</div>
         ) : (
@@ -429,6 +637,8 @@ export default function IntelligencePage({ project = null, projectId = null }) {
               </button>
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
 

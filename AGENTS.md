@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Architecture
 
@@ -43,6 +43,6 @@ Docker (full stack from repo root): `docker compose up --build`
 ## Constraints
 
 - Required backend env vars: `DATABASE_URL`, `OPENAI_API_KEY` (used for all AI: enrichment, Copilot chat, project/source discovery).
-- All LLM calls go through OpenAI's Responses API (`OPENAI_CHAT_MODEL`/`OPENAI_CHAT_BASE_URL` overridable; default model `gpt-5-nano`).
+- All LLM calls go through OpenAI's chat-completions endpoint (`OPENAI_CHAT_MODEL`/`OPENAI_CHAT_BASE_URL` overridable).
 - `EMBEDDING_MODEL`/`EMBEDDING_DEVICE` still run locally via sentence-transformers; unrelated to the chat LLM.
 - Keep `VITE_API_TARGET` (dashboard) consistent with the backend's actual base URL if deployed separately.
