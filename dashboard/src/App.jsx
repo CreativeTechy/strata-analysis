@@ -18,8 +18,93 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, FolderKanban, Database, CalendarClock, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+const PIPELINE_STATUS_COLORS = {
+  success: '#2ed573',
+  failed: '#ff4757',
+  running: '#ffb13b',
+  queued: '#9aa0aa',
+  cancelled: '#9aa0aa',
+};
+
+const SENTIMENT_COLORS = {
+  positive: '#16a34a',
+  negative: '#e11d48',
+  neutral: '#64748b',
+  mixed: '#f59e0b',
+};
+
+function dominantSentimentFromStats(stats) {
+  const total = Number(stats?.total) || 0;
+  if (!total) {
+    return { label: 'No data yet', color: 'var(--text-light)', pct: 0 };
+  }
+  const entries = [
+    { label: 'Positive', key: 'positive', value: Number(stats.positive) || 0 },
+    { label: 'Negative', key: 'negative', value: Number(stats.negative) || 0 },
+    { label: 'Neutral', key: 'neutral', value: Number(stats.neutral) || 0 },
+    { label: 'Mixed', key: 'mixed', value: Number(stats.mixed) || 0 },
+  ].sort((a, b) => b.value - a.value);
+  const top = entries[0];
+  const pct = Math.round((top.value / total) * 100);
+  return { label: `${top.label} - ${pct}%`, color: SENTIMENT_COLORS[top.key] };
+}
+
+const REPORT_PERIODS = [
+  { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '30d', label: 'Last 30 days', days: 30 },
+  { key: 'all', label: 'All time', days: null },
+];
+
+// Non-overlapping, back-to-back windows: offsetWindows=0 is "now minus N
+// days through now", offsetWindows=1 is the equal-length window right
+// before that - what "compare to previous period" diffs against.
+function reportPeriodWindow(periodKey, offsetWindows = 0) {
+  const period = REPORT_PERIODS.find((entry) => entry.key === periodKey);
+  if (!period?.days) return { dateFrom: null, dateTo: null };
+  const windowMs = period.days * 24 * 60 * 60 * 1000;
+  const to = Date.now() - offsetWindows * windowMs;
+  const from = to - windowMs;
+  return { dateFrom: new Date(from).toISOString(), dateTo: new Date(to).toISOString() };
+}
+
+function timeAgo(dateString) {
+  if (!dateString) return null;
+  const diffMs = Date.now() - new Date(dateString).getTime();
+  if (!Number.isFinite(diffMs)) return null;
+  if (diffMs < 60000) return 'just now';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function findNextScheduledRun(projects) {
+  const now = Date.now();
+  const candidates = projects
+    .filter((project) => project.repeat_enabled && project.next_run_at)
+    .map((project) => ({ project, nextRunAt: new Date(project.next_run_at).getTime() }))
+    .filter(({ nextRunAt }) => Number.isFinite(nextRunAt) && nextRunAt > now)
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+  return candidates[0] || null;
+}
+
+function formatCountdown(targetMs) {
+  const diffMs = targetMs - Date.now();
+  if (diffMs <= 0) return 'starting shortly';
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return 'in under a minute';
+  if (minutes === 1) return 'in 1 minute';
+  if (minutes < 60) return `in ${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d ${hours % 24}h`;
+}
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -80,6 +165,11 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isLoadingReportStats, setIsLoadingReportStats] = useState(true);
+  const [reportStatsError, setReportStatsError] = useState(null);
+  const [lastReportSyncAt, setLastReportSyncAt] = useState(null);
+  const [reportPeriod, setReportPeriod] = useState('all');
+  const [reportCompareEnabled, setReportCompareEnabled] = useState(false);
+  const [reportCompareStats, setReportCompareStats] = useState(null);
   const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
     if (stored) {
@@ -139,6 +229,21 @@ export default function App() {
     () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
     [pipelineRuns]
   );
+
+  const pipelineHealth = useMemo(() => {
+    const sorted = [...pipelineRuns].sort(
+      (a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime()
+    );
+    const counts = { queued: 0, running: 0, success: 0, failed: 0, cancelled: 0 };
+    pipelineRuns.forEach((run) => {
+      const status = String(run?.status || '').toLowerCase();
+      if (status in counts) counts[status] += 1;
+    });
+    const lastFinished = sorted.find((run) => run?.finished_at) || null;
+    return { lastRun: sorted[0] || null, counts, lastFinished };
+  }, [pipelineRuns]);
+
+  const nextScheduledRun = useMemo(() => findNextScheduledRun(projects), [projects]);
 
   const coerceProjectId = (value) => {
     if (value == null) return null;
@@ -236,29 +341,57 @@ export default function App() {
     return fallback;
   };
 
+  const fetchReportStatsForRange = async (scopedProjectId, { dateFrom, dateTo } = {}) => {
+    const params = new URLSearchParams();
+    if (scopedProjectId != null) {
+      params.set('project_id', String(scopedProjectId));
+    }
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    const res = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
+    if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
+    const data = await res.json();
+    return {
+      total: Number(data?.total) || 0,
+      positive: Number(data?.positive) || 0,
+      negative: Number(data?.negative) || 0,
+      neutral: Number(data?.neutral) || 0,
+      mixed: Number(data?.mixed) || 0,
+      article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
+      insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
+    };
+  };
+
   const loadReportStats = async (projectId = selectedProjectId) => {
     const scopedProjectId = coerceProjectId(projectId);
     setIsLoadingReportStats(true);
+    setReportStatsError(null);
+    const shouldCompare = reportCompareEnabled && reportPeriod !== 'all';
     try {
-      const params = new URLSearchParams();
-      if (scopedProjectId != null) {
-        params.set('project_id', String(scopedProjectId));
+      // Fetched independently of the (optional) compare request below: a
+      // failure comparing against the previous period shouldn't cost the
+      // user the primary numbers they actually asked to see.
+      const current = await fetchReportStatsForRange(scopedProjectId, reportPeriodWindow(reportPeriod, 0));
+      setReportStats(current);
+      setLastReportSyncAt(new Date().toISOString());
+
+      if (shouldCompare) {
+        try {
+          const previous = await fetchReportStatsForRange(scopedProjectId, reportPeriodWindow(reportPeriod, 1));
+          setReportCompareStats(previous);
+        } catch (compareError) {
+          console.error('Failed to load comparison period stats', compareError);
+          setReportCompareStats(null);
+        }
+      } else {
+        setReportCompareStats(null);
       }
-      const scopedRes = await fetch(`/api/articles/stats${params.toString() ? `?${params.toString()}` : ''}`);
-      if (!scopedRes.ok) throw new Error(`Stats request failed: ${scopedRes.status}`);
-      const data = await scopedRes.json();
-      setReportStats({
-        total: Number(data?.total) || 0,
-        positive: Number(data?.positive) || 0,
-        negative: Number(data?.negative) || 0,
-        neutral: Number(data?.neutral) || 0,
-        mixed: Number(data?.mixed) || 0,
-        article_category_breakdown: Array.isArray(data?.article_category_breakdown) ? data.article_category_breakdown : [],
-        insights: data?.insights && typeof data.insights === 'object' ? data.insights : {},
-      });
     } catch (error) {
+      // Deliberately leave reportStats/reportCompareStats untouched: keeping
+      // the last known-good numbers on screen alongside a clear error state
+      // reads better than blanking the report to a misleading "0 articles".
       console.error('Failed to load report stats', error);
-      setReportStats({ total: 0, positive: 0, negative: 0, neutral: 0, mixed: 0, article_category_breakdown: [], insights: {} });
+      setReportStatsError(error?.message || 'Failed to load reports');
     } finally {
       setIsLoadingReportStats(false);
     }
@@ -368,16 +501,22 @@ export default function App() {
   }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || pathname !== '/reports') return;
 
-    if (pathname === '/dashboard' || pathname === '/') {
-      loadReportStats(selectedProjectId);
+    // Reports is project-scoped only (no "all projects" aggregate), so pick a
+    // default project as soon as one is available instead of showing an empty state.
+    if (selectedProjectId == null && projects.length > 0) {
+      setSelectedProjectId(Number(projects[0].id));
+      return;
     }
 
-    if (pathname === '/workflow') {
-      loadWorkflowArticles(workflowSelectedProjectIds);
-    }
-  }, [isAuthenticated, pathname, selectedProjectId, workflowSelectedProjectIds]);
+    loadReportStats(selectedProjectId);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, reportPeriod, reportCompareEnabled]);
+
+  useEffect(() => {
+    if (!isAuthenticated || pathname !== '/workflow') return;
+    loadWorkflowArticles(workflowSelectedProjectIds);
+  }, [isAuthenticated, pathname, workflowSelectedProjectIds]);
 
   const runScraper = async (projectIds = workflowSelectedProjectIds) => {
     const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
@@ -597,52 +736,258 @@ export default function App() {
     <div className="content-shell">
       <header className="dashboard-hero">
         <div>
-          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
-          <p className="subtitle">
-            Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
-          </p>
-        </div>
-
-        <div className="dashboard-hero-actions">
-          <select
-            className="filter-select"
-            value={selectedProjectId ?? ''}
-            onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-            disabled={isLoadingProjects || projects.length === 0}
-            style={{ minWidth: '220px' }}
-          >
-            <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name} ({project.status || 'draft'})
-              </option>
-            ))}
-          </select>
-          <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
-            <RefreshCw size={16} /> Refresh Reports
-          </button>
+          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Dashboard</h2>
+          <p className="subtitle">Quick snapshot of your workspace</p>
         </div>
       </header>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-        {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
-          <span className="panel-chip warning">
-            <RefreshCw size={12} className="spin" />
-            Loading dashboard
-          </span>
-        ) : (
-          <span className="panel-chip success">Dashboard ready</span>
-        )}
-      </div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-        <StatsOverview
-          stats={reportStats}
-          scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
-          loading={isLoadingReportStats}
-        />
-      </motion.div>
+      <section className="stats-grid" style={{ marginTop: 28 }}>
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <div className="stat-icon">
+            <FolderKanban size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Total Projects</h4>
+            <p>{isLoadingProjects ? '—' : projects.length.toLocaleString()}</p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Across your workspace</span>
+          </div>
+        </motion.article>
+
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <div
+            className="stat-icon"
+            style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(56, 189, 248, 0.1))', color: '#6366f1' }}
+          >
+            <Database size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Pipeline Health</h4>
+            <p style={{ color: pipelineHealth.lastRun ? PIPELINE_STATUS_COLORS[String(pipelineHealth.lastRun.status || '').toLowerCase()] : 'var(--text-dark)' }}>
+              {pipelineHealth.lastRun
+                ? pipelineHealth.lastRun.status.charAt(0).toUpperCase() + pipelineHealth.lastRun.status.slice(1)
+                : 'No runs yet'}
+            </p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+              {pipelineHealth.lastFinished
+                ? `Last completed ${timeAgo(pipelineHealth.lastFinished.finished_at)}`
+                : 'No completed runs yet'}
+            </span>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <span className="panel-chip success">{pipelineHealth.counts.success} success</span>
+              <span className="panel-chip warning">{pipelineHealth.counts.running + pipelineHealth.counts.queued} running</span>
+              <span className="panel-chip" style={{ background: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' }}>
+                {pipelineHealth.counts.failed} failed
+              </span>
+            </div>
+          </div>
+        </motion.article>
+
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
+          <div
+            className="stat-icon"
+            style={{ background: 'linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(255, 159, 67, 0.1))', color: '#ff6b35' }}
+          >
+            <CalendarClock size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Next Run</h4>
+            <p style={{ fontSize: '1.4rem' }}>
+              {nextScheduledRun
+                ? nextScheduledRun.project.name || `Project #${nextScheduledRun.project.id}`
+                : 'None scheduled'}
+            </p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+              {nextScheduledRun
+                ? `Runs ${formatCountdown(nextScheduledRun.nextRunAt)} - ${new Date(nextScheduledRun.nextRunAt).toLocaleString()}`
+                : 'Enable a repeat schedule on a project to see it here'}
+            </span>
+          </div>
+        </motion.article>
+      </section>
     </div>
   );
+
+  const renderReportsView = () => {
+    const hasProjects = projects.length > 0;
+    const dominantSentiment = dominantSentimentFromStats(reportStats);
+    const totalArticles = Number(reportStats.total) || 0;
+
+    let syncStatus;
+    if (reportStatsError) {
+      syncStatus = {
+        tone: 'error',
+        icon: <AlertCircle size={13} />,
+        label: 'Sync failed',
+        detail: reportStatsError,
+      };
+    } else if (isLoadingReportStats) {
+      syncStatus = {
+        tone: 'loading',
+        icon: <RefreshCw size={13} className="spin" />,
+        label: 'Syncing',
+        detail: 'Fetching latest data...',
+      };
+    } else {
+      syncStatus = {
+        tone: 'success',
+        icon: <CheckCircle2 size={13} />,
+        label: 'Up to date',
+        detail: lastReportSyncAt ? `Updated ${timeAgo(lastReportSyncAt)}` : 'Not synced yet',
+      };
+    }
+
+    return (
+      <div className="content-shell">
+        <header className="report-header">
+          <div className="report-header-top">
+            <div className="report-heading">
+              <span className="report-kicker">
+                <BarChart3 size={13} /> Reports
+              </span>
+              <h2 className="report-title">
+                {selectedProject ? selectedProject.name : 'Select a project'}
+              </h2>
+              <p className="subtitle">
+                Sentiment, categories, and audience insights generated from analyzed articles.
+              </p>
+            </div>
+
+            <div className="report-header-actions">
+              <div className="report-project-control">
+                <label className="report-project-control-label" htmlFor="reports-project-select">
+                  <FolderKanban size={13} /> Project scope
+                </label>
+                <div className="report-project-select-wrap">
+                  <FolderKanban size={16} aria-hidden="true" />
+                  <select
+                    id="reports-project-select"
+                    className="filter-select report-project-select"
+                    value={selectedProjectId ?? ''}
+                    onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                    disabled={isLoadingProjects || !hasProjects}
+                    aria-label="Project scope for this report"
+                  >
+                    {hasProjects ? (
+                      projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name} ({project.status || 'draft'})
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No projects yet</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-secondary toolbar-button report-refresh-btn"
+                onClick={() => loadReportStats()}
+                disabled={isLoadingReportStats || !hasProjects}
+                aria-busy={isLoadingReportStats}
+              >
+                <RefreshCw size={16} className={isLoadingReportStats ? 'spin' : ''} />
+                {isLoadingReportStats ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          <div className="report-filter-row">
+            <div className="source-type-tabs" role="tablist" aria-label="Report date range">
+              {REPORT_PERIODS.map((period) => (
+                <button
+                  key={period.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={reportPeriod === period.key}
+                  className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
+                  onClick={() => setReportPeriod(period.key)}
+                >
+                  {period.label}
+                </button>
+              ))}
+            </div>
+
+            <label className={`report-compare-toggle ${reportPeriod === 'all' ? 'disabled' : ''}`}>
+              <input
+                type="checkbox"
+                checked={reportCompareEnabled}
+                disabled={reportPeriod === 'all'}
+                onChange={(e) => setReportCompareEnabled(e.target.checked)}
+              />
+              Compare to previous period
+            </label>
+          </div>
+
+          <ul className="report-summary-chips" aria-label="Report summary">
+            <li className="report-chip">
+              <FolderKanban size={13} aria-hidden="true" />
+              <span className="report-chip-label">Project</span>
+              <strong>{selectedProject ? selectedProject.name : 'None selected'}</strong>
+            </li>
+            <li className="report-chip">
+              <Activity size={13} aria-hidden="true" />
+              <span className="report-chip-label">Articles analyzed</span>
+              <strong>{totalArticles.toLocaleString()}</strong>
+            </li>
+            <li className="report-chip">
+              <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
+              <span className="report-chip-label">Dominant sentiment</span>
+              <strong style={{ color: dominantSentiment.color }}>{dominantSentiment.label}</strong>
+            </li>
+            <li className="report-chip">
+              <CalendarClock size={13} aria-hidden="true" />
+              <span className="report-chip-label">Range</span>
+              <strong>
+                {REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
+                {reportCompareEnabled && reportPeriod !== 'all' ? ' (compared)' : ''}
+              </strong>
+            </li>
+            <li
+              className={`report-chip report-sync-chip report-sync-${syncStatus.tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              {syncStatus.icon}
+              <span className="report-chip-label">{syncStatus.label}</span>
+              <strong>{syncStatus.detail}</strong>
+            </li>
+          </ul>
+        </header>
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <StatsOverview
+            stats={reportStats}
+            compareStats={reportCompareEnabled && reportPeriod !== 'all' ? reportCompareStats : null}
+            comparePeriodLabel={(() => {
+              const period = REPORT_PERIODS.find((entry) => entry.key === reportPeriod);
+              return period?.days ? `${period.days}-day period` : null;
+            })()}
+            scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
+            loading={isLoadingReportStats}
+            error={reportStatsError}
+            onRetry={() => loadReportStats()}
+          />
+        </motion.div>
+      </div>
+    );
+  };
 
   const renderWorkflowRoute = () => (
     <WorkflowPage
@@ -666,6 +1011,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
+          <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route
