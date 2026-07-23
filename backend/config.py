@@ -42,8 +42,11 @@ _load_dotenv()
 
 DATABASE_URL = db.get_database_url()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_CHAT_BASE_URL = os.environ.get("OPENAI_CHAT_BASE_URL", "https://api.openai.com/v1/chat/completions")
-OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5.5-2026-04-23")
+# OPENAI_CHAT_BASE_URL/OPENAI_CHAT_MODEL are kept as the env var names for
+# backward compatibility with existing deployments; they now point at the
+# Responses API (see llm_client.py), not chat completions.
+OPENAI_CHAT_BASE_URL = os.environ.get("OPENAI_CHAT_BASE_URL", "https://api.openai.com/v1/responses")
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-nano")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
