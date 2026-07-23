@@ -775,7 +775,14 @@ export default function App() {
           <Route path="/workflow" element={renderWorkflowRoute()} />
           <Route
             path="/intelligence"
-            element={<IntelligencePage key={selectedProjectId ?? 'all'} project={selectedProject} projectId={selectedProjectId} />}
+            element={
+              <IntelligencePage
+                key={selectedProjectId ?? 'all'}
+                project={selectedProject}
+                projectId={selectedProjectId}
+                projects={projects}
+              />
+            }
           />
           <Route
             path="/admin/users"

@@ -4,6 +4,14 @@
   min-height: 100vh;
   max-width: 100vw;
   overflow-x: hidden;
+  transition: grid-template-columns 0.25s ease;
+}
+
+/* Horizontal collapse for the Matches column, mirroring the app Sidebar's
+   rail collapse: the column shrinks to a slim strip instead of hiding its
+   content in place. */
+.intelligence-layout.matches-collapsed {
+  grid-template-columns: 280px minmax(0, 1fr) 64px;
 }
 
 .intell-sidebar {
@@ -130,6 +138,12 @@
   border-left: 1px solid rgba(0,0,0,0.06);
   background: rgba(255,255,255,0.55);
   overflow-y: auto;
+  transition: padding 0.25s ease;
+}
+
+.intell-preview.intell-preview-collapsed {
+  padding: 24px 10px;
+  overflow: hidden;
 }
 
 .preview-card {
@@ -199,8 +213,38 @@
 }
 
 .filter-group h4 {
-  margin-bottom: 8px;
+  margin-bottom: 0;
   font-size: 0.9rem;
+}
+
+/* Collapsible header shared by each sidebar filter section (By Site,
+   By Sentiment, By Topic, By Date). */
+.filter-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 4px 0;
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+}
+
+.filter-group-chevron {
+  flex-shrink: 0;
+  color: var(--text-light);
+  transition: transform 0.2s ease;
+}
+
+.filter-group-chevron.open {
+  transform: rotate(180deg);
+}
+
+.filter-group-content {
+  margin-top: 4px;
 }
 
 .filter-option {
@@ -209,6 +253,94 @@
   gap: 8px;
   padding: 8px 0;
   font-size: 0.85rem;
+}
+
+.date-filter-presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.date-filter-presets .btn-secondary {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.date-filter-presets .btn-secondary.active {
+  background: var(--primary-color);
+  color: #fff;
+  border-color: var(--primary-color);
+}
+
+.date-filter-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.date-filter-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-light);
+}
+
+.date-filter-inputs .date-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+/* Single control that collapses/expands the whole Matches panel horizontally
+   (same rail pattern as the app Sidebar: the column shrinks to a strip that
+   holds only the toggle button and a count badge). */
+.matches-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+.intell-preview-collapsed .matches-panel-header {
+  justify-content: center;
+  padding-bottom: 16px;
+}
+
+.matches-collapse-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.6);
+  color: var(--text-dark);
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.matches-collapse-btn:hover {
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 6px 14px rgba(15,23,42,0.08);
+}
+
+.matches-collapsed-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(46, 134, 222, 0.12);
+  color: var(--secondary-color);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .matches-pagination {
@@ -257,6 +389,10 @@
     grid-template-columns: 240px minmax(0, 1fr) 280px;
   }
 
+  .intelligence-layout.matches-collapsed {
+    grid-template-columns: 240px minmax(0, 1fr) 64px;
+  }
+
   .intell-chat-header {
     padding: 18px 28px;
   }
@@ -277,7 +413,8 @@
    into off-canvas drawers toggled from the buttons in the chat header and
    dismissed via their own close button or the backdrop. */
 @media (max-width: 960px) {
-  .intelligence-layout {
+  .intelligence-layout,
+  .intelligence-layout.matches-collapsed {
     grid-template-columns: 1fr;
   }
 
@@ -402,6 +539,10 @@
     width: 90vw;
     max-width: 90vw;
     padding: 20px;
+  }
+
+  .date-filter-inputs {
+    grid-template-columns: 1fr;
   }
 
   .article-detail-overlay {
