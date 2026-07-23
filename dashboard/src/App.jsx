@@ -54,6 +54,11 @@ export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
   const workflowSelectionStorageKey = 'strata.workflowSelectedProjectIds';
+  const { user, loading: authLoading } = useAuth();
+  // App mounts once at the router root and never unmounts across login/logout,
+  // so data-loading effects must key off this (not `[]`) or they run before the
+  // session cookie is confirmed and never refetch once auth resolves.
+  const isAuthenticated = !authLoading && !!user;
 
   const [projects, setProjects] = useState([]);
   const [reportStats, setReportStats] = useState({
@@ -303,25 +308,27 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
     refreshSources();
     refreshProjects();
     refreshUsers();
     return () => stopPolling();
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
     loadPipelineRuns();
     pipelineRunsPollRef.current = setInterval(loadPipelineRuns, 5000);
     return () => stopPipelineRunsPolling();
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    if (pathname !== '/pipeline-runs') return undefined;
+    if (!isAuthenticated || pathname !== '/pipeline-runs') return undefined;
     // Keeps repeat schedules (next_run_at) fresh so the upcoming-run placeholder
     // stays accurate while this page is open, without polling project data elsewhere.
     const interval = setInterval(refreshProjects, 15000);
     return () => clearInterval(interval);
-  }, [pathname]);
+  }, [isAuthenticated, pathname]);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -361,6 +368,8 @@ export default function App() {
   }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     if (pathname === '/dashboard' || pathname === '/') {
       loadReportStats(selectedProjectId);
     }
@@ -368,7 +377,7 @@ export default function App() {
     if (pathname === '/workflow') {
       loadWorkflowArticles(workflowSelectedProjectIds);
     }
-  }, [pathname, selectedProjectId, workflowSelectedProjectIds]);
+  }, [isAuthenticated, pathname, selectedProjectId, workflowSelectedProjectIds]);
 
   const runScraper = async (projectIds = workflowSelectedProjectIds) => {
     const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
