@@ -18,8 +18,52 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, FolderKanban, Database, CalendarClock } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+const PIPELINE_STATUS_COLORS = {
+  success: '#2ed573',
+  failed: '#ff4757',
+  running: '#ffb13b',
+  queued: '#9aa0aa',
+  cancelled: '#9aa0aa',
+};
+
+function timeAgo(dateString) {
+  if (!dateString) return null;
+  const diffMs = Date.now() - new Date(dateString).getTime();
+  if (!Number.isFinite(diffMs)) return null;
+  if (diffMs < 60000) return 'just now';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function findNextScheduledRun(projects) {
+  const now = Date.now();
+  const candidates = projects
+    .filter((project) => project.repeat_enabled && project.next_run_at)
+    .map((project) => ({ project, nextRunAt: new Date(project.next_run_at).getTime() }))
+    .filter(({ nextRunAt }) => Number.isFinite(nextRunAt) && nextRunAt > now)
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+  return candidates[0] || null;
+}
+
+function formatCountdown(targetMs) {
+  const diffMs = targetMs - Date.now();
+  if (diffMs <= 0) return 'starting shortly';
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return 'in under a minute';
+  if (minutes === 1) return 'in 1 minute';
+  if (minutes < 60) return `in ${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d ${hours % 24}h`;
+}
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -139,6 +183,21 @@ export default function App() {
     () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
     [pipelineRuns]
   );
+
+  const pipelineHealth = useMemo(() => {
+    const sorted = [...pipelineRuns].sort(
+      (a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime()
+    );
+    const counts = { queued: 0, running: 0, success: 0, failed: 0, cancelled: 0 };
+    pipelineRuns.forEach((run) => {
+      const status = String(run?.status || '').toLowerCase();
+      if (status in counts) counts[status] += 1;
+    });
+    const lastFinished = sorted.find((run) => run?.finished_at) || null;
+    return { lastRun: sorted[0] || null, counts, lastFinished };
+  }, [pipelineRuns]);
+
+  const nextScheduledRun = useMemo(() => findNextScheduledRun(projects), [projects]);
 
   const coerceProjectId = (value) => {
     if (value == null) return null;
@@ -368,16 +427,22 @@ export default function App() {
   }, [workflowSelectedProjectIds]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || pathname !== '/reports') return;
 
-    if (pathname === '/dashboard' || pathname === '/') {
-      loadReportStats(selectedProjectId);
+    // Reports is project-scoped only (no "all projects" aggregate), so pick a
+    // default project as soon as one is available instead of showing an empty state.
+    if (selectedProjectId == null && projects.length > 0) {
+      setSelectedProjectId(Number(projects[0].id));
+      return;
     }
 
-    if (pathname === '/workflow') {
-      loadWorkflowArticles(workflowSelectedProjectIds);
-    }
-  }, [isAuthenticated, pathname, selectedProjectId, workflowSelectedProjectIds]);
+    loadReportStats(selectedProjectId);
+  }, [isAuthenticated, pathname, selectedProjectId, projects]);
+
+  useEffect(() => {
+    if (!isAuthenticated || pathname !== '/workflow') return;
+    loadWorkflowArticles(workflowSelectedProjectIds);
+  }, [isAuthenticated, pathname, workflowSelectedProjectIds]);
 
   const runScraper = async (projectIds = workflowSelectedProjectIds) => {
     const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
@@ -597,9 +662,99 @@ export default function App() {
     <div className="content-shell">
       <header className="dashboard-hero">
         <div>
+          <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Dashboard</h2>
+          <p className="subtitle">Quick snapshot of your workspace</p>
+        </div>
+      </header>
+
+      <section className="stats-grid" style={{ marginTop: 28 }}>
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <div className="stat-icon">
+            <FolderKanban size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Total Projects</h4>
+            <p>{isLoadingProjects ? '—' : projects.length.toLocaleString()}</p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Across your workspace</span>
+          </div>
+        </motion.article>
+
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <div
+            className="stat-icon"
+            style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(56, 189, 248, 0.1))', color: '#6366f1' }}
+          >
+            <Database size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Pipeline Health</h4>
+            <p style={{ color: pipelineHealth.lastRun ? PIPELINE_STATUS_COLORS[String(pipelineHealth.lastRun.status || '').toLowerCase()] : 'var(--text-dark)' }}>
+              {pipelineHealth.lastRun
+                ? pipelineHealth.lastRun.status.charAt(0).toUpperCase() + pipelineHealth.lastRun.status.slice(1)
+                : 'No runs yet'}
+            </p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+              {pipelineHealth.lastFinished
+                ? `Last completed ${timeAgo(pipelineHealth.lastFinished.finished_at)}`
+                : 'No completed runs yet'}
+            </span>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <span className="panel-chip success">{pipelineHealth.counts.success} success</span>
+              <span className="panel-chip warning">{pipelineHealth.counts.running + pipelineHealth.counts.queued} running</span>
+              <span className="panel-chip" style={{ background: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' }}>
+                {pipelineHealth.counts.failed} failed
+              </span>
+            </div>
+          </div>
+        </motion.article>
+
+        <motion.article
+          className="glass-card stat-card"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
+          <div
+            className="stat-icon"
+            style={{ background: 'linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(255, 159, 67, 0.1))', color: '#ff6b35' }}
+          >
+            <CalendarClock size={24} />
+          </div>
+          <div className="stat-info">
+            <h4>Next Run</h4>
+            <p style={{ fontSize: '1.4rem' }}>
+              {nextScheduledRun
+                ? nextScheduledRun.project.name || `Project #${nextScheduledRun.project.id}`
+                : 'None scheduled'}
+            </p>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
+              {nextScheduledRun
+                ? `Runs ${formatCountdown(nextScheduledRun.nextRunAt)} - ${new Date(nextScheduledRun.nextRunAt).toLocaleString()}`
+                : 'Enable a repeat schedule on a project to see it here'}
+            </span>
+          </div>
+        </motion.article>
+      </section>
+    </div>
+  );
+
+  const renderReportsView = () => (
+    <div className="content-shell">
+      <header className="dashboard-hero">
+        <div>
           <h2 style={{ fontSize: '1.8rem', color: 'var(--text-dark)' }}>Reports</h2>
           <p className="subtitle">
-            Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - all projects'}
+            Overview metrics and pipeline health{selectedProject ? ` for ${selectedProject.name}` : ' - select a project'}
           </p>
         </div>
 
@@ -611,14 +766,17 @@ export default function App() {
             disabled={isLoadingProjects || projects.length === 0}
             style={{ minWidth: '220px' }}
           >
-            <option value="">{projects.length ? 'all projects' : 'No projects yet'}</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name} ({project.status || 'draft'})
-              </option>
-            ))}
+            {projects.length === 0 ? (
+              <option value="">No projects yet</option>
+            ) : (
+              projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name} ({project.status || 'draft'})
+                </option>
+              ))
+            )}
           </select>
-          <button className="btn-secondary toolbar-button" onClick={loadReportStats}>
+          <button className="btn-secondary toolbar-button" onClick={() => loadReportStats()}>
             <RefreshCw size={16} /> Refresh Reports
           </button>
         </div>
@@ -627,17 +785,17 @@ export default function App() {
         {(isLoadingReportStats || isLoadingProjects || isLoadingSources) ? (
           <span className="panel-chip warning">
             <RefreshCw size={12} className="spin" />
-            Loading dashboard
+            Loading reports
           </span>
         ) : (
-          <span className="panel-chip success">Dashboard ready</span>
+          <span className="panel-chip success">Reports ready</span>
         )}
       </div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
         <StatsOverview
           stats={reportStats}
-          scopeLabel={selectedProject ? selectedProject.name : 'all projects'}
+          scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
           loading={isLoadingReportStats}
         />
       </motion.div>
@@ -666,6 +824,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
+          <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route
