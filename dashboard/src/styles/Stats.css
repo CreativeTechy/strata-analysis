@@ -1,10 +1,10 @@
-/* Page-specific responsive/overflow fixes for the Dashboard stats screen
+/* Page-specific responsive/overflow fixes for the Reports screen
    (src/components/StatsOverview.jsx). Shared layout primitives
-   (.stats-grid, .stat-card, .sentiment-report, .mini-list-row, etc.) live in
+   (.stats-grid, .stat-card, .report-section, .mini-list-row, etc.) live in
    src/styles/index.css - this file only patches gaps found during the
    responsive pass below. Everything here is scoped under .stats-overview
-   (the root <section>) so it can't leak into other screens that happen to
-   reuse similarly-named classes. */
+   (also present on the root <section>, alongside .report-body) so it can't
+   leak into other screens that happen to reuse similarly-named classes. */
 
 /* Stat cards: .stat-info has no min-width in index.css, so inside the flex
    .stat-card row a long, unbreakable string (e.g. a big "1,234,567" count)
@@ -17,21 +17,6 @@
 .stats-overview .stat-info p {
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-/* The sentiment report card used a fixed inline min-height sized for the
-   desktop two-column top layout. Below 960px everything stacks into one
-   column and the real content (chart + category chart + six insight lists)
-   is always much taller than 560px anyway, so keep the floor for desktop
-   only - on mobile it just adds dead space above the fold. */
-.stats-overview .sentiment-report-card {
-  min-height: 560px;
-}
-
-@media (max-width: 960px) {
-  .stats-overview .sentiment-report-card {
-    min-height: 0;
-  }
 }
 
 /* Article-category bar chart: the Y axis reserves a fixed pixel width for
@@ -54,16 +39,57 @@
   }
 }
 
-/* Insight list rows (top praised features, complaints, etc.): the category
-   chip next to the row text doesn't shrink (flex-shrink: 0 in index.css) and
-   can overflow a narrow phone card when the category name is long. Let it
-   drop to its own line instead of pushing past the card edge. */
-@media (max-width: 480px) {
-  .stats-overview .mini-list-row-copy {
-    flex-wrap: wrap;
+/* Insight-category tab bar (Praised features / Complaints / ...): six tabs
+   wrapping onto multiple rows reads as a tall, busy block on phone widths.
+   Scroll it horizontally as a single row instead - every panel is still
+   reachable (via swipe or the arrow-key roving-tabindex handler), nothing
+   is hidden, it just collapses vertically. */
+@media (max-width: 640px) {
+  .stats-overview .report-insight-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .stats-overview .mini-list-row-subtle {
+  .stats-overview .report-insight-tabs .source-type-tab {
+    flex-shrink: 0;
+  }
+}
+
+/* Audience Insights hero + cards: the hero's desktop padding/title size and
+   the card's side-by-side text/count layout are generous by design, but
+   need to shrink on phones so they don't eat the whole viewport height or
+   force the count column into an awkwardly narrow strip. */
+@media (max-width: 640px) {
+  .stats-overview .report-insights-hero {
+    padding: 24px 20px;
+  }
+
+  .stats-overview .report-insights-hero-title {
+    font-size: 1.4rem;
+  }
+
+  .stats-overview .report-insight-card {
+    padding: 18px;
+  }
+
+  .stats-overview .report-insight-card-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .stats-overview .report-insight-card-count {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .stats-overview .report-insight-card-count span {
+    margin-top: 0;
+  }
+
+  .stats-overview .report-insight-card-cta {
     max-width: 100%;
   }
 }

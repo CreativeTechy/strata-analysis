@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 import re
 
 import config
@@ -93,6 +94,23 @@ def _normalize_tone(value: str | None) -> str:
     return tone if tone in VALID_TONES else "neutral"
 
 
+def _normalize_date_bound(value: str | None) -> str:
+    """Validate a date/datetime filter bound before it reaches SQL.
+
+    An invalid value is dropped (treated as "no bound") rather than sent to
+    Postgres, so a bad query param can't blow up the request or silently
+    zero out a report - it just falls back to unfiltered for that bound.
+    """
+    text = _normalize_text(value)
+    if not text:
+        return ""
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return text
+
+
 def compute_overall_tone(article_tone, writer_tone):
     """Deterministic overall_tone for a single article. Never guessed by the AI."""
     article_tone = _normalize_tone(article_tone)
@@ -176,7 +194,7 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
     clauses = []
     params = []
 
@@ -210,19 +228,36 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None):
             clauses.append("id = any(%s)")
             params.append(article_ids)
 
+    date_from_value = _normalize_date_bound(date_from)
+    if date_from_value:
+        clauses.append("coalesce(published, created_at) >= %s")
+        params.append(date_from_value)
+
+    date_to_value = _normalize_date_bound(date_to)
+    if date_to_value:
+        clauses.append("coalesce(published, created_at) <= %s")
+        params.append(date_to_value)
+
     if clauses:
         return " where " + " and ".join(clauses), params
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None):
     if not config.DATABASE_URL:
         return [], 0
 
     field, direction = _normalize_sort(order)
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
-    where_sql, params = _where_parts(search=search, sentiment=sentiment, category=category, project_id=project_id)
+    where_sql, params = _where_parts(
+        search=search,
+        sentiment=sentiment,
+        category=category,
+        project_id=project_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     try:
         rows = db.fetch_all(
@@ -249,7 +284,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         return [], 0
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None):
     if not config.DATABASE_URL:
         return []
 
@@ -268,6 +303,8 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             project_id=project_id,
             order=order,
             select=select,
+            date_from=date_from,
+            date_to=date_to,
         )
         if not batch:
             break
@@ -391,7 +428,7 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def _search_results(search=None, sentiment=None, category=None, project_id=None):
+def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
@@ -399,6 +436,8 @@ def _search_results(search=None, sentiment=None, category=None, project_id=None)
         select=ARTICLES_SELECT,
         order=DEFAULT_SORT,
         limit=SEARCH_SCAN_LIMIT,
+        date_from=date_from,
+        date_to=date_to,
     )
     ranked_rows, matched_rows = _rank_search_rows(rows, search)
     if _normalize_text(search):
@@ -407,7 +446,7 @@ def _search_results(search=None, sentiment=None, category=None, project_id=None)
     return ranked_rows, len(ranked_rows)
 
 
-def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=1000):
+def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=1000, date_from=None, date_to=None):
     if not config.DATABASE_URL:
         return []
 
@@ -424,6 +463,8 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             project_id=project_id,
             order="created_at.desc",
             select="url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary",
+            date_from=date_from,
+            date_to=date_to,
         )
         if not batch:
             break
@@ -795,7 +836,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
     return _attach_project_similarity_scores(rows, project_id)
 
 
-def _count_articles(search=None, sentiment=None, category=None, project_id=None):
+def _count_articles(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
     search_text = _normalize_text(search)
     if search_text:
         _, total = _search_results(
@@ -803,6 +844,8 @@ def _count_articles(search=None, sentiment=None, category=None, project_id=None)
             sentiment=sentiment,
             category=category,
             project_id=project_id,
+            date_from=date_from,
+            date_to=date_to,
         )
         return total
 
@@ -815,21 +858,31 @@ def _count_articles(search=None, sentiment=None, category=None, project_id=None)
         project_id=project_id,
         order=DEFAULT_SORT,
         select="id",
+        date_from=date_from,
+        date_to=date_to,
     )
     return total
 
 
-def get_article_stats(search=None, category=None, project_id=None):
-    total = _count_articles(search=search, category=category, project_id=project_id)
-    positive = _count_articles(search=search, sentiment="positive", category=category, project_id=project_id)
-    negative = _count_articles(search=search, sentiment="negative", category=category, project_id=project_id)
-    neutral = _count_articles(search=search, sentiment="neutral", category=category, project_id=project_id)
-    mixed = _count_articles(search=search, sentiment="mixed", category=category, project_id=project_id)
+def get_article_stats(search=None, category=None, project_id=None, date_from=None, date_to=None):
+    """Sentiment/category/insight rollup for a scope, optionally bounded to a date window.
+
+    date_from/date_to are ISO date or datetime strings compared against
+    coalesce(published, created_at); either can be omitted for an open-ended
+    bound. The response shape is unchanged from the unfiltered case so
+    existing UI consumers keep working - the date window only narrows which
+    articles are counted.
+    """
+    total = _count_articles(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+    positive = _count_articles(search=search, sentiment="positive", category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+    negative = _count_articles(search=search, sentiment="negative", category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+    neutral = _count_articles(search=search, sentiment="neutral", category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+    mixed = _count_articles(search=search, sentiment="mixed", category=category, project_id=project_id, date_from=date_from, date_to=date_to)
     search_text = _normalize_text(search)
     if search_text:
-        rows, _ = _search_results(search=search_text, category=category, project_id=project_id)
+        rows, _ = _search_results(search=search_text, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
     else:
-        rows = _fetch_rows_for_stats(search=search, category=category, project_id=project_id)
+        rows = _fetch_rows_for_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
 
     return {
         "total": total,

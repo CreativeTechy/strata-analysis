@@ -589,9 +589,11 @@ def get_articles_stats(
     search: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
-    return get_article_stats(search=search, category=category, project_id=project_id)
+    return get_article_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
 
 
 @app.get("/api/articles/export")
