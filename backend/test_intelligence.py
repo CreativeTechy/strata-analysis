@@ -7,6 +7,7 @@ from intelligence import (
     count_configured_terms,
     emotion_signature,
     filter_rows_for_period,
+    keyword_existence_over_time,
     net_sentiment,
     pipeline_discovery_series,
 )
@@ -57,6 +58,40 @@ class IntelligenceHelpersTests(unittest.TestCase):
             {"published": "2026-06-01T12:00:00Z"},
         ]
         self.assertEqual(len(filter_rows_for_period(rows, "7d", now)), 1)
+
+    def test_keyword_existence_splits_into_one_series_per_keyword(self):
+        rows = [
+            {"published": "2026-07-20T00:00:00Z", "title": "EV recall", "summary": "", "text": ""},
+            {"published": "2026-07-20T00:00:00Z", "title": "battery fire", "summary": "", "text": ""},
+            {"published": "2026-07-21T00:00:00Z", "title": "no matches here", "summary": "", "text": ""},
+        ]
+        series = keyword_existence_over_time(rows, ["EV", "battery"], all_keywords=True)
+        self.assertEqual(
+            series,
+            [
+                {"date": "2026-07-20", "EV": 1, "battery": 1},
+                {"date": "2026-07-21", "EV": 0, "battery": 0},
+            ],
+        )
+
+    def test_keyword_existence_combines_keywords_without_double_counting(self):
+        rows = [
+            {"published": "2026-07-20T00:00:00Z", "title": "EV battery recall", "summary": "", "text": ""},
+            {"published": "2026-07-20T00:00:00Z", "title": "battery only", "summary": "", "text": ""},
+        ]
+        series = keyword_existence_over_time(rows, ["EV", "battery"], all_keywords=False)
+        self.assertEqual(series, [{"date": "2026-07-20", "matches": 2}])
+
+    def test_keyword_existence_filters_by_source_url(self):
+        rows = [
+            {"published": "2026-07-20T00:00:00Z", "source_url": "https://a.example.com", "title": "EV news", "summary": "", "text": ""},
+            {"published": "2026-07-20T00:00:00Z", "source_url": "https://b.example.com", "title": "EV news too", "summary": "", "text": ""},
+        ]
+        series = keyword_existence_over_time(rows, ["EV"], source_url="https://a.example.com", all_keywords=False)
+        self.assertEqual(series, [{"date": "2026-07-20", "matches": 1}])
+
+    def test_keyword_existence_returns_empty_without_keywords(self):
+        self.assertEqual(keyword_existence_over_time([{"title": "EV"}], []), [])
 
 
 if __name__ == "__main__":
