@@ -45,7 +45,7 @@ from projects_store import (
     set_project_users,
     update_project,
 )
-from intelligence import get_project_intelligence, normalize_period
+from intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
 from sources_store import (
     bootstrap_sources,
     create_source,
@@ -609,6 +609,21 @@ def get_project_intelligence_view(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     return get_project_intelligence(project, normalize_period(period))
+
+
+@app.get("/api/projects/{project_id}/keyword-existence")
+def get_project_keyword_existence_view(
+    project_id: int,
+    period: str = "30d",
+    source_url: str | None = None,
+    keyword: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return get_project_keyword_existence(project, normalize_period(period), source_url=source_url, keyword=keyword)
 
 
 @app.get("/api/articles/export")

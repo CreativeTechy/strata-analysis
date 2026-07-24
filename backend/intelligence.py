@@ -138,6 +138,60 @@ def count_configured_terms(rows: list[dict], hashtags=None, keywords=None) -> li
     return sorted(terms, key=lambda item: (-item["mentions"], item["term"].lower()))
 
 
+def keyword_existence_over_time(
+    rows: list[dict],
+    keywords: list[str],
+    source_url: str | None = None,
+    all_keywords: bool = False,
+) -> list[dict]:
+    """Per-day counts of articles that contain each keyword at least once.
+
+    When `all_keywords` is True, each day carries one count per keyword (for
+    the "one series per keyword" view). Otherwise the keywords are combined
+    into a single `matches` count per day, i.e. articles matching any of the
+    given keywords, without double-counting an article against itself.
+    """
+    cleaned = []
+    seen = set()
+    for raw in keywords or []:
+        label = str(raw or "").strip()
+        if not label or label.lower() in seen:
+            continue
+        seen.add(label.lower())
+        cleaned.append(label)
+    if not cleaned:
+        return []
+
+    scoped_rows = rows
+    if source_url:
+        target = str(source_url).strip().lower()
+        scoped_rows = [row for row in rows if str(row.get("source_url") or "").strip().lower() == target]
+
+    patterns = {label: rf"(?<!\w){re.escape(label)}(?!\w)" for label in cleaned}
+    daily = defaultdict(lambda: {label: 0 for label in cleaned})
+    daily_any = defaultdict(int)
+    for row in scoped_rows:
+        date = article_date(row)
+        if not date:
+            continue
+        key = date.date().isoformat()
+        bucket = daily[key]
+        daily_any.setdefault(key, 0)
+        haystack = " ".join(str(row.get(field) or "") for field in ("title", "summary", "text"))
+        matched_any = False
+        for label in cleaned:
+            if re.search(patterns[label], haystack, re.IGNORECASE):
+                bucket[label] += 1
+                matched_any = True
+        if matched_any:
+            daily_any[key] += 1
+
+    dates = sorted(daily.keys())
+    if all_keywords:
+        return [{"date": date, **daily[date]} for date in dates]
+    return [{"date": date, "matches": daily_any[date]} for date in dates]
+
+
 def pipeline_discovery_series(runs: list[dict]) -> list[dict]:
     points = []
     previous = None
@@ -250,4 +304,36 @@ def get_project_intelligence(project: dict, period: str = "30d") -> dict:
         "trending_terms": count_configured_terms(rows, project.get("hashtags"), project.get("keywords")),
         "pipeline_discovery": pipeline_discovery_series(_fetch_pipeline_runs(project["id"])),
         "insights": _topic_summary(rows),
+    }
+
+
+def get_project_keyword_existence(
+    project: dict,
+    period: str = "30d",
+    source_url: str | None = None,
+    keyword: str | None = None,
+) -> dict:
+    period = normalize_period(period)
+    rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+    configured_keywords = [str(term).strip() for term in (project.get("keywords") or []) if str(term or "").strip()]
+
+    normalized_keyword = str(keyword or "").strip()
+    all_keywords = not normalized_keyword or normalized_keyword.lower() == "all"
+    selected_keywords = (
+        configured_keywords
+        if all_keywords
+        else [term for term in configured_keywords if term.lower() == normalized_keyword.lower()]
+    )
+
+    normalized_source = str(source_url or "").strip()
+    scoped_source = None if not normalized_source or normalized_source.lower() == "all" else normalized_source
+
+    return {
+        "project_id": project["id"],
+        "period": period,
+        "keywords": configured_keywords,
+        "selected_keywords": selected_keywords,
+        "all_keywords": all_keywords,
+        "source_url": scoped_source,
+        "series": keyword_existence_over_time(rows, selected_keywords, source_url=scoped_source, all_keywords=all_keywords),
     }

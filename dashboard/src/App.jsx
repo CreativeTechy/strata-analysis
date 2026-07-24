@@ -802,6 +802,9 @@ export default function App() {
             loading={isLoadingIntelligence}
             error={intelligenceError}
             onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
+            project={selectedProject}
+            sources={sources}
+            period={reportPeriod}
           />
         </motion.div>
       </div>
