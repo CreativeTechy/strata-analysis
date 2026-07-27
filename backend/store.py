@@ -8,12 +8,15 @@ import json
 
 import config
 import db
+import dedup
 from embeddings import cosine_similarity
 from projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
 from psycopg.types.json import Jsonb
+from timestamps import parse_published
 
 ARTICLE_COLUMNS = (
-    "url", "source", "source_url", "title", "author", "published", "text",
+    "url", "source", "source_url", "title", "author", "published",
+    "published_at", "published_precision", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "article_category", "writer_tone", "article_tone", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
@@ -34,6 +37,8 @@ ARTICLE_MUTABLE_FIELDS = (
     "title",
     "author",
     "published",
+    "published_at",
+    "published_precision",
     "text",
     "fetched_at",
     "summary",
@@ -75,7 +80,15 @@ ARTICLE_JSON_FIELDS = {
 
 
 def _row(article):
-    return {k: article.get(k) for k in ARTICLE_COLUMNS}
+    row = {k: article.get(k) for k in ARTICLE_COLUMNS}
+    # Single chokepoint for the parsed publish timestamp, so every save path
+    # (pipeline, re-enrich, backfill) gets it without its own date handling.
+    # `published` stays as the raw provenance string.
+    if row.get("published_at") is None and not row.get("published_precision"):
+        parsed, precision = parse_published(row.get("published"))
+        row["published_at"] = parsed
+        row["published_precision"] = precision
+    return row
 
 
 def _legacy_row(article):
@@ -174,7 +187,54 @@ def _article_returning_sql():
     returning = ["id", "source_url"]
     if "embedding_json" in columns:
         returning.append("embedding_json")
+    if "story_id" in columns:
+        returning.append("story_id")
     return ", ".join(returning)
+
+
+def _assign_story_group(article, saved_row):
+    """Group a freshly saved article with any near-identical story already stored.
+
+    Syndication grouping is global (project_id null) rather than per project: a
+    wire story is the same story whoever is watching it, and "independent
+    stories in this project" is then `count(distinct story_id)` over the
+    project's articles.
+
+    Skipped when the row already carries a story_id, so re-scraping an article
+    cannot inflate a group's member_count.
+    """
+    if "story_id" not in _article_columns():
+        return None
+    if not saved_row or saved_row.get("story_id") is not None:
+        return saved_row.get("story_id") if saved_row else None
+
+    article_id = saved_row.get("id")
+    if article_id is None:
+        return None
+
+    row = _row(article)
+    try:
+        with db.transaction() as cur:
+            story_id, _created = dedup.assign_story(
+                cur,
+                {
+                    "id": article_id,
+                    "title": row.get("title"),
+                    "text": row.get("text"),
+                    "published_at": row.get("published_at"),
+                },
+                project_id=None,
+            )
+            if story_id is not None:
+                cur.execute(
+                    "update articles set story_id = %s where id = %s",
+                    (story_id, article_id),
+                )
+        return story_id
+    except Exception as exc:
+        # Grouping is an enrichment of the row, not a condition of storing it.
+        _log_db_error("  story grouping skipped", exc)
+        return None
 
 
 def _article_row(article):
@@ -185,7 +245,7 @@ def _article_row(article):
         value = row[field]
         if field in ARTICLE_JSON_FIELDS:
             value = _jsonb_param(value)
-        elif field in {"fetched_at", "analyzed_at", "embedded_at"}:
+        elif field in {"fetched_at", "analyzed_at", "embedded_at", "published_at"}:
             value = _null_if_blank(value)
         params.append(value)
     return fields, tuple(params)
@@ -267,6 +327,7 @@ def save_articles(articles, batch_size=50):
             for article in source_batch:
                 row = _upsert_article_row(article)
                 if row:
+                    _assign_story_group(article, row)
                     persisted.append((article, row))
                     sent += 1
                     saved_by_source[_source_key(article)] += 1

@@ -142,6 +142,11 @@ SENTIMENT_CLASSIFIER_MODEL = os.environ.get(
 # "cpu" or "cuda"/"cuda:0" etc.
 SENTIMENT_CLASSIFIER_DEVICE = os.environ.get("SENTIMENT_CLASSIFIER_DEVICE", "cpu").strip()
 
+# Apply pending schema migrations when the API starts. Set false to manage them
+# out of band (`python migrate.py`) — e.g. when several backend replicas share
+# one database and only a deploy step should migrate it.
+MIGRATE_ON_STARTUP = _env_bool("MIGRATE_ON_STARTUP", True)
+
 
 # --- Auth -------------------------------------------------------------------
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "strata_session")
