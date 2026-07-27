@@ -50,15 +50,6 @@ OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-nano")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
-# Optional dedicated sentiment classifier (see sentiment_classifier.py).
-# Empty by default - disabled, overall_sentiment comes from the LLM alone.
-# Set to a Hugging Face text-classification model id, e.g.
-# "cardiffnlp/twitter-roberta-base-sentiment-latest", to have enrich.py
-# double-check LLM "neutral" calls and promote them to positive/negative when
-# the classifier is confident (>= SENTIMENT_CLASSIFIER_MIN_SCORE).
-SENTIMENT_CLASSIFIER_MODEL = os.environ.get("SENTIMENT_CLASSIFIER_MODEL", "").strip()
-SENTIMENT_CLASSIFIER_MIN_SCORE = float(os.environ.get("SENTIMENT_CLASSIFIER_MIN_SCORE", "0.6") or 0.6)
-
 SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 30)
 SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
 
@@ -68,6 +59,22 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Dedicated sentiment classifier (see sentiment_classifier.py), used in place
+# of the LLM for `overall_sentiment` only - every other enrichment field
+# (summary, topic, article_category, tones, feedback lists, ...) still comes
+# from the LLM either way. Off by default: false/unset means enrich.py keeps
+# using the LLM's own sentiment call, exactly as before this existed.
+ENABLE_SENTIMENT_CLASSIFIER = _env_bool("ENABLE_SENTIMENT_CLASSIFIER", False)
+SENTIMENT_CLASSIFIER_MODEL = os.environ.get(
+    "SENTIMENT_CLASSIFIER_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest"
+).strip()
+# "cpu" or "cuda"/"cuda:0" etc.
+SENTIMENT_CLASSIFIER_DEVICE = os.environ.get("SENTIMENT_CLASSIFIER_DEVICE", "cpu").strip()
+# Below this confidence, treat the classifier's call as unreliable and keep
+# the LLM's sentiment instead of overriding it.
+SENTIMENT_CLASSIFIER_MIN_SCORE = float(os.environ.get("SENTIMENT_CLASSIFIER_MIN_SCORE", "0.6") or 0.6)
 
 
 # --- Auth -------------------------------------------------------------------

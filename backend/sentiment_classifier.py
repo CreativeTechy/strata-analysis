@@ -1,24 +1,33 @@
-"""Optional dedicated sentiment classifier, used only to double-check
-`overall_sentiment` - the rest of the enrichment payload stays LLM-driven.
+"""Dedicated sentiment classifier for article `overall_sentiment`.
 
-Disabled by default. Set `SENTIMENT_CLASSIFIER_MODEL` in backend/.env to a
-Hugging Face text-classification model id (e.g.
-"cardiffnlp/twitter-roberta-base-sentiment-latest") to enable it.
+Why a separate classifier instead of the LLM: the enrichment LLM call is one
+prompt producing the whole payload (summary, topic, category, tones, feedback
+lists, ...), and it tends to hedge sentiment toward "neutral". Sentiment is
+also a narrow, well-studied classification task a small dedicated model
+handles reliably and cheaply, so it's pulled out into its own path rather
+than reworking the shared enrichment prompt. Everything else in the payload
+still comes from that one LLM call, untouched.
 
-Where this plugs in: enrich.py calls classify_sentiment() only when the LLM's
-overall_sentiment came back "neutral", and only promotes it to positive/negative
-when the classifier is confident (see SENTIMENT_CLASSIFIER_MIN_SCORE in
-config.py). It never overrides a non-neutral LLM sentiment and it can't
-produce "mixed" itself, so LLM-detected nuance (mixed, category-driven
-negative, etc.) is left alone. This targets the specific failure mode of an
-overly-cautious prompt/model defaulting to neutral, without touching anything
-else in the pipeline.
+Toggle: set `ENABLE_SENTIMENT_CLASSIFIER=true` in backend/.env to switch
+article sentiment over to this classifier; leave it false/unset (the
+default) to keep the existing LLM-based sentiment. This is a plain env
+lookup read fresh from `config` on every call, so flipping it in .env and
+restarting the process is enough - no code change needed.
+
+Model: `SENTIMENT_CLASSIFIER_MODEL` (default
+"cardiffnlp/twitter-roberta-base-sentiment-latest"), run on
+`SENTIMENT_CLASSIFIER_DEVICE` ("cpu" or "cuda"/"cuda:0"). That model is
+3-class (positive/negative/neutral) and can't express "mixed" - rather than
+force a "mixed" verdict out of logic that isn't there, this simply never
+returns "mixed"; enrich.py falls back to the LLM's own sentiment (which can
+say "mixed") whenever the classifier has nothing usable to say.
 
 `transformers` is already a transitive dependency of sentence-transformers
 (see requirements.txt), so enabling this normally requires no new install.
-If it's missing, or the model fails to load, this fails soft to None and
-enrich.py just keeps the LLM's sentiment - the pipeline never breaks because
-of this module.
+If it's missing, disabled, or the model fails to load or errors at
+inference time, classify_sentiment() returns None and enrich.py keeps
+whatever sentiment it already had - this module can never crash the
+pipeline or leave a field unset.
 """
 
 from __future__ import annotations
@@ -39,37 +48,57 @@ _LABEL_ALIASES = {
 }
 
 
+def _resolve_device():
+    """Map SENTIMENT_CLASSIFIER_DEVICE to the int/str transformers.pipeline expects."""
+    device = (config.SENTIMENT_CLASSIFIER_DEVICE or "cpu").strip().lower()
+    if not device.startswith("cuda"):
+        return -1
+    parts = device.split(":", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    return 0
+
+
 @lru_cache(maxsize=1)
-def _load_pipeline():
-    model_name = (config.SENTIMENT_CLASSIFIER_MODEL or "").strip()
-    if not model_name:
-        return None
+def _load_pipeline(model_name: str, device_setting: str):
     try:
         from transformers import pipeline
     except Exception:
         logger.warning(
-            "SENTIMENT_CLASSIFIER_MODEL=%s is set but the `transformers` package "
-            "isn't installed; the dedicated sentiment classifier is disabled.",
-            model_name,
+            "ENABLE_SENTIMENT_CLASSIFIER is set but the `transformers` package "
+            "isn't installed; falling back to the LLM's sentiment."
         )
         return None
     try:
-        return pipeline("sentiment-analysis", model=model_name)
+        return pipeline("sentiment-analysis", model=model_name, device=_resolve_device())
     except Exception:
-        logger.exception("Failed to load sentiment classifier model '%s'", model_name)
+        logger.exception(
+            "Failed to load sentiment classifier model '%s' on device '%s'",
+            model_name,
+            device_setting,
+        )
         return None
 
 
 def classify_sentiment(text: str):
     """Return {"label": "positive"|"negative"|"neutral", "score": float}, or
-    None if the classifier is disabled, unavailable, or failed - callers
-    should treat None as "no opinion" and keep whatever sentiment they have.
+    None if the classifier is disabled, unavailable, misconfigured, or
+    failed to produce a usable label - callers should treat None as "no
+    opinion" and keep whatever sentiment they already have.
     """
+    if not config.ENABLE_SENTIMENT_CLASSIFIER:
+        return None
+
+    model_name = (config.SENTIMENT_CLASSIFIER_MODEL or "").strip()
+    if not model_name:
+        logger.warning("ENABLE_SENTIMENT_CLASSIFIER is set but SENTIMENT_CLASSIFIER_MODEL is empty.")
+        return None
+
     text = (text or "").strip()
     if not text:
         return None
 
-    classifier = _load_pipeline()
+    classifier = _load_pipeline(model_name, config.SENTIMENT_CLASSIFIER_DEVICE or "cpu")
     if classifier is None:
         return None
 

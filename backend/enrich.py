@@ -850,19 +850,35 @@ def build_topic_insight(articles, topic_name=""):
 
 
 def _apply_sentiment_classifier(validated, *, title, text):
-    """Optionally promote an LLM "neutral" sentiment using a dedicated
-    classifier (see sentiment_classifier.py). No-op unless
-    SENTIMENT_CLASSIFIER_MODEL is configured; never touches a non-neutral
-    LLM sentiment.
+    """Swap `overall_sentiment`/`sentiment` for the dedicated classifier's
+    verdict when ENABLE_SENTIMENT_CLASSIFIER is on (see
+    sentiment_classifier.py) - everything else in `validated` (summary,
+    topic, category, tones, feedback lists, ...) stays exactly what the LLM
+    produced. Sentiment is pulled out into its own model because it's a
+    narrow classification task prone to LLM hedging; the rest of the
+    payload needs the LLM's broader understanding of the article and isn't
+    touched here.
+
+    If the classifier is disabled, unavailable, misconfigured, or returns a
+    low-confidence/unusable result, this is a no-op and the LLM's own
+    sentiment (set earlier by _validate_enrichment) is left in place - the
+    classifier can only ever replace sentiment, never break it.
     """
-    if not config.SENTIMENT_CLASSIFIER_MODEL or validated.get("overall_sentiment") != "neutral":
+    if not config.ENABLE_SENTIMENT_CLASSIFIER:
         return
 
     classifier_text = "\n".join(
         part for part in (title, validated.get("summary"), text) if part
     ).strip()
-    result = classify_sentiment(classifier_text)
-    if not result or result["label"] == "neutral":
+    try:
+        result = classify_sentiment(classifier_text)
+    except Exception as e:
+        # classify_sentiment() already catches its own errors and returns
+        # None; this is a defense-in-depth backstop so a bug there can never
+        # take down the rest of an otherwise-good LLM enrichment.
+        print(f"  Sentiment classifier failed for '{title[:50]}': {e}")
+        return
+    if not result:
         return
     if result["score"] < config.SENTIMENT_CLASSIFIER_MIN_SCORE:
         return
