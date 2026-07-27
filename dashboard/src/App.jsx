@@ -7,6 +7,10 @@ import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
 import IntelligencePage from './components/IntelligencePage';
+import CompetitorStudiesPage from './components/CompetitorStudiesPage';
+import CompetitorOnboarding from './components/CompetitorOnboarding';
+import CompetitorWorkspace from './components/CompetitorWorkspace';
+import CompetitorReportPage from './components/CompetitorReportPage';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import ArticlesPage from './components/ArticlesPage';
@@ -951,6 +955,41 @@ export default function App() {
                 projects={projects}
               />
             }
+          />
+          {/* Competitor study — a separate experience from the sentiment/opinion
+              screens above, so it keeps its own routes and its own project scope
+              (a study *is* a project, in competitor mode). */}
+          <Route
+            path="/competitors"
+            element={(
+              <RequirePermission permissions={['competitors.view']}>
+                <CompetitorStudiesPage />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/new"
+            element={(
+              <RequirePermission permissions={['competitors.manage']}>
+                <CompetitorOnboarding />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/:studyId"
+            element={(
+              <RequirePermission permissions={['competitors.view']}>
+                <CompetitorWorkspace />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/:studyId/reports/:findingId"
+            element={(
+              <RequirePermission permissions={['competitors.view']}>
+                <CompetitorReportPage />
+              </RequirePermission>
+            )}
           />
           <Route
             path="/admin/users"

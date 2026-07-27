@@ -20,6 +20,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, R
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+import competitor_api
 import config
 import migrate
 import permissions_store
@@ -92,6 +93,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# The competitor study is a separate experience from sentiment/opinions, so its
+# routes live in their own module rather than growing this one.
+app.include_router(competitor_api.router)
 
 
 @app.exception_handler(HTTPException)

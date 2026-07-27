@@ -1,0 +1,412 @@
+"""HTTP surface for the competitor study.
+
+Kept in its own APIRouter rather than appended to main.py: this is a separate
+experience from sentiment/opinions, and separating the routes is what keeps the
+two from tangling as either one grows.
+
+Long-running work (website scrape, competitor discovery, analysis generation) runs
+synchronously and is expected to take tens of seconds — the UI shows staged
+progress for it, matching how the existing project discovery flow behaves.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+
+import business_profile_store
+import competitor_analysis
+import competitor_discovery
+import competitors_store
+import db
+from auth import require_permission
+
+router = APIRouter(prefix="/api/competitor", tags=["competitor"])
+
+
+def _project_or_404(project_id: int) -> dict:
+    project = db.fetch_one(
+        "select id, name, mode, status, repeat_enabled, next_run_at, last_run_at, last_run_status "
+        "from projects where id = %s",
+        (int(project_id),),
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def _competitor_or_404(competitor_id: int) -> dict:
+    competitor = competitors_store.get_competitor(competitor_id)
+    if not competitor:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+    return competitor
+
+
+# --------------------------------------------------------------------------- #
+# Studies
+# --------------------------------------------------------------------------- #
+@router.get("/studies")
+def list_studies(user: dict = Depends(require_permission("competitors.view"))):
+    """Competitor-mode projects with enough summary to render the index."""
+    return {
+        "studies": db.fetch_all(
+            """
+            select p.id, p.name, p.status, p.mode, p.created_at, p.updated_at,
+                   p.repeat_enabled, p.next_run_at, p.last_run_at, p.last_run_status,
+                   bp.name as business_name, bp.website as business_website,
+                   bp.market, bp.industry, bp.scrape_status,
+                   coalesce(c.tracked, 0)::int   as tracked_competitors,
+                   coalesce(c.suggested, 0)::int as suggested_competitors,
+                   coalesce(f.total, 0)::int     as finding_count,
+                   coalesce(f.high, 0)::int      as high_impact_count,
+                   f.latest_generated_at
+            from projects p
+            left join business_profiles bp on bp.project_id = p.id
+            left join (
+                select project_id,
+                       count(*) filter (where status = 'tracked')   as tracked,
+                       count(*) filter (where status = 'suggested') as suggested
+                from competitors group by project_id
+            ) c on c.project_id = p.id
+            left join (
+                select project_id, count(*) as total,
+                       count(*) filter (where impact_level = 'high') as high,
+                       max(generated_at) as latest_generated_at
+                from competitor_findings group by project_id
+            ) f on f.project_id = p.id
+            where p.mode = 'competitor'
+            order by p.created_at desc
+            """
+        )
+    }
+
+
+@router.post("/studies")
+def create_study(payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Create a competitor-mode project. The business profile is added next."""
+    name = str((payload or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A study name is required.")
+    project = db.fetch_one(
+        """
+        insert into projects (name, mode, status, description)
+        values (%s, 'competitor', %s, %s)
+        returning id, name, mode, status, created_at
+        """,
+        (name, str((payload or {}).get("status") or "active"),
+         str((payload or {}).get("description") or "").strip() or None),
+    )
+    if not project:
+        raise HTTPException(status_code=500, detail="Could not create the study.")
+    return {"study": project}
+
+
+@router.get("/studies/{project_id}")
+def get_study(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    project = _project_or_404(project_id)
+    return {
+        "study": project,
+        "profile": business_profile_store.get_profile(project_id),
+        "competitors": competitors_store.competitor_overview(project_id),
+        "findings": competitor_analysis.list_findings(project_id),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Business profile
+# --------------------------------------------------------------------------- #
+@router.get("/studies/{project_id}/profile")
+def get_profile(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    _project_or_404(project_id)
+    return {"profile": business_profile_store.get_profile(project_id)}
+
+
+@router.post("/studies/{project_id}/profile")
+def build_profile(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Scrape the business's website and derive its market context.
+
+    Returns the scrape outcome alongside the profile so the UI can say how many
+    pages were actually read — a thin scrape produces a weak profile, and that
+    should be visible rather than inferred later from poor competitor matches.
+    """
+    _project_or_404(project_id)
+    payload = payload or {}
+    if not str(payload.get("name") or "").strip():
+        raise HTTPException(status_code=400, detail="A business name is required.")
+    return business_profile_store.build_profile(project_id, payload)
+
+
+@router.put("/studies/{project_id}/profile")
+def update_profile(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Save user edits to the profile without re-scraping or re-deriving."""
+    _project_or_404(project_id)
+    existing = business_profile_store.get_profile(project_id) or {}
+    merged = {**existing, **(payload or {})}
+    profile = business_profile_store.upsert_profile(project_id, merged)
+    if not profile:
+        raise HTTPException(status_code=400, detail="Could not save the profile.")
+    return {"profile": profile}
+
+
+# --------------------------------------------------------------------------- #
+# Discovery
+# --------------------------------------------------------------------------- #
+@router.post("/studies/{project_id}/discover")
+def discover(project_id: int, payload: dict = None, user: dict = Depends(require_permission("competitors.analyze"))):
+    """Find competitors for the profiled business and persist them as suggestions.
+
+    Also resolves each competitor's owned accounts in the same pass, since the
+    onboarding flow needs them immediately and a second round trip per competitor
+    would make the step feel broken.
+    """
+    _project_or_404(project_id)
+    profile = business_profile_store.get_profile(project_id)
+    if not profile:
+        raise HTTPException(status_code=400, detail="Add the business profile before discovering competitors.")
+
+    payload = payload or {}
+    limit = max(3, min(int(payload.get("limit") or competitor_discovery.MAX_COMPETITORS), 20))
+    with_accounts = payload.get("with_accounts", True) is not False
+
+    result = competitor_discovery.discover_competitors(profile, limit=limit)
+    if result.get("error") and not result.get("competitors"):
+        raise HTTPException(status_code=502, detail=result["error"])
+
+    saved = []
+    for entry in result["competitors"]:
+        record = competitors_store.upsert_competitor(project_id, entry)
+        if not record:
+            continue
+        accounts = []
+        if with_accounts:
+            for account in competitor_discovery.discover_accounts(record["name"], record.get("website")):
+                stored = competitors_store.upsert_account(record["id"], account)
+                if stored:
+                    accounts.append(stored)
+        saved.append({**record, "accounts": accounts})
+
+    competitors_store.rerank_competitors(project_id)
+    return {
+        "competitors": competitors_store.competitor_overview(project_id),
+        "discovered": len(saved),
+        "rejected": result.get("rejected") or [],
+        "model": competitor_discovery.discovery_model(),
+    }
+
+
+@router.post("/competitors/{competitor_id}/accounts/discover")
+def discover_competitor_accounts(competitor_id: int, user: dict = Depends(require_permission("competitors.analyze"))):
+    competitor = _competitor_or_404(competitor_id)
+    found = competitor_discovery.discover_accounts(competitor["name"], competitor.get("website"))
+    for account in found:
+        competitors_store.upsert_account(competitor_id, account)
+    return {"accounts": competitors_store.list_accounts(competitor_id)}
+
+
+# --------------------------------------------------------------------------- #
+# Competitors + accounts
+# --------------------------------------------------------------------------- #
+@router.get("/studies/{project_id}/competitors")
+def list_competitors(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    _project_or_404(project_id)
+    competitors = competitors_store.competitor_overview(project_id)
+    for competitor in competitors:
+        competitor["accounts"] = competitors_store.list_accounts(competitor["id"])
+    return {"competitors": competitors}
+
+
+@router.post("/studies/{project_id}/competitors")
+def add_competitor(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    _project_or_404(project_id)
+    payload = payload or {}
+    if not str(payload.get("name") or "").strip():
+        raise HTTPException(status_code=400, detail="A competitor name is required.")
+    record = competitors_store.upsert_competitor(
+        project_id, {**payload, "discovery_source": payload.get("discovery_source") or "manual"}
+    )
+    if not record:
+        raise HTTPException(status_code=400, detail="Could not save the competitor.")
+    competitors_store.rerank_competitors(project_id)
+    return {"competitor": record}
+
+
+@router.put("/competitors/{competitor_id}")
+def update_competitor(competitor_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    competitor = _competitor_or_404(competitor_id)
+    record = competitors_store.upsert_competitor(
+        competitor["project_id"], {**competitor, **(payload or {})}
+    )
+    competitors_store.rerank_competitors(competitor["project_id"])
+    return {"competitor": record}
+
+
+@router.post("/competitors/{competitor_id}/status")
+def set_status(competitor_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Track or ignore a competitor. Tracking links its valid accounts as sources."""
+    competitor = _competitor_or_404(competitor_id)
+    status = str((payload or {}).get("status") or "").strip().lower()
+    record = competitors_store.set_competitor_status(competitor_id, status)
+    if not record:
+        raise HTTPException(status_code=400, detail="status must be suggested, tracked, or ignored.")
+    sync = competitors_store.sync_project_sources(competitor["project_id"])
+    return {"competitor": record, "sources": sync}
+
+
+@router.delete("/competitors/{competitor_id}")
+def remove_competitor(competitor_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    competitor = _competitor_or_404(competitor_id)
+    competitors_store.delete_competitor(competitor_id)
+    competitors_store.rerank_competitors(competitor["project_id"])
+    return {"ok": True}
+
+
+@router.get("/competitors/{competitor_id}/accounts")
+def list_accounts(competitor_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    _competitor_or_404(competitor_id)
+    return {"accounts": competitors_store.list_accounts(competitor_id)}
+
+
+@router.post("/competitors/{competitor_id}/accounts")
+def add_account(competitor_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    _competitor_or_404(competitor_id)
+    account = competitors_store.upsert_account(competitor_id, payload or {})
+    if not account:
+        raise HTTPException(status_code=400, detail="platform and url are required.")
+    return {"account": account}
+
+
+@router.post("/accounts/{account_id}/validate")
+def validate_account(account_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Accept or reject a discovered account.
+
+    Accepting registers it as a scrape source; rejecting detaches it. Nothing is
+    scraped on a guess, because a misattributed account puts another company's
+    activity into a report someone plans against.
+    """
+    status = str((payload or {}).get("status") or "").strip().lower()
+    account = competitors_store.set_account_validation(
+        account_id, status, str((payload or {}).get("reason") or "")
+    )
+    if not account:
+        raise HTTPException(status_code=400, detail="status must be pending, valid, or rejected.")
+    return {"account": account}
+
+
+@router.delete("/accounts/{account_id}")
+def remove_account(account_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    competitors_store.delete_account(account_id)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Analysis
+# --------------------------------------------------------------------------- #
+@router.post("/studies/{project_id}/analyze")
+def analyze(project_id: int, payload: dict = None, user: dict = Depends(require_permission("competitors.analyze"))):
+    """Validate the scraped evidence, then generate one card per tracked competitor."""
+    _project_or_404(project_id)
+    payload = payload or {}
+    period_days = max(1, min(int(payload.get("period_days") or competitor_analysis.DEFAULT_PERIOD_DAYS), 365))
+    result = competitor_analysis.generate_findings(project_id, period_days=period_days)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {
+        **result,
+        "findings": competitor_analysis.list_findings(project_id),
+    }
+
+
+@router.get("/studies/{project_id}/findings")
+def list_findings(project_id: int, impact: str | None = None, competitor_id: int | None = None,
+                  history: bool = False, user: dict = Depends(require_permission("competitors.view"))):
+    _project_or_404(project_id)
+    return {
+        "findings": competitor_analysis.list_findings(
+            project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
+        )
+    }
+
+
+@router.get("/findings/{finding_id}")
+def get_finding(finding_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """One finding as a full report, including the evidence it was filtered from."""
+    finding = competitor_analysis.get_finding(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return {
+        "finding": finding,
+        "accounts": competitors_store.list_accounts(finding["competitor_id"]),
+        "rejected_evidence": competitor_analysis.rejected_evidence(finding["competitor_id"]),
+        "history": competitor_analysis.list_findings(
+            finding["project_id"], competitor_id=finding["competitor_id"], latest_only=False,
+        ),
+    }
+
+
+@router.post("/findings/{finding_id}/validate")
+def validate_finding(finding_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    status = str((payload or {}).get("status") or "").strip().lower()
+    finding = competitor_analysis.set_finding_validation(
+        finding_id, status, str((payload or {}).get("notes") or "")
+    )
+    if not finding:
+        raise HTTPException(status_code=400, detail="status must be pending, validated, or rejected.")
+    return {"finding": finding}
+
+
+# --------------------------------------------------------------------------- #
+# Scheduling — reuses the existing project scheduler, no new machinery
+# --------------------------------------------------------------------------- #
+@router.get("/studies/{project_id}/schedule")
+def get_schedule(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    return {"schedule": db.fetch_one(
+        """
+        select repeat_enabled, repeat_interval_value, repeat_interval_unit,
+               repeat_weekdays, first_run_at, next_run_at, last_run_at, last_run_status
+        from projects where id = %s
+        """,
+        (int(project_id),),
+    )}
+
+
+@router.put("/studies/{project_id}/schedule")
+def set_schedule(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Enable recurring competitor scrapes via the existing project scheduler."""
+    _project_or_404(project_id)
+    payload = payload or {}
+    enabled = bool(payload.get("repeat_enabled"))
+    unit = str(payload.get("repeat_interval_unit") or "days").strip().lower()
+    if unit not in {"minutes", "hours", "days"}:
+        raise HTTPException(status_code=400, detail="repeat_interval_unit must be minutes, hours, or days.")
+    try:
+        value = max(1, int(payload.get("repeat_interval_value") or 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="repeat_interval_value must be a positive number.")
+
+    first_run = payload.get("first_run_at") or None
+    schedule = db.fetch_one(
+        """
+        update projects
+           set repeat_enabled = %s,
+               repeat_interval_value = %s,
+               repeat_interval_unit = %s,
+               first_run_at = coalesce(%s::timestamptz, first_run_at),
+               next_run_at = case
+                   when %s then coalesce(%s::timestamptz, next_run_at, now())
+                   else null
+               end
+         where id = %s
+        returning repeat_enabled, repeat_interval_value, repeat_interval_unit,
+                  first_run_at, next_run_at, last_run_at, last_run_status
+        """,
+        (enabled, value, unit, first_run, enabled, first_run, int(project_id)),
+    )
+    return {"schedule": schedule}
+
+
+@router.post("/studies/{project_id}/sync-sources")
+def sync_sources(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    """Reconcile project sources with the currently-valid competitor accounts."""
+    _project_or_404(project_id)
+    return {"sources": competitors_store.sync_project_sources(project_id)}

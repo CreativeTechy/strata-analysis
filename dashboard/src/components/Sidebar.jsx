@@ -8,6 +8,7 @@ import {
   Newspaper,
   Database,
   CalendarDays,
+  Radar,
   Users,
   ShieldCheck,
   Link2,
@@ -19,15 +20,35 @@ import {
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/articles', label: 'Articles', icon: Newspaper },
-  { to: '/sources', label: 'Sources', icon: Rss },
-  { to: '/projects', label: 'Projects', icon: CalendarDays },
-  { to: '/workflow', label: 'Workflow', icon: GitMerge },
-  { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
-  { to: '/intelligence', label: 'Copilot', icon: MessageSquare },
+// The two experiences answer different questions and are kept visibly apart:
+// "Listening" is what people are saying (sentiment, opinions); "Competitors" is
+// what rival companies are doing and what to do about it. Mixing them in one flat
+// list is what made the old navigation ambiguous.
+const NAV_SECTIONS = [
+  {
+    label: 'Listening',
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/reports', label: 'Reports', icon: BarChart3 },
+      { to: '/articles', label: 'Articles', icon: Newspaper },
+      { to: '/intelligence', label: 'Copilot', icon: MessageSquare },
+    ],
+  },
+  {
+    label: 'Competitors',
+    items: [
+      { to: '/competitors', label: 'Studies', icon: Radar, permission: 'competitors.view' },
+    ],
+  },
+  {
+    label: 'Setup',
+    items: [
+      { to: '/sources', label: 'Sources', icon: Rss },
+      { to: '/projects', label: 'Projects', icon: CalendarDays },
+      { to: '/workflow', label: 'Workflow', icon: GitMerge },
+      { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
+    ],
+  },
 ];
 
 const ADMIN_NAV_ITEMS = [
@@ -93,18 +114,33 @@ export default function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className="btn-secondary sidebar-nav-link"
-            style={navStyle}
-            title={showCollapsed ? label : undefined}
-            onClick={onCloseMobile}
-          >
-            <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
+        {NAV_SECTIONS.map((section) => {
+          // A section with nothing the user may see should not leave a stray heading.
+          const visible = section.items.filter(
+            (item) => !item.permission || hasPermission(item.permission),
+          );
+          if (!visible.length) return null;
+          return (
+            <React.Fragment key={section.label}>
+              {!showCollapsed && <div className="sidebar-nav-section">{section.label}</div>}
+              {visible.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className="btn-secondary sidebar-nav-link"
+                  style={navStyle}
+                  title={showCollapsed ? label : undefined}
+                  onClick={onCloseMobile}
+                >
+                  <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
+                </NavLink>
+              ))}
+            </React.Fragment>
+          );
+        })}
+        {ADMIN_NAV_ITEMS.filter((item) => hasPermission(item.permission)).length && !showCollapsed ? (
+          <div className="sidebar-nav-section">Admin</div>
+        ) : null}
         {ADMIN_NAV_ITEMS.filter((item) => hasPermission(item.permission)).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
