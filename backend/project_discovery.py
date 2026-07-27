@@ -299,7 +299,7 @@ def _extract_json_blob(text):
 
 
 def _ai_source_suggestions(project):
-    if not config.OPENAI_API_KEY:
+    if not config.LLM_API_KEY:
         return []
 
     project_context = _project_context(project)

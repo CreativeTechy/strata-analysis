@@ -24,7 +24,7 @@ from store import save_articles
 
 MIN_TEXT_LENGTH = 200
 PROMPT_VERSION = "2026-07-27"
-MODEL_NAME = config.OPENAI_CHAT_MODEL
+MODEL_NAME = config.LLM_CHAT_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
     "review",
