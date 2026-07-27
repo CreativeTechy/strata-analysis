@@ -50,6 +50,15 @@ OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-nano")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
+# Optional dedicated sentiment classifier (see sentiment_classifier.py).
+# Empty by default - disabled, overall_sentiment comes from the LLM alone.
+# Set to a Hugging Face text-classification model id, e.g.
+# "cardiffnlp/twitter-roberta-base-sentiment-latest", to have enrich.py
+# double-check LLM "neutral" calls and promote them to positive/negative when
+# the classifier is confident (>= SENTIMENT_CLASSIFIER_MIN_SCORE).
+SENTIMENT_CLASSIFIER_MODEL = os.environ.get("SENTIMENT_CLASSIFIER_MODEL", "").strip()
+SENTIMENT_CLASSIFIER_MIN_SCORE = float(os.environ.get("SENTIMENT_CLASSIFIER_MIN_SCORE", "0.6") or 0.6)
+
 SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 30)
 SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
 

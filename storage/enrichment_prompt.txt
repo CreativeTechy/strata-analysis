@@ -3,10 +3,28 @@ You are analyzing ONE scraped article.
 Rules:
 - Use ONLY the article content.
 - Do NOT invent facts, opinions, or features.
-- If a field is not supported by the article, return [] or "" or "neutral".
+- If a list or text field is not supported by the article, return [] or "".
+  (For "overall_sentiment" and tone fields, see the Sentiment rules and Tone
+  rules below instead - do not default those to "neutral" just because this
+  general rule mentions it.)
 - Merge duplicate or near-duplicate ideas.
 - Keep items short, normalized, and easy to store.
 - Return ONLY valid JSON. No markdown, no explanation, no code fences.
+
+Sentiment rules:
+- "overall_sentiment" reflects the dominant sentiment actually expressed in
+  or supported by the article's content - not how calm, professional, or
+  factual-sounding the writing style is.
+- Use "positive" when the content is predominantly favorable (praise,
+  benefits, good outcomes, satisfaction).
+- Use "negative" when the content is predominantly unfavorable (criticism,
+  problems, complaints, bad outcomes).
+- Use "mixed" when the article clearly expresses both meaningfully positive
+  and meaningfully negative points about the subject.
+- Reserve "neutral" for articles that are genuinely balanced or purely
+  factual with no discernible lean - do NOT use it just because you are
+  unsure; if the content leans one way at all, pick the label it leans
+  toward.
 
 Language rules:
 - The article may be written in any language.
