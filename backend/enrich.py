@@ -5,6 +5,7 @@ enriched_articles.json, then upserts to local PostgreSQL.
 
 import json
 import os
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
@@ -18,10 +19,11 @@ from embeddings import build_article_embedding_text, get_embedding
 from projects_store import get_project
 from llm_client import chat_completion
 from pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
+from sentiment_classifier import classify_sentiment
 from store import save_articles
 
 MIN_TEXT_LENGTH = 200
-PROMPT_VERSION = "2026-07-15"
+PROMPT_VERSION = "2026-07-27"
 MODEL_NAME = config.OPENAI_CHAT_MODEL
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
 VALID_CATEGORIES = {
@@ -356,8 +358,33 @@ def _normalize_category(value):
 
 
 def _normalize_sentiment(value):
-    sentiment = _as_text(value).lower()
-    return sentiment if sentiment in VALID_SENTIMENTS else "neutral"
+    """Map a raw sentiment label to one of VALID_SENTIMENTS.
+
+    Models don't always return the exact enum value asked for in the prompt
+    ("positive.", "mostly positive", "negative overall", "mixed sentiment").
+    Falling back straight to "neutral" on anything that isn't an exact match
+    is what was causing most articles to collapse to neutral, so this checks
+    for an exact match first and otherwise looks at which sentiment words the
+    label actually contains.
+    """
+    sentiment = _as_text(value).lower().strip()
+    if sentiment in VALID_SENTIMENTS:
+        return sentiment
+    if not sentiment:
+        return "neutral"
+
+    words = set(re.findall(r"[a-z]+", sentiment))
+    has_positive = "positive" in words or "positives" in words
+    has_negative = "negative" in words or "negatives" in words
+    has_mixed = "mixed" in words or "ambivalent" in words or "ambiguous" in words
+
+    if has_mixed or (has_positive and has_negative):
+        return "mixed"
+    if has_positive:
+        return "positive"
+    if has_negative:
+        return "negative"
+    return "neutral"
 
 
 def _normalize_tone(value):
@@ -822,6 +849,45 @@ def build_topic_insight(articles, topic_name=""):
     }
 
 
+def _apply_sentiment_classifier(validated, *, title, text):
+    """Swap `overall_sentiment`/`sentiment` for the dedicated classifier's
+    verdict when ENABLE_SENTIMENT_CLASSIFIER is on (see
+    sentiment_classifier.py) - everything else in `validated` (summary,
+    topic, category, tones, feedback lists, ...) stays exactly what the LLM
+    produced. Sentiment is pulled out into its own model because it's a
+    narrow classification task prone to LLM hedging; the rest of the
+    payload needs the LLM's broader understanding of the article and isn't
+    touched here.
+
+    If the classifier is disabled, unavailable, misconfigured, or returns a
+    low-confidence/unusable result, this is a no-op and the LLM's own
+    sentiment (set earlier by _validate_enrichment) is left in place - the
+    classifier can only ever replace sentiment, never break it.
+    """
+    if not config.ENABLE_SENTIMENT_CLASSIFIER:
+        return
+
+    classifier_text = "\n".join(
+        part for part in (title, validated.get("summary"), text) if part
+    ).strip()
+    try:
+        result = classify_sentiment(classifier_text)
+    except Exception as e:
+        # classify_sentiment() already catches its own errors and returns
+        # None; this is a defense-in-depth backstop so a bug there can never
+        # take down the rest of an otherwise-good LLM enrichment.
+        print(f"  Sentiment classifier failed for '{title[:50]}': {e}")
+        return
+    if not result:
+        return
+    if result["score"] < config.SENTIMENT_CLASSIFIER_MIN_SCORE:
+        return
+
+    validated["overall_sentiment"] = result["label"]
+    validated["sentiment"] = result["label"]
+    validated["insight_json"]["overall_sentiment"] = result["label"]
+
+
 def enrich_article(article, project_context=""):
     title = article.get("title", "")
     text = article.get("text", "")[:5000]
@@ -846,6 +912,7 @@ def enrich_article(article, project_context=""):
         validated = _validate_enrichment(parsed)
         if validated is None:
             raise ValueError("Local LLM returned JSON that did not match the enrichment schema")
+        _apply_sentiment_classifier(validated, title=title, text=text)
         embedding_text = build_article_embedding_text(article, validated)
         embedding = get_embedding(embedding_text)
         if embedding:

@@ -1,9 +1,13 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowUpRight, CircleMinus, Heart, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, CircleMinus, Heart, Radio, Tag, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import SearchableSelect from './SearchableSelect';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
+// Categorical palette for keyword lines (validated CVD-safe order, see dataviz skill).
+const KEYWORD_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
 function percent(value, total) { return total ? Math.round((Number(value || 0) / total) * 100) : 0; }
 function formatDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
@@ -16,7 +20,62 @@ function FeedbackColumn({ title, icon, tone, items }) {
   return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => <li key={item.text || item.idea}>{item.text || item.idea}<strong>{item.count || item.frequency_estimate || 1}</strong></li>)}</ul> : <p>No signals in this category yet.</p>}</article>;
 }
 
-export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry }) {
+export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, sources = [], period = 'all' }) {
+  const projectId = project?.id ?? null;
+
+  const configuredKeywords = useMemo(
+    () => (project?.keywords || []).map((keyword) => String(keyword || '').trim()).filter(Boolean),
+    [project]
+  );
+  const keywordOptions = useMemo(() => configuredKeywords.map((keyword) => ({ value: keyword, label: keyword })), [configuredKeywords]);
+  const sourceOptions = useMemo(() => {
+    const linkedIds = new Set((project?.source_ids || []).map((id) => Number(id)));
+    return (sources || [])
+      .filter((source) => linkedIds.has(Number(source.id)))
+      .map((source) => ({ value: source.url, label: source.name || source.url }));
+  }, [project, sources]);
+
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [keywordFilter, setKeywordFilter] = useState('all');
+  const [keywordReport, setKeywordReport] = useState(null);
+  const [keywordLoading, setKeywordLoading] = useState(false);
+  const [keywordError, setKeywordError] = useState(null);
+
+  useEffect(() => {
+    setSourceFilter('all');
+    setKeywordFilter('all');
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId == null || configuredKeywords.length === 0) {
+      setKeywordReport(null);
+      setKeywordError(null);
+      setKeywordLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setKeywordLoading(true);
+    setKeywordError(null);
+    const params = new URLSearchParams({ period });
+    if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
+    if (keywordFilter !== 'all') params.set('keyword', keywordFilter);
+    fetch(`/api/projects/${projectId}/keyword-existence?${params.toString()}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Keyword existence request failed: ${res.status}`);
+        return res.json();
+      })
+      .then((data) => { if (!cancelled) setKeywordReport(data); })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load keyword existence', err);
+          setKeywordReport(null);
+          setKeywordError(err?.message || 'Failed to load keyword existence');
+        }
+      })
+      .finally(() => { if (!cancelled) setKeywordLoading(false); });
+    return () => { cancelled = true; };
+  }, [projectId, period, sourceFilter, keywordFilter, configuredKeywords.length]);
+
   if (loading) return <section className="report-brief glass-card intelligence-loading">Loading the live intelligence brief…</section>;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>Couldn’t load this report</strong><p className="subtitle">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>Try again</button>}</div></section>;
 
@@ -30,6 +89,13 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const headline = leadingIdea
     ? `${scopeLabel} generated ${total.toLocaleString()} analyzed articles. The leading conversation theme is ${leadingIdea}${leadingConcern ? `, while ${leadingConcern} is the primary concern` : ''}.`
     : `${scopeLabel} generated ${total.toLocaleString()} analyzed articles with a net sentiment of ${intelligence.net_sentiment >= 0 ? '+' : ''}${intelligence.net_sentiment}.`;
+
+  const keywordSeriesData = keywordReport?.series || [];
+  const isMultiKeyword = Boolean(keywordReport?.all_keywords);
+  const keywordSeriesKeys = isMultiKeyword
+    ? (keywordReport?.selected_keywords?.length ? keywordReport.selected_keywords : configuredKeywords)
+    : ['matches'];
+  const keywordHasMatches = keywordSeriesData.some((point) => keywordSeriesKeys.some((key) => Number(point[key] || 0) > 0));
 
   return <section className="report-brief">
     <Section number="01" title="Executive summary">
@@ -45,15 +111,85 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [`${value} articles`, name]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{entry.name}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{percent(entry.value, total)}%</strong></div>)}<p>Sentiment is calculated from the analyzed article content already stored for this project.</p></div></div>
     </Section>
 
-    <Section number="03" title="Volume trend">
+    <Section number="03" title="Keyword existence">
+      {configuredKeywords.length === 0 ? (
+        <div className="glass-card admin-empty-state intelligence-keyword-empty">
+          <strong>No keywords configured</strong>
+          <p className="subtitle">Add keywords to {scopeLabel || 'this project'} to track how often they show up in analyzed articles over time.</p>
+          <Link to="/projects" className="btn-secondary">Manage project keywords</Link>
+        </div>
+      ) : (
+        <>
+          <div className="keyword-existence-filters">
+            <SearchableSelect
+              label="Source"
+              icon={<Radio size={13} />}
+              value={sourceFilter}
+              onChange={setSourceFilter}
+              options={sourceOptions}
+              allLabel="All sources"
+              placeholder="Search sources…"
+              disabled={sourceOptions.length === 0}
+            />
+            <SearchableSelect
+              label="Keyword"
+              icon={<Tag size={13} />}
+              value={keywordFilter}
+              onChange={setKeywordFilter}
+              options={keywordOptions}
+              allLabel="All keywords"
+              placeholder="Search keywords…"
+            />
+          </div>
+
+          {keywordLoading ? (
+            <p className="intelligence-empty">Loading keyword existence…</p>
+          ) : keywordError ? (
+            <div className="glass-card admin-empty-state report-error-state" role="alert">
+              <div className="admin-empty-state-icon"><AlertTriangle size={20} /></div>
+              <strong>Couldn’t load keyword existence</strong>
+              <p className="subtitle">{keywordError}</p>
+            </div>
+          ) : !keywordHasMatches ? (
+            <div className="glass-card admin-empty-state">
+              <strong>No matches for this filter</strong>
+              <p className="subtitle">No analyzed articles matched the selected source and keyword combination in this date range.</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={keywordSeriesData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" />
+                <XAxis dataKey="date" tickFormatter={formatDate} minTickGap={24} />
+                <YAxis allowDecimals={false} />
+                <Tooltip labelFormatter={formatDate} />
+                {isMultiKeyword && <Legend />}
+                {keywordSeriesKeys.map((key, index) => (
+                  <Line
+                    key={key}
+                    dataKey={key}
+                    name={isMultiKeyword ? key : keywordFilter}
+                    type="monotone"
+                    stroke={isMultiKeyword ? KEYWORD_COLORS[index % KEYWORD_COLORS.length] : '#2563eb'}
+                    strokeWidth={2.5}
+                    dot={false}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </>
+      )}
+    </Section>
+
+    <Section number="04" title="Volume trend">
       <ResponsiveContainer width="100%" height={285}><LineChart data={intelligence.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={formatDate} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} /><Legend /><Line dataKey="total" name="Total" type="monotone" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line dataKey="positive" name="Positive" type="monotone" stroke={COLORS.positive} strokeWidth={2} dot={false} /><Line dataKey="negative" name="Negative" type="monotone" stroke={COLORS.negative} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
     </Section>
 
-    <Section number="04" title="Categorized feedback">
+    <Section number="05" title="Categorized feedback">
       <div className="report-feedback-grid"><FeedbackColumn title="Positive drivers" icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} /><FeedbackColumn title="Negative drivers" icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} /><FeedbackColumn title="Neutral / mixed" icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} /></div>
     </Section>
 
-    <Section number="05" title="Most talked-about ideas">
+    <Section number="06" title="Most talked-about ideas">
       <div className="report-idea-list">{(insights.frequent_ideas || []).slice(0, 8).map((idea) => <article key={idea.idea} className={idea.type || 'issue'}><span>{idea.type === 'praise' ? <Heart size={16} /> : <ArrowUpRight size={16} />}</span><div><strong>{idea.idea}</strong><small>{idea.category || idea.type || 'Theme'}</small></div><b>{idea.frequency_estimate || 1}</b></article>)}{!(insights.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas have been detected yet.</p>}</div>
     </Section>
   </section>;
