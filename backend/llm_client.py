@@ -1,4 +1,12 @@
-"""Thin client for the configured OpenAI-compatible Responses API."""
+"""Thin client for the configured chat LLM provider (OpenAI or DeepSeek).
+
+`config.LLM_PROVIDER` picks the active provider; this module is the only
+place that knows the difference between OpenAI's Responses API and the
+OpenAI-compatible chat-completions shape DeepSeek (and similar providers)
+use. Every caller goes through the single `chat_completion(...)` entry point
+below and never sees which provider or API shape actually served the
+request.
+"""
 
 from __future__ import annotations
 
@@ -90,7 +98,8 @@ def _split_instructions(messages):
     return instructions, input_items
 
 
-def _extract_output_text(payload) -> str:
+def _extract_output_text_responses(payload) -> str:
+    """Extract text from an OpenAI Responses API payload."""
     status = payload.get("status", "unknown")
     output = payload.get("output") or []
 
@@ -130,6 +139,35 @@ def _extract_output_text(payload) -> str:
     )
 
 
+def _extract_output_text_chat_completions(payload) -> str:
+    """Extract text from an OpenAI-compatible chat-completions payload (DeepSeek et al.)."""
+    choices = payload.get("choices") or []
+    if not choices:
+        raise LLMInvalidResponseError("LLM returned no choices", finish_reason="unknown")
+
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason") or "unknown"
+    message = choice.get("message") or {}
+    text = (message.get("content") or "").strip()
+    if text:
+        return text
+
+    # Normalize to the same finish_reason vocabulary _post()'s retry logic
+    # already understands for the Responses API ("max_output_tokens" means
+    # "give it more room and retry").
+    normalized_reason = "max_output_tokens" if finish_reason == "length" else finish_reason
+    raise LLMInvalidResponseError(
+        f"LLM returned an empty response (finish_reason={finish_reason})",
+        finish_reason=normalized_reason,
+    )
+
+
+def _extract_output_text(payload) -> str:
+    if config.LLM_API_STYLE == "chat_completions":
+        return _extract_output_text_chat_completions(payload)
+    return _extract_output_text_responses(payload)
+
+
 def _error_message(resp) -> str:
     try:
         detail = (resp.json().get("error") or {}).get("message", "")
@@ -159,7 +197,7 @@ def _post(url, body, timeout):
             url,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.OPENAI_API_KEY}",
+                "Authorization": f"Bearer {config.LLM_API_KEY}",
             },
             json=body,
             timeout=timeout,
@@ -189,21 +227,50 @@ def _post(url, body, timeout):
     return payload
 
 
-def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60):
-    url = (config.OPENAI_CHAT_BASE_URL or "").strip()
-    if not config.OPENAI_API_KEY or not url:
-        raise LLMConfigError("OPENAI_API_KEY is not configured")
+def _build_request_body(*, messages, model, temperature, max_tokens):
+    """Build the provider-appropriate request body for the same logical inputs.
 
+    This is the one place that adapts to the active provider's payload shape
+    - callers always pass the same messages/temperature/max_tokens/timeout
+    regardless of which provider is configured.
+    """
+    if config.LLM_API_STYLE == "chat_completions":
+        return {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+    # "responses" style (OpenAI Responses API): no system role in `input`,
+    # system/developer messages become the top-level `instructions` string.
     instructions, input_items = _split_instructions(messages)
-
     body = {
-        "model": model or config.OPENAI_CHAT_MODEL,
+        "model": model,
         "input": input_items,
         "temperature": temperature,
         "max_output_tokens": max_tokens,
     }
     if instructions:
         body["instructions"] = instructions
+    return body
+
+
+def _max_tokens_key():
+    return "max_tokens" if config.LLM_API_STYLE == "chat_completions" else "max_output_tokens"
+
+
+def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60):
+    url = (config.LLM_CHAT_BASE_URL or "").strip()
+    if not config.LLM_API_KEY or not url:
+        raise LLMConfigError(f"{config.LLM_API_KEY_ENV_NAME} is not configured")
+
+    body = _build_request_body(
+        messages=messages,
+        model=model or config.LLM_CHAT_MODEL,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
 
     try:
         payload = _post(url, body, timeout)
@@ -211,7 +278,7 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
         # Some models only accept the default temperature (1) and reject any
         # other value - drop it and retry once rather than failing outright.
         if "temperature" in (exc.detail or "").lower():
-            body.pop("temperature", None)
+            body = {k: v for k, v in body.items() if k != "temperature"}
             payload = _post(url, body, timeout)
         else:
             raise
@@ -220,16 +287,17 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
         return _extract_output_text(payload)
     except LLMInvalidResponseError as exc:
         retry_body = body
+        max_tokens_key = _max_tokens_key()
         if exc.finish_reason == "max_output_tokens":
-            # The model spent its entire max_output_tokens budget on hidden
-            # reasoning and never got to write visible content - retrying
-            # with the same budget would just hit the same wall. Give it
-            # more room instead.
-            current = int(body.get("max_output_tokens") or max_tokens)
-            retry_body = {**body, "max_output_tokens": min(current * 2, 4000)}
+            # The model spent its entire token budget on hidden reasoning (or
+            # hit the length cap) and never got to write visible content -
+            # retrying with the same budget would just hit the same wall.
+            # Give it more room instead.
+            current = int(body.get(max_tokens_key) or max_tokens)
+            retry_body = {**body, max_tokens_key: min(current * 2, 4000)}
             print(
                 f"llm_client: empty response from truncation ({exc.detail}); "
-                f"retrying once with max_output_tokens={retry_body['max_output_tokens']}"
+                f"retrying once with {max_tokens_key}={retry_body[max_tokens_key]}"
             )
         else:
             # Otherwise treat it as a transient glitch (stray refusal turn)

@@ -764,7 +764,7 @@ def delete_articles(user: dict = Depends(require_permission("articles.delete")))
 
 @app.post("/api/chat")
 async def chat(payload: dict, user: dict = Depends(require_permission())):
-    """Intelligence Copilot -> OpenAI over the filtered articles."""
+    """Intelligence Copilot -> the configured LLM provider, over the filtered articles."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
