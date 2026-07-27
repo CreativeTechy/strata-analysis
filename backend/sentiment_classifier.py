@@ -1,33 +1,25 @@
 """Dedicated sentiment classifier for article `overall_sentiment`.
 
-Why a separate classifier instead of the LLM: the enrichment LLM call is one
-prompt producing the whole payload (summary, topic, category, tones, feedback
-lists, ...), and it tends to hedge sentiment toward "neutral". Sentiment is
-also a narrow, well-studied classification task a small dedicated model
-handles reliably and cheaply, so it's pulled out into its own path rather
-than reworking the shared enrichment prompt. Everything else in the payload
-still comes from that one LLM call, untouched.
-
-Toggle: set `ENABLE_SENTIMENT_CLASSIFIER=true` in backend/.env to switch
-article sentiment over to this classifier; leave it false/unset (the
-default) to keep the existing LLM-based sentiment. This is a plain env
-lookup read fresh from `config` on every call, so flipping it in .env and
-restarting the process is enough - no code change needed.
+This is the ONLY source of article sentiment - the LLM used for the rest of
+enrichment (summary, topic, category, tones, feedback lists, ...) is never
+consulted for sentiment, and never overrides or backfills it. Sentiment is a
+narrow, well-studied classification task a small dedicated model handles
+reliably and cheaply, so it's pulled out into its own path rather than
+trusted to the shared enrichment prompt.
 
 Model: `SENTIMENT_CLASSIFIER_MODEL` (default
 "cardiffnlp/twitter-roberta-base-sentiment-latest"), run on
 `SENTIMENT_CLASSIFIER_DEVICE` ("cpu" or "cuda"/"cuda:0"). That model is
 3-class (positive/negative/neutral) and can't express "mixed" - rather than
 force a "mixed" verdict out of logic that isn't there, this simply never
-returns "mixed"; enrich.py falls back to the LLM's own sentiment (which can
-say "mixed") whenever the classifier has nothing usable to say.
+returns "mixed".
 
 `transformers` is already a transitive dependency of sentence-transformers
-(see requirements.txt), so enabling this normally requires no new install.
-If it's missing, disabled, or the model fails to load or errors at
-inference time, classify_sentiment() returns None and enrich.py keeps
-whatever sentiment it already had - this module can never crash the
-pipeline or leave a field unset.
+(see requirements.txt), so this normally requires no new install. If it's
+missing, misconfigured, or the model fails to load or errors at inference
+time, classify_sentiment() returns None - callers (enrich.py) must treat
+that as "no result" and fall back to a deterministic "neutral" plus logging,
+never to the LLM.
 """
 
 from __future__ import annotations
@@ -65,8 +57,8 @@ def _load_pipeline(model_name: str, device_setting: str):
         from transformers import pipeline
     except Exception:
         logger.warning(
-            "ENABLE_SENTIMENT_CLASSIFIER is set but the `transformers` package "
-            "isn't installed; falling back to the LLM's sentiment."
+            "The `transformers` package isn't installed; sentiment will "
+            "default to neutral."
         )
         return None
     try:
@@ -82,16 +74,14 @@ def _load_pipeline(model_name: str, device_setting: str):
 
 def classify_sentiment(text: str):
     """Return {"label": "positive"|"negative"|"neutral", "score": float}, or
-    None if the classifier is disabled, unavailable, misconfigured, or
-    failed to produce a usable label - callers should treat None as "no
-    opinion" and keep whatever sentiment they already have.
+    None if the classifier is unavailable, misconfigured, or failed to
+    produce a usable label - callers must treat None as "no result" and
+    default sentiment to "neutral" (with logging), never fall back to the
+    LLM.
     """
-    if not config.ENABLE_SENTIMENT_CLASSIFIER:
-        return None
-
     model_name = (config.SENTIMENT_CLASSIFIER_MODEL or "").strip()
     if not model_name:
-        logger.warning("ENABLE_SENTIMENT_CLASSIFIER is set but SENTIMENT_CLASSIFIER_MODEL is empty.")
+        logger.warning("SENTIMENT_CLASSIFIER_MODEL is empty; sentiment will default to neutral.")
         return None
 
     text = (text or "").strip()
