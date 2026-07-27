@@ -1,0 +1,49 @@
+"""Shared label vocab for the analysis pipeline.
+
+Single source of truth for the category/tone enums the zero-shot
+classification stage classifies into and the rest of the pipeline validates
+against - previously these enums were copy-pasted independently in enrich.py
+and articles_store.py.
+"""
+
+VALID_CATEGORIES = (
+    "review",
+    "comparison",
+    "complaint",
+    "news",
+    "ownership_experience",
+    "buying_guide",
+    "general_article",
+)
+
+# Human-readable hypothesis phrasing per category, fed to the zero-shot
+# classifier as candidate labels (mDeBERTa-mnli scores label words directly,
+# so plain nouns/phrases work better than snake_case tokens).
+CATEGORY_HYPOTHESIS_LABELS = {
+    "review": "a product or service review",
+    "comparison": "a comparison between products or options",
+    "complaint": "a complaint",
+    "news": "a news report",
+    "ownership_experience": "a personal ownership experience",
+    "buying_guide": "a buying guide",
+    "general_article": "a general article",
+}
+
+VALID_TONES = (
+    "neutral",
+    "positive",
+    "enthusiastic",
+    "optimistic",
+    "critical",
+    "skeptical",
+    "negative",
+    "concerned",
+    "angry",
+    "sarcastic",
+    "humorous",
+    "formal",
+    "informal",
+)
+
+DEFAULT_CATEGORY = "general_article"
+DEFAULT_TONE = "neutral"

@@ -10,6 +10,7 @@ import IntelligencePage from './components/IntelligencePage';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import ArticlesPage from './components/ArticlesPage';
+import AnalysisPage from './components/AnalysisPage';
 import LoginPage from './components/LoginPage';
 import UsersPage from './components/UsersPage';
 import RolesListPage from './components/RolesListPage';
@@ -836,6 +837,7 @@ export default function App() {
           <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
+          <Route path="/analysis" element={<AnalysisPage projects={projects} />} />
           <Route
             path="/sources"
             element={(

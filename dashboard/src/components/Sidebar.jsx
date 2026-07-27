@@ -7,6 +7,7 @@ import {
   Rss,
   Newspaper,
   Database,
+  ScanSearch,
   CalendarDays,
   Users,
   ShieldCheck,
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { to: '/projects', label: 'Projects', icon: CalendarDays },
   { to: '/workflow', label: 'Workflow', icon: GitMerge },
   { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
+  { to: '/analysis', label: 'Analysis', icon: ScanSearch },
   { to: '/intelligence', label: 'Copilot', icon: MessageSquare },
 ];
 

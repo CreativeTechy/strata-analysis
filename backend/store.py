@@ -18,6 +18,12 @@ ARTICLE_COLUMNS = (
     "article_category", "writer_tone", "article_tone", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
+    "sentiment_score", "sentiment_low_confidence", "sentiment_model",
+    "category_confidence", "writer_tone_confidence", "article_tone_confidence",
+    "classification_model", "extraction_model", "analysis_pipeline_version",
+    "source_language", "source_language_confidence", "embedding_dimensions",
+    "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
+    "analysis_attempt_count", "reprocess_requested_at",
 )
 
 LEGACY_ARTICLE_COLUMNS = (
@@ -59,6 +65,24 @@ ARTICLE_MUTABLE_FIELDS = (
     "embedding_model",
     "embedding_source",
     "embedded_at",
+    "sentiment_score",
+    "sentiment_low_confidence",
+    "sentiment_model",
+    "category_confidence",
+    "writer_tone_confidence",
+    "article_tone_confidence",
+    "classification_model",
+    "extraction_model",
+    "analysis_pipeline_version",
+    "source_language",
+    "source_language_confidence",
+    "embedding_dimensions",
+    "analysis_status",
+    "analysis_error",
+    "analysis_started_at",
+    "analysis_finished_at",
+    "analysis_attempt_count",
+    "reprocess_requested_at",
 )
 ARTICLE_JSON_FIELDS = {
     "insight_json",
@@ -177,6 +201,12 @@ def _article_returning_sql():
     return ", ".join(returning)
 
 
+_ARTICLE_TIMESTAMP_FIELDS = {
+    "fetched_at", "analyzed_at", "embedded_at",
+    "analysis_started_at", "analysis_finished_at", "reprocess_requested_at",
+}
+
+
 def _article_row(article):
     row = _row(article)
     fields = _article_write_fields()
@@ -185,8 +215,16 @@ def _article_row(article):
         value = row[field]
         if field in ARTICLE_JSON_FIELDS:
             value = _jsonb_param(value)
-        elif field in {"fetched_at", "analyzed_at", "embedded_at"}:
+        elif field in _ARTICLE_TIMESTAMP_FIELDS:
             value = _null_if_blank(value)
+        elif field == "analysis_status":
+            # not-null column - a pipeline result that never set this
+            # (shouldn't happen, but this is the write path, not the pipeline)
+            # must not attempt to insert NULL into it.
+            value = _null_if_blank(value) or "success"
+        elif field == "embedding_dimensions":
+            embedding_json = row.get("embedding_json")
+            value = len(embedding_json) if isinstance(embedding_json, list) else None
         params.append(value)
     return fields, tuple(params)
 
@@ -215,27 +253,189 @@ def _upsert_article_row(article):
     )
 
 
+@lru_cache(maxsize=16)
+def _table_exists(table_name):
+    """Whether a given public table exists yet - lets the normalized child
+    tables (article_feedback_items, idea_clusters, ...) be written to
+    opportunistically without breaking the core article upsert on a
+    database that hasn't had schema.sql re-run yet."""
+    if not config.DATABASE_URL:
+        return False
+    try:
+        row = db.fetch_one(
+            """
+            select exists (
+                select 1 from information_schema.tables
+                where table_schema = 'public' and table_name = %s
+            ) as exists
+            """,
+            (table_name,),
+        )
+        return bool((row or {}).get("exists"))
+    except Exception:
+        return False
+
+
+def _bulk_insert(table, columns, rows):
+    """INSERT many rows in one round trip. `table`/`columns` are always
+    internal constants (never user input), so building the identifier list
+    with an f-string here is safe - only the row values are parameterized."""
+    if not rows:
+        return
+    columns_sql = ", ".join(columns)
+    placeholder_row = "(" + ", ".join(["%s"] * len(columns)) + ")"
+    values_sql = ", ".join([placeholder_row] * len(rows))
+    params = tuple(value for row in rows for value in row)
+    db.execute(f"insert into {table} ({columns_sql}) values {values_sql}", params)
+
+
+FEEDBACK_ITEM_TYPES = (
+    "positive_feedback", "negative_feedback", "nice_to_have_features", "complaints",
+    "great_features", "comfort_issues", "performance_feedback", "price_value_feedback",
+    "maintenance_reliability_feedback", "technology_feedback", "safety_feedback",
+    "key_points", "risks", "opportunities",
+)
+
+
+def _replace_article_children(article_id, article):
+    """Fully replace the normalized per-article rows (feedback items, people
+    opinions, tags) for one article. Delete-then-insert so reprocessing an
+    article never leaves stale rows from its previous analysis behind.
+
+    These tables are additive/new - on a database that hasn't had schema.sql
+    re-run yet they simply don't exist, so this silently no-ops rather than
+    breaking the article upsert itself."""
+    if not _table_exists("article_feedback_items"):
+        return
+    try:
+        db.execute("delete from article_feedback_items where article_id = %s", (article_id,))
+        db.execute("delete from article_people_opinions where article_id = %s", (article_id,))
+        db.execute("delete from article_tags where article_id = %s", (article_id,))
+
+        feedback_rows = []
+        for feedback_type in FEEDBACK_ITEM_TYPES:
+            for text in article.get(feedback_type) or []:
+                text = str(text).strip()
+                if text:
+                    feedback_rows.append((article_id, feedback_type, text))
+        _bulk_insert("article_feedback_items", ("article_id", "feedback_type", "text"), feedback_rows)
+
+        opinion_rows = []
+        for item in article.get("people_opinions") or []:
+            if not isinstance(item, dict):
+                continue
+            opinion = str(item.get("opinion") or "").strip()
+            if not opinion:
+                continue
+            sentiment = str(item.get("sentiment") or "neutral").strip().lower() or "neutral"
+            category = str(item.get("category") or "").strip()
+            opinion_rows.append((article_id, opinion, sentiment, category))
+        _bulk_insert("article_people_opinions", ("article_id", "opinion", "sentiment", "category"), opinion_rows)
+
+        tag_rows = []
+        for tag_type, field in (("organization", "organizations"), ("entity", "entities"), ("topic", "topics")):
+            for value in article.get(field) or []:
+                value = str(value).strip()
+                if value:
+                    tag_rows.append((article_id, tag_type, value))
+        _bulk_insert("article_tags", ("article_id", "tag_type", "value"), tag_rows)
+    except Exception as e:
+        _log_db_error(f"  article child-table write error for article {article_id}", e)
+
+
+def _replace_idea_clusters_for_article(article_id, project_id, frequent_ideas):
+    """Link/unlink this article from its project's idea_clusters and
+    recompute frequency_estimate for every affected cluster. Idea clusters
+    are project-scoped (there is no meaningful global cluster), so this is a
+    no-op without a project_id, and a no-op if idea_clusters hasn't been
+    created yet (pre-migration database)."""
+    if project_id is None or not _table_exists("idea_clusters"):
+        return
+    try:
+        previous = db.fetch_all(
+            "select idea_cluster_id from idea_cluster_articles where article_id = %s",
+            (article_id,),
+        )
+        previous_ids = {row["idea_cluster_id"] for row in previous or []}
+
+        db.execute("delete from idea_cluster_articles where article_id = %s", (article_id,))
+
+        new_cluster_ids = set()
+        for item in frequent_ideas or []:
+            if not isinstance(item, dict):
+                continue
+            idea = str(item.get("idea") or "").strip()
+            if not idea:
+                continue
+            idea_type = str(item.get("type") or "issue").strip().lower() or "issue"
+            if idea_type not in {"complaint", "praise", "suggestion", "issue"}:
+                idea_type = "issue"
+            category = str(item.get("category") or "").strip()
+
+            row = db.fetch_one(
+                """
+                insert into idea_clusters (project_id, idea, type, category)
+                values (%s, %s, %s, %s)
+                on conflict (project_id, normalized_idea, type, category) do update set
+                    last_seen_at = now(), updated_at = now()
+                returning id
+                """,
+                (project_id, idea, idea_type, category),
+            )
+            if not row:
+                continue
+            cluster_id = row["id"]
+            new_cluster_ids.add(cluster_id)
+            db.execute(
+                "insert into idea_cluster_articles (idea_cluster_id, article_id) values (%s, %s) "
+                "on conflict do nothing",
+                (cluster_id, article_id),
+            )
+
+        for cluster_id in previous_ids | new_cluster_ids:
+            db.execute(
+                """
+                update idea_clusters set frequency_estimate = (
+                    select count(*) from idea_cluster_articles where idea_cluster_id = %s
+                )
+                where id = %s
+                """,
+                (cluster_id, cluster_id),
+            )
+    except Exception as e:
+        _log_db_error(f"  idea cluster write error for article {article_id}", e)
+
+
 def _source_key(article):
     return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
 
 
-def save_articles(articles, batch_size=50):
-    """Upserts articles and returns (total_saved, saved_count_by_source)."""
+def save_articles(articles, batch_size=50, project_id=None):
+    """Upserts articles and returns (total_saved, saved_count_by_source).
+
+    `project_id` additionally links every saved article to that project and
+    scopes their idea-cluster attribution to it. When omitted (the
+    subprocess pipeline's call site - enrich.py never passes it), it falls
+    back to the PIPELINE_RUN_ID/PIPELINE_PROJECT_ID env var the scrape
+    subprocess sets, exactly as before. Callers running in-process (e.g.
+    reanalyze.py, which has no such env var scoped to one request) should
+    pass it explicitly instead.
+    """
     if not config.DATABASE_URL:
         print("Database credentials not set, skipping upload.")
         return 0, {}
 
     sent = 0
     saved_by_source = defaultdict(int)
-    project_id = None
-    try:
-        from os import environ
+    if project_id is None:
+        try:
+            from os import environ
 
-        raw_project_id = (environ.get("PIPELINE_PROJECT_ID") or "").strip()
-        if raw_project_id:
-            project_id = int(raw_project_id)
-    except Exception:
-        project_id = None
+            raw_project_id = (environ.get("PIPELINE_PROJECT_ID") or "").strip()
+            if raw_project_id:
+                project_id = int(raw_project_id)
+        except Exception:
+            project_id = None
 
     source_project_cache = {}
     linked_articles = defaultdict(set)
@@ -278,6 +478,10 @@ def save_articles(articles, batch_size=50):
                     article_id = int(row.get("id"))
                 except Exception:
                     continue
+
+                _replace_article_children(article_id, article)
+                _replace_idea_clusters_for_article(article_id, project_id, article.get("frequent_ideas"))
+
                 source_url = (row.get("source_url") or article.get("source_url") or "").strip()
                 if not source_url:
                     continue
