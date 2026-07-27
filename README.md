@@ -22,10 +22,33 @@ it in Supabase, and surfaces it in the dashboard.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
    backend API.
 
-OpenAI is used everywhere in this app for AI: article enrichment
-(`backend/enrich.py`), Intelligence Copilot chat (`backend/main.py`), and
-hashtag/keyword/username/source discovery (`backend/projects_ai.py` and
-`backend/project_discovery.py`).
+A single configured LLM provider is used everywhere in this app for AI:
+article enrichment (`backend/enrich.py`), Intelligence Copilot chat
+(`backend/main.py`), and hashtag/keyword/username/source discovery
+(`backend/projects_ai.py` and `backend/project_discovery.py`). All provider
+selection and request formatting lives in `backend/llm_client.py`; feature
+modules just call `chat_completion(...)` and never know which provider is
+active.
+
+### Choosing an LLM provider
+
+Set `LLM_PROVIDER` in `backend/.env` to pick the backend:
+
+- `openai` (default) - uses OpenAI's Responses API. Requires `OPENAI_API_KEY`;
+  `OPENAI_CHAT_BASE_URL` and `OPENAI_CHAT_MODEL` are optional overrides
+  (default model `gpt-5-nano`).
+- `deepseek` - uses DeepSeek's OpenAI-compatible chat-completions API.
+  Requires `DEEPSEEK_API_KEY`; `DEEPSEEK_CHAT_BASE_URL` and
+  `DEEPSEEK_CHAT_MODEL` are optional overrides (default model
+  `deepseek-chat`).
+
+Only the env vars for the selected provider need to be set - switching
+providers is a single env var change, no code changes or redeploy of a
+different image required. Whichever provider is active, LLM failures surface
+the same stable, provider-neutral error codes (`llm_config_error`,
+`llm_auth_error`, `llm_rate_limited`, `llm_timeout`, `llm_unavailable`,
+`llm_bad_request`, `llm_invalid_response`) to the dashboard - raw provider
+errors are never sent to the client.
 
 ## Clone And Run
 
@@ -56,8 +79,10 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 Set at minimum:
 
 - `DATABASE_URL`
-- `OPENAI_API_KEY` - OpenAI API key, required for enrichment, Intelligence
-  Copilot chat, and project/source discovery
+- An LLM provider's credentials - by default `OPENAI_API_KEY` (OpenAI),
+  required for enrichment, Intelligence Copilot chat, and project/source
+  discovery. Set `LLM_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` instead to use
+  DeepSeek - see [Choosing an LLM provider](#choosing-an-llm-provider).
 
 ### 3. Run the backend locally
 
@@ -125,8 +150,10 @@ docker compose up --build
 The backend container reads `backend/.env`. Make sure it contains values for:
 
 - `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- `OPENAI_API_KEY=...` - OpenAI API key, required for enrichment,
-  Intelligence Copilot chat, and project/source discovery
+- Whichever LLM provider is selected via `LLM_PROVIDER` (default `openai`,
+  requiring `OPENAI_API_KEY`) - required for enrichment, Intelligence Copilot
+  chat, and project/source discovery. See
+  [Choosing an LLM provider](#choosing-an-llm-provider).
 
 ### Adminer login
 
@@ -169,7 +196,9 @@ This deletes all local data and recreates the database from the current
 For a production-style deployment, the important pieces are:
 
 - PostgreSQL must be reachable by the backend container
-- `backend/.env` must include the database URL and `OPENAI_API_KEY`
+- `backend/.env` must include the database URL and the active LLM provider's
+  credentials (`OPENAI_API_KEY` by default, or `LLM_PROVIDER=deepseek` plus
+  `DEEPSEEK_API_KEY`)
 
 The current Docker setup is suitable for a single-server deployment where the
 database, backend, frontend, and reverse proxy all run together.
