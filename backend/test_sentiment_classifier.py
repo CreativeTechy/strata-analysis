@@ -34,33 +34,22 @@ class ResolveDeviceTests(unittest.TestCase):
 
 class ClassifySentimentTests(unittest.TestCase):
     def setUp(self):
-        self._original_enabled = config.ENABLE_SENTIMENT_CLASSIFIER
         self._original_model = config.SENTIMENT_CLASSIFIER_MODEL
         sc._load_pipeline.cache_clear()
 
     def tearDown(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = self._original_enabled
         config.SENTIMENT_CLASSIFIER_MODEL = self._original_model
         sc._load_pipeline.cache_clear()
 
-    def test_disabled_returns_none_without_loading_a_model(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = False
-        with patch("sentiment_classifier._load_pipeline") as mocked:
-            self.assertIsNone(sc.classify_sentiment("great product"))
-        mocked.assert_not_called()
-
-    def test_enabled_but_no_model_configured_returns_none(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
+    def test_no_model_configured_returns_none(self):
         config.SENTIMENT_CLASSIFIER_MODEL = ""
         self.assertIsNone(sc.classify_sentiment("great product"))
 
     def test_empty_text_returns_none(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         self.assertIsNone(sc.classify_sentiment("   "))
 
     def test_successful_classification_is_normalized(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         fake_pipeline = lambda text: [{"label": "LABEL_2", "score": 0.87}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
@@ -68,7 +57,6 @@ class ClassifySentimentTests(unittest.TestCase):
         self.assertEqual(result, {"label": "positive", "score": 0.87})
 
     def test_human_readable_labels_pass_through_case_insensitively(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         fake_pipeline = lambda text: [{"label": "NEGATIVE", "score": 0.7}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
@@ -76,13 +64,11 @@ class ClassifySentimentTests(unittest.TestCase):
         self.assertEqual(result, {"label": "negative", "score": 0.7})
 
     def test_pipeline_unavailable_returns_none(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         with patch("sentiment_classifier._load_pipeline", return_value=None):
             self.assertIsNone(sc.classify_sentiment("I love this"))
 
     def test_inference_error_returns_none_instead_of_raising(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
 
         def boom(text):
@@ -92,14 +78,12 @@ class ClassifySentimentTests(unittest.TestCase):
             self.assertIsNone(sc.classify_sentiment("I love this"))
 
     def test_unrecognized_label_returns_none(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         fake_pipeline = lambda text: [{"label": "surprise", "score": 0.5}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
             self.assertIsNone(sc.classify_sentiment("huh"))
 
     def test_missing_transformers_package_is_handled_gracefully(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
         with patch.dict("sys.modules", {"transformers": None}):
             self.assertIsNone(sc.classify_sentiment("great product"))

@@ -10,15 +10,12 @@ Rules:
   inventing detail the post doesn't contain.
 - Do NOT invent facts, opinions, or features not present in the text.
 - Return ONLY valid JSON. No markdown, no explanation, no code fences.
-
-Sentiment rules:
-- "overall_sentiment" reflects the dominant sentiment actually expressed in the
-  post - not how calm or matter-of-fact its wording is.
-- Use "positive" when the post is predominantly favorable, "negative" when
-  it's predominantly unfavorable, and "mixed" when it clearly expresses both.
-- Reserve "neutral" for posts that are genuinely balanced or purely factual -
-  do NOT use it just because you're unsure; if the post leans one way at all,
-  pick the label it leans toward.
+- Do not include an "overall_sentiment" field - post sentiment is computed
+  separately by a dedicated classifier, not by you.
+- For each "people_opinions" item, set its "sentiment" to whichever of
+  positive/negative/mixed/neutral that specific opinion expresses (mixed
+  only if that one opinion clearly expresses both positive and negative
+  points).
 
 Language rules:
 - The post may be written in any language.
@@ -39,7 +36,6 @@ Return this exact JSON structure:
 {
   "topic": "",
   "article_category": "review | comparison | complaint | news | ownership_experience | buying_guide | general_article",
-  "overall_sentiment": "positive | negative | mixed | neutral",
   "writer_tone": "",
   "article_tone": "",
   "summary": "",

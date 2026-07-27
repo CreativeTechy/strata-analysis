@@ -5,11 +5,14 @@ from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-import config
 import enrich
 
 
 class NormalizeSentimentTests(unittest.TestCase):
+    """_normalize_sentiment() is still used for per-item fields (people_opinions,
+    frequent_ideas/feedback entries) - it is no longer used for the article-level
+    overall_sentiment/sentiment, which come solely from the classifier."""
+
     def test_exact_matches_pass_through(self):
         for value in ("positive", "negative", "mixed", "neutral"):
             self.assertEqual(enrich._normalize_sentiment(value), value)
@@ -38,7 +41,6 @@ class ValidateEnrichmentTests(unittest.TestCase):
         payload = {
             "summary": "The reviewer liked the car overall.",
             "article_category": "review",
-            "overall_sentiment": "positive",
         }
         payload.update(overrides)
         return payload
@@ -49,17 +51,15 @@ class ValidateEnrichmentTests(unittest.TestCase):
     def test_non_dict_payload_is_invalid(self):
         self.assertIsNone(enrich._validate_enrichment("not a dict"))
 
-    def test_loose_sentiment_values_are_normalized_end_to_end(self):
-        validated = enrich._validate_enrichment(self._payload(overall_sentiment="mostly positive"))
-        self.assertEqual(validated["overall_sentiment"], "positive")
-        self.assertEqual(validated["sentiment"], "positive")
-        self.assertEqual(validated["insight_json"]["overall_sentiment"], "positive")
-
-    def test_neutral_complaint_category_is_forced_negative(self):
-        validated = enrich._validate_enrichment(
-            self._payload(overall_sentiment="neutral", article_category="complaint")
-        )
-        self.assertEqual(validated["overall_sentiment"], "negative")
+    def test_llm_sentiment_is_ignored_regardless_of_value(self):
+        """_validate_enrichment() never reads overall_sentiment/sentiment from
+        the LLM payload - it always sets a neutral placeholder that
+        _apply_sentiment_classifier() overwrites afterward."""
+        for llm_value in ("positive", "negative", "mixed", "anything at all", None):
+            validated = enrich._validate_enrichment(self._payload(overall_sentiment=llm_value))
+            self.assertEqual(validated["overall_sentiment"], "neutral")
+            self.assertEqual(validated["sentiment"], "neutral")
+            self.assertEqual(validated["insight_json"]["overall_sentiment"], "neutral")
 
     def test_output_shape_is_unchanged(self):
         validated = enrich._validate_enrichment(self._payload())
@@ -67,64 +67,63 @@ class ValidateEnrichmentTests(unittest.TestCase):
 
 
 class SentimentClassifierIntegrationTests(unittest.TestCase):
-    """Covers _apply_sentiment_classifier, the enrich.py call site that wires
-    the ENABLE_SENTIMENT_CLASSIFIER toggle into the enrichment payload."""
+    """Covers _apply_sentiment_classifier, the sole source of
+    overall_sentiment/sentiment - it always runs and always wins over
+    whatever the LLM produced."""
 
-    def setUp(self):
-        self._original_enabled = config.ENABLE_SENTIMENT_CLASSIFIER
-        self._original_min_score = config.SENTIMENT_CLASSIFIER_MIN_SCORE
-
-    def tearDown(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = self._original_enabled
-        config.SENTIMENT_CLASSIFIER_MIN_SCORE = self._original_min_score
-
-    def _validated(self, sentiment="neutral"):
+    def _validated(self):
         return dict(enrich._validate_enrichment({
             "summary": "A calm, factual write-up.",
-            "overall_sentiment": sentiment,
         }))
 
-    def test_disabled_by_default_keeps_the_llm_sentiment(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = False
-        validated = self._validated(sentiment="positive")
-        with patch("enrich.classify_sentiment") as mocked:
-            enrich._apply_sentiment_classifier(validated, title="t", text="body")
-        mocked.assert_not_called()
-        self.assertEqual(validated["overall_sentiment"], "positive")
-
-    def test_enabled_and_confident_classification_replaces_the_llm_sentiment(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
-        config.SENTIMENT_CLASSIFIER_MIN_SCORE = 0.6
-        # LLM said "mixed" - the classifier's verdict should win once enabled,
-        # since sentiment is no longer LLM-driven when the toggle is on.
-        validated = self._validated(sentiment="mixed")
+    def test_confident_classification_sets_sentiment(self):
+        validated = self._validated()
         with patch("enrich.classify_sentiment", return_value={"label": "positive", "score": 0.92}):
             enrich._apply_sentiment_classifier(validated, title="t", text="body")
         self.assertEqual(validated["overall_sentiment"], "positive")
         self.assertEqual(validated["sentiment"], "positive")
         self.assertEqual(validated["insight_json"]["overall_sentiment"], "positive")
 
-    def test_low_confidence_classification_falls_back_to_the_llm_sentiment(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
-        config.SENTIMENT_CLASSIFIER_MIN_SCORE = 0.6
-        validated = self._validated(sentiment="negative")
+    def test_low_confidence_classification_is_still_used_verbatim(self):
+        """There is no LLM sentiment to fall back to, so even a low-confidence
+        classifier label is used as-is - the classifier is the only source."""
+        validated = self._validated()
         with patch("enrich.classify_sentiment", return_value={"label": "positive", "score": 0.3}):
             enrich._apply_sentiment_classifier(validated, title="t", text="body")
-        self.assertEqual(validated["overall_sentiment"], "negative")
+        self.assertEqual(validated["overall_sentiment"], "positive")
 
-    def test_classifier_returning_none_falls_back_to_the_llm_sentiment(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
-        validated = self._validated(sentiment="positive")
+    def test_classifier_returning_none_defaults_to_neutral(self):
+        validated = self._validated()
         with patch("enrich.classify_sentiment", return_value=None):
             enrich._apply_sentiment_classifier(validated, title="t", text="body")
-        self.assertEqual(validated["overall_sentiment"], "positive")
+        self.assertEqual(validated["overall_sentiment"], "neutral")
+        self.assertEqual(validated["sentiment"], "neutral")
+        self.assertEqual(validated["insight_json"]["overall_sentiment"], "neutral")
 
-    def test_classifier_raising_falls_back_to_the_llm_sentiment_without_crashing(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
-        validated = self._validated(sentiment="positive")
+    def test_classifier_raising_defaults_to_neutral_without_crashing(self):
+        validated = self._validated()
         with patch("enrich.classify_sentiment", side_effect=RuntimeError("boom")):
             enrich._apply_sentiment_classifier(validated, title="t", text="body")
-        self.assertEqual(validated["overall_sentiment"], "positive")
+        self.assertEqual(validated["overall_sentiment"], "neutral")
+
+    def test_unrecognized_label_defaults_to_neutral(self):
+        validated = self._validated()
+        with patch("enrich.classify_sentiment", return_value={"label": "surprised", "score": 0.9}):
+            enrich._apply_sentiment_classifier(validated, title="t", text="body")
+        self.assertEqual(validated["overall_sentiment"], "neutral")
+
+    def test_llm_sentiment_already_on_validated_is_overwritten(self):
+        """Simulates a validated payload that somehow still carries an LLM
+        sentiment - the classifier must replace it, never defer to it."""
+        validated = self._validated()
+        validated["overall_sentiment"] = "mixed"
+        validated["sentiment"] = "mixed"
+        validated["insight_json"]["overall_sentiment"] = "mixed"
+        with patch("enrich.classify_sentiment", return_value={"label": "negative", "score": 0.8}):
+            enrich._apply_sentiment_classifier(validated, title="t", text="body")
+        self.assertEqual(validated["overall_sentiment"], "negative")
+        self.assertEqual(validated["sentiment"], "negative")
+        self.assertEqual(validated["insight_json"]["overall_sentiment"], "negative")
 
 
 class EnrichArticleFallbackTests(unittest.TestCase):
@@ -137,23 +136,22 @@ class EnrichArticleFallbackTests(unittest.TestCase):
             self.assertIsNone(enrich.enrich_article({"title": "t", "text": "x" * 300}))
 
 
-class EnrichArticleSentimentToggleTests(unittest.TestCase):
-    """End-to-end: enrich_article() with the LLM and embeddings mocked out,
-    checking the ENABLE_SENTIMENT_CLASSIFIER toggle picks the right source
-    for `overall_sentiment` while every other field stays LLM-produced."""
+class EnrichArticleSentimentTests(unittest.TestCase):
+    """End-to-end: enrich_article() with the LLM and embeddings mocked out.
+    overall_sentiment/sentiment must always come from the classifier, and
+    every other field must stay exactly what the LLM produced."""
 
     LLM_JSON = json.dumps({
         "summary": "A glowing review of the new model.",
         "topic": "new model launch",
         "article_category": "review",
-        "overall_sentiment": "neutral",
+        "overall_sentiment": "mixed",
         "writer_tone": "positive",
         "article_tone": "positive",
         "positive_feedback": ["great range"],
     })
 
     def setUp(self):
-        self._original_enabled = config.ENABLE_SENTIMENT_CLASSIFIER
         self._patchers = [
             patch("enrich.chat_completion", return_value=self.LLM_JSON),
             patch("enrich.get_embedding", return_value={}),
@@ -162,37 +160,31 @@ class EnrichArticleSentimentToggleTests(unittest.TestCase):
             p.start()
 
     def tearDown(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = self._original_enabled
         for p in self._patchers:
             p.stop()
 
-    def test_disabled_uses_the_llm_sentiment(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = False
-        with patch("enrich.classify_sentiment") as mocked:
-            result = enrich.enrich_article({"title": "t", "text": "x" * 300})
-        mocked.assert_not_called()
-        self.assertEqual(result["overall_sentiment"], "neutral")
-        self.assertEqual(result["topic"], "new model launch")
-        self.assertEqual(result["writer_tone"], "positive")
-
-    def test_enabled_uses_the_classifier_sentiment_and_keeps_other_fields(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
+    def test_classifier_sentiment_replaces_the_llm_sentiment(self):
         with patch("enrich.classify_sentiment", return_value={"label": "positive", "score": 0.95}):
             result = enrich.enrich_article({"title": "t", "text": "x" * 300})
         self.assertEqual(result["overall_sentiment"], "positive")
         self.assertEqual(result["sentiment"], "positive")
-        # Everything else stays exactly what the LLM produced.
+        self.assertEqual(result["insight_json"]["overall_sentiment"], "positive")
+        # Everything else stays exactly what the LLM produced - the LLM's
+        # "mixed" sentiment guess is nowhere in the output.
         self.assertEqual(result["topic"], "new model launch")
         self.assertEqual(result["article_category"], "review")
         self.assertEqual(result["writer_tone"], "positive")
         self.assertEqual(result["positive_feedback"], ["great range"])
 
-    def test_enabled_but_classifier_unavailable_still_returns_a_full_payload(self):
-        config.ENABLE_SENTIMENT_CLASSIFIER = True
+    def test_classifier_unavailable_defaults_to_neutral_not_the_llm_sentiment(self):
         with patch("enrich.classify_sentiment", return_value=None):
             result = enrich.enrich_article({"title": "t", "text": "x" * 300})
         self.assertIsNotNone(result)
         self.assertEqual(result["overall_sentiment"], "neutral")
+        self.assertEqual(result["sentiment"], "neutral")
+        # Other fields are unaffected by the classifier's fallback.
+        self.assertEqual(result["topic"], "new model launch")
+        self.assertEqual(result["writer_tone"], "positive")
 
 
 if __name__ == "__main__":

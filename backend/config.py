@@ -61,20 +61,15 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-# Dedicated sentiment classifier (see sentiment_classifier.py), used in place
-# of the LLM for `overall_sentiment` only - every other enrichment field
-# (summary, topic, article_category, tones, feedback lists, ...) still comes
-# from the LLM either way. Off by default: false/unset means enrich.py keeps
-# using the LLM's own sentiment call, exactly as before this existed.
-ENABLE_SENTIMENT_CLASSIFIER = _env_bool("ENABLE_SENTIMENT_CLASSIFIER", False)
+# Dedicated sentiment classifier (see sentiment_classifier.py) - the sole
+# source of article `overall_sentiment`/`sentiment`. The LLM is never used
+# for sentiment, so there is no toggle to fall back to it; if the classifier
+# can't run, enrich.py defaults sentiment to "neutral" and logs it instead.
 SENTIMENT_CLASSIFIER_MODEL = os.environ.get(
     "SENTIMENT_CLASSIFIER_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest"
 ).strip()
 # "cpu" or "cuda"/"cuda:0" etc.
 SENTIMENT_CLASSIFIER_DEVICE = os.environ.get("SENTIMENT_CLASSIFIER_DEVICE", "cpu").strip()
-# Below this confidence, treat the classifier's call as unreliable and keep
-# the LLM's sentiment instead of overriding it.
-SENTIMENT_CLASSIFIER_MIN_SCORE = float(os.environ.get("SENTIMENT_CLASSIFIER_MIN_SCORE", "0.6") or 0.6)
 
 
 # --- Auth -------------------------------------------------------------------

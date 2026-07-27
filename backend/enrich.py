@@ -530,9 +530,10 @@ def _validate_enrichment(payload):
         return None
 
     article_category = _normalize_category(payload.get("article_category") or payload.get("category"))
-    sentiment = _normalize_sentiment(payload.get("overall_sentiment") or payload.get("sentiment"))
-    if sentiment == "neutral" and article_category in {"complaint"}:
-        sentiment = "negative"
+    # Placeholder only - the LLM is never trusted for sentiment. Real
+    # overall_sentiment/sentiment always come from _apply_sentiment_classifier(),
+    # called unconditionally right after this for every article.
+    sentiment = "neutral"
 
     writer_tone = _normalize_tone(payload.get("writer_tone"))
     article_tone = _normalize_tone(payload.get("article_tone"))
@@ -849,27 +850,28 @@ def build_topic_insight(articles, topic_name=""):
     }
 
 
+_ALLOWED_CLASSIFIER_SENTIMENTS = {"positive", "negative", "neutral"}
+
+
 def _apply_sentiment_classifier(validated, *, title, text):
-    """Swap `overall_sentiment`/`sentiment` for the dedicated classifier's
-    verdict when ENABLE_SENTIMENT_CLASSIFIER is on (see
-    sentiment_classifier.py) - everything else in `validated` (summary,
-    topic, category, tones, feedback lists, ...) stays exactly what the LLM
-    produced. Sentiment is pulled out into its own model because it's a
-    narrow classification task prone to LLM hedging; the rest of the
-    payload needs the LLM's broader understanding of the article and isn't
-    touched here.
+    """Set `overall_sentiment`/`sentiment` from the dedicated Hugging Face
+    classifier (see sentiment_classifier.py) - everything else in
+    `validated` (summary, topic, category, tones, feedback lists, ...) stays
+    exactly what the LLM produced. This always runs, for every article, and
+    always wins: the LLM is never used for sentiment, so there is nothing
+    here for it to override or backfill.
 
-    If the classifier is disabled, unavailable, misconfigured, or returns a
-    low-confidence/unusable result, this is a no-op and the LLM's own
-    sentiment (set earlier by _validate_enrichment) is left in place - the
-    classifier can only ever replace sentiment, never break it.
+    If the classifier can't produce a usable label (unavailable,
+    misconfigured, errors at inference, or returns something outside
+    positive/negative/neutral), sentiment deterministically defaults to
+    "neutral" and the reason is logged - the LLM's own sentiment is never
+    consulted as a fallback.
     """
-    if not config.ENABLE_SENTIMENT_CLASSIFIER:
-        return
-
     classifier_text = "\n".join(
         part for part in (title, validated.get("summary"), text) if part
     ).strip()
+
+    result = None
     try:
         result = classify_sentiment(classifier_text)
     except Exception as e:
@@ -877,15 +879,21 @@ def _apply_sentiment_classifier(validated, *, title, text):
         # None; this is a defense-in-depth backstop so a bug there can never
         # take down the rest of an otherwise-good LLM enrichment.
         print(f"  Sentiment classifier failed for '{title[:50]}': {e}")
-        return
-    if not result:
-        return
-    if result["score"] < config.SENTIMENT_CLASSIFIER_MIN_SCORE:
-        return
 
-    validated["overall_sentiment"] = result["label"]
-    validated["sentiment"] = result["label"]
-    validated["insight_json"]["overall_sentiment"] = result["label"]
+    label = result.get("label") if result else None
+    if label not in _ALLOWED_CLASSIFIER_SENTIMENTS:
+        if result:
+            print(
+                f"  Sentiment classifier returned an unusable label for "
+                f"'{title[:50]}': {label!r}; defaulting to neutral"
+            )
+        else:
+            print(f"  Sentiment classifier unavailable for '{title[:50]}'; defaulting to neutral")
+        label = "neutral"
+
+    validated["overall_sentiment"] = label
+    validated["sentiment"] = label
+    validated["insight_json"]["overall_sentiment"] = label
 
 
 def enrich_article(article, project_context=""):
