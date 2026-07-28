@@ -1,12 +1,15 @@
 import unittest
 from collections import Counter
 from datetime import datetime, timezone
+from unittest.mock import patch
 
+from services.intelligence import intelligence
 from services.intelligence.intelligence import (
     classify_platform,
     count_configured_terms,
     emotion_signature,
     filter_rows_for_period,
+    get_project_intelligence,
     keyword_existence_over_time,
     net_sentiment,
     pipeline_discovery_series,
@@ -92,6 +95,25 @@ class IntelligenceHelpersTests(unittest.TestCase):
 
     def test_keyword_existence_returns_empty_without_keywords(self):
         self.assertEqual(keyword_existence_over_time([{"title": "EV"}], []), [])
+
+
+class GetProjectIntelligenceTests(unittest.TestCase):
+    """get_project_intelligence() does a deferred `from
+    services.articles.articles_store import _topic_summary` import inside the
+    function body, not at module level - a bad import path there only breaks
+    at call time, so this must actually invoke the function (not just import
+    the module) to catch it. Regression test for a reorg that broke exactly
+    this: the module-level import graph checked out fine while this deferred
+    import still pointed at the pre-move module path."""
+
+    def test_runs_end_to_end_without_a_database(self):
+        with patch.object(intelligence, "_database_ready", return_value=False):
+            result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []})
+        self.assertEqual(result["project_id"], 1)
+        self.assertEqual(result["period"], "30d")
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["active_sources"], 0)
+        self.assertIn("insights", result)
 
 
 if __name__ == "__main__":

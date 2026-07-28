@@ -260,7 +260,7 @@ def _fetch_active_source_count(project_id: int) -> int:
 
 
 def get_project_intelligence(project: dict, period: str = "30d") -> dict:
-    from articles_store import _topic_summary
+    from services.articles.articles_store import _topic_summary
     period = normalize_period(period)
     rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
     counts = Counter(str(row.get("sentiment") or "").lower() for row in rows)

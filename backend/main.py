@@ -952,7 +952,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
 @app.delete("/api/articles")
 def delete_articles(user: dict = Depends(require_permission("articles.delete"))):
     """Delete all stored articles from Postgres."""
-    from store import delete_all_articles
+    from services.articles.store import delete_all_articles
 
     deleted = delete_all_articles()
     if not deleted:

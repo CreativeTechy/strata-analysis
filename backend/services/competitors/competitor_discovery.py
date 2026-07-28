@@ -186,7 +186,7 @@ def _corroborate(name: str, website: str) -> dict:
 
 def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborate: bool = True) -> dict:
     """Return `{competitors: [...], rejected: [...]}`, ranked largest first."""
-    from business_profile_store import profile_context
+    from services.competitors.business_profile_store import profile_context
 
     context = profile_context(profile)
     if not context:

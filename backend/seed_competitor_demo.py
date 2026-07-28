@@ -21,8 +21,8 @@ from datetime import datetime, timedelta, timezone
 
 from psycopg.types.json import Jsonb
 
-import competitor_analysis
-import competitors_store
+from services.competitors import competitor_analysis
+from services.competitors import competitors_store
 import db
 import dedup
 
@@ -241,7 +241,7 @@ def seed() -> int:
     project_id = int(project["id"])
     print(f"Created study {project_id}: {STUDY_NAME}")
 
-    import business_profile_store
+    from services.competitors import business_profile_store
 
     business_profile_store.upsert_profile(project_id, {
         **PROFILE,

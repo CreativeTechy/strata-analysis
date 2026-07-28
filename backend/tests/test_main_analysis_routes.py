@@ -189,5 +189,38 @@ class ProjectIdeaClustersTests(AnalysisRoutesTestCase):
         self.assertEqual(resp.json(), page)
 
 
+class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
+    """delete_articles() does a deferred `from services.articles.store
+    import delete_all_articles` import inside the route body, not at module
+    level, so `main.delete_all_articles` never exists to patch the way other
+    routes' module-level imports do - a bad import path here only breaks at
+    call time. Regression test for a reorg that broke exactly this: the
+    module-level import graph checked out fine while this deferred import
+    still pointed at the pre-move module path."""
+
+    def test_deletes_all_articles(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_all_articles", return_value=7
+        ) as mock_delete:
+            resp = self.client.delete("/api/articles")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"ok": True})
+        mock_delete.assert_called_once()
+
+    def test_reports_error_when_store_reports_failure(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_all_articles", return_value=0
+        ):
+            resp = self.client.delete("/api/articles")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("error", resp.json())
+
+
 if __name__ == "__main__":
     unittest.main()

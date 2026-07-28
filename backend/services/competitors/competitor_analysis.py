@@ -295,7 +295,7 @@ def _format_evidence(rows: list[dict]) -> str:
 
 def generate_finding(business_profile: dict, competitor: dict, period_days: int = DEFAULT_PERIOD_DAYS) -> dict | None:
     """Build one analysis card for one competitor, or None when evidence is absent."""
-    from business_profile_store import profile_context
+    from services.competitors.business_profile_store import profile_context
 
     evidence = _evidence_for(int(competitor["id"]))
     if not evidence:
@@ -400,8 +400,8 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
 
 def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -> dict:
     """Validate evidence then produce one card per tracked competitor."""
-    from business_profile_store import get_profile
-    from competitors_store import list_competitors
+    from services.competitors.business_profile_store import get_profile
+    from services.competitors.competitors_store import list_competitors
 
     profile = get_profile(project_id)
     competitors = list_competitors(project_id, status="tracked")
