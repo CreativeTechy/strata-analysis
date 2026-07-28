@@ -1,5 +1,28 @@
--- Strata Media - Supabase schema for the article analysis pipeline.
--- Run this in Supabase SQL Editor.
+-- Strata Media - Postgres schema for the article analysis pipeline.
+--
+-- Applied as migration `0001_baseline` by backend/migrate.py, and mounted into
+-- docker-entrypoint-initdb.d so a fresh volume starts from it. Every statement
+-- is idempotent, so re-running it is safe and is how an existing database
+-- converges with a fresh one.
+
+-- The RLS policies below grant to `anon` and `authenticated`, which Supabase
+-- provides but vanilla Postgres does not. Without these roles the whole file
+-- aborts on a fresh database (the postgres entrypoint runs initdb scripts with
+-- ON_ERROR_STOP=1), which made the documented `docker compose down -v` reset
+-- fail. They are created NOLOGIN and hold no grants, so they cannot connect and
+-- are inert: the backend connects as the table owner via psycopg and bypasses
+-- RLS entirely. Kept rather than deleted so a database restored from the
+-- Supabase era keeps behaving identically.
+do $$
+begin
+    if not exists (select 1 from pg_roles where rolname = 'anon') then
+        create role anon nologin;
+    end if;
+    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+        create role authenticated nologin;
+    end if;
+end
+$$;
 
 create or replace function public.set_updated_at()
 returns trigger

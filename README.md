@@ -177,19 +177,74 @@ To remove the Postgres volume as well:
 docker compose down -v
 ```
 
+### Schema migrations
+
+Schema changes are applied by `backend/migrate.py`, which runs automatically when
+the API starts. Dropping the Postgres volume is no longer needed to pick up a
+schema change.
+
+```bash
+# from backend/
+python migrate.py            # apply anything pending
+python migrate.py --status   # show applied vs pending, change nothing
+python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
+```
+
+How it works:
+
+- `schema.sql` is version `0001_baseline`. It is idempotent, so it is safe to
+  re-run, and re-running it is how an existing database converges with a fresh
+  one. It is also still mounted into `docker-entrypoint-initdb.d`, so a brand-new
+  volume starts from it directly.
+- `backend/migrations/NNNN_name.sql` are the forward migrations, applied in
+  numeric order, each in its own transaction.
+- Applied versions and their checksums are recorded in `schema_migrations`.
+  Editing a migration after it has been applied is a hard error — the runner
+  refuses rather than letting environments diverge silently. Add a new migration
+  instead.
+
+To add one: create `backend/migrations/0004_short_name.sql`, keep every statement
+idempotent (`if not exists`, `or replace`, `on conflict do nothing`), and restart
+the backend or run `python migrate.py`.
+
+Set `MIGRATE_ON_STARTUP=false` to manage migrations out of band instead — e.g.
+when several backend replicas share one database and only the deploy step should
+migrate it.
+
+### Backfilling the signal layer
+
+Two derived columns are populated from data already in Postgres — no re-scraping
+and no model calls:
+
+```bash
+# from backend/
+python backfill_signal_layer.py --dry-run    # report only
+python backfill_signal_layer.py              # both passes
+```
+
+- **dates** — parses the free-text `articles.published` into `published_at` plus
+  a `published_precision` of `exact`, `day`, or `unknown`. Rows whose date cannot
+  be recovered keep a null `published_at` and must be excluded from time series
+  rather than falling back to `created_at`, which would report when we scraped a
+  story rather than when it was published.
+- **stories** — groups near-identical bodies into `story_groups` so prevalence
+  can be counted per independent story instead of per URL. One wire story
+  republished by thirty outlets is one story, not thirty sources.
+
+Both passes are batched, committed per batch, and resumable — progress lives in
+the data, so an interrupted run is continued by running it again.
+
 ### Reset the database (fresh start)
 
-`schema.sql` only runs automatically against an empty Postgres volume, so if
-your local schema ever drifts from `schema.sql` (e.g. leftover tables from a
-rename), drop the volume and rebuild:
+To wipe all local data and rebuild from scratch:
 
 ```bash
 docker compose down -v
 docker compose up --build -d
 ```
 
-This deletes all local data and recreates the database from the current
-`schema.sql` on next startup.
+The volume is recreated from `schema.sql`, then the backend applies any
+migrations on top at startup.
 
 ## Deployment Notes
 

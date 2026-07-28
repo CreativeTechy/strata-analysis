@@ -20,7 +20,9 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, R
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+import competitor_api
 import config
+import migrate
 import permissions_store
 import sessions_store
 import users_store
@@ -91,6 +93,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# The competitor study is a separate experience from sentiment/opinions, so its
+# routes live in their own module rather than growing this one.
+app.include_router(competitor_api.router)
 
 
 @app.exception_handler(HTTPException)
@@ -164,6 +170,25 @@ def _format_project_context(project: dict | None) -> str:
         parts.append(f"Description: {description}")
 
     return "\n".join(parts)
+
+
+@app.on_event("startup")
+async def _apply_migrations():
+    """Bring the schema up to date before anything reads or writes it.
+
+    Registered ahead of the admin bootstrap on purpose: that depends on roles the
+    baseline migration seeds. Failures are deliberately fatal — a backend serving
+    requests against a schema it does not match returns wrong answers silently,
+    which is worse than refusing to start. Set MIGRATE_ON_STARTUP=false to manage
+    migrations out of band (`python migrate.py`) instead.
+    """
+    if not config.MIGRATE_ON_STARTUP:
+        logger.info("Startup migrations disabled (MIGRATE_ON_STARTUP=false).")
+        return
+    if not config.DATABASE_URL:
+        logger.warning("DATABASE_URL is missing; skipping migrations.")
+        return
+    migrate.run_on_startup()
 
 
 @app.on_event("startup")
