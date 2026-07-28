@@ -4,8 +4,10 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 
 import config
+import llm_client
 from analysis import structured_extraction as se
 
 
@@ -107,6 +109,40 @@ class ExtractStructuredDataTests(unittest.TestCase):
             result = se.extract_structured_data("title", "body")
         self.assertTrue(result.failed)
         self.assertEqual(mock_run.call_count, 1)
+
+
+class RunGenerationTests(unittest.TestCase):
+    """`_run_generation` is the seam onto the configured LLM provider - no
+    local model is loaded for this stage anymore (see llm_client.py)."""
+
+    def test_calls_the_provider_backed_client_in_json_mode(self):
+        messages = [{"role": "user", "content": "hi"}]
+        with patch("analysis.structured_extraction.llm_client.chat_completion", return_value="{}") as mock_chat:
+            result = se._run_generation(messages)
+        self.assertEqual(result, "{}")
+        mock_chat.assert_called_once_with(
+            messages=messages,
+            temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,
+            max_tokens=config.STRUCTURED_EXTRACTION_MAX_NEW_TOKENS,
+            json_mode=True,
+        )
+
+    def test_provider_error_is_caught_and_returns_none(self):
+        with patch(
+            "analysis.structured_extraction.llm_client.chat_completion",
+            side_effect=llm_client.LLMConfigError("no key configured"),
+        ):
+            result = se._run_generation([{"role": "user", "content": "hi"}])
+        self.assertIsNone(result)
+
+    def test_provider_error_surfaces_as_model_unavailable_end_to_end(self):
+        with patch(
+            "analysis.structured_extraction.llm_client.chat_completion",
+            side_effect=llm_client.LLMRateLimitError("rate limited"),
+        ):
+            result = se.extract_structured_data("title", "body")
+        self.assertTrue(result.failed)
+        self.assertEqual(result.reason, "model_unavailable")
 
 
 if __name__ == "__main__":

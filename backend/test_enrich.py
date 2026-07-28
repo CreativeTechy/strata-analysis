@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 
 import enrich
 

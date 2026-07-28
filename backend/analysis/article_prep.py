@@ -15,8 +15,9 @@ import config
 
 _SOCIAL_DOMAINS = {"x.com", "twitter.com"}
 
-# Chat-template control tokens (ChatML-style, used by Qwen and many other
-# instruct models). If scraped content contains these literally, it can try
+# Chat-template control tokens (ChatML-style, used by many instruct models,
+# including the LLM provider behind structured extraction). If scraped
+# content contains these literally, it can try
 # to fake a role boundary and smuggle in new "instructions" once the text is
 # dropped into a chat prompt. They're stripped from the model-facing copy
 # only - never from the stored article text.

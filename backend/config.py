@@ -68,14 +68,16 @@ _LLM_PROVIDER_DEFAULTS = {
         "base_url_env": "DEEPSEEK_CHAT_BASE_URL",
         "model_env": "DEEPSEEK_CHAT_MODEL",
         "default_base_url": "https://api.deepseek.com/v1/chat/completions",
-        "default_model": "deepseek-chat",
+        # "deepseek-chat"/"deepseek-reasoner" are DeepSeek's deprecated legacy
+        # model aliases - this is the current supported model name.
+        "default_model": "deepseek-v4-pro",
         "api_style": "chat_completions",
     },
 }
 
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower() or "openai"
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
 if LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
-    LLM_PROVIDER = "openai"
+    LLM_PROVIDER = "deepseek"
 
 # Per-provider env vars are kept as top-level names (OPENAI_API_KEY et al. are
 # unchanged from before this switch existed, so existing deployments that only
@@ -171,11 +173,13 @@ CLASSIFICATION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("CLASSIFICATION_CONFIDENCE_THRESHOLD", "0.4") or 0.4
 )
 
-# Structured extraction (summary/feedback lists/opinions/ideas/key points) via
-# a local instruction-tuned LLM, run through transformers text-generation.
-STRUCTURED_EXTRACTION_MODEL = os.environ.get(
-    "STRUCTURED_EXTRACTION_MODEL", "Qwen/Qwen2.5-7B-Instruct"
-).strip()
+# Structured extraction (summary/feedback lists/opinions/ideas/key points) now
+# goes through the configured LLM provider (llm_client.chat_completion), the
+# same one used for enrichment/Copilot/discovery - no local model is loaded
+# for this stage. STRUCTURED_EXTRACTION_MODEL/_DEVICE are no-op compatibility
+# settings kept only so old .env files with these set don't break; they are
+# not read by structured_extraction.py.
+STRUCTURED_EXTRACTION_MODEL = os.environ.get("STRUCTURED_EXTRACTION_MODEL", "").strip()
 STRUCTURED_EXTRACTION_DEVICE = os.environ.get("STRUCTURED_EXTRACTION_DEVICE", "cpu").strip()
 STRUCTURED_EXTRACTION_MAX_NEW_TOKENS = int(
     os.environ.get("STRUCTURED_EXTRACTION_MAX_NEW_TOKENS", "900") or 900

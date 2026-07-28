@@ -1,8 +1,9 @@
 """Structured extraction stage: summary, feedback lists, opinions, ideas,
 key points/risks/opportunities - everything the old single-LLM enrichment
 prompt used to produce, minus sentiment/category/tone (now their own
-stages). Runs a local instruction-tuned model (Qwen/Qwen2.5-7B-Instruct by
-default) via `transformers` text-generation, lazy-loaded and reused.
+stages). Calls the configured LLM provider (see config.LLM_PROVIDER and
+llm_client.chat_completion) in JSON mode - no local model is loaded for
+this stage.
 
 Output is validated strictly against EXTRACTION_SCHEMA. A first pass that
 isn't valid JSON, or doesn't match the schema, gets minor auto-repair
@@ -16,12 +17,11 @@ malformed data for the caller to store as if it were real.
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 
 import config
+import llm_client
 from analysis import normalize
 from analysis.json_utils import JSONParseError, parse_json_response, validate_schema
-from analysis.model_utils import resolve_device_index
 
 logger = logging.getLogger(__name__)
 
@@ -102,30 +102,6 @@ class ExtractionResult:
         self.attempts = attempts
 
 
-@lru_cache(maxsize=1)
-def _load_pipeline(model_name: str, device_setting: str):
-    try:
-        from transformers import pipeline
-    except Exception:
-        logger.warning("`transformers` isn't installed; structured extraction is disabled.")
-        return None
-    try:
-        return pipeline("text-generation", model=model_name, device=resolve_device_index(device_setting))
-    except Exception:
-        logger.exception(
-            "Failed to load structured extraction model '%s' on device '%s'", model_name, device_setting
-        )
-        return None
-
-
-def _get_pipeline():
-    model_name = (config.STRUCTURED_EXTRACTION_MODEL or "").strip()
-    if not model_name:
-        logger.warning("STRUCTURED_EXTRACTION_MODEL is empty; structured extraction is disabled.")
-        return None
-    return _load_pipeline(model_name, config.STRUCTURED_EXTRACTION_DEVICE or "cpu")
-
-
 def _build_messages(title: str, text: str, project_context: str = "") -> list:
     user_content = (
         f"Article title:\n{title}\n\n"
@@ -152,45 +128,17 @@ def _build_correction_messages(messages: list, bad_response: str, errors: list) 
     ]
 
 
-def _extract_generated_text(outputs) -> str | None:
-    if not outputs:
-        return None
-    generated = outputs[0].get("generated_text")
-    if isinstance(generated, str):
-        return generated
-    if isinstance(generated, list) and generated:
-        last = generated[-1]
-        if isinstance(last, dict):
-            return last.get("content")
-    return None
-
-
 def _run_generation(messages: list) -> str | None:
-    generator = _get_pipeline()
-    if generator is None:
-        return None
-
-    max_new_tokens = config.STRUCTURED_EXTRACTION_MAX_NEW_TOKENS
-    temperature = config.STRUCTURED_EXTRACTION_TEMPERATURE
-    gen_kwargs = {"max_new_tokens": max_new_tokens}
-    if temperature and temperature > 0:
-        gen_kwargs["do_sample"] = True
-        gen_kwargs["temperature"] = temperature
-    else:
-        gen_kwargs["do_sample"] = False
-
-    tokenizer = getattr(generator, "tokenizer", None)
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is not None:
-        gen_kwargs["pad_token_id"] = eos_token_id
-
     try:
-        outputs = generator(messages, **gen_kwargs)
-    except Exception:
+        return llm_client.chat_completion(
+            messages=messages,
+            temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,
+            max_tokens=config.STRUCTURED_EXTRACTION_MAX_NEW_TOKENS,
+            json_mode=True,
+        )
+    except llm_client.LLMError:
         logger.exception("Structured extraction generation failed")
         return None
-
-    return _extract_generated_text(outputs)
 
 
 def _parse_and_validate(raw: str):

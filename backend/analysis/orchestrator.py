@@ -66,9 +66,18 @@ def describe_models() -> str:
     return (
         f"sentiment={config.SENTIMENT_CLASSIFIER_MODEL or 'unavailable'}"
         f";classification={config.CLASSIFICATION_MODEL or 'unavailable'}"
-        f";extraction={config.STRUCTURED_EXTRACTION_MODEL or 'unavailable'}"
+        f";extraction={_describe_extraction_model()}"
         f";embedding={config.EMBEDDING_MODEL or 'unavailable'}"
     )
+
+
+def _describe_extraction_model() -> str:
+    """Structured extraction now runs through the configured LLM provider
+    (see config.LLM_PROVIDER/llm_client.py) rather than a dedicated local
+    model, so its identifier is "<provider>:<model>", not a bare model name."""
+    if not config.LLM_CHAT_MODEL:
+        return "unavailable"
+    return f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}"
 
 
 def analyze_article(article: dict, *, project_context: str = "") -> dict:
@@ -174,7 +183,7 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
         "writer_tone_confidence": float(writer_tone_result.get("score", 0.0)),
         "article_tone_confidence": float(article_tone_result.get("score", 0.0)),
         "classification_model": config.CLASSIFICATION_MODEL or None,
-        "extraction_model": config.STRUCTURED_EXTRACTION_MODEL or None,
+        "extraction_model": f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}" if config.LLM_CHAT_MODEL else None,
         "analysis_pipeline_version": PIPELINE_VERSION,
         "source_language": language_result.get("language"),
         "source_language_confidence": float(language_result.get("score", 0.0)),

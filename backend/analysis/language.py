@@ -4,8 +4,9 @@ Detects the article's source language as metadata (source_language,
 source_language_confidence on the articles table) - it never translates or
 rewrites the stored text, and every other stage's model here is already
 multilingual-capable (mDeBERTa, the multilingual sentence-transformers
-embedding model, and Qwen2.5-7B-Instruct all handle non-English input
-directly). Lazy-loaded and reused like every other stage.
+embedding model, and the configured LLM provider used for structured
+extraction all handle non-English input directly). Lazy-loaded and reused
+like every other stage.
 """
 
 from __future__ import annotations

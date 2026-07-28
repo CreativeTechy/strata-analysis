@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 
+import config
 from analysis import orchestrator
 from analysis.structured_extraction import ExtractionResult
 
@@ -108,6 +110,10 @@ class AnalyzeArticleTests(unittest.TestCase):
         self.assertIsNotNone(result["analysis_finished_at"])
         for model_field in ("sentiment_model", "classification_model", "extraction_model"):
             self.assertTrue(result[model_field])
+        # extraction is now provider-backed (no dedicated local model), so its
+        # identifier is "<provider>:<model>" rather than a bare model name.
+        self.assertIn(":", result["extraction_model"])
+        self.assertTrue(result["extraction_model"].startswith(f"{config.LLM_PROVIDER}:"))
 
     def test_entity_extraction_override_replaces_extraction_entities_when_enabled(self):
         with patch(
