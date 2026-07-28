@@ -2,8 +2,8 @@
 
 The four stages live in their own modules:
   scraper  -> scraper/spiders/source_rss.py (Scrapy)
-  enricher -> enrich.py
-  saver    -> store.py
+  enricher -> services/articles/enrich.py
+  saver    -> services/articles/store.py
 
 This API triggers the jobs and exposes configured sources to the dashboard.
 """
@@ -20,16 +20,16 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, R
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-import competitor_api
 import config
 import migrate
-import permissions_store
-import sessions_store
-import users_store
-from auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
-from project_discovery import discover_project_links
-from projects_ai import suggest_project_metadata
-from articles_store import (
+from services.competitors import competitor_api
+from services.auth import permissions_store
+from services.auth import sessions_store
+from services.auth import users_store
+from services.auth.auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
+from services.projects.project_discovery import discover_project_links
+from services.projects.projects_ai import suggest_project_metadata
+from services.articles.articles_store import (
     compute_overall_tone,
     export_articles,
     get_analysis_status_counts,
@@ -40,7 +40,7 @@ from articles_store import (
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
 )
-from reanalyze import (
+from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
     mark_reprocess_requested,
@@ -48,7 +48,7 @@ from reanalyze import (
     reanalyze_articles,
 )
 from llm_client import LLMError, chat_completion
-from projects_store import (
+from services.projects.projects_store import (
     create_project,
     delete_project,
     diagnose_project_setup,
@@ -64,8 +64,8 @@ from projects_store import (
     set_project_users,
     update_project,
 )
-from intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
-from sources_store import (
+from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
+from services.sources.sources_store import (
     bootstrap_sources,
     create_source,
     delete_source,
@@ -73,8 +73,8 @@ from sources_store import (
     list_sources_page,
     update_source,
 )
-from pipeline import cancel_pipeline_run, run_scraper_pipeline
-from pipeline_runs import (
+from services.pipeline.pipeline import cancel_pipeline_run, run_scraper_pipeline
+from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
     create_pipeline_run,
     get_active_run_for_project,
@@ -83,7 +83,7 @@ from pipeline_runs import (
     list_pipeline_runs,
     update_pipeline_run,
 )
-from scheduler import scheduler_loop
+from services.pipeline.scheduler import scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
@@ -952,7 +952,7 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
 @app.delete("/api/articles")
 def delete_articles(user: dict = Depends(require_permission("articles.delete"))):
     """Delete all stored articles from Postgres."""
-    from store import delete_all_articles
+    from services.articles.store import delete_all_articles
 
     deleted = delete_all_articles()
     if not deleted:

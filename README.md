@@ -6,8 +6,8 @@ it in Supabase, and surfaces it in the dashboard.
 ## Pipeline
 
 - `backend/scraper/` - Scrapy project for source and page extraction
-- `backend/enrich.py` - AI enrichment stage
-- `backend/store.py` - Supabase upsert layer
+- `backend/services/articles/enrich.py` - AI enrichment stage
+- `backend/services/articles/store.py` - Supabase upsert layer
 - `backend/main.py` - FastAPI API for scraping, sources, projects, and chat
 - `dashboard/` - React + Vite dashboard
 
@@ -16,16 +16,18 @@ it in Supabase, and surfaces it in the dashboard.
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
    Supabase `sources` or the `SOURCES` env var override, discovers article links,
    and extracts clean title/date/text with trafilatura.
-2. Enricher - `backend/enrich.py`. Cleans and tags each article with AI,
-   then falls back to neutral defaults if the request fails.
-3. Saver - `backend/store.py`. Upserts enriched articles into Supabase.
+2. Enricher - `backend/services/articles/enrich.py`. Cleans and tags each
+   article with AI, then falls back to neutral defaults if the request fails.
+3. Saver - `backend/services/articles/store.py`. Upserts enriched articles
+   into Supabase.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
    backend API.
 
 A single configured LLM provider is used everywhere in this app for AI:
-article enrichment (`backend/enrich.py`), Intelligence Copilot chat
-(`backend/main.py`), and hashtag/keyword/username/source discovery
-(`backend/projects_ai.py` and `backend/project_discovery.py`). All provider
+article enrichment (`backend/services/articles/enrich.py`), Intelligence
+Copilot chat (`backend/main.py`), and hashtag/keyword/username/source
+discovery (`backend/services/projects/projects_ai.py` and
+`backend/services/projects/project_discovery.py`). All provider
 selection and request formatting lives in `backend/llm_client.py`; feature
 modules just call `chat_completion(...)` and never know which provider is
 active.
@@ -119,7 +121,7 @@ You can run the scrape/enrich/save flow directly from the backend folder:
 
 ```bash
 scrapy crawl source_rss -O articles.json
-python enrich.py
+python -m services.articles.enrich
 ```
 
 ## Docker Deployment

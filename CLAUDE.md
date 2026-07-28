@@ -7,12 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Pipeline: Scrapy spider → AI enrichment → Supabase/Postgres → FastAPI → React dashboard.
 
 - `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `sources` table (or `SOURCES` env var override), discovers article links, extracts text via trafilatura.
-- `backend/enrich.py` - tags/cleans articles using the configured LLM (via `llm_client.chat_completion`), falling back to neutral defaults if the call fails.
-- `backend/store.py` - upserts enriched articles into Supabase.
+- `backend/services/articles/enrich.py` - tags/cleans articles using the configured LLM (via `llm_client.chat_completion`), falling back to neutral defaults if the call fails.
+- `backend/services/articles/store.py` - upserts enriched articles into Supabase.
 - `backend/main.py` - FastAPI app: scraping, sources, projects, chat (Intelligence Copilot, also via `llm_client.chat_completion`) endpoints.
-- `backend/projects_ai.py` / `backend/project_discovery.py` - call the configured LLM via `llm_client.chat_completion` for hashtag/keyword/username/source discovery.
+- `backend/services/projects/projects_ai.py` / `backend/services/projects/project_discovery.py` - call the configured LLM via `llm_client.chat_completion` for hashtag/keyword/username/source discovery.
 - `backend/config.py` - single source of truth for source list and credentials; loads `backend/.env` manually (not python-dotenv). Also resolves the active LLM provider (`LLM_PROVIDER`) and its credentials/base URL/model.
 - `backend/llm_client.py` - provider-neutral `chat_completion(...)` client; the only module aware of OpenAI vs. DeepSeek request/response differences.
+- `backend/services/` - business-logic modules grouped by domain: `auth/` (login, sessions, users, RBAC), `projects/`, `sources/`, `competitors/` (competitor study), `articles/` (enrichment/storage/reanalysis), `pipeline/` (scrape→enrich→save execution, run tracking, scheduling), `intelligence/` (analytics). `backend/analysis/` (the AI stage pipeline) and standalone ops scripts (`migrate.py`, `backfill_signal_layer.py`, `seed_competitor_demo.py`) stay at `backend/` root.
 - `dashboard/` - React 19 + Vite dashboard, reads Supabase directly and calls the backend API.
 
 No automated test suite exists in this repo.
@@ -27,7 +28,7 @@ pip install -r requirements.txt
 pip install -r requirements-optional.txt   # needed for local embeddings (sentence-transformers)
 uvicorn main:app --port 8000
 ```
-Run pipeline manually: `scrapy crawl source_rss -O articles.json` then `python enrich.py`.
+Run pipeline manually: `scrapy crawl source_rss -O articles.json` then `python -m services.articles.enrich`.
 
 Dashboard (from `dashboard/`):
 ```

@@ -227,7 +227,7 @@ def _post(url, body, timeout):
     return payload
 
 
-def _build_request_body(*, messages, model, temperature, max_tokens):
+def _build_request_body(*, messages, model, temperature, max_tokens, json_mode):
     """Build the provider-appropriate request body for the same logical inputs.
 
     This is the one place that adapts to the active provider's payload shape
@@ -235,12 +235,15 @@ def _build_request_body(*, messages, model, temperature, max_tokens):
     regardless of which provider is configured.
     """
     if config.LLM_API_STYLE == "chat_completions":
-        return {
+        body = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        return body
 
     # "responses" style (OpenAI Responses API): no system role in `input`,
     # system/developer messages become the top-level `instructions` string.
@@ -253,6 +256,8 @@ def _build_request_body(*, messages, model, temperature, max_tokens):
     }
     if instructions:
         body["instructions"] = instructions
+    if json_mode:
+        body["text"] = {"format": {"type": "json_object"}}
     return body
 
 
@@ -260,7 +265,14 @@ def _max_tokens_key():
     return "max_tokens" if config.LLM_API_STYLE == "chat_completions" else "max_output_tokens"
 
 
-def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60):
+def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60, json_mode=False):
+    """Send a chat request to the active provider and return its text reply.
+
+    `json_mode=True` asks the provider to constrain its output to a single
+    JSON object (OpenAI's/DeepSeek's native JSON-object response format).
+    This only forces well-formed JSON syntax, not a particular shape -
+    callers still need to validate the result against their own schema.
+    """
     url = (config.LLM_CHAT_BASE_URL or "").strip()
     if not config.LLM_API_KEY or not url:
         raise LLMConfigError(f"{config.LLM_API_KEY_ENV_NAME} is not configured")
@@ -270,6 +282,7 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
         model=model or config.LLM_CHAT_MODEL,
         temperature=temperature,
         max_tokens=max_tokens,
+        json_mode=json_mode,
     )
 
     try:
