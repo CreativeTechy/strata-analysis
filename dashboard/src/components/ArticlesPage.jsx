@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
@@ -35,6 +35,11 @@ function formatMatchScore(value) {
   const score = Number(value);
   if (!Number.isFinite(score)) return '';
   return score.toFixed(2);
+}
+
+function confidencePct(value) {
+  const score = Number(value);
+  return Number.isFinite(score) ? `${Math.round(score * 100)}%` : null;
 }
 
 function SkeletonArticleCard() {
@@ -85,9 +90,16 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [exporting, setExporting] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [detailArticleId, setDetailArticleId] = useState(null);
+  const [detailData, setDetailData] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [detailReprocessing, setDetailReprocessing] = useState(false);
+  const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
+  const canReprocess = hasPermission('pipeline.run');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -146,6 +158,54 @@ export default function ArticlesPage({ project = null, projectId = null, project
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
   }, [articles.length]);
+
+  useEffect(() => {
+    if (detailArticleId == null) return undefined;
+    const controller = new AbortController();
+    async function loadDetail() {
+      setDetailLoading(true);
+      setDetailError('');
+      setDetailActionMessage('');
+      try {
+        const res = await fetch(`/api/articles/${detailArticleId}/analysis`, { signal: controller.signal });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load analysis (${res.status})`);
+        setDetailData(data?.analysis || null);
+      } catch (err) {
+        if (err?.name !== 'AbortError') {
+          setDetailData(null);
+          setDetailError(err?.message || 'Failed to load analysis details.');
+        }
+      } finally {
+        setDetailLoading(false);
+      }
+    }
+    loadDetail();
+    return () => controller.abort();
+  }, [detailArticleId]);
+
+  const closeDetailModal = () => {
+    setDetailArticleId(null);
+    setDetailData(null);
+    setDetailError('');
+    setDetailActionMessage('');
+  };
+
+  const handleReprocess = async () => {
+    if (detailArticleId == null || detailReprocessing) return;
+    setDetailReprocessing(true);
+    setDetailActionMessage('');
+    try {
+      const res = await fetch(`/api/articles/${detailArticleId}/reprocess`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to reprocess article (${res.status})`);
+      setDetailActionMessage('Reprocessing started - reopen this panel in a moment to see the updated result.');
+    } catch (err) {
+      setDetailActionMessage(err?.message || 'Failed to reprocess article.');
+    } finally {
+      setDetailReprocessing(false);
+    }
+  };
 
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + articles.length, total);
@@ -269,6 +329,95 @@ export default function ArticlesPage({ project = null, projectId = null, project
             await handleDeleteAll();
           }}
         />
+
+        <ConfirmModal
+          open={detailArticleId != null}
+          title="Analysis details"
+          hideCancel={!canReprocess}
+          cancelLabel="Close"
+          confirmLabel={canReprocess ? (detailReprocessing ? 'Reprocessing...' : 'Reprocess') : 'Close'}
+          onClose={closeDetailModal}
+          onConfirm={canReprocess ? handleReprocess : closeDetailModal}
+        >
+          {detailLoading ? (
+            <p className="subtitle">Loading analysis details...</p>
+          ) : detailError ? (
+            <p style={{ color: '#b42318' }}>{detailError}</p>
+          ) : detailData ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <span
+                  className={`badge ${
+                    detailData.analysis_status === 'failed' ? 'negative' : detailData.analysis_status === 'success' ? 'positive' : 'neutral'
+                  }`}
+                >
+                  {prettyLabel(detailData.analysis_status || 'unknown')}
+                </span>
+                {detailData.analysis_error ? <span className="badge negative">{detailData.analysis_error}</span> : null}
+              </div>
+
+              <div>
+                <strong>Sentiment:</strong> {prettyLabel(detailData.sentiment)}
+                {confidencePct(detailData.confidence?.sentiment) && (
+                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    (confidence {confidencePct(detailData.confidence.sentiment)}
+                    {detailData.confidence?.sentiment_low_confidence ? ', low confidence' : ''})
+                  </span>
+                )}
+              </div>
+              <div>
+                <strong>Category:</strong> {prettyLabel(detailData.article_category)}
+                {confidencePct(detailData.confidence?.category) && (
+                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    (confidence {confidencePct(detailData.confidence.category)})
+                  </span>
+                )}
+              </div>
+              <div>
+                <strong>Writer tone:</strong> {prettyLabel(detailData.writer_tone)}
+                {confidencePct(detailData.confidence?.writer_tone) && (
+                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    (confidence {confidencePct(detailData.confidence.writer_tone)})
+                  </span>
+                )}
+              </div>
+              <div>
+                <strong>Article tone:</strong> {prettyLabel(detailData.article_tone)}
+                {confidencePct(detailData.confidence?.article_tone) && (
+                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    (confidence {confidencePct(detailData.confidence.article_tone)})
+                  </span>
+                )}
+              </div>
+              <div>
+                <strong>Overall tone:</strong> {prettyLabel(detailData.overall_tone)}
+              </div>
+              {detailData.source_language ? (
+                <div>
+                  <strong>Source language:</strong> {detailData.source_language.toUpperCase()}
+                  {confidencePct(detailData.source_language_confidence) && (
+                    <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                      (confidence {confidencePct(detailData.source_language_confidence)})
+                    </span>
+                  )}
+                </div>
+              ) : null}
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-light)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
+                <div>
+                  Models - sentiment: {detailData.models?.sentiment || 'n/a'}, classification: {detailData.models?.classification || 'n/a'}, extraction:{' '}
+                  {detailData.models?.extraction || 'n/a'}
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  Attempts: {detailData.processing?.attempt_count ?? 0} - Last run:{' '}
+                  {detailData.processing?.finished_at ? new Date(detailData.processing.finished_at).toLocaleString() : 'Not yet'}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="subtitle">No analysis data available for this article.</p>
+          )}
+          {detailActionMessage ? <p style={{ marginTop: 10, fontSize: '0.85rem', color: 'var(--text-light)' }}>{detailActionMessage}</p> : null}
+        </ConfirmModal>
 
         <div className="glass-card articles-toolbar">
           <label className="articles-search">
@@ -410,6 +559,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
                           <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
+                        onClick={() => setDetailArticleId(article.id)}
+                        title="View analysis details"
+                      >
+                        <Info size={13} /> Details
+                      </button>
                     </div>
 
                     <h3 className="article-title">

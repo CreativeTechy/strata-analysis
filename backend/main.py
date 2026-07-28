@@ -29,7 +29,24 @@ import users_store
 from auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
 from project_discovery import discover_project_links
 from projects_ai import suggest_project_metadata
-from articles_store import compute_overall_tone, export_articles, get_article_stats, list_articles
+from articles_store import (
+    compute_overall_tone,
+    export_articles,
+    get_analysis_status_counts,
+    get_article_analysis,
+    get_article_stats,
+    list_analysis_errors,
+    list_articles,
+    list_articles_for_idea_cluster,
+    list_idea_clusters_for_project,
+)
+from reanalyze import (
+    load_article_for_reanalysis,
+    mark_processing,
+    mark_reprocess_requested,
+    reanalyze_article,
+    reanalyze_articles,
+)
 from llm_client import LLMError, chat_completion
 from projects_store import (
     create_project,
@@ -678,6 +695,166 @@ def export_articles_jsonl(
         "Content-Type": "application/x-ndjson; charset=utf-8",
     }
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
+
+
+# --- Analysis pipeline: on-demand (re)analysis, status, ideas -------------
+
+MAX_BATCH_ANALYZE_IDS = 50
+
+
+@app.post("/api/articles/{article_id}/analyze")
+def analyze_article_endpoint(
+    article_id: int,
+    background_tasks: BackgroundTasks,
+    payload: dict | None = None,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Run the analysis pipeline for one already-scraped article. Skips
+    articles that already completed successfully unless force=true is
+    passed - use POST .../reprocess to always force a fresh run regardless
+    of current status."""
+    force = bool((payload or {}).get("force"))
+    article = load_article_for_reanalysis(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found.")
+
+    current = get_article_analysis(article_id)
+    if current and current.get("analysis_status") == "success" and not force:
+        return {"article_id": article_id, "status": "skipped", "reason": "already_analyzed", "analysis": current}
+
+    mark_processing(article_id)
+    background_tasks.add_task(reanalyze_article, article_id)
+    return {"article_id": article_id, "status": "processing"}
+
+
+@app.post("/api/articles/analyze")
+def analyze_articles_endpoint(
+    background_tasks: BackgroundTasks,
+    payload: dict,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Batch version of the single-article analyze endpoint - queues
+    analysis for up to MAX_BATCH_ANALYZE_IDS articles at once and returns
+    immediately; poll GET /api/analysis/status or each article's
+    GET .../analysis for progress."""
+    payload = payload or {}
+    raw_ids = payload.get("article_ids") or []
+    force = bool(payload.get("force"))
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise HTTPException(status_code=400, detail="article_ids must be a non-empty list.")
+    if len(raw_ids) > MAX_BATCH_ANALYZE_IDS:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_BATCH_ANALYZE_IDS} article_ids per request.")
+    try:
+        article_ids = [int(i) for i in raw_ids]
+    except Exception:
+        raise HTTPException(status_code=400, detail="article_ids must be integers.")
+
+    queued, skipped, not_found = [], [], []
+    for article_id in article_ids:
+        if not load_article_for_reanalysis(article_id):
+            not_found.append(article_id)
+            continue
+        current = get_article_analysis(article_id)
+        if current and current.get("analysis_status") == "success" and not force:
+            skipped.append(article_id)
+            continue
+        mark_processing(article_id)
+        queued.append(article_id)
+
+    if queued:
+        background_tasks.add_task(reanalyze_articles, queued)
+
+    return {"queued": queued, "skipped": skipped, "not_found": not_found}
+
+
+@app.post("/api/articles/{article_id}/reprocess")
+def reprocess_article_endpoint(
+    article_id: int,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Always forces a fresh analysis run, regardless of current
+    analysis_status - distinct from POST .../analyze, which skips articles
+    that already succeeded."""
+    if not load_article_for_reanalysis(article_id):
+        raise HTTPException(status_code=404, detail="Article not found.")
+
+    reprocess_requested_at = mark_reprocess_requested(article_id)
+    background_tasks.add_task(reanalyze_article, article_id)
+    return {"article_id": article_id, "status": "processing", "reprocess_requested_at": reprocess_requested_at}
+
+
+@app.get("/api/articles/{article_id}/analysis")
+def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_permission("articles.view"))):
+    """Full analysis detail for one article: sentiment/tone/category with
+    their confidence scores, per-stage model identifiers, and
+    analysis_status/analysis_error so a failed or low-confidence result is
+    never mistaken for a confident real one."""
+    analysis = get_article_analysis(article_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Article not found.")
+    return {"analysis": analysis}
+
+
+@app.get("/api/analysis/status")
+def get_analysis_status_endpoint(
+    project_id: int | None = None,
+    user: dict = Depends(require_permission("pipeline.view")),
+):
+    """Aggregate analysis_status counts (pending/processing/success/failed/
+    partial), optionally scoped to a project."""
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
+    counts = get_analysis_status_counts(project_id=project_id)
+    return {"project_id": project_id, "counts": counts, "total": sum(counts.values())}
+
+
+@app.get("/api/articles/analysis-errors")
+def get_analysis_errors_endpoint(
+    project_id: int | None = None,
+    limit: int = 24,
+    offset: int = 0,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Paginated list of articles whose most recent analysis run failed,
+    with the stored error - the detail view behind the aggregate counts in
+    GET /api/analysis/status."""
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
+    return list_analysis_errors(project_id=project_id, limit=limit, offset=offset)
+
+
+@app.get("/api/projects/{project_id}/idea-clusters")
+def get_project_idea_clusters(
+    project_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Cross-article frequent-idea clusters for a project - the persisted,
+    cross-run counterpart to the per-run rollup in insights.frequent_ideas."""
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return list_idea_clusters_for_project(project_id, limit=limit, offset=offset)
+
+
+@app.get("/api/projects/{project_id}/idea-clusters/{cluster_id}/articles")
+def get_idea_cluster_articles(
+    project_id: int,
+    cluster_id: int,
+    limit: int = 10,
+    offset: int = 0,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Representative source articles for one idea cluster."""
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    page = list_articles_for_idea_cluster(cluster_id, project_id, limit=limit, offset=offset)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Idea cluster not found.")
+    return page
 
 
 @app.post("/api/sources")

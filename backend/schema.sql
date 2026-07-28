@@ -475,3 +475,183 @@ on public.project_users
 for select
 to anon, authenticated
 using (true);
+
+-- =============================================================================
+-- Modular analysis pipeline: persistence additions (backend/analysis/).
+-- Everything below is additive and safe to re-run: existing insight_json /
+-- flat jsonb columns on articles are left exactly as they were and remain
+-- authoritative for existing readers (articles_store.py, the dashboard) -
+-- nothing here removes or renames a column those readers depend on. The
+-- new columns/tables are new capability the analysis pipeline populates
+-- going forward; rows written before this migration simply have them null
+-- (or the stated default), which callers must treat as "unknown"/"not yet
+-- migrated", not as a real neutral result.
+-- =============================================================================
+
+alter table public.articles
+    add column if not exists sentiment_score numeric,
+    add column if not exists sentiment_low_confidence boolean not null default false,
+    add column if not exists sentiment_model text,
+    add column if not exists category_confidence numeric,
+    add column if not exists writer_tone_confidence numeric,
+    add column if not exists article_tone_confidence numeric,
+    add column if not exists classification_model text,
+    add column if not exists extraction_model text,
+    add column if not exists analysis_pipeline_version text,
+    add column if not exists source_language text,
+    add column if not exists source_language_confidence numeric,
+    add column if not exists embedding_dimensions integer,
+    add column if not exists analysis_status text not null default 'success',
+    add column if not exists analysis_error text,
+    add column if not exists analysis_started_at timestamptz,
+    add column if not exists analysis_finished_at timestamptz,
+    add column if not exists analysis_attempt_count integer not null default 0,
+    add column if not exists reprocess_requested_at timestamptz;
+
+-- Legacy rows (pre-dating these columns) default to analysis_status =
+-- 'success' above because they *did* complete under the old single-LLM
+-- pipeline - 'failed'/'pending'/'processing' are reserved for rows the new
+-- pipeline has actually seen.
+alter table public.articles
+    drop constraint if exists articles_analysis_status_check;
+alter table public.articles
+    add constraint articles_analysis_status_check
+    check (analysis_status in ('pending', 'processing', 'success', 'failed', 'partial'));
+
+create index if not exists articles_analysis_status_idx on public.articles (analysis_status);
+create index if not exists articles_reprocess_requested_idx on public.articles (reprocess_requested_at) where reprocess_requested_at is not null;
+create index if not exists articles_source_language_idx on public.articles (source_language);
+
+-- One-time, safe backfill: embedding_dimensions is fully derivable from the
+-- vector already stored, for rows embedded before this column existed. Only
+-- touches rows where it's currently null, so it's safe to re-run.
+update public.articles
+set embedding_dimensions = jsonb_array_length(embedding_json)
+where embedding_dimensions is null
+  and embedding_json is not null
+  and jsonb_typeof(embedding_json) = 'array'
+  and jsonb_array_length(embedding_json) > 0;
+
+-- --- Normalized child tables for repeated per-article items -----------------
+-- Additive: insight_json / the flat jsonb list columns on articles keep
+-- working exactly as before for existing readers. Rows here are fully
+-- replaced (delete+insert) each time an article is (re)analyzed - see
+-- store.py's _replace_article_children() - so reprocessing an article never
+-- leaves stale rows behind.
+create table if not exists public.article_feedback_items (
+    id            bigint generated always as identity primary key,
+    article_id    bigint not null references public.articles(id) on delete cascade,
+    feedback_type text not null,
+    text          text not null,
+    created_at    timestamptz default now()
+);
+
+create table if not exists public.article_people_opinions (
+    id           bigint generated always as identity primary key,
+    article_id   bigint not null references public.articles(id) on delete cascade,
+    opinion      text not null,
+    sentiment    text not null default 'neutral',
+    category     text not null default '',
+    created_at   timestamptz default now()
+);
+
+create table if not exists public.article_tags (
+    id           bigint generated always as identity primary key,
+    article_id   bigint not null references public.articles(id) on delete cascade,
+    tag_type     text not null check (tag_type in ('organization', 'entity', 'topic')),
+    value        text not null,
+    created_at   timestamptz default now()
+);
+
+create index if not exists article_feedback_items_article_idx on public.article_feedback_items (article_id);
+create index if not exists article_feedback_items_type_idx on public.article_feedback_items (feedback_type);
+create index if not exists article_people_opinions_article_idx on public.article_people_opinions (article_id);
+create index if not exists article_tags_article_idx on public.article_tags (article_id);
+create index if not exists article_tags_type_value_idx on public.article_tags (tag_type, value);
+
+-- --- Cross-article idea clusters ---------------------------------------------
+-- A project-scoped rollup of frequent_ideas that accumulates across pipeline
+-- runs, unlike analysis/aggregation.py's build_topic_insight() which only
+-- ever sees one run's in-memory batch. Clustering is exact-match on
+-- (project, normalized idea text, type, category) - the same dedupe key
+-- build_topic_insight() already uses for a single run, just persisted so it
+-- compounds over time instead of resetting every run.
+create table if not exists public.idea_clusters (
+    id                 bigint generated always as identity primary key,
+    project_id         bigint not null references public.projects(id) on delete cascade,
+    idea               text not null,
+    normalized_idea    text generated always as (lower(trim(idea))) stored,
+    type               text not null default 'issue' check (type in ('complaint', 'praise', 'suggestion', 'issue')),
+    category           text not null default '',
+    frequency_estimate integer not null default 0,
+    first_seen_at      timestamptz default now(),
+    last_seen_at       timestamptz default now(),
+    updated_at         timestamptz default now()
+);
+
+alter table public.idea_clusters
+    drop constraint if exists idea_clusters_unique_key;
+alter table public.idea_clusters
+    add constraint idea_clusters_unique_key
+    unique (project_id, normalized_idea, type, category);
+
+-- Which articles contributed to a cluster; frequency_estimate is recomputed
+-- from this table's row count for the cluster on every write (see store.py),
+-- so reprocessing an article can never double-count it.
+create table if not exists public.idea_cluster_articles (
+    idea_cluster_id bigint not null references public.idea_clusters(id) on delete cascade,
+    article_id      bigint not null references public.articles(id) on delete cascade,
+    created_at      timestamptz default now(),
+    primary key (idea_cluster_id, article_id)
+);
+
+create index if not exists idea_clusters_project_idx on public.idea_clusters (project_id);
+create index if not exists idea_clusters_frequency_idx on public.idea_clusters (frequency_estimate desc);
+create index if not exists idea_cluster_articles_article_idx on public.idea_cluster_articles (article_id);
+
+drop trigger if exists set_idea_clusters_updated_at on public.idea_clusters;
+create trigger set_idea_clusters_updated_at
+before update on public.idea_clusters
+for each row
+execute function public.set_updated_at();
+
+alter table public.article_feedback_items enable row level security;
+alter table public.article_people_opinions enable row level security;
+alter table public.article_tags enable row level security;
+alter table public.idea_clusters enable row level security;
+alter table public.idea_cluster_articles enable row level security;
+
+drop policy if exists "Public read access" on public.article_feedback_items;
+create policy "Public read access"
+on public.article_feedback_items
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.article_people_opinions;
+create policy "Public read access"
+on public.article_people_opinions
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.article_tags;
+create policy "Public read access"
+on public.article_tags
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.idea_clusters;
+create policy "Public read access"
+on public.idea_clusters
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public read access" on public.idea_cluster_articles;
+create policy "Public read access"
+on public.idea_cluster_articles
+for select
+to anon, authenticated
+using (true);
