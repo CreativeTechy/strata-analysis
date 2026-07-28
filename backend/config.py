@@ -41,12 +41,86 @@ _load_dotenv()
 
 
 DATABASE_URL = db.get_database_url()
+
+# --- LLM provider ------------------------------------------------------------
+# `LLM_PROVIDER` picks which backend every AI feature (enrichment, Intelligence
+# Copilot chat, project metadata suggestions, project/source discovery) talks
+# to. Everything provider-specific - credentials, base URL, default model, and
+# request/response shape - is resolved here and in llm_client.py; feature
+# modules only ever call llm_client.chat_completion() and never branch on the
+# provider themselves.
+#
+# OpenAI uses its Responses API; DeepSeek (and any other OpenAI-compatible
+# provider) uses the chat-completions shape. Adding a new OpenAI-compatible
+# provider only requires a new entry in _LLM_PROVIDER_DEFAULTS plus its two
+# env vars below - no changes to llm_client.py's request logic.
+_LLM_PROVIDER_DEFAULTS = {
+    "openai": {
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url_env": "OPENAI_CHAT_BASE_URL",
+        "model_env": "OPENAI_CHAT_MODEL",
+        "default_base_url": "https://api.openai.com/v1/responses",
+        "default_model": "gpt-5-nano",
+        "api_style": "responses",
+    },
+    "deepseek": {
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url_env": "DEEPSEEK_CHAT_BASE_URL",
+        "model_env": "DEEPSEEK_CHAT_MODEL",
+        "default_base_url": "https://api.deepseek.com/v1/chat/completions",
+        "default_model": "deepseek-chat",
+        "api_style": "chat_completions",
+    },
+}
+
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower() or "openai"
+if LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
+    LLM_PROVIDER = "openai"
+
+# Per-provider env vars are kept as top-level names (OPENAI_API_KEY et al. are
+# unchanged from before this switch existed, so existing deployments that only
+# ever set the OpenAI vars keep working with no changes). Only the active
+# provider's values are used by llm_client.py, via LLM_API_KEY/LLM_CHAT_*
+# below.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # OPENAI_CHAT_BASE_URL/OPENAI_CHAT_MODEL are kept as the env var names for
 # backward compatibility with existing deployments; they now point at the
 # Responses API (see llm_client.py), not chat completions.
-OPENAI_CHAT_BASE_URL = os.environ.get("OPENAI_CHAT_BASE_URL", "https://api.openai.com/v1/responses")
-OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5-nano")
+OPENAI_CHAT_BASE_URL = os.environ.get(
+    "OPENAI_CHAT_BASE_URL", _LLM_PROVIDER_DEFAULTS["openai"]["default_base_url"]
+)
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", _LLM_PROVIDER_DEFAULTS["openai"]["default_model"])
+
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_CHAT_BASE_URL = os.environ.get(
+    "DEEPSEEK_CHAT_BASE_URL", _LLM_PROVIDER_DEFAULTS["deepseek"]["default_base_url"]
+)
+DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", _LLM_PROVIDER_DEFAULTS["deepseek"]["default_model"])
+
+_LLM_PROVIDER_VALUES = {
+    "openai": {
+        "api_key": OPENAI_API_KEY,
+        "base_url": OPENAI_CHAT_BASE_URL,
+        "model": OPENAI_CHAT_MODEL,
+    },
+    "deepseek": {
+        "api_key": DEEPSEEK_API_KEY,
+        "base_url": DEEPSEEK_CHAT_BASE_URL,
+        "model": DEEPSEEK_CHAT_MODEL,
+    },
+}
+
+# Provider-neutral values llm_client.py (and, indirectly, every feature
+# module) actually reads. Switching providers is a single env var
+# (LLM_PROVIDER) away - nothing else needs to change.
+_active_provider = _LLM_PROVIDER_DEFAULTS[LLM_PROVIDER]
+_active_values = _LLM_PROVIDER_VALUES[LLM_PROVIDER]
+LLM_API_KEY = _active_values["api_key"]
+LLM_CHAT_BASE_URL = _active_values["base_url"]
+LLM_CHAT_MODEL = _active_values["model"]
+LLM_API_STYLE = _active_provider["api_style"]
+LLM_API_KEY_ENV_NAME = _active_provider["api_key_env"]
+
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 ).strip()
@@ -141,6 +215,11 @@ LANGUAGE_DETECTION_DEVICE = os.environ.get("LANGUAGE_DETECTION_DEVICE", "cpu").s
 LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
+
+# Apply pending schema migrations when the API starts. Set false to manage them
+# out of band (`python migrate.py`) — e.g. when several backend replicas share
+# one database and only a deploy step should migrate it.
+MIGRATE_ON_STARTUP = _env_bool("MIGRATE_ON_STARTUP", True)
 
 
 # --- Auth -------------------------------------------------------------------

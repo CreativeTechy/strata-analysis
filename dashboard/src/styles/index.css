@@ -171,6 +171,24 @@ body::after {
   overflow: hidden;
 }
 
+/* Section headings keep the two experiences (Listening vs Competitors) visibly
+   apart. `gap` on .sidebar-nav applies between every child, so the negative
+   margin pulls a heading closer to the group it labels than to the group above. */
+.sidebar-nav-section {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  opacity: 0.7;
+  padding: 4px 12px 0;
+  margin-bottom: -4px;
+}
+
+.sidebar-nav-section:not(:first-child) {
+  margin-top: 8px;
+}
+
 .sidebar.sidebar-collapsed .sidebar-nav-link,
 .sidebar.sidebar-collapsed .sidebar-logout {
   padding-left: 10px;

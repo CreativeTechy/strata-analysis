@@ -175,7 +175,7 @@ def suggest_project_metadata(name, description):
     description = _clean_text(description)
 
     fallback = _fallback_metadata(name, description)
-    if not config.OPENAI_API_KEY or not name:
+    if not config.LLM_API_KEY or not name:
         return fallback
 
     prompt = (
@@ -218,5 +218,5 @@ def suggest_project_metadata(name, description):
         "keywords": keywords or fallback["keywords"],
         "usernames": usernames or fallback["usernames"],
         "profile_urls": _username_profile_urls(usernames or fallback["usernames"]),
-        "source": "openai",
+        "source": config.LLM_PROVIDER,
     }
