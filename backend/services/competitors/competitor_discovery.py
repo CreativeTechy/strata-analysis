@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 import config
 from llm_client import LLMError, chat_completion
-from project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
+from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
 
 PROMPT_VERSION = "competitor-discovery-2026-07-27"
 

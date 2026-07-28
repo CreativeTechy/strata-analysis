@@ -5,7 +5,7 @@ from unittest.mock import patch
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 
-import enrich
+from services.articles import enrich
 
 
 class CleanArticlesTests(unittest.TestCase):
@@ -73,7 +73,7 @@ class EnrichArticleTests(unittest.TestCase):
 
     def test_delegates_to_the_orchestrator_and_returns_its_result(self):
         sentinel = {"summary": "ok", "sentiment": "positive"}
-        with patch("enrich.analyze_article", return_value=sentinel) as mock_analyze:
+        with patch("services.articles.enrich.analyze_article", return_value=sentinel) as mock_analyze:
             result = enrich.enrich_article({"title": "t", "text": "x" * 300}, project_context="ctx")
         self.assertIs(result, sentinel)
         mock_analyze.assert_called_once()
@@ -81,11 +81,11 @@ class EnrichArticleTests(unittest.TestCase):
         self.assertEqual(kwargs.get("project_context"), "ctx")
 
     def test_orchestrator_returning_none_is_passed_through(self):
-        with patch("enrich.analyze_article", return_value=None):
+        with patch("services.articles.enrich.analyze_article", return_value=None):
             self.assertIsNone(enrich.enrich_article({"title": "t", "text": "x" * 300}))
 
     def test_orchestrator_raising_is_caught_and_returns_none(self):
-        with patch("enrich.analyze_article", side_effect=RuntimeError("boom")):
+        with patch("services.articles.enrich.analyze_article", side_effect=RuntimeError("boom")):
             self.assertIsNone(enrich.enrich_article({"title": "t", "text": "x" * 300}))
 
 

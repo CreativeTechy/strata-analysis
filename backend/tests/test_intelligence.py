@@ -2,7 +2,7 @@ import unittest
 from collections import Counter
 from datetime import datetime, timezone
 
-from intelligence import (
+from services.intelligence.intelligence import (
     classify_platform,
     count_configured_terms,
     emotion_signature,

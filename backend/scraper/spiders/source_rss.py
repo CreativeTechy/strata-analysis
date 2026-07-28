@@ -24,7 +24,7 @@ from trafilatura.feeds import find_feed_urls
 
 from config import load_source_records
 from content_guard import is_blocked_domain, is_consent_title
-from pipeline_runs import update_pipeline_run
+from services.pipeline.pipeline_runs import update_pipeline_run
 
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')

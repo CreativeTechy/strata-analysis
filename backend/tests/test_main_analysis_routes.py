@@ -6,7 +6,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from fastapi.testclient import TestClient
 
-import auth
+from services.auth import auth
 import main
 
 FAKE_USER = {"id": 1, "username": "admin", "role_id": 1, "status": "active"}
@@ -26,16 +26,16 @@ class AnalysisRoutesTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         main.app.dependency_overrides[auth.get_current_user] = _fake_get_current_user
-        cls._csrf_patcher = patch("auth._enforce_csrf")
+        cls._csrf_patcher = patch("services.auth.auth._enforce_csrf")
         cls._csrf_patcher.start()
         cls._perm_patcher = patch(
-            "permissions_store.user_permission_keys",
+            "services.auth.permissions_store.user_permission_keys",
             return_value={"pipeline.run", "pipeline.view", "articles.view"},
         )
         cls._perm_patcher.start()
         # _ensure_project_visible() short-circuits on full_access without a
         # DB round trip - fake admin is full_access, same as user_permission_keys above.
-        cls._full_access_patcher = patch("permissions_store.user_is_full_access", return_value=True)
+        cls._full_access_patcher = patch("services.auth.permissions_store.user_is_full_access", return_value=True)
         cls._full_access_patcher.start()
         cls.client = TestClient(main.app)
 

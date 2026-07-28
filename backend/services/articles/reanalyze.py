@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import db
 from analysis.orchestrator import analyze_article
-from store import save_articles
+from services.articles.store import save_articles
 
 ARTICLE_SOURCE_FIELDS = ("id", "url", "source", "source_url", "title", "author", "published", "text")
 

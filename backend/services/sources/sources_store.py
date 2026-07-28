@@ -7,7 +7,7 @@ from urllib.parse import quote_plus, urlparse
 
 import config
 import db
-from projects_store import set_source_projects, list_source_project_ids
+from services.projects.projects_store import set_source_projects, list_source_project_ids
 
 
 SOURCE_SELECT = "id,url,name,enabled,source_type,limited,created_at,updated_at"

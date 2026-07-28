@@ -10,7 +10,7 @@ import config
 import db
 import dedup
 from embeddings import cosine_similarity
-from projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
+from services.projects.projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
 

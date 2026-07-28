@@ -4,17 +4,17 @@ from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-import store
+from services.articles import store
 
 
 class BulkInsertTests(unittest.TestCase):
     def test_no_rows_does_not_call_execute(self):
-        with patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store.db.execute") as mock_execute:
             store._bulk_insert("some_table", ("a", "b"), [])
         mock_execute.assert_not_called()
 
     def test_builds_one_multi_row_insert_with_flattened_params(self):
-        with patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store.db.execute") as mock_execute:
             store._bulk_insert("article_tags", ("article_id", "tag_type", "value"), [
                 (1, "organization", "Acme"),
                 (1, "topic", "ev"),
@@ -34,17 +34,17 @@ class TableExistsTests(unittest.TestCase):
         store._table_exists.cache_clear()
 
     def test_returns_false_without_database_url(self):
-        with patch("store.config.DATABASE_URL", ""):
+        with patch("services.articles.store.config.DATABASE_URL", ""):
             self.assertFalse(store._table_exists("article_tags"))
 
     def test_returns_true_when_query_reports_exists(self):
-        with patch("store.config.DATABASE_URL", "postgresql://x"):
-            with patch("store.db.fetch_one", return_value={"exists": True}):
+        with patch("services.articles.store.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.store.db.fetch_one", return_value={"exists": True}):
                 self.assertTrue(store._table_exists("article_tags"))
 
     def test_returns_false_and_does_not_raise_on_query_error(self):
-        with patch("store.config.DATABASE_URL", "postgresql://x"):
-            with patch("store.db.fetch_one", side_effect=RuntimeError("boom")):
+        with patch("services.articles.store.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.store.db.fetch_one", side_effect=RuntimeError("boom")):
                 self.assertFalse(store._table_exists("article_tags"))
 
 
@@ -66,14 +66,14 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
     }
 
     def test_noop_when_table_does_not_exist(self):
-        with patch("store._table_exists", return_value=False):
-            with patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store._table_exists", return_value=False):
+            with patch("services.articles.store.db.execute") as mock_execute:
                 store._replace_article_children(1, self.ARTICLE)
         mock_execute.assert_not_called()
 
     def test_deletes_before_inserting(self):
-        with patch("store._table_exists", return_value=True):
-            with patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store._table_exists", return_value=True):
+            with patch("services.articles.store.db.execute") as mock_execute:
                 store._replace_article_children(1, self.ARTICLE)
         delete_calls = [c for c in mock_execute.call_args_list if c.args[0].strip().startswith("delete")]
         insert_calls = [c for c in mock_execute.call_args_list if c.args[0].strip().startswith("insert")]
@@ -85,8 +85,8 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
         self.assertLess(last_delete_index, first_insert_index)
 
     def test_db_error_is_caught_and_logged_not_raised(self):
-        with patch("store._table_exists", return_value=True):
-            with patch("store.db.execute", side_effect=RuntimeError("boom")):
+        with patch("services.articles.store._table_exists", return_value=True):
+            with patch("services.articles.store.db.execute", side_effect=RuntimeError("boom")):
                 store._replace_article_children(1, self.ARTICLE)  # must not raise
 
 
@@ -98,23 +98,23 @@ class ReplaceIdeaClustersForArticleTests(unittest.TestCase):
         store._table_exists.cache_clear()
 
     def test_noop_without_project_id(self):
-        with patch("store._table_exists", return_value=True):
-            with patch("store.db.execute") as mock_execute, patch("store.db.fetch_all") as mock_fetch_all:
+        with patch("services.articles.store._table_exists", return_value=True):
+            with patch("services.articles.store.db.execute") as mock_execute, patch("services.articles.store.db.fetch_all") as mock_fetch_all:
                 store._replace_idea_clusters_for_article(1, None, [{"idea": "x"}])
         mock_execute.assert_not_called()
         mock_fetch_all.assert_not_called()
 
     def test_noop_when_idea_clusters_table_missing(self):
-        with patch("store._table_exists", return_value=False):
-            with patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store._table_exists", return_value=False):
+            with patch("services.articles.store.db.execute") as mock_execute:
                 store._replace_idea_clusters_for_article(1, 2, [{"idea": "x"}])
         mock_execute.assert_not_called()
 
     def test_unlinks_then_relinks_and_recomputes_frequency(self):
-        with patch("store._table_exists", return_value=True), \
-             patch("store.db.fetch_all", return_value=[{"idea_cluster_id": 9}]), \
-             patch("store.db.fetch_one", return_value={"id": 42}), \
-             patch("store.db.execute") as mock_execute:
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store.db.fetch_all", return_value=[{"idea_cluster_id": 9}]), \
+             patch("services.articles.store.db.fetch_one", return_value={"id": 42}), \
+             patch("services.articles.store.db.execute") as mock_execute:
             store._replace_idea_clusters_for_article(
                 1, 2, [{"idea": "charging is slow", "type": "complaint", "category": "charging"}]
             )
@@ -128,17 +128,17 @@ class ReplaceIdeaClustersForArticleTests(unittest.TestCase):
         self.assertEqual(recomputed_ids, {9, 42})
 
     def test_invalid_idea_type_falls_back_to_issue(self):
-        with patch("store._table_exists", return_value=True), \
-             patch("store.db.fetch_all", return_value=[]), \
-             patch("store.db.fetch_one", return_value={"id": 1}) as mock_fetch_one, \
-             patch("store.db.execute"):
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store.db.fetch_all", return_value=[]), \
+             patch("services.articles.store.db.fetch_one", return_value={"id": 1}) as mock_fetch_one, \
+             patch("services.articles.store.db.execute"):
             store._replace_idea_clusters_for_article(1, 2, [{"idea": "x", "type": "bogus"}])
         _, params = mock_fetch_one.call_args[0]
         self.assertEqual(params[2], "issue")
 
     def test_db_error_is_caught_and_logged_not_raised(self):
-        with patch("store._table_exists", return_value=True):
-            with patch("store.db.fetch_all", side_effect=RuntimeError("boom")):
+        with patch("services.articles.store._table_exists", return_value=True):
+            with patch("services.articles.store.db.fetch_all", side_effect=RuntimeError("boom")):
                 store._replace_idea_clusters_for_article(1, 2, [{"idea": "x"}])  # must not raise
 
 
@@ -159,7 +159,7 @@ class ArticleRowFieldHandlingTests(unittest.TestCase):
         return article
 
     def _field_value(self, article, field_name):
-        with patch("store._article_write_fields", return_value=[field_name, "embedding_json"]):
+        with patch("services.articles.store._article_write_fields", return_value=[field_name, "embedding_json"]):
             fields, params = store._article_row(article)
         return dict(zip(fields, params))[field_name]
 

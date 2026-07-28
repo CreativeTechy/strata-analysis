@@ -10,7 +10,7 @@ import re
 import config
 import db
 from embeddings import cosine_similarity, get_embedding
-from projects_store import list_article_ids_for_project, list_article_similarity_scores_for_project
+from services.projects.projects_store import list_article_ids_for_project, list_article_similarity_scores_for_project
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"

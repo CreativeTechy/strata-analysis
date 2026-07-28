@@ -14,10 +14,14 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from projects_store import list_sources_for_project, record_run_completion
-from pipeline_runs import update_pipeline_run
+from services.projects.projects_store import list_sources_for_project, record_run_completion
+from services.pipeline.pipeline_runs import update_pipeline_run
 
-BASE_DIR = Path(__file__).resolve().parent
+# services/pipeline/pipeline.py -> services/pipeline -> services -> backend/.
+# BASE_DIR must be the backend root (not this file's own directory): it's
+# used as the cwd for both the `scrapy crawl` subprocess (needs scrapy.cfg,
+# which lives at backend root) and the enrich-stage subprocess below.
+BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_DIR = BASE_DIR.parent / "storage"
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -209,7 +213,11 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 scrape_finished_at=datetime.now(timezone.utc).isoformat(),
             )
             print("2. Cleaning + enriching + saving...")
-            _run_step(run_id, [sys.executable, "enrich.py"], BASE_DIR, env)
+            # enrich.py now lives at services/articles/enrich.py, not next to
+            # this file, so it can't be run as a bare relative filename -
+            # `-m` resolves it as a module via BASE_DIR (backend root) on
+            # sys.path, same mechanism uvicorn/pytest already rely on.
+            _run_step(run_id, [sys.executable, "-m", "services.articles.enrich"], BASE_DIR, env)
 
             if _is_cancel_requested(run_id):
                 raise PipelineCancelled()

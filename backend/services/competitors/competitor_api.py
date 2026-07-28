@@ -15,12 +15,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-import business_profile_store
-import competitor_analysis
-import competitor_discovery
-import competitors_store
+from services.competitors import business_profile_store
+from services.competitors import competitor_analysis
+from services.competitors import competitor_discovery
+from services.competitors import competitors_store
 import db
-from auth import require_permission
+from services.auth.auth import require_permission
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
 

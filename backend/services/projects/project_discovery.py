@@ -18,8 +18,8 @@ from parsel import Selector
 
 import config
 from llm_client import chat_completion
-from sources_store import create_source
-from projects_store import set_project_sources
+from services.sources.sources_store import create_source
+from services.projects.projects_store import set_project_sources
 
 SEARCH_HEADERS = {
     "User-Agent": (

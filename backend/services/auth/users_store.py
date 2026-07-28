@@ -6,7 +6,7 @@ import bcrypt
 
 import config
 import db
-import permissions_store
+from services.auth import permissions_store
 
 STATUSES = ("active", "disabled")
 

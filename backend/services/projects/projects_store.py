@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse, urlunparse
 
 import config
 import db
-import users_store
+from services.auth import users_store
 from embeddings import build_project_embedding_text, get_embedding
 from psycopg.types.json import Jsonb
 

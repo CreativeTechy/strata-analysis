@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Request, Response
 
 import config
-import permissions_store
-import sessions_store
-import users_store
+from services.auth import permissions_store
+from services.auth import sessions_store
+from services.auth import users_store
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

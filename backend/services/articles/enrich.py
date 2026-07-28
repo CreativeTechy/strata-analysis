@@ -16,9 +16,9 @@ from analysis.aggregation import build_topic_insight, compute_overall_tone
 from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_models
 from content_guard import is_blocked_article
 from embeddings import build_article_embedding_text, get_embedding
-from projects_store import get_project
-from pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
-from store import save_articles
+from services.projects.projects_store import get_project
+from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
+from services.articles.store import save_articles
 
 MIN_TEXT_LENGTH = 200
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
