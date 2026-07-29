@@ -14,11 +14,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight, Filter,
-  Layers, Lightbulb, Radar, ShieldCheck, Sparkles, Target, TrendingUp,
+  Layers, Lightbulb, Link2, Radar, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp,
 } from 'lucide-react';
 import {
-  IMPACT_LABELS, SIZE_TIER_LABELS, analyze, avatarGradient, getStudy, initials,
-  listCompetitors, listFindings, relativeTime, setCompetitorStatus, syncSources,
+  IMPACT_LABELS, SIZE_TIER_LABELS, analyze, avatarGradient, discoverAccounts, getStudy,
+  initials, listAccounts, listCompetitors, listFindings, relativeTime, setCompetitorStatus,
+  syncSources, validateAccount,
 } from '../competitorApi.js';
 import '../styles/Competitors.css';
 
@@ -132,6 +133,9 @@ export default function CompetitorWorkspace() {
   const [notice, setNotice] = useState(null);
   const [impact, setImpact] = useState('');
   const [showCompetitors, setShowCompetitors] = useState(false);
+  const [expandedChannels, setExpandedChannels] = useState(() => new Set());
+  const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
+  const [channelBusy, setChannelBusy] = useState({});
 
   // Fetch inside the effect with a cancel guard, so switching studies mid-request
   // cannot resolve into the newly-selected study's state.
@@ -202,6 +206,62 @@ export default function CompetitorWorkspace() {
       setCompetitors(result.competitors || []);
     } catch (caught) {
       setError(caught.message);
+    }
+  };
+
+  // Confirmed/valid, pending, and account_count are aggregate counts on the
+  // competitor row itself - refetch them after any channel action so the
+  // "N pending" banner and per-row counts stay in sync with what was just done.
+  const refreshCompetitorCounts = async () => {
+    try {
+      const result = await listCompetitors(studyId);
+      setCompetitors(result.competitors || []);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  };
+
+  const toggleChannels = async (competitorId) => {
+    setExpandedChannels((current) => {
+      const next = new Set(current);
+      if (next.has(competitorId)) next.delete(competitorId);
+      else next.add(competitorId);
+      return next;
+    });
+    if (accountsByCompetitor[competitorId]) return;
+    try {
+      const result = await listAccounts(competitorId);
+      setAccountsByCompetitor((current) => ({ ...current, [competitorId]: result.accounts || [] }));
+    } catch (caught) {
+      setError(caught.message);
+    }
+  };
+
+  const decideAccount = async (competitorId, accountId, status) => {
+    try {
+      const result = await validateAccount(accountId, status);
+      setAccountsByCompetitor((current) => ({
+        ...current,
+        [competitorId]: (current[competitorId] || []).map((account) =>
+          account.id === accountId ? result.account : account,
+        ),
+      }));
+      await refreshCompetitorCounts();
+    } catch (caught) {
+      setError(caught.message);
+    }
+  };
+
+  const findChannels = async (competitorId) => {
+    setChannelBusy((current) => ({ ...current, [competitorId]: true }));
+    try {
+      const result = await discoverAccounts(competitorId);
+      setAccountsByCompetitor((current) => ({ ...current, [competitorId]: result.accounts || [] }));
+      await refreshCompetitorCounts();
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setChannelBusy((current) => ({ ...current, [competitorId]: false }));
     }
   };
 
@@ -317,31 +377,90 @@ export default function CompetitorWorkspace() {
             Only tracked competitors are scraped and analysed. Ranked by size.
           </p>
           <div className="cs-rows">
-            {competitors.map((competitor) => (
-              <div key={competitor.id} className="cs-row">
-                <span className="cs-row-rank">{competitor.size_rank ?? '-'}</span>
-                <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
-                  {initials(competitor.name)}
-                </div>
-                <div className="cs-row-main">
-                  <div className="cs-row-name">{competitor.name}</div>
-                  <div className="cs-row-desc">
-                    {competitor.valid_account_count}/{competitor.account_count} channels confirmed
-                    {competitor.pending_account_count ? ` · ${competitor.pending_account_count} pending` : ''}
-                    {competitor.finding_count ? ` · ${competitor.finding_count} report(s)` : ''}
+            {competitors.map((competitor) => {
+              const channelsOpen = expandedChannels.has(competitor.id);
+              const accounts = accountsByCompetitor[competitor.id];
+              return (
+                <div key={competitor.id}>
+                  <div className="cs-row">
+                    <span className="cs-row-rank">{competitor.size_rank ?? '-'}</span>
+                    <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
+                      {initials(competitor.name)}
+                    </div>
+                    <div className="cs-row-main">
+                      <div className="cs-row-name">{competitor.name}</div>
+                      <div className="cs-row-desc">
+                        {competitor.valid_account_count}/{competitor.account_count} channels confirmed
+                        {competitor.pending_account_count ? ` · ${competitor.pending_account_count} pending` : ''}
+                        {competitor.finding_count ? ` · ${competitor.finding_count} report(s)` : ''}
+                      </div>
+                    </div>
+                    <div className="cs-row-side">
+                      <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
+                        {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
+                      </span>
+                      <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleChannels(competitor.id)}>
+                        <Link2 size={13} /> {channelsOpen ? 'Hide channels' : 'Channels'}
+                      </button>
+                      <button type="button" className={`cs-btn cs-btn-sm${competitor.status === 'tracked' ? ' cs-btn-primary' : ''}`}
+                        onClick={() => toggleTracking(competitor)}>
+                        {competitor.status === 'tracked' ? <><Check size={13} /> Tracking</> : 'Track'}
+                      </button>
+                    </div>
                   </div>
+
+                  {channelsOpen ? (
+                    <div className="cs-rows" style={{ marginLeft: 30, marginBottom: 14 }}>
+                      {!accounts ? (
+                        <div className="cs-row-desc" style={{ padding: '8px 0' }}>Loading channels...</div>
+                      ) : !accounts.length ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
+                          <span className="cs-row-desc">No channels found yet.</span>
+                          <button type="button" className="cs-btn cs-btn-sm"
+                            onClick={() => findChannels(competitor.id)} disabled={channelBusy[competitor.id]}>
+                            {channelBusy[competitor.id] ? <span className="cs-spinner" /> : <Search size={13} />} Find channels
+                          </button>
+                        </div>
+                      ) : (
+                        accounts.map((account) => (
+                          <div key={account.id} className="cs-row">
+                            <div className="cs-row-main">
+                              <div className="cs-row-name" style={{ textTransform: 'capitalize' }}>
+                                {account.platform}
+                                {account.handle ? <span style={{ fontWeight: 400, color: 'var(--text-light)' }}> @{account.handle}</span> : null}
+                              </div>
+                              <div className="cs-row-desc">{account.url}</div>
+                            </div>
+                            <div className="cs-row-side">
+                              {account.confidence != null ? (
+                                <span className="cs-pill cs-pill-signal">
+                                  {Math.round(Number(account.confidence) * 100)}% sure
+                                </span>
+                              ) : null}
+                              <span className={`cs-pill cs-pill-${account.validation_status}`}>
+                                {account.validation_status}
+                              </span>
+                              {account.validation_status !== 'valid' ? (
+                                <button type="button" className="cs-btn cs-btn-sm"
+                                  onClick={() => decideAccount(competitor.id, account.id, 'valid')}>
+                                  <Check size={13} /> Confirm
+                                </button>
+                              ) : null}
+                              {account.validation_status !== 'rejected' ? (
+                                <button type="button" className="cs-btn cs-btn-sm cs-btn-danger"
+                                  onClick={() => decideAccount(competitor.id, account.id, 'rejected')}>
+                                  <Trash2 size={13} /> Not theirs
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
                 </div>
-                <div className="cs-row-side">
-                  <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
-                    {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
-                  </span>
-                  <button type="button" className={`cs-btn cs-btn-sm${competitor.status === 'tracked' ? ' cs-btn-primary' : ''}`}
-                    onClick={() => toggleTracking(competitor)}>
-                    {competitor.status === 'tracked' ? <><Check size={13} /> Tracking</> : 'Track'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}
