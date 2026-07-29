@@ -11,6 +11,7 @@ progress for it, matching how the existing project discovery flow behaves.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -173,17 +174,29 @@ def discover(project_id: int, payload: dict = None, user: dict = Depends(require
     if result.get("error") and not result.get("competitors"):
         raise HTTPException(status_code=502, detail=result["error"])
 
+    records = [r for r in (competitors_store.upsert_competitor(project_id, entry) for entry in result["competitors"]) if r]
+
+    # Each competitor's account discovery is an independent LLM call plus a
+    # site fetch (10-30s). Run them concurrently rather than one after another
+    # - sequential, a dozen competitors would push this well past nginx's
+    # proxy timeout, breaking the "tens of seconds" synchronous UX this
+    # endpoint is built around. DB writes stay single-threaded below.
+    accounts_by_id = {}
+    if with_accounts and records:
+        with ThreadPoolExecutor(max_workers=min(6, len(records))) as pool:
+            futures = {
+                record["id"]: pool.submit(competitor_discovery.discover_accounts, record["name"], record.get("website"))
+                for record in records
+            }
+        accounts_by_id = {record_id: future.result() for record_id, future in futures.items()}
+
     saved = []
-    for entry in result["competitors"]:
-        record = competitors_store.upsert_competitor(project_id, entry)
-        if not record:
-            continue
+    for record in records:
         accounts = []
-        if with_accounts:
-            for account in competitor_discovery.discover_accounts(record["name"], record.get("website")):
-                stored = competitors_store.upsert_account(record["id"], account)
-                if stored:
-                    accounts.append(stored)
+        for account in accounts_by_id.get(record["id"], []):
+            stored = competitors_store.upsert_account(record["id"], account)
+            if stored:
+                accounts.append(stored)
         saved.append({**record, "accounts": accounts})
 
     competitors_store.rerank_competitors(project_id)
