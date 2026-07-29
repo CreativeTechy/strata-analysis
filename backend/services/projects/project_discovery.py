@@ -118,6 +118,13 @@ def _normalize_url(url):
         return ""
 
     parsed = urlparse(url)
+    if not parsed.scheme and not parsed.netloc and "." in parsed.path.split("/", 1)[0]:
+        # A bare domain like "kfc.com" (no scheme) parses with everything
+        # dumped into `.path` and an empty netloc - treat it as https, same
+        # as a browser omnibox would.
+        url = f"https://{url}"
+        parsed = urlparse(url)
+
     if "duckduckgo.com" in (parsed.netloc or "").lower() and parsed.path.startswith("/l/"):
         qs = parse_qs(parsed.query)
         candidate = (qs.get("uddg") or [""])[0]

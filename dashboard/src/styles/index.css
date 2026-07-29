@@ -166,27 +166,68 @@ body::after {
   overflow-x: hidden;
 }
 
-.sidebar-nav-link {
+.sidebar-nav-link.btn-secondary {
   white-space: nowrap;
   overflow: hidden;
+  padding: 12px 18px;
+  min-height: 46px;
+}
+
+.sidebar-nav-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-nav-group:not(:first-child) {
+  margin-top: 8px;
+}
+
+.sidebar-nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
 }
 
 /* Section headings keep the two experiences (Listening vs Competitors) visibly
-   apart. `gap` on .sidebar-nav applies between every child, so the negative
-   margin pulls a heading closer to the group it labels than to the group above. */
+   apart, and now double as the collapse/expand toggle for their group. */
 .sidebar-nav-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-family: inherit;
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-light);
   opacity: 0.7;
-  padding: 4px 12px 0;
-  margin-bottom: -4px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  transition: background 0.2s ease, opacity 0.2s ease;
 }
 
-.sidebar-nav-section:not(:first-child) {
-  margin-top: 8px;
+.sidebar-nav-section:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-nav-section:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.sidebar-nav-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.sidebar-nav-chevron-closed {
+  transform: rotate(-90deg);
 }
 
 .sidebar.sidebar-collapsed .sidebar-nav-link,
