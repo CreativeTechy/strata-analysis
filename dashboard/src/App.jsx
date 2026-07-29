@@ -11,6 +11,8 @@ import CompetitorStudiesPage from './components/CompetitorStudiesPage';
 import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorReportPage from './components/CompetitorReportPage';
+import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
+import CompetitorStudySummary from './components/CompetitorStudySummary.jsx';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import ArticlesPage from './components/ArticlesPage';
@@ -800,17 +802,23 @@ export default function App() {
           </ul>
         </header>
 
+        <CompetitorPulseCard />
+
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <StatsOverview
-            intelligence={liveReport}
-            scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
-            loading={isLoadingIntelligence}
-            error={intelligenceError}
-            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
-            project={selectedProject}
-            sources={sources}
-            period={reportPeriod}
-          />
+          {selectedProject?.mode === 'competitor' ? (
+            <CompetitorStudySummary studyId={selectedProject.id} />
+          ) : (
+            <StatsOverview
+              intelligence={liveReport}
+              scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
+              loading={isLoadingIntelligence}
+              error={intelligenceError}
+              onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
+              project={selectedProject}
+              sources={sources}
+              period={reportPeriod}
+            />
+          )}
         </motion.div>
       </div>
     );

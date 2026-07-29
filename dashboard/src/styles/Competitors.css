@@ -698,6 +698,107 @@
 
 .cs-link-back:hover { color: var(--text-dark); }
 
+/* --- pulse card + study summary (Dashboard/Reports embeds) -------------- */
+.cs-pulse-card, .cs-study-summary { margin-bottom: 20px; }
+
+.cs-pulse-head, .cs-study-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cs-pulse-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.cs-study-summary-head h3 {
+  margin: 6px 0 2px;
+  font-size: 1.08rem;
+  font-weight: 640;
+  color: var(--text-dark);
+}
+
+.cs-pulse-viewall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+.cs-pulse-stats {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+  margin: 14px 0 4px;
+}
+
+.cs-pulse-stats > div { display: flex; flex-direction: column; gap: 2px; }
+.cs-pulse-stats strong { font-size: 1.3rem; font-weight: 680; color: var(--text-dark); }
+.cs-pulse-stats span { font-size: 0.76rem; color: var(--text-light); }
+
+.cs-pulse-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cs-pulse-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  text-decoration: none;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.cs-pulse-row:hover { border-color: rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.85); }
+
+.cs-pulse-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cs-pulse-row-headline {
+  font-size: 0.87rem;
+  font-weight: 590;
+  color: var(--text-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-pulse-row-meta { font-size: 0.74rem; color: var(--text-light); }
+.cs-pulse-row-time { font-size: 0.74rem; color: var(--text-light); white-space: nowrap; flex-shrink: 0; }
+
+.cs-pulse-empty, .cs-pulse-empty-state p {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  margin: 12px 0 0;
+}
+
+.cs-pulse-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cs-pulse-empty-state p { margin: 0; max-width: 52ch; }
+
 /* --- responsive --------------------------------------------------------- */
 @media (max-width: 1024px) {
   .cs-report-cols { grid-template-columns: 1fr; }

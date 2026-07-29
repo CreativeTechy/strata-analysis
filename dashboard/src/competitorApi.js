@@ -37,6 +37,8 @@ async function request(path, { method = 'GET', body, signal } = {}) {
 
 // --- studies ---------------------------------------------------------------
 export const listStudies = () => request('/studies');
+/** Cross-study totals + recent findings, for the Dashboard/Reports pulse card. */
+export const getOverview = () => request('/overview');
 export const createStudy = (body) => request('/studies', { method: 'POST', body });
 export const getStudy = (id) => request(`/studies/${id}`);
 

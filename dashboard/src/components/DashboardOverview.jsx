@@ -7,6 +7,8 @@ import {
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
+import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import CompetitorStudySummary from './CompetitorStudySummary.jsx';
 
 const PERIODS = [
   { key: '7d', label: 'Last 7 days' },
@@ -62,10 +64,12 @@ export default function DashboardOverview({
       </div>
     </header>
 
+    <CompetitorPulseCard />
+
     {!selectedProject ? <div className="glass-card admin-empty-state"><strong>No project selected</strong><p className="subtitle">Create a project to begin tracking intelligence.</p></div> : null}
     {error ? <div className="glass-card admin-empty-state"><strong>Couldn’t load project intelligence</strong><p className="subtitle">{error}</p></div> : null}
 
-    {selectedProject && !error ? <>
+    {selectedProject && !error ? (selectedProject.mode === 'competitor' ? <CompetitorStudySummary studyId={selectedProject.id} /> : <>
       <section className="intelligence-metric-grid" aria-busy={loading}>
         <MetricCard icon={<FolderKanban size={18} />} label="Total projects" value={Number(totalProjects || 0).toLocaleString()} detail="Across your workspace" />
         <MetricCard icon={<Activity size={18} />} label="Pipeline health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
@@ -93,6 +97,6 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card intelligence-pipeline-card"><div className="intelligence-card-heading"><h3>Article discovery by pipeline run</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={formatDate} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} formatter={(value) => [`${value} articles`, 'Discovered']} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a successful pipeline run to compare article discovery.</p>}</article>
         </section>
       </>}
-    </> : null}
+    </>) : null}
   </div>;
 }

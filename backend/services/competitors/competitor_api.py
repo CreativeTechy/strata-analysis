@@ -83,6 +83,26 @@ def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     }
 
 
+@router.get("/overview")
+def overview(user: dict = Depends(require_permission("competitors.view"))):
+    """Cross-study summary for the Dashboard/Reports pulse card: totals plus recent findings."""
+    totals = db.fetch_one(
+        """
+        select count(distinct p.id)::int as studies,
+               count(distinct c.id) filter (where c.status = 'tracked')::int as tracked_competitors,
+               count(distinct f.id) filter (where f.impact_level = 'high')::int as high_impact_findings
+        from projects p
+        left join competitors c on c.project_id = p.id
+        left join competitor_findings f on f.project_id = p.id
+        where p.mode = 'competitor'
+        """
+    ) or {"studies": 0, "tracked_competitors": 0, "high_impact_findings": 0}
+    return {
+        "totals": totals,
+        "recent_findings": competitor_analysis.list_recent_findings(limit=6),
+    }
+
+
 @router.post("/studies")
 def create_study(payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
     """Create a competitor-mode project. The business profile is added next."""

@@ -496,6 +496,24 @@ def list_findings(project_id: int, competitor_id: int | None = None,
     return rows
 
 
+def list_recent_findings(limit: int = 6) -> list[dict]:
+    """Most recent findings across every competitor study, for the cross-study pulse card."""
+    return db.fetch_all(
+        f"""
+        select {_finding_select()},
+               c.name as competitor_name, c.size_tier,
+               p.id as study_id, p.name as study_name
+        from competitor_findings f
+        join competitors c on c.id = f.competitor_id
+        join projects p on p.id = f.project_id
+        where f.validation_status != 'rejected'
+        order by f.generated_at desc
+        limit %s
+        """,
+        (int(limit),),
+    )
+
+
 def _finding_select() -> str:
     return ", ".join(f"f.{name.strip()}" for name in FINDING_COLUMNS.replace("\n", " ").split(",") if name.strip())
 
