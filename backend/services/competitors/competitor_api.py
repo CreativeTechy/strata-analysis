@@ -4,17 +4,17 @@ Kept in its own APIRouter rather than appended to main.py: this is a separate
 experience from sentiment/opinions, and separating the routes is what keeps the
 two from tangling as either one grows.
 
-Long-running work (website scrape, competitor discovery, analysis generation) runs
-synchronously and is expected to take tens of seconds — the UI shows staged
-progress for it, matching how the existing project discovery flow behaves.
+Long-running work (website scrape, analysis generation) runs synchronously and
+is expected to take tens of seconds — the UI shows staged progress for it,
+matching how the existing project discovery flow behaves. Competitor discovery
+is the exception: it runs as a background job (see discover()/discover_status()
+below) because it can take minutes once web corroboration and per-competitor
+account lookups are added up, well past any gateway timeout.
 """
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from services.competitors import business_profile_store
 from services.competitors import competitor_analysis
@@ -154,12 +154,19 @@ def update_profile(project_id: int, payload: dict, user: dict = Depends(require_
 # Discovery
 # --------------------------------------------------------------------------- #
 @router.post("/studies/{project_id}/discover")
-def discover(project_id: int, payload: dict = None, user: dict = Depends(require_permission("competitors.analyze"))):
-    """Find competitors for the profiled business and persist them as suggestions.
+def discover(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    payload: dict = None,
+    user: dict = Depends(require_permission("competitors.analyze")),
+):
+    """Queue competitor discovery as a background job and return immediately.
 
-    Also resolves each competitor's owned accounts in the same pass, since the
-    onboarding flow needs them immediately and a second round trip per competitor
-    would make the step feel broken.
+    Discovery chains an LLM call, live web corroboration per candidate, and
+    (with_accounts) a further LLM call per competitor - easily minutes end to
+    end, which running inline used to push past the gateway timeout and 504.
+    The UI polls GET .../discover/{run_id} for progress and refetches
+    competitors once the run succeeds.
     """
     _project_or_404(project_id)
     profile = business_profile_store.get_profile(project_id)
@@ -170,42 +177,24 @@ def discover(project_id: int, payload: dict = None, user: dict = Depends(require
     limit = max(3, min(int(payload.get("limit") or competitor_discovery.MAX_COMPETITORS), 20))
     with_accounts = payload.get("with_accounts", True) is not False
 
-    result = competitor_discovery.discover_competitors(profile, limit=limit)
-    if result.get("error") and not result.get("competitors"):
-        raise HTTPException(status_code=502, detail=result["error"])
+    active = competitor_discovery.get_active_discovery_run(project_id)
+    if active:
+        return {"run_id": active["run_id"], "status": active["status"]}
 
-    records = [r for r in (competitors_store.upsert_competitor(project_id, entry) for entry in result["competitors"]) if r]
+    run_id = competitor_discovery.create_discovery_run(project_id)
+    background_tasks.add_task(
+        competitor_discovery.run_discovery_job, run_id, project_id, profile, limit, with_accounts
+    )
+    return {"run_id": run_id, "status": "queued", "model": competitor_discovery.discovery_model()}
 
-    # Each competitor's account discovery is an independent LLM call plus a
-    # site fetch (10-30s). Run them concurrently rather than one after another
-    # - sequential, a dozen competitors would push this well past nginx's
-    # proxy timeout, breaking the "tens of seconds" synchronous UX this
-    # endpoint is built around. DB writes stay single-threaded below.
-    accounts_by_id = {}
-    if with_accounts and records:
-        with ThreadPoolExecutor(max_workers=min(6, len(records))) as pool:
-            futures = {
-                record["id"]: pool.submit(competitor_discovery.discover_accounts, record["name"], record.get("website"))
-                for record in records
-            }
-        accounts_by_id = {record_id: future.result() for record_id, future in futures.items()}
 
-    saved = []
-    for record in records:
-        accounts = []
-        for account in accounts_by_id.get(record["id"], []):
-            stored = competitors_store.upsert_account(record["id"], account)
-            if stored:
-                accounts.append(stored)
-        saved.append({**record, "accounts": accounts})
-
-    competitors_store.rerank_competitors(project_id)
-    return {
-        "competitors": competitors_store.competitor_overview(project_id),
-        "discovered": len(saved),
-        "rejected": result.get("rejected") or [],
-        "model": competitor_discovery.discovery_model(),
-    }
+@router.get("/studies/{project_id}/discover/{run_id}")
+def discover_status(project_id: int, run_id: str, user: dict = Depends(require_permission("competitors.view"))):
+    _project_or_404(project_id)
+    run = competitor_discovery.get_discovery_run(run_id)
+    if not run or run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Discovery run not found.")
+    return {"run": run}
 
 
 @router.post("/competitors/{competitor_id}/accounts/discover")

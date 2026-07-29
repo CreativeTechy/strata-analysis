@@ -23,6 +23,10 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import config
@@ -378,3 +382,105 @@ def discover_accounts(name: str, website: str | None) -> list[dict]:
 
 def discovery_model() -> str:
     return config.LLM_CHAT_MODEL
+
+
+# --------------------------------------------------------------------------- #
+# Background job
+# --------------------------------------------------------------------------- #
+# Discovery chains an LLM call, live web corroboration per candidate, and (with
+# with_accounts) a further LLM call per competitor - easily minutes end to end
+# once the model is running slow, well past any gateway timeout. It runs as a
+# FastAPI BackgroundTask instead of inline in the request handler, tracked here
+# in-memory (in-process, not Postgres) since it's a one-shot onboarding step the
+# user watches live, not a durable scheduled job like the scrape pipeline - if
+# the backend restarts mid-run the UI just needs to let the user retry.
+_runs_lock = threading.Lock()
+_runs: dict[str, dict] = {}
+
+ACTIVE_DISCOVERY_STATUSES = ("queued", "running")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def create_discovery_run(project_id: int) -> str:
+    run_id = uuid.uuid4().hex
+    with _runs_lock:
+        _runs[run_id] = {
+            "run_id": run_id,
+            "project_id": project_id,
+            "status": "queued",
+            "stage": "queued",
+            "message": "Queued for competitor discovery.",
+            "error": None,
+            "discovered": 0,
+            "rejected": [],
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+    return run_id
+
+
+def get_discovery_run(run_id: str) -> dict | None:
+    with _runs_lock:
+        run = _runs.get(run_id)
+        return dict(run) if run else None
+
+
+def get_active_discovery_run(project_id: int) -> dict | None:
+    with _runs_lock:
+        for run in _runs.values():
+            if run["project_id"] == project_id and run["status"] in ACTIVE_DISCOVERY_STATUSES:
+                return dict(run)
+    return None
+
+
+def _update_discovery_run(run_id: str, **fields) -> None:
+    with _runs_lock:
+        run = _runs.get(run_id)
+        if run is not None:
+            run.update(fields, updated_at=_now_iso())
+
+
+def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, with_accounts: bool) -> None:
+    """Background counterpart of the old synchronous discover() endpoint body."""
+    from services.competitors import competitors_store
+
+    _update_discovery_run(run_id, status="running", stage="discovering",
+                          message="Asking the model for competitors...")
+    try:
+        result = discover_competitors(profile, limit=limit)
+        if result.get("error") and not result.get("competitors"):
+            _update_discovery_run(run_id, status="failed", stage="error",
+                                  message=result["error"], error=result["error"])
+            return
+
+        records = [r for r in (competitors_store.upsert_competitor(project_id, entry) for entry in result["competitors"]) if r]
+
+        accounts_by_id = {}
+        if with_accounts and records:
+            # Each competitor's account discovery is an independent LLM call plus
+            # a site fetch - run them concurrently rather than one after another.
+            _update_discovery_run(run_id, stage="accounts",
+                                  message=f"Resolving accounts for {len(records)} competitors...")
+            with ThreadPoolExecutor(max_workers=min(6, len(records))) as pool:
+                futures = {
+                    record["id"]: pool.submit(discover_accounts, record["name"], record.get("website"))
+                    for record in records
+                }
+            accounts_by_id = {record_id: future.result() for record_id, future in futures.items()}
+
+        for record in records:
+            for account in accounts_by_id.get(record["id"], []):
+                competitors_store.upsert_account(record["id"], account)
+
+        competitors_store.rerank_competitors(project_id)
+        _update_discovery_run(
+            run_id, status="success", stage="done",
+            message=f"Discovered {len(records)} competitors.",
+            discovered=len(records), rejected=result.get("rejected") or [],
+        )
+    except Exception as exc:
+        _update_discovery_run(run_id, status="failed", stage="error",
+                              message="Competitor discovery crashed.", error=str(exc))

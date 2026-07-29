@@ -47,7 +47,10 @@ export const buildProfile = (id, body) => request(`/studies/${id}/profile`, { me
 export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'PUT', body });
 
 // --- competitors -----------------------------------------------------------
+/** Queues discovery as a background job; returns { run_id, status } immediately.
+ *  Poll getDiscoveryStatus(id, run_id) until status is 'success' or 'failed'. */
 export const discoverCompetitors = (id, body) => request(`/studies/${id}/discover`, { method: 'POST', body });
+export const getDiscoveryStatus = (id, runId) => request(`/studies/${id}/discover/${runId}`);
 export const listCompetitors = (id) => request(`/studies/${id}/competitors`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>

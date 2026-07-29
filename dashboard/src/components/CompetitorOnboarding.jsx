@@ -25,8 +25,8 @@ import {
 } from 'lucide-react';
 import {
   SIZE_TIER_LABELS, addCompetitor, buildProfile, createStudy, discoverCompetitors,
-  initials, avatarGradient, listCompetitors, saveProfile, setCompetitorStatus,
-  setSchedule, validateAccount,
+  getDiscoveryStatus, initials, avatarGradient, listCompetitors, saveProfile,
+  setCompetitorStatus, setSchedule, validateAccount,
 } from '../competitorApi.js';
 import '../styles/Competitors.css';
 
@@ -83,6 +83,23 @@ function StageList({ stages }) {
       })}
     </div>
   );
+}
+
+const DISCOVERY_POLL_MS = 2500;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Discovery runs as a backend job that can take minutes (LLM call + live web
+ *  corroboration + per-competitor account lookups), so it's queued rather than
+ *  awaited directly - poll until it reaches a terminal status. */
+async function pollDiscoveryRun(studyId, runId) {
+  for (;;) {
+    const { run } = await getDiscoveryStatus(studyId, runId);
+    if (run.status === 'success' || run.status === 'failed') return run;
+    await sleep(DISCOVERY_POLL_MS);
+  }
 }
 
 function ListEditor({ label, hint, values, onChange, placeholder }) {
@@ -205,12 +222,20 @@ export default function CompetitorOnboarding() {
     try {
       const saved = await saveProfile(studyId, profile);
       setProfile(saved.profile);
-      const result = await discoverCompetitors(studyId, { limit: 12, with_accounts: true });
-      setCompetitors(result.competitors || []);
-      setRejected(result.rejected || []);
+
+      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: true });
+      const run = await pollDiscoveryRun(studyId, queued.run_id);
+      if (run.status === 'failed') {
+        throw new Error(run.error || run.message || 'Competitor discovery failed.');
+      }
+
+      const result = await listCompetitors(studyId);
+      const discovered = result.competitors || [];
+      setCompetitors(discovered);
+      setRejected(run.rejected || []);
       // Pre-select the top five by size: the ranking is the recommendation, but
       // the user still confirms it before anything gets scraped.
-      setTracked(new Set((result.competitors || []).slice(0, 5).map((item) => item.id)));
+      setTracked(new Set(discovered.slice(0, 5).map((item) => item.id)));
       setStep(3);
     } catch (caught) {
       setError(caught.message);
