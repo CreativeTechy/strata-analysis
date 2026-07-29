@@ -89,7 +89,13 @@ def _strip_fences(text: str) -> str:
 
 
 def _domain(url: str) -> str:
-    host = urlparse(str(url or "").strip()).netloc.lower()
+    url = str(url or "").strip()
+    if url and "://" not in url:
+        # A bare domain like "kfc.com" (no scheme) has nothing for urlparse to
+        # put in `.netloc` - the "//" prefix makes it parse as a network-path
+        # reference so the host still comes out right.
+        url = f"//{url}"
+    host = urlparse(url).netloc.lower()
     return host[4:] if host.startswith("www.") else host
 
 
@@ -124,7 +130,7 @@ def _ask_for_competitors(profile_context: str, exclude_domain: str, limit: int) 
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=2200,
+            max_tokens=6000,
             timeout=120,
         )
         parsed = json.loads(_strip_fences(raw))

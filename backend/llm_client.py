@@ -118,7 +118,13 @@ def _extract_output_text_responses(payload) -> str:
                 refusal = content.get("refusal")
 
     joined = "\n".join(text.strip() for text in texts if text and text.strip()).strip()
-    if joined:
+    incomplete_reason = (payload.get("incomplete_details") or {}).get("reason", "unknown")
+
+    # A response cut off by the token budget is unusable even when some text
+    # did make it out - a JSON payload chopped mid-object is not valid JSON,
+    # so treat it the same as a fully empty response and let the caller's
+    # retry-with-more-budget logic kick in.
+    if joined and incomplete_reason != "max_output_tokens":
         return joined
 
     # The provider accepted the request (2xx) but sent back nothing usable -
@@ -127,14 +133,14 @@ def _extract_output_text_responses(payload) -> str:
     # could write any visible content all look like this. Surface the
     # incomplete reason/refusal so the caller's log line says *why*, and so
     # it can pick a retry strategy.
-    incomplete_reason = (payload.get("incomplete_details") or {}).get("reason", "unknown")
     if refusal:
         raise LLMInvalidResponseError(
             f"LLM refused the request (status={status}): {refusal}",
             finish_reason=incomplete_reason,
         )
     raise LLMInvalidResponseError(
-        f"LLM returned an empty response (status={status}, incomplete_reason={incomplete_reason})",
+        f"LLM returned {'a truncated' if joined else 'an empty'} response "
+        f"(status={status}, incomplete_reason={incomplete_reason})",
         finish_reason=incomplete_reason,
     )
 
@@ -149,15 +155,21 @@ def _extract_output_text_chat_completions(payload) -> str:
     finish_reason = choice.get("finish_reason") or "unknown"
     message = choice.get("message") or {}
     text = (message.get("content") or "").strip()
-    if text:
-        return text
 
     # Normalize to the same finish_reason vocabulary _post()'s retry logic
     # already understands for the Responses API ("max_output_tokens" means
     # "give it more room and retry").
     normalized_reason = "max_output_tokens" if finish_reason == "length" else finish_reason
+
+    # A response cut off by the token budget is unusable even when some text
+    # did make it out - a JSON payload chopped mid-object is not valid JSON,
+    # so treat it the same as a fully empty response and let the caller's
+    # retry-with-more-budget logic kick in.
+    if text and finish_reason != "length":
+        return text
+
     raise LLMInvalidResponseError(
-        f"LLM returned an empty response (finish_reason={finish_reason})",
+        f"LLM returned {'a truncated' if text else 'an empty'} response (finish_reason={finish_reason})",
         finish_reason=normalized_reason,
     )
 
@@ -307,7 +319,7 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
             # retrying with the same budget would just hit the same wall.
             # Give it more room instead.
             current = int(body.get(max_tokens_key) or max_tokens)
-            retry_body = {**body, max_tokens_key: min(current * 2, 4000)}
+            retry_body = {**body, max_tokens_key: min(current * 2, 16000)}
             print(
                 f"llm_client: empty response from truncation ({exc.detail}); "
                 f"retrying once with {max_tokens_key}={retry_body[max_tokens_key]}"

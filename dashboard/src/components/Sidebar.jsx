@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LayoutDashboard,
   BarChart3,
@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronsLeft,
   ChevronsRight,
+  ChevronDown,
   X,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
@@ -59,6 +60,25 @@ const ADMIN_NAV_ITEMS = [
   { to: '/admin/project-linkage', label: 'Project Access', icon: Link2, permission: 'projects.link_users' },
 ];
 
+// Rendered as one more collapsible group alongside NAV_SECTIONS so admin gets
+// the same expand/collapse and permission-filtering treatment as everything else.
+const ALL_NAV_SECTIONS = [...NAV_SECTIONS, { label: 'Admin', items: ADMIN_NAV_ITEMS }];
+
+const SECTION_STATE_KEY = 'strata.sidebarSections';
+
+function loadSectionState() {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(SECTION_STATE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function sectionDomId(label) {
+  return `sidebar-section-${label.toLowerCase().replace(/\s+/g, '-')}`;
+}
+
 export default function Sidebar({
   collapsed = false,
   onToggleCollapse = () => {},
@@ -67,9 +87,23 @@ export default function Sidebar({
 }) {
   const { user, hasPermission, logout } = useAuth();
   const navigate = useNavigate();
+  const [openSections, setOpenSections] = useState(loadSectionState);
 
   // On mobile the drawer always renders fully expanded; only the desktop rail collapses.
   const showCollapsed = collapsed && !mobileOpen;
+
+  // Sections default to open unless the user has explicitly collapsed them before.
+  const isSectionOpen = (label) => openSections[label] !== false;
+
+  const toggleSection = (label) => {
+    setOpenSections((prev) => {
+      const next = { ...prev, [label]: !(prev[label] !== false) };
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -116,45 +150,53 @@ export default function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {NAV_SECTIONS.map((section) => {
+        {ALL_NAV_SECTIONS.map((section) => {
           // A section with nothing the user may see should not leave a stray heading.
           const visible = section.items.filter(
             (item) => !item.permission || hasPermission(item.permission),
           );
           if (!visible.length) return null;
+
+          const links = visible.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className="btn-secondary sidebar-nav-link"
+              style={navStyle}
+              title={showCollapsed ? label : undefined}
+              onClick={onCloseMobile}
+            >
+              <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
+            </NavLink>
+          ));
+
+          // Collapsed desktop rail stays a flat icon list; no headers to toggle.
+          if (showCollapsed) {
+            return <React.Fragment key={section.label}>{links}</React.Fragment>;
+          }
+
+          const open = isSectionOpen(section.label);
+          const domId = sectionDomId(section.label);
           return (
-            <React.Fragment key={section.label}>
-              {!showCollapsed && <div className="sidebar-nav-section">{section.label}</div>}
-              {visible.map(({ to, label, icon: Icon }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  className="btn-secondary sidebar-nav-link"
-                  style={navStyle}
-                  title={showCollapsed ? label : undefined}
-                  onClick={onCloseMobile}
-                >
-                  <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
-                </NavLink>
-              ))}
-            </React.Fragment>
+            <div className="sidebar-nav-group" key={section.label}>
+              <button
+                type="button"
+                className="sidebar-nav-section"
+                onClick={() => toggleSection(section.label)}
+                aria-expanded={open}
+                aria-controls={domId}
+              >
+                <span>{section.label}</span>
+                <ChevronDown size={14} className={`sidebar-nav-chevron${open ? '' : ' sidebar-nav-chevron-closed'}`} />
+              </button>
+              {open && (
+                <div className="sidebar-nav-items" id={domId}>
+                  {links}
+                </div>
+              )}
+            </div>
           );
         })}
-        {ADMIN_NAV_ITEMS.filter((item) => hasPermission(item.permission)).length && !showCollapsed ? (
-          <div className="sidebar-nav-section">Admin</div>
-        ) : null}
-        {ADMIN_NAV_ITEMS.filter((item) => hasPermission(item.permission)).map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className="btn-secondary sidebar-nav-link"
-            style={navStyle}
-            title={showCollapsed ? label : undefined}
-            onClick={onCloseMobile}
-          >
-            <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
       </nav>
 
       {user && (
