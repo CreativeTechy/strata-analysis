@@ -21,6 +21,7 @@ import requests
 
 import db
 from llm_client import LLMError, chat_completion
+from prompt_loader import load_prompt
 
 PROMPT_VERSION = "competitor-profile-2026-07-27"
 
@@ -42,28 +43,7 @@ HEADERS = {
     )
 }
 
-PROFILE_SYSTEM_PROMPT = """You read a company's own website and describe the business factually.
-
-Rules:
-- Use ONLY the supplied page text. Never invent products, customers, or claims.
-- If the text does not support a field, return "" or [] — never a placeholder.
-- Write every field in English regardless of the site's language.
-- Be concrete. "Project management software for construction subcontractors" is
-  useful; "innovative solutions provider" is not.
-
-Return ONLY this JSON object, no markdown and no commentary:
-{
-  "name": "",
-  "industry": "",
-  "market": "the specific market/category this business competes in",
-  "geography": "",
-  "positioning": "one sentence on how it positions itself",
-  "offerings": [],
-  "audience": [],
-  "differentiators": [],
-  "keywords": [],
-  "context_summary": "3-4 sentences an analyst could use to judge whether a competitor's move matters to this business"
-}"""
+PROFILE_SYSTEM_PROMPT = load_prompt("competitor_profile_system_prompt.txt")
 
 
 def _normalize_website(value: str | None) -> str:

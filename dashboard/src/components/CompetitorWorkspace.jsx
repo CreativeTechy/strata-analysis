@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight, Filter,
-  Layers, Lightbulb, Link2, Radar, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp,
+  Layers, Lightbulb, Link2, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
   IMPACT_LABELS, SIZE_TIER_LABELS, analyze, avatarGradient, discoverAccounts, getStudy,
@@ -130,6 +130,8 @@ export default function CompetitorWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [runMode, setRunMode] = useState(null); // 'scrape' | 'direct' - which choice is currently running
+  const [showRunChoice, setShowRunChoice] = useState(false);
   const [notice, setNotice] = useState(null);
   const [impact, setImpact] = useState('');
   const [showCompetitors, setShowCompetitors] = useState(false);
@@ -175,13 +177,18 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  const runAnalysis = async () => {
+  // Never scraped before - hint which choice to lead with in the run dialog.
+  const likelyNeedsScrape = !study?.last_run_at;
+
+  const runAnalysis = async (scrapeFirst) => {
+    setShowRunChoice(false);
+    setRunMode(scrapeFirst ? 'scrape' : 'direct');
     setAnalyzing(true);
     setError('');
     setNotice(null);
     try {
       await syncSources(studyId);
-      const result = await analyze(studyId, { period_days: 30 });
+      const result = await analyze(studyId, { period_days: 30, scrape: scrapeFirst });
       setFindings(result.findings || []);
       const validation = result.validation || {};
       const reasons = validation.rejection_reasons || {};
@@ -190,6 +197,8 @@ export default function CompetitorWorkspace() {
         scanned: validation.scanned || 0,
         skipped: result.skipped || [],
         reasons,
+        scrapedFirst: Boolean(result.scrape_run),
+        scrapeRun: result.scrape_run || null,
       });
       setImpact('');
     } catch (caught) {
@@ -310,9 +319,9 @@ export default function CompetitorWorkspace() {
           <button type="button" className="cs-btn" onClick={() => setShowCompetitors((value) => !value)}>
             <Layers size={15} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}
           </button>
-          <button type="button" className="cs-btn cs-btn-primary" onClick={runAnalysis} disabled={analyzing}>
+          <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
             {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
-            {analyzing ? 'Analysing...' : 'Run analysis'}
+            {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
           </button>
         </div>
       </div>
@@ -342,6 +351,12 @@ export default function CompetitorWorkspace() {
         <div className="cs-alert cs-alert-info">
           <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
+            {notice.scrapedFirst ? (
+              <>
+                This study had no articles yet, so we scraped and enriched its sources first
+                {notice.scrapeRun?.articles_saved ? ` (${notice.scrapeRun.articles_saved} saved)` : ''}, then{' '}
+              </>
+            ) : null}
             Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
             {notice.scanned} scanned article{notice.scanned === 1 ? '' : 's'}.
             {Object.keys(notice.reasons).length ? (
@@ -491,13 +506,14 @@ export default function CompetitorWorkspace() {
           <h3>No reports yet</h3>
           <p>
             {stats.tracked
-              ? 'Competitors are tracked but nothing has been analysed. Run the analysis once their channels have been scraped.'
+              ? 'Competitors are tracked but nothing has been analysed. Run the analysis to scrape fresh evidence or read what is already on file.'
               : 'Track at least one competitor, confirm their channels, then run the analysis.'}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {stats.tracked ? (
-              <button type="button" className="cs-btn cs-btn-primary" onClick={runAnalysis} disabled={analyzing}>
-                {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />} Run analysis
+              <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
+                {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
+                {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
               </button>
             ) : (
               <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowCompetitors(true)}>
@@ -507,6 +523,46 @@ export default function CompetitorWorkspace() {
           </div>
         </div>
       )}
+
+      {showRunChoice ? (
+        <div className="confirm-modal-backdrop" role="presentation" onClick={() => setShowRunChoice(false)}>
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="run-analysis-title"
+            aria-describedby="run-analysis-message" onClick={(event) => event.stopPropagation()}>
+            <div className="confirm-modal-header">
+              <h2 id="run-analysis-title" className="confirm-modal-title">Run analysis</h2>
+              <button type="button" className="confirm-modal-close" onClick={() => setShowRunChoice(false)} aria-label="Close dialog">
+                <X size={18} />
+              </button>
+            </div>
+
+            <p id="run-analysis-message" className="confirm-modal-message">
+              Scrape this study&rsquo;s sources for fresh articles first, or analyse the evidence already on file?
+              {' '}{study?.last_run_at ? `Last scraped ${relativeTime(study.last_run_at)}.` : 'This study has never been scraped.'}
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '4px 0 6px' }}>
+              <button type="button" onClick={() => runAnalysis(true)}
+                className={`cs-btn${likelyNeedsScrape ? ' cs-btn-primary' : ''}`}
+                style={{ justifyContent: 'flex-start', width: '100%' }}>
+                <RefreshCw size={15} />
+                <span style={{ textAlign: 'left', flex: 1 }}>Scrape &amp; analyze</span>
+                {likelyNeedsScrape ? <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span> : null}
+              </button>
+              <button type="button" onClick={() => runAnalysis(false)}
+                className={`cs-btn${likelyNeedsScrape ? '' : ' cs-btn-primary'}`}
+                style={{ justifyContent: 'flex-start', width: '100%' }}>
+                <Sparkles size={15} />
+                <span style={{ textAlign: 'left', flex: 1 }}>Analyze existing articles</span>
+                {likelyNeedsScrape ? null : <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span>}
+              </button>
+            </div>
+
+            <div className="confirm-modal-actions">
+              <button type="button" className="btn-secondary" onClick={() => setShowRunChoice(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

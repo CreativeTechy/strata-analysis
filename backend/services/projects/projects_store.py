@@ -1044,6 +1044,25 @@ def set_source_projects(source_id, project_ids):
         return []
 
 
+def project_has_articles(project_id):
+    """Whether the project has any article at all, regardless of source.
+
+    Used to decide whether analysis needs a scrape/enrich pass first - a
+    project can have zero articles overall even if it has sources assigned,
+    e.g. right after creation or before the first pipeline run.
+    """
+    if not config.DATABASE_URL or project_id is None:
+        return False
+    try:
+        row = db.fetch_one(
+            "select exists(select 1 from article_projects where project_id = %s) as has_articles",
+            (int(project_id),),
+        )
+        return bool((row or {}).get("has_articles"))
+    except Exception:
+        return False
+
+
 def list_sources_for_project(project_id):
     if not config.DATABASE_URL:
         return []
