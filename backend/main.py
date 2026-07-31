@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
 import migrate
+from prompt_loader import load_prompt
 from services.competitors import competitor_api
 from services.auth import permissions_store
 from services.auth import sessions_store
@@ -88,16 +89,7 @@ from services.pipeline.scheduler import scheduler_loop
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
 
-
-def _load_text_asset(filename, fallback=""):
-    path = STORAGE_DIR / filename
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except Exception:
-        return fallback.strip()
-
-
-COPILOT_SYSTEM_PROMPT = _load_text_asset("copilot_system_prompt.txt")
+COPILOT_SYSTEM_PROMPT = load_prompt("copilot_system_prompt.txt")
 
 logger = logging.getLogger(__name__)
 

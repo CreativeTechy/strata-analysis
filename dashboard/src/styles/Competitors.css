@@ -487,7 +487,6 @@
 @keyframes cs-spin { to { transform: rotate(360deg); } }
 
 /* --- report page -------------------------------------------------------- */
-.cs-report { max-width: 1060px; margin: 0; }
 
 .cs-report-hero {
   background: #fff;

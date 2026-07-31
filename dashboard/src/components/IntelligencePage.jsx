@@ -654,7 +654,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               <X size={20} /> Close
             </button>
 
-            <div style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
+            <div className="content-shell">
               <div className="article-meta-badges">
                 <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
                 <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>

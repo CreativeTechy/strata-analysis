@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 import config
 from llm_client import LLMError, chat_completion
+from prompt_loader import load_prompt
 from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
 
 PROMPT_VERSION = "competitor-discovery-2026-07-27"
@@ -40,36 +41,8 @@ TIER_WEIGHT = {"enterprise": 0, "mid_market": 1, "smb": 2, "startup": 3, "unknow
 
 MAX_COMPETITORS = 12
 
-DISCOVERY_SYSTEM_PROMPT = """You identify real, currently-operating competitors of a business.
-
-Rules:
-- Name only companies that actually exist. If unsure a company is real, omit it.
-- `website` must be the company's own primary domain, not a directory, listicle,
-  marketplace, Wikipedia page, or news article about them.
-- Do not include the business itself.
-- Rank by SIZE, largest first: `size_rank` 1 is the largest competitor.
-- `size_tier`: enterprise (large/public/market leader), mid_market, smb, startup.
-- `size_signals` must state what your size judgement is based on in short factual
-  phrases, e.g. ["public company", "global footprint", "raised Series D"]. If you
-  have no basis, return [].
-- `why_competitor` — one sentence on the overlap with this specific business.
-
-Return ONLY this JSON, no markdown:
-{"competitors": [
-  {"name": "", "website": "", "description": "", "size_tier": "enterprise",
-   "size_rank": 1, "size_signals": [], "why_competitor": ""}
-]}"""
-
-ACCOUNTS_SYSTEM_PROMPT = """You list the official owned channels of a company.
-
-Rules:
-- Only channels you are confident belong to THIS company. Omit anything uncertain.
-- Use canonical URLs (https://x.com/handle, https://www.linkedin.com/company/slug).
-- Never guess a handle by pattern alone. If you do not know it, omit the platform.
-- `confidence` 0..1 reflects how sure you are the channel is theirs.
-
-Return ONLY this JSON, no markdown:
-{"accounts": [{"platform": "x|linkedin|facebook|youtube|instagram|blog|news", "url": "", "handle": "", "confidence": 0.0}]}"""
+DISCOVERY_SYSTEM_PROMPT = load_prompt("competitor_discovery_system_prompt.txt")
+ACCOUNTS_SYSTEM_PROMPT = load_prompt("competitor_accounts_system_prompt.txt")
 
 VALID_PLATFORMS = {"x", "linkedin", "facebook", "youtube", "instagram", "blog", "news"}
 

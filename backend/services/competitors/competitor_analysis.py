@@ -39,6 +39,7 @@ import config
 import db
 from content_guard import is_blocked_article
 from llm_client import LLMError, chat_completion
+from prompt_loader import load_prompt
 
 PROMPT_VERSION = "competitor-analysis-2026-07-27"
 
@@ -49,34 +50,7 @@ DEFAULT_PERIOD_DAYS = 30
 
 IMPACT_LEVELS = {"high", "medium", "low"}
 
-ANALYSIS_SYSTEM_PROMPT = """You are a competitive analyst briefing an operator who has to act today.
-
-You receive: a description of OUR business, one COMPETITOR, and dated evidence
-excerpts about that competitor.
-
-Rules:
-- Use ONLY the supplied evidence. Never invent a move, number, date, or quote.
-- Do not state prevalence or counts — those are computed separately and will be
-  attached to your output. Describe substance, not volume.
-- "impact" must be specific to OUR business as described. If the evidence has no
-  real bearing on us, say so plainly and set impact_level to "low".
-- Every action must be something this business could actually start. No
-  "monitor the situation", no "consider evaluating".
-- If the evidence is too thin to support a conclusion, say that in whats_up and
-  return few or no actions rather than padding.
-
-Return ONLY this JSON, no markdown:
-{
-  "headline": "under 70 characters, what changed",
-  "whats_up": "2-4 sentences on what the competitor is doing, grounded in the evidence",
-  "impact": "2-4 sentences on what this means for OUR business specifically",
-  "impact_level": "high|medium|low",
-  "signals": ["short tags e.g. pricing, launch, hiring, expansion, partnership"],
-  "actions": [
-    {"action": "", "rationale": "", "effort": "low|medium|high", "urgency": "now|this_quarter|watch"}
-  ],
-  "confidence": 0.0
-}"""
+ANALYSIS_SYSTEM_PROMPT = load_prompt("competitor_analysis_system_prompt.txt")
 
 
 def _strip_fences(text: str) -> str:
@@ -120,26 +94,34 @@ def _mentions(text: str, aliases: list[str]) -> str | None:
     return None
 
 
-def _candidate_articles(project_id: int, since: datetime | None) -> list[dict]:
+def _effective_date(article: dict) -> datetime | None:
+    """The date to judge an article's recency by.
+
+    published_at is authoritative for rss/social content, which carries a real
+    publish timestamp. Plain `web` pages (menus, terms, careers...) are usually
+    evergreen and don't have one; htmldate's fallback extraction latches onto
+    whatever date-shaped text it can find instead (a copyright year, a footer
+    notice), so for those the scrape date is the only trustworthy signal.
+    """
+    source_type = config._infer_source_type(str(article.get("source_url") or article.get("source") or ""))
+    if source_type == "web":
+        return article.get("created_at")
+    return article.get("published_at") or article.get("created_at")
+
+
+def _candidate_articles(project_id: int) -> list[dict]:
     """Project articles that could plausibly concern a competitor."""
-    clauses = ["ap.project_id = %s"]
-    params: list = [int(project_id)]
-    if since is not None:
-        # published_at is authoritative; fall back to created_at only when the
-        # publish date could not be recovered at all (see migration 0002).
-        clauses.append("coalesce(a.published_at, a.created_at) >= %s")
-        params.append(since)
     return db.fetch_all(
-        f"""
+        """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                a.published_at, a.published_precision, a.created_at, a.story_id,
                a.sentiment, a.article_category
         from articles a
         join article_projects ap on ap.article_id = a.id
-        where {' and '.join(clauses)}
-        order by coalesce(a.published_at, a.created_at) desc
+        where ap.project_id = %s
+        order by a.created_at desc
         """,
-        tuple(params),
+        (int(project_id),),
     )
 
 
@@ -150,7 +132,9 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
     workspace can show what was filtered and why instead of a bare total.
     """
     since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
-    articles = _candidate_articles(project_id, since)
+    articles = _candidate_articles(project_id)
+    if since is not None:
+        articles = [a for a in articles if (_effective_date(a) or since) >= since]
 
     alias_map = {int(c["id"]): _aliases(c) for c in competitors}
     per_competitor: dict[int, dict] = {
