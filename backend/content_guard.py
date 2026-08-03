@@ -1,5 +1,6 @@
-"""Shared guard against Google consent/interstitial and search pages being
-stored as articles.
+"""Shared guard against Google consent/interstitial and search pages, and
+against Reddit/Telegram responses that are not real content, being stored as
+articles.
 
 Used in two places: the scraper (backend/scraper/spiders/source_rss.py), which
 is the primary chokepoint since it decides what gets yielded as a scraped
@@ -53,3 +54,37 @@ def is_consent_title(title):
 
 def is_blocked_article(url, title):
     return is_blocked_domain(url) or is_consent_title(title)
+
+
+def is_reddit_blocked_payload(payload):
+    """True when a Reddit JSON response is an error/interstitial rather than
+    a real Listing.
+
+    Reddit's public `.json` endpoints return a plain error dict - not a
+    Listing (which always has top-level `kind`/`data` keys) - for private,
+    banned or quarantined subreddits/users, and for some rate-limited/blocked
+    requests. Treat any of those the same as an empty listing: nothing to
+    store, not an error worth failing the run over.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "error" in payload:
+        return True
+    if str(payload.get("reason") or "").strip().lower() in {"private", "banned", "quarantined"}:
+        return True
+    return False
+
+
+def is_telegram_channel_unavailable(status):
+    """True when a `t.me/s/<channel>` request was redirected away from the
+    `/s/` preview path.
+
+    Confirmed by hand against the live site: a channel that exists and is
+    public serves the `/s/` preview directly with status 200; a handle that
+    does not exist (or is not a public channel) 302-redirects to the bare
+    `t.me/<handle>` app-install/contact page instead. The scraper requests
+    with redirects disabled so this status is what the callback actually
+    sees, rather than silently following into that unrelated page and
+    scraping its boilerplate as if it were a message.
+    """
+    return status in (301, 302, 303, 307, 308)

@@ -18,11 +18,13 @@ from content_guard import is_blocked_article
 from embeddings import build_article_embedding_text, get_embedding
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
+from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics
 from services.articles.store import save_articles
 
 MIN_TEXT_LENGTH = 200
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 PIPELINE_PROJECT_ID = os.environ.get("PIPELINE_PROJECT_ID", "").strip()
+PIPELINE_WORKDIR = os.environ.get("PIPELINE_WORKDIR", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
@@ -231,18 +233,36 @@ def _set_run_timestamps(**fields):
 def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved):
     if not PIPELINE_RUN_ID:
         return
-    sources = set(scraped) | set(removed) | set(date_filtered) | set(kept) | set(enriched) | set(saved)
+
+    # Fetch-time diagnostics the spider recorded per configured source (was it
+    # blocked/404/DNS-failed, or did it just return nothing) - see
+    # scraper/spiders/source_rss.py's closed() and source_diagnostics.py.
+    # Included in `sources` below so a source with 0 scraped items (which
+    # never appears in scraped/removed/date_filtered/kept/enriched/saved)
+    # still gets a row instead of silently having no per-source data at all.
+    diagnostics_by_source = {
+        entry.get("source_name"): entry
+        for entry in load_source_diagnostics(PIPELINE_WORKDIR)
+        if entry.get("source_name")
+    }
+
+    sources = set(scraped) | set(removed) | set(date_filtered) | set(kept) | set(enriched) | set(saved) | set(diagnostics_by_source)
     source_stats = {}
     for source in sources:
         removed_counts = removed.get(source) or {}
+        scraped_count = scraped.get(source, 0)
+        diagnostic = diagnostics_by_source.get(source)
         source_stats[source] = {
-            "scraped": scraped.get(source, 0),
+            "scraped": scraped_count,
             "duplicate": removed_counts.get("duplicate", 0),
             "blocked": removed_counts.get("blocked", 0),
             "date_filtered": date_filtered.get(source, 0),
             "kept": kept.get(source, 0),
             "enriched": enriched.get(source, 0),
             "saved": saved.get(source, 0),
+            "http_status": (diagnostic or {}).get("http_status"),
+            "network_blocked": bool((diagnostic or {}).get("network_blocked")),
+            "fetch_note": build_fetch_note(diagnostic, scraped_count),
         }
     upsert_pipeline_run_source_stats(PIPELINE_RUN_ID, source_stats)
 

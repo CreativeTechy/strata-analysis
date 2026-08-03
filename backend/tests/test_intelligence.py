@@ -26,6 +26,12 @@ class IntelligenceHelpersTests(unittest.TestCase):
         self.assertEqual(classify_platform({"source_url": "https://twitter.com/strata"}), "X")
         self.assertEqual(classify_platform({"url": "https://example.com/story"}), "Web")
 
+    def test_platform_classification_uses_reddit_and_telegram_hosts(self):
+        self.assertEqual(classify_platform({"url": "https://www.reddit.com/r/test/comments/1/x/"}), "Reddit")
+        self.assertEqual(classify_platform({"source": "reddit.com/r/test"}), "Reddit")
+        self.assertEqual(classify_platform({"url": "https://t.me/somechannel/1"}), "Telegram")
+        self.assertEqual(classify_platform({"source": "t.me/somechannel"}), "Telegram")
+
     def test_emotions_are_mapped_from_existing_tones(self):
         signature = {item["axis"]: item["count"] for item in emotion_signature([
             {"article_tone": "optimistic", "writer_tone": "neutral"},

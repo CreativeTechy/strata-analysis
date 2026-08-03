@@ -15,6 +15,7 @@ import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
 import CompetitorStudySummary from './components/CompetitorStudySummary.jsx';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
+import PipelineRunDetailPage from './components/PipelineRunDetailPage';
 import ArticlesPage from './components/ArticlesPage';
 import AnalysisPage from './components/AnalysisPage';
 import LoginPage from './components/LoginPage';
@@ -849,6 +850,7 @@ export default function App() {
           <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
+          <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />
           <Route path="/analysis" element={<AnalysisPage projects={projects} />} />
           <Route
             path="/sources"

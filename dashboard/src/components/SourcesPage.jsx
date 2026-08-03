@@ -26,6 +26,7 @@ const emptyDraft = {
   enabled: true,
   limited: true,
   project_ids: [],
+  reddit_kind: 'subreddit',
 };
 
 const SOURCE_TYPE_OPTIONS = [
@@ -35,6 +36,8 @@ const SOURCE_TYPE_OPTIONS = [
   { value: 'hashtag', label: 'Hashtag' },
   { value: 'keyword', label: 'Keyword' },
   { value: 'username', label: 'X Account' },
+  { value: 'reddit', label: 'Reddit' },
+  { value: 'telegram', label: 'Telegram' },
 ];
 
 const SOURCE_TYPE_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
@@ -46,6 +49,25 @@ const TERM_SOURCE_PLACEHOLDERS = {
   username: 'X account, without @ (e.g. elonmusk)',
   keyword: 'Keyword or phrase (e.g. electric vehicles)',
 };
+
+// Reddit/Telegram keep the URL field (unlike the term types above) since it
+// doubles as a free-form input that accepts short forms as well as full URLs.
+const URL_FIELD_PLACEHOLDERS = {
+  reddit: 'r/subreddit, u/username, a search term, or a reddit.com URL',
+  telegram: '@channelname, channelname, or https://t.me/channelname',
+};
+
+function inferRedditKind(url) {
+  let path = url || '';
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // Not a full URL (e.g. a bare term saved before this field existed) - fall through.
+  }
+  if (/\/user\//i.test(path)) return 'user';
+  if (/\/search/i.test(path)) return 'search';
+  return 'subreddit';
+}
 
 function sourceTypeLabel(sourceType) {
   const match = SOURCE_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
@@ -64,6 +86,7 @@ function normalizeDraftForCompare(value) {
     project_ids: Array.isArray(value?.project_ids)
       ? [...new Set(value.project_ids.map((item) => Number(item)).filter((item) => Number.isFinite(item)))].sort((a, b) => a - b)
       : [],
+    reddit_kind: String(value?.reddit_kind || 'subreddit').trim().toLowerCase(),
   };
 }
 
@@ -125,22 +148,17 @@ export default function SourcesPage({
         .filter((project) => Array.isArray(project.source_ids) && project.source_ids.map(Number).includes(Number(currentSource.id)))
         .map((project) => Number(project.id));
 
-      setDraft({
+      const nextDraft = {
         url: currentSource.url || '',
         name: currentSource.name || '',
         source_type: currentSource.source_type || 'rss',
         enabled: currentSource.enabled ?? true,
         limited: currentSource.limited ?? false,
         project_ids: assignedProjectIds,
-      });
-      setInitialDraft({
-        url: currentSource.url || '',
-        name: currentSource.name || '',
-        source_type: currentSource.source_type || 'rss',
-        enabled: currentSource.enabled ?? true,
-        limited: currentSource.limited ?? false,
-        project_ids: assignedProjectIds,
-      });
+        reddit_kind: inferRedditKind(currentSource.url),
+      };
+      setDraft(nextDraft);
+      setInitialDraft(nextDraft);
       return;
     }
 
@@ -252,6 +270,9 @@ export default function SourcesPage({
       limited: Boolean(draft.limited),
       project_ids: draft.project_ids,
     };
+    if (draft.source_type === 'reddit') {
+      payload.reddit_kind = draft.reddit_kind || 'subreddit';
+    }
 
     if (isTermType ? !payload.name : !payload.url) return;
 
@@ -348,13 +369,31 @@ export default function SourcesPage({
               })}
             </div>
           </div>
+          {draft.source_type === 'reddit' && (
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Reddit source kind</span>
+              <select
+                className="filter-select"
+                value={draft.reddit_kind}
+                onChange={(e) => setDraft((prev) => ({ ...prev, reddit_kind: e.target.value }))}
+              >
+                <option value="subreddit">Subreddit</option>
+                <option value="user">User / profile</option>
+                <option value="search">Keyword / search</option>
+              </select>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
+                Only used to interpret a bare word below (e.g. "ev" as a subreddit vs. a search term). Prefixed input
+                (r/..., u/...) and full reddit.com URLs are unambiguous either way.
+              </span>
+            </label>
+          )}
           {!TERM_SOURCE_TYPES.has(draft.source_type) && (
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Source URL</span>
               <input
                 type="text"
                 className="source-input"
-                placeholder="Source URL"
+                placeholder={URL_FIELD_PLACEHOLDERS[draft.source_type] || 'Source URL'}
                 value={draft.url}
                 onChange={(e) => setDraft((prev) => ({ ...prev, url: e.target.value }))}
               />
