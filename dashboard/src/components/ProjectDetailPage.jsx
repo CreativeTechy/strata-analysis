@@ -33,6 +33,8 @@ const SOURCE_TYPE_OPTIONS = [
   { value: 'hashtag', label: 'Hashtag' },
   { value: 'keyword', label: 'Keyword' },
   { value: 'username', label: 'X Account' },
+  { value: 'reddit', label: 'Reddit' },
+  { value: 'telegram', label: 'Telegram' },
 ];
 
 const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];

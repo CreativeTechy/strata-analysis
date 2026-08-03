@@ -27,6 +27,15 @@ class IsSocialPostTests(unittest.TestCase):
     def test_non_dict_is_not_social(self):
         self.assertFalse(article_prep.is_social_post("not a dict"))
 
+    def test_reddit_url_is_social(self):
+        self.assertTrue(article_prep.is_social_post({"url": "https://www.reddit.com/r/test/comments/abc/x/"}))
+
+    def test_telegram_url_is_social(self):
+        self.assertTrue(article_prep.is_social_post({"url": "https://t.me/somechannel/123"}))
+
+    def test_reddit_source_field_is_social(self):
+        self.assertTrue(article_prep.is_social_post({"source": "reddit.com/r/test"}))
+
 
 class SanitizeForPromptTests(unittest.TestCase):
     """Defense against scraped content faking chat-template control tokens

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Database, RefreshCw, CalendarClock } from 'lucide-react';
-import PipelineRunDetailModal from './PipelineRunDetailModal';
 
 const POLL_INTERVAL_MS = 5000;
 // Only surface an upcoming repeating run as a placeholder when it's within this
@@ -72,7 +71,6 @@ export default function PipelineRunsPage({ projects = [] }) {
   const [stoppingId, setStoppingId] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
-  const [viewingRun, setViewingRun] = useState(null);
 
   const loadRuns = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -249,13 +247,13 @@ export default function PipelineRunsPage({ projects = [] }) {
                   <span style={{ color: stageColor(run.status), fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 700 }}>
                     {run.status}
                   </span>
-                  <button
+                  <Link
+                    to={`/pipeline-runs/${run.id}`}
                     className="btn-secondary"
-                    onClick={() => setViewingRun(run)}
-                    style={{ padding: '6px 10px', fontSize: '0.75rem' }}
+                    style={{ padding: '6px 10px', fontSize: '0.75rem', textDecoration: 'none' }}
                   >
                     View
-                  </button>
+                  </Link>
                   {ACTIVE_STATUSES.includes(run.status) ? (
                     <button
                       className="btn-secondary"
@@ -285,13 +283,6 @@ export default function PipelineRunsPage({ projects = [] }) {
           ))
         )}
       </div>
-
-      <PipelineRunDetailModal
-        open={Boolean(viewingRun)}
-        runId={viewingRun?.id}
-        projectName={viewingRun ? projectNameForRun(viewingRun, projectsById) : ''}
-        onClose={() => setViewingRun(null)}
-      />
     </div>
   );
 }

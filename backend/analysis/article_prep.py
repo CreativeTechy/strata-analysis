@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import config
 
-_SOCIAL_DOMAINS = {"x.com", "twitter.com"}
+_SOCIAL_DOMAINS = {"x.com", "twitter.com", "reddit.com", "t.me", "telegram.me"}
 
 # Chat-template control tokens (ChatML-style, used by many instruct models,
 # including the LLM provider behind structured extraction). If scraped
@@ -44,7 +44,7 @@ def normalize_text(value: str | None) -> str:
 
 
 def is_social_post(article: dict) -> bool:
-    """True for scraped X/Twitter posts, which are short and get lighter handling."""
+    """True for scraped X/Twitter/Reddit/Telegram posts, which are short and get lighter handling."""
     if not isinstance(article, dict):
         return False
     url_host = urlparse(article.get("url") or "").netloc.lower()

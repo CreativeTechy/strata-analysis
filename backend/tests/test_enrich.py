@@ -1,5 +1,6 @@
 import os
 import unittest
+from collections import Counter
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -87,6 +88,53 @@ class EnrichArticleTests(unittest.TestCase):
     def test_orchestrator_raising_is_caught_and_returns_none(self):
         with patch("services.articles.enrich.analyze_article", side_effect=RuntimeError("boom")):
             self.assertIsNone(enrich.enrich_article({"title": "t", "text": "x" * 300}))
+
+
+class PersistSourceStatsTests(unittest.TestCase):
+    """_persist_source_stats() merges scraper-recorded diagnostics (blocked/
+    404/DNS failure/empty - see source_diagnostics.py) into the per-source
+    breakdown, so a source that scraped 0 articles still gets a row."""
+
+    def test_no_pipeline_run_id_skips_persist_entirely(self):
+        with patch.object(enrich, "PIPELINE_RUN_ID", ""), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
+            enrich._persist_source_stats({}, {}, {}, {}, {}, {})
+        mock_upsert.assert_not_called()
+
+    def test_zero_scraped_source_gets_a_row_via_diagnostics_alone(self):
+        with patch.object(enrich, "PIPELINE_RUN_ID", "run-1"), patch.object(
+            enrich, "load_source_diagnostics",
+            return_value=[{"source_name": "r/messi", "http_status": 403, "network_blocked": True}],
+        ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
+            enrich._persist_source_stats({}, {}, {}, {}, {}, {})
+
+        mock_upsert.assert_called_once()
+        run_id, stats = mock_upsert.call_args[0]
+        self.assertEqual(run_id, "run-1")
+        self.assertIn("r/messi", stats)
+        self.assertEqual(stats["r/messi"]["scraped"], 0)
+        self.assertTrue(stats["r/messi"]["network_blocked"])
+        self.assertIn("Blocked", stats["r/messi"]["fetch_note"])
+
+    def test_healthy_scraped_source_has_no_fetch_note(self):
+        with patch.object(enrich, "PIPELINE_RUN_ID", "run-1"), patch.object(
+            enrich, "load_source_diagnostics", return_value=[]
+        ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
+            enrich._persist_source_stats(Counter({"good-source": 3}), {}, {}, {}, {}, {})
+
+        _, stats = mock_upsert.call_args[0]
+        self.assertEqual(stats["good-source"]["scraped"], 3)
+        self.assertEqual(stats["good-source"]["fetch_note"], "")
+        self.assertFalse(stats["good-source"]["network_blocked"])
+
+    def test_source_with_no_diagnostic_and_zero_scraped_notes_empty(self):
+        with patch.object(enrich, "PIPELINE_RUN_ID", "run-1"), patch.object(
+            enrich, "load_source_diagnostics", return_value=[]
+        ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
+            # date_filtered still references the source even though nothing was scraped/kept.
+            enrich._persist_source_stats({}, {}, Counter({"quiet-source": 1}), {}, {}, {})
+
+        _, stats = mock_upsert.call_args[0]
+        self.assertEqual(stats["quiet-source"]["fetch_note"], "Returned 0 articles.")
 
 
 if __name__ == "__main__":

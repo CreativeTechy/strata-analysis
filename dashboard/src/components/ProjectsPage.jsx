@@ -34,6 +34,8 @@ const SOURCE_TYPE_OPTIONS = [
   { value: 'hashtag', label: 'Hashtag' },
   { value: 'keyword', label: 'Keyword' },
   { value: 'username', label: 'X Account' },
+  { value: 'reddit', label: 'Reddit' },
+  { value: 'telegram', label: 'Telegram' },
 ];
 
 const TERM_SOURCE_TYPES = new Set(['hashtag', 'keyword', 'username']);

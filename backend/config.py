@@ -220,6 +220,37 @@ LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
 
+# --- Reddit/Telegram scraping: optional network egress ----------------------
+# Both platforms can anti-bot-block requests from datacenter/cloud IP ranges
+# (see scraper/spiders/source_rss.py's BLOCKED_STATUS_CODES/blocked-source
+# reporting, and services/pipeline/pipeline.py's summary of it). Routing just
+# these platforms' requests through a proxy is one mitigation for that.
+# Unset (the default) changes nothing - requests go out directly, same as
+# every other source type. Full proxy URL, e.g. `http://user:pass@host:port`
+# - Scrapy's HttpProxyMiddleware parses embedded basic-auth credentials from
+# the URL itself, no separate credential fields needed.
+REDDIT_PROXY_URL = os.environ.get("REDDIT_PROXY_URL", "").strip()
+TELEGRAM_PROXY_URL = os.environ.get("TELEGRAM_PROXY_URL", "").strip()
+
+# --- Reddit OAuth (optional) -------------------------------------------------
+# Reddit's officially sanctioned path for programmatic access - an app-only
+# ("client_credentials") token via a registered Reddit app - is far less
+# likely to be blocked than the unauthenticated `.json` endpoints, at the
+# cost of requiring credentials (which the rest of this source type
+# deliberately doesn't). Both unset (the default) keeps using the public
+# `.json` endpoints with no behavior change. Register an app (type "script")
+# at https://www.reddit.com/prefs/apps to get a client id/secret.
+REDDIT_OAUTH_CLIENT_ID = os.environ.get("REDDIT_OAUTH_CLIENT_ID", "").strip()
+REDDIT_OAUTH_CLIENT_SECRET = os.environ.get("REDDIT_OAUTH_CLIENT_SECRET", "").strip()
+# Reddit requires a distinctive User-Agent for API use (generic/browser UAs
+# are rate-limited harder) - see https://github.com/reddit-archive/reddit/wiki/API#rules.
+REDDIT_OAUTH_USER_AGENT = os.environ.get("REDDIT_OAUTH_USER_AGENT", "").strip()
+
+
+def reddit_oauth_configured() -> bool:
+    return bool(REDDIT_OAUTH_CLIENT_ID and REDDIT_OAUTH_CLIENT_SECRET)
+
+
 # Apply pending schema migrations when the API starts. Set false to manage them
 # out of band (`python migrate.py`) — e.g. when several backend replicas share
 # one database and only a deploy step should migrate it.
@@ -280,34 +311,52 @@ def _looks_like_social_url(url: str) -> bool:
             "tiktok.com",
             "linkedin.com",
             "youtube.com",
-            "reddit.com",
             "threads.net",
         )
     )
 
 
+def _looks_like_reddit_url(url: str) -> bool:
+    host = urlparse((url or "").strip()).netloc.lower().removeprefix("www.")
+    return host == "reddit.com" or host.endswith(".reddit.com")
+
+
+def _looks_like_telegram_url(url: str) -> bool:
+    host = urlparse((url or "").strip()).netloc.lower().removeprefix("www.")
+    return host in {"t.me", "telegram.me"}
+
+
 def _infer_source_type(url: str) -> str:
     if _looks_like_feed_url(url):
         return "rss"
+    if _looks_like_reddit_url(url):
+        return "reddit"
+    if _looks_like_telegram_url(url):
+        return "telegram"
     if _looks_like_social_url(url):
         return "social"
     return "web"
 
 
-KNOWN_SOURCE_TYPES = {"rss", "web", "social", "hashtag", "keyword", "username"}
+KNOWN_SOURCE_TYPES = {"rss", "web", "social", "hashtag", "keyword", "username", "reddit", "telegram"}
 
 
 def _resolve_source_type(source_type_input: str, url: str) -> str:
     """Pick the source_type to store, trusting an explicit known value.
 
     Legacy rows stored as rss/web whose URL is actually a social profile get
-    upgraded to social, same as before this was centralized. hashtag/keyword/
+    upgraded to social, same as before this was centralized. reddit.com used
+    to be lumped into the generic social bucket, so a legacy row stored as
+    social (or rss/web) whose URL is actually reddit.com/t.me gets upgraded
+    to the dedicated reddit/telegram type the same way. hashtag/keyword/
     username are never overridden even though their derived URLs live on
     x.com/google.com (which would otherwise infer as social/web).
     """
     source_type_input = (source_type_input or "").strip().lower()
     inferred_type = _infer_source_type(url)
     if source_type_input in KNOWN_SOURCE_TYPES:
+        if source_type_input in {"rss", "web", "social"} and inferred_type in {"reddit", "telegram"}:
+            return inferred_type
         if source_type_input in {"rss", "web"} and inferred_type == "social":
             return "social"
         return source_type_input

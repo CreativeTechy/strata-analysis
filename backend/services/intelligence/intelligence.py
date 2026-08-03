@@ -88,6 +88,10 @@ def classify_platform(row: dict) -> str:
         host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
         if host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
             return "X"
+        if host == "reddit.com" or host.endswith(".reddit.com"):
+            return "Reddit"
+        if host in {"t.me", "telegram.me"}:
+            return "Telegram"
     return "Web"
 
 

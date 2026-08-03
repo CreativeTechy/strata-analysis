@@ -16,6 +16,7 @@ from pathlib import Path
 
 from services.projects.projects_store import list_sources_for_project, record_run_completion
 from services.pipeline.pipeline_runs import update_pipeline_run
+from services.pipeline.source_diagnostics import load_source_diagnostics, summarize_notable_diagnostics
 
 # services/pipeline/pipeline.py -> services/pipeline -> services -> backend/.
 # BASE_DIR must be the backend root (not this file's own directory): it's
@@ -137,6 +138,8 @@ def _load_pipeline_stats(stats_file: Path):
         return {}
 
 
+
+
 def _finish_run(run_id, project_id, **fields):
     """Persist the terminal pipeline_runs state and reschedule the project's next run."""
     update_pipeline_run(run_id, **fields)
@@ -223,12 +226,14 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 raise PipelineCancelled()
 
             stats = _load_pipeline_stats(stats_file)
+            diagnostics_summary = summarize_notable_diagnostics(load_source_diagnostics(str(run_path)))
+            completion_message = "Pipeline complete." + (f" {diagnostics_summary}" if diagnostics_summary else "")
             _finish_run(
                 run_id,
                 project_id,
                 status="success",
                 stage="done",
-                message="Pipeline complete.",
+                message=completion_message,
                 articles_scraped=int(stats.get("articles_scraped") or 0),
                 articles_cleaned=int(stats.get("articles_cleaned") or 0),
                 articles_saved=int(stats.get("articles_saved") or 0),

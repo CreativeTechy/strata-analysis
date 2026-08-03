@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 import config
 import db
@@ -13,6 +13,8 @@ from services.projects.projects_store import set_source_projects, list_source_pr
 SOURCE_SELECT = "id,url,name,enabled,source_type,limited,created_at,updated_at"
 
 TERM_SOURCE_TYPES = {"username", "hashtag", "keyword"}
+
+REDDIT_KINDS = {"subreddit", "user", "search"}
 
 
 def _default_name(url):
@@ -49,6 +51,85 @@ def _derive_term_url(source_type, term):
     return ""
 
 
+def _derive_reddit_url(term, kind=None):
+    """Turn a full reddit.com URL, a `r/`/`u/` prefixed short form, or a bare
+    subreddit/username/search term into a canonical reddit.com URL.
+
+    A bare term (no `r/`/`u/` prefix, not a URL) is ambiguous - it could be a
+    subreddit, a username, or a search phrase (see the source-type
+    requirements) - so `kind` (from the dashboard's Reddit-kind selector)
+    disambiguates it. It only matters for bare terms; an explicit `r/...`,
+    `u/.../user/...`, or full URL is unambiguous on its own and `kind` is
+    ignored.
+    """
+    text = (term or "").strip()
+    if not text:
+        return ""
+
+    if re.match(r"^https?://", text, re.I):
+        parsed = urlparse(text)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host != "reddit.com" and not host.endswith(".reddit.com"):
+            return ""
+        path = (parsed.path or "").rstrip("/")
+        if path.startswith("/search"):
+            # Reddit's search UI appends its own tracking params (cId/iId/type/...)
+            # alongside the real query - keep only `q`, don't drop the query
+            # string wholesale like the subreddit/user branch below does, or
+            # the search term itself (the only thing that matters) is lost.
+            query_term = (parse_qs(parsed.query).get("q") or [""])[0].strip()
+            return f"https://www.reddit.com/search?q={quote_plus(query_term)}" if query_term else ""
+        return f"https://www.reddit.com{path}" if path else ""
+
+    kind = (kind or "").strip().lower()
+    if kind not in REDDIT_KINDS:
+        kind = "subreddit"
+
+    stripped = text.lstrip("/")
+    lowered = stripped.lower()
+    if lowered.startswith("r/"):
+        sub = re.sub(r"[^A-Za-z0-9_]", "", stripped[2:])
+        return f"https://www.reddit.com/r/{sub}" if sub else ""
+    if lowered.startswith("u/"):
+        handle = re.sub(r"[^A-Za-z0-9_-]", "", stripped[2:])
+        return f"https://www.reddit.com/user/{handle}" if handle else ""
+    if lowered.startswith("user/"):
+        handle = re.sub(r"[^A-Za-z0-9_-]", "", stripped[5:])
+        return f"https://www.reddit.com/user/{handle}" if handle else ""
+
+    if kind == "user":
+        handle = re.sub(r"[^A-Za-z0-9_-]", "", stripped)
+        return f"https://www.reddit.com/user/{handle}" if handle else ""
+    if kind == "search":
+        return f"https://www.reddit.com/search?q={quote_plus(text)}"
+    sub = re.sub(r"[^A-Za-z0-9_]", "", stripped)
+    return f"https://www.reddit.com/r/{sub}" if sub else ""
+
+
+def _derive_telegram_url(term):
+    """Turn `https://t.me/channel`, `https://t.me/s/channel`, `@channel`, or
+    a bare `channel` into the canonical `https://t.me/s/<channel>` preview
+    URL the spider scrapes (see source_rss.py's telegram parser)."""
+    text = (term or "").strip()
+    if not text:
+        return ""
+
+    if re.match(r"^https?://", text, re.I):
+        parsed = urlparse(text)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host not in {"t.me", "telegram.me"}:
+            return ""
+        parts = [p for p in parsed.path.split("/") if p]
+        if not parts:
+            return ""
+        channel = parts[1] if parts[0].lower() == "s" and len(parts) > 1 else parts[0]
+    else:
+        channel = text.lstrip("@").strip()
+
+    channel = re.sub(r"[^A-Za-z0-9_]", "", channel)
+    return f"https://t.me/s/{channel}" if channel else ""
+
+
 def _normalize_record(row, include_project_ids=False):
     url = (row.get("url") or "").strip()
     name = (row.get("name") or "").strip() or _default_name(url)
@@ -80,6 +161,20 @@ def _upsert_payload(source, default_limited=True):
 
     if not url and source_type_input in TERM_SOURCE_TYPES and name:
         url = _derive_term_url(source_type_input, name)
+    elif source_type_input == "reddit" and (url or name):
+        # No `or url` fallback: an input that doesn't resolve to a real
+        # reddit.com URL (wrong host, empty after stripping) must fail
+        # create/update, not silently save whatever the user typed in as an
+        # unusable "reddit" source - see create_source()/update_source()'s
+        # `if not payload["url"]: return None`.
+        reddit_kind = str(source.get("reddit_kind") or "").strip().lower()
+        url = _derive_reddit_url(url or name, reddit_kind)
+    elif source_type_input == "telegram" and (url or name):
+        # Same reasoning as reddit above - e.g. a web.telegram.org/a/#<chat_id>
+        # link (Telegram Web's internal numeric chat-ID deep link, not a
+        # public @username/t.me link) must be rejected here, not saved as-is
+        # only to silently scrape zero articles later.
+        url = _derive_telegram_url(url or name)
 
     source_type = config._resolve_source_type(source_type_input, url)
     return {

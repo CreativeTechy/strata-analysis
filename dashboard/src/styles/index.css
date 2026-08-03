@@ -1915,19 +1915,6 @@ h1, h2, h3 {
   animation: spin 0.9s linear infinite;
 }
 
-.run-detail-modal {
-  width: min(100%, 760px);
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.run-detail-body {
-  overflow-y: auto;
-  padding-right: 4px;
-  margin-bottom: 14px;
-}
-
 .run-detail-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -1935,10 +1922,6 @@ h1, h2, h3 {
   padding-bottom: 16px;
   margin-bottom: 16px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.run-detail-section {
-  margin-bottom: 18px;
 }
 
 .run-detail-section-title {
