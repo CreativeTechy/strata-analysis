@@ -99,7 +99,41 @@ uvicorn main:app --port 8000
 If you don't need local embeddings, you can skip the optional requirements
 file.
 
-### 4. Run the dashboard locally
+Migrations run automatically on startup (see
+[Schema migrations](#schema-migrations)), so a fresh, empty `DATABASE_URL`
+gets every table created for you the first time you run `uvicorn`. To apply
+them without starting the server - e.g. before seeding - run it directly:
+
+```bash
+python migrate.py
+```
+
+### 4. Seed example data (optional)
+
+The dashboard is empty until something has scraped or a project has been
+analyzed. To have example data to look at right away, run one or both of the
+bundled seed scripts from `backend/` (venv active, `DATABASE_URL` set):
+
+```bash
+python seed_competitor_demo.py        # fictional "Northwind" competitor study
+python seed_strata_create_demo.py     # real strata create study: 10 competitors, 5 AI-generated reports
+```
+
+Both talk to the database directly, need no LLM API key, and are safe to
+re-run - each resets just its own study. Remove one with `--wipe`:
+
+```bash
+python seed_strata_create_demo.py --wipe
+```
+
+`seed_strata_create_demo.py` reproduces a real completed run of this
+project's own competitor-study pipeline (real competitor names, a real
+derived business profile, real AI-written reports), captured directly from
+this project's database. It does not reseed the underlying scraped articles
+or the "filtered out" evidence trail behind a report, so that panel is empty
+for this seeded study - see the module docstring for why.
+
+### 5. Run the dashboard locally
 
 Open a second terminal:
 
@@ -115,7 +149,7 @@ On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 The dashboard expects the backend on `http://localhost:8000` unless you set
 `VITE_API_TARGET`.
 
-### 5. Run the pipeline manually
+### 6. Run the pipeline manually
 
 You can run the scrape/enrich/save flow directly from the backend folder:
 
@@ -235,6 +269,19 @@ python backfill_signal_layer.py              # both passes
 
 Both passes are batched, committed per batch, and resumable — progress lives in
 the data, so an interrupted run is continued by running it again.
+
+### Seeding example data
+
+To load the same bundled example studies into the Docker stack's database,
+run the seed scripts inside the running `backend` container:
+
+```bash
+docker compose exec backend python seed_competitor_demo.py
+docker compose exec backend python seed_strata_create_demo.py
+```
+
+See [Seed example data](#4-seed-example-data-optional) above for what each
+script creates and how to remove one with `--wipe`.
 
 ### Reset the database (fresh start)
 
