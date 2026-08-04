@@ -41,6 +41,8 @@ export const listStudies = () => request('/studies');
 export const getOverview = () => request('/overview');
 export const createStudy = (body) => request('/studies', { method: 'POST', body });
 export const getStudy = (id) => request(`/studies/${id}`);
+export const updateStudy = (id, body) => request(`/studies/${id}`, { method: 'PUT', body });
+export const deleteStudy = (id) => request(`/studies/${id}`, { method: 'DELETE' });
 
 // --- business profile ------------------------------------------------------
 export const getProfile = (id) => request(`/studies/${id}/profile`);

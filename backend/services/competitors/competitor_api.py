@@ -26,7 +26,7 @@ import db
 from services.auth.auth import require_permission
 from services.pipeline.pipeline import run_scraper_pipeline
 from services.pipeline.pipeline_runs import create_pipeline_run, get_active_run_for_project, get_pipeline_run
-from services.projects.projects_store import list_sources_for_project, project_has_articles
+from services.projects.projects_store import delete_project, list_sources_for_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
 
@@ -137,6 +137,36 @@ def get_study(project_id: int, user: dict = Depends(require_permission("competit
         "competitors": competitors_store.competitor_overview(project_id),
         "findings": competitor_analysis.list_findings(project_id),
     }
+
+
+@router.put("/studies/{project_id}")
+def update_study(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    _project_or_404(project_id)
+    payload = payload or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A study name is required.")
+    project = db.fetch_one(
+        """
+        update projects
+           set name = %s, status = %s, description = %s, updated_at = now()
+         where id = %s and mode = 'competitor'
+        returning id, name, mode, status, description, created_at, updated_at
+        """,
+        (name, str(payload.get("status") or "active"),
+         str(payload.get("description") or "").strip() or None, int(project_id)),
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Study not found")
+    return {"study": project}
+
+
+@router.delete("/studies/{project_id}")
+def remove_study(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    _project_or_404(project_id)
+    if not delete_project(project_id):
+        raise HTTPException(status_code=500, detail="Unable to delete the study.")
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- #

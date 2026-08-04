@@ -89,7 +89,7 @@ function StageList({ stages }) {
   );
 }
 
-function ListEditor({ label, hint, values, onChange, placeholder }) {
+export function ListEditor({ label, hint, values, onChange, placeholder }) {
   const [draft, setDraft] = useState('');
   const items = Array.isArray(values) ? values : [];
 
