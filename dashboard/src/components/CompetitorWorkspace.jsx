@@ -13,18 +13,28 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight, Filter,
-  Layers, Lightbulb, Link2, Plus, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
+  Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight, Filter,
+  Layers, Lightbulb, Link2, Pencil, Plus, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
   IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
-  avatarGradient, discoverAccounts, discoverCompetitors, getStudy, initials, listAccounts,
-  listCompetitors, listFindings, pollDiscoveryRun, relativeTime, setCompetitorStatus,
-  syncSources, validateAccount,
+  avatarGradient, deleteStudy, discoverAccounts, discoverCompetitors, getSchedule, getStudy, initials,
+  listAccounts, listCompetitors, listFindings, pollDiscoveryRun, relativeTime, saveProfile,
+  setCompetitorStatus, setSchedule, syncSources, updateStudy, validateAccount,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
+import { useAuth } from '../auth/useAuth.js';
+import ConfirmModal from './ConfirmModal';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
+import { ListEditor } from './CompetitorOnboarding.jsx';
 import '../styles/Competitors.css';
+
+const STUDY_STATUS_OPTIONS = ['draft', 'active', 'archived'];
+const SCHEDULE_UNIT_OPTIONS = [
+  { value: 'minutes', label: 'minute(s)' },
+  { value: 'hours', label: 'hour(s)' },
+  { value: 'days', label: 'day(s)' },
+];
 
 const IMPACT_FILTERS = [
   { key: '', label: 'All impact' },
@@ -125,8 +135,12 @@ function StatTile({ icon: Icon, label, value, tone }) {
 export default function CompetitorWorkspace() {
   const { studyId } = useParams();
   const navigate = useNavigate();
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('competitors.manage');
 
   const [study, setStudy] = useState(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [profile, setProfile] = useState(null);
   const [competitors, setCompetitors] = useState([]);
   const [findings, setFindings] = useState([]);
@@ -146,6 +160,21 @@ export default function CompetitorWorkspace() {
   const [discoveringCompetitors, setDiscoveringCompetitors] = useState(false);
   const [discoveryNotice, setDiscoveryNotice] = useState(null);
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState({ name: '', description: '', status: 'active' });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [schedule, setScheduleState] = useState(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState({
+    repeat_enabled: false, repeat_interval_value: 1, repeat_interval_unit: 'days',
+  });
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+
   // Fetch inside the effect with a cancel guard, so switching studies mid-request
   // cannot resolve into the newly-selected study's state.
   useEffect(() => {
@@ -154,15 +183,17 @@ export default function CompetitorWorkspace() {
       setLoading(true);
       setError('');
       try {
-        const [detail, competitorList] = await Promise.all([
+        const [detail, competitorList, scheduleDetail] = await Promise.all([
           getStudy(studyId),
           listCompetitors(studyId),
+          getSchedule(studyId),
         ]);
         if (cancelled) return;
         setStudy(detail.study);
         setProfile(detail.profile);
         setFindings(detail.findings || []);
         setCompetitors(competitorList.competitors || []);
+        setScheduleState(scheduleDetail.schedule || null);
       } catch (caught) {
         if (!cancelled) setError(caught.message);
       } finally {
@@ -212,6 +243,96 @@ export default function CompetitorWorkspace() {
       setError(caught.message);
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleDeleteStudy = async () => {
+    setDeleting(true);
+    try {
+      await deleteStudy(studyId);
+      navigate('/competitors');
+    } catch (caught) {
+      setError(caught.message);
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  };
+
+  const openEdit = () => {
+    setEditDraft({
+      name: study?.name || '',
+      description: study?.description || '',
+      status: study?.status || 'active',
+    });
+    setEditOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    setSavingEdit(true);
+    setError('');
+    try {
+      const result = await updateStudy(studyId, editDraft);
+      setStudy((prev) => ({ ...prev, ...result.study }));
+      setEditOpen(false);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const openSchedule = () => {
+    setScheduleDraft({
+      repeat_enabled: Boolean(schedule?.repeat_enabled),
+      repeat_interval_value: schedule?.repeat_interval_value || 1,
+      repeat_interval_unit: schedule?.repeat_interval_unit || 'days',
+    });
+    setScheduleOpen(true);
+  };
+
+  const handleSaveSchedule = async () => {
+    setSavingSchedule(true);
+    setError('');
+    try {
+      const result = await setSchedule(studyId, {
+        repeat_enabled: scheduleDraft.repeat_enabled,
+        repeat_interval_value: Math.max(1, Number(scheduleDraft.repeat_interval_value) || 1),
+        repeat_interval_unit: scheduleDraft.repeat_interval_unit,
+      });
+      setScheduleState(result.schedule || null);
+      setStudy((prev) => (prev ? { ...prev, ...result.schedule } : prev));
+      setScheduleOpen(false);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  const openProfile = () => {
+    setProfileDraft({
+      industry: profile?.industry || '',
+      market: profile?.market || '',
+      positioning: profile?.positioning || '',
+      offerings: profile?.offerings || [],
+      audience: profile?.audience || [],
+      differentiators: profile?.differentiators || [],
+      context_summary: profile?.context_summary || '',
+    });
+    setProfileOpen(true);
+  };
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    setError('');
+    try {
+      const result = await saveProfile(studyId, profileDraft);
+      setProfile(result.profile || null);
+      setProfileOpen(false);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -386,6 +507,28 @@ export default function CompetitorWorkspace() {
             {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
             {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
           </button>
+          {canManage && (
+            <>
+              <button type="button" className="cs-btn" onClick={openProfile}>
+                <Building2 size={15} /> {profile ? 'Edit profile' : 'Add profile'}
+              </button>
+              <button type="button" className="cs-btn" onClick={openSchedule}>
+                <CalendarClock size={15} />
+                {schedule?.repeat_enabled ? `Every ${schedule.repeat_interval_value} ${schedule.repeat_interval_unit}` : 'Tracking off'}
+              </button>
+              <button type="button" className="cs-btn" onClick={openEdit}>
+                <Pencil size={15} /> Edit study
+              </button>
+              <button
+                type="button"
+                className="cs-btn"
+                onClick={() => setDeleteOpen(true)}
+                style={{ color: '#ff4757' }}
+              >
+                <Trash2 size={15} /> Delete study
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -660,6 +803,130 @@ export default function CompetitorWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={editOpen}
+        title="Edit study"
+        confirmLabel={savingEdit ? 'Saving...' : 'Save changes'}
+        cancelLabel="Cancel"
+        onClose={() => setEditOpen(false)}
+        onConfirm={handleSaveEdit}
+      >
+        <div className="cs-field">
+          <label className="cs-label" htmlFor="cs-study-name">Name</label>
+          <input id="cs-study-name" className="cs-input" value={editDraft.name}
+            onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} />
+        </div>
+        <div className="cs-field">
+          <label className="cs-label" htmlFor="cs-study-description">Description</label>
+          <textarea id="cs-study-description" className="cs-textarea" style={{ minHeight: 80 }}
+            value={editDraft.description}
+            onChange={(event) => setEditDraft({ ...editDraft, description: event.target.value })} />
+        </div>
+        <div className="cs-field">
+          <label className="cs-label" htmlFor="cs-study-status">Status</label>
+          <select id="cs-study-status" className="cs-input" value={editDraft.status}
+            onChange={(event) => setEditDraft({ ...editDraft, status: event.target.value })}>
+            {STUDY_STATUS_OPTIONS.map((status) => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+        </div>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={scheduleOpen}
+        title="Tracking schedule"
+        message="Automatically re-scrape and re-analyse this study's competitors on a recurring interval."
+        confirmLabel={savingSchedule ? 'Saving...' : 'Save schedule'}
+        cancelLabel="Cancel"
+        onClose={() => setScheduleOpen(false)}
+        onConfirm={handleSaveSchedule}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
+          <input type="checkbox" checked={scheduleDraft.repeat_enabled}
+            onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_enabled: event.target.checked })} />
+          Scrape and re-analyse automatically
+        </label>
+        {scheduleDraft.repeat_enabled ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
+            <span>Every</span>
+            <input className="cs-input" type="number" min="1" style={{ width: 78 }}
+              value={scheduleDraft.repeat_interval_value}
+              onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_interval_value: event.target.value })} />
+            <select className="cs-input" style={{ width: 130 }} value={scheduleDraft.repeat_interval_unit}
+              onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_interval_unit: event.target.value })}>
+              {SCHEDULE_UNIT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={profileOpen}
+        title="Business profile"
+        message="This is the description competitors get matched against, and what every “how does this affect us” judgement is measured by."
+        confirmLabel={savingProfile ? 'Saving...' : 'Save profile'}
+        cancelLabel="Cancel"
+        onClose={() => setProfileOpen(false)}
+        onConfirm={handleSaveProfile}
+      >
+        {profileDraft ? (
+          <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 4 }}>
+            <div className="cs-grid-2">
+              <div className="cs-field">
+                <label className="cs-label" htmlFor="cs-p-industry">Industry</label>
+                <input id="cs-p-industry" className="cs-input" value={profileDraft.industry}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, industry: event.target.value })} />
+              </div>
+              <div className="cs-field">
+                <label className="cs-label" htmlFor="cs-p-market">Market you compete in</label>
+                <input id="cs-p-market" className="cs-input" value={profileDraft.market}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, market: event.target.value })} />
+              </div>
+            </div>
+
+            <div className="cs-field">
+              <label className="cs-label" htmlFor="cs-p-positioning">Positioning</label>
+              <input id="cs-p-positioning" className="cs-input" value={profileDraft.positioning}
+                onChange={(event) => setProfileDraft({ ...profileDraft, positioning: event.target.value })} />
+            </div>
+
+            <ListEditor label="What you offer" values={profileDraft.offerings}
+              placeholder="demand forecasting"
+              onChange={(offerings) => setProfileDraft({ ...profileDraft, offerings })} />
+            <ListEditor label="Who buys it" values={profileDraft.audience}
+              placeholder="operations directors"
+              onChange={(audience) => setProfileDraft({ ...profileDraft, audience })} />
+            <ListEditor label="What sets you apart" hint="used to judge competitor moves"
+              values={profileDraft.differentiators} placeholder="implementation in under 30 days"
+              onChange={(differentiators) => setProfileDraft({ ...profileDraft, differentiators })} />
+
+            <div className="cs-field">
+              <label className="cs-label" htmlFor="cs-p-context">Market context</label>
+              <textarea id="cs-p-context" className="cs-textarea" style={{ minHeight: 110 }}
+                value={profileDraft.context_summary}
+                onChange={(event) => setProfileDraft({ ...profileDraft, context_summary: event.target.value })} />
+            </div>
+          </div>
+        ) : null}
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={deleteOpen}
+        title={`Delete study "${study?.name || ''}"?`}
+        message="This will permanently remove the study, its business profile, tracked competitors, and findings."
+        confirmLabel={deleting ? 'Deleting...' : 'Delete study'}
+        cancelLabel="Keep study"
+        confirmButtonStyle={{
+          background: 'linear-gradient(135deg, #ff4757, #e03131)',
+          boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
+        }}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={handleDeleteStudy}
+      />
     </div>
   );
 }
