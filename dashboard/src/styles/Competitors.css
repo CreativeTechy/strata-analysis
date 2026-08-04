@@ -319,6 +319,150 @@
   color: var(--primary-color);
 }
 
+/* --- findings toolbar (search / impact / date range / view toggle) ------ */
+.cs-findings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.cs-search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  flex: 1 1 220px;
+  min-width: 180px;
+  color: #94a3b8;
+}
+
+.cs-search-field:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
+}
+
+.cs-search-field input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: var(--text-dark);
+}
+
+.cs-date-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-light);
+  flex-wrap: wrap;
+}
+
+.cs-date-range .cs-input {
+  width: auto;
+  padding: 8px 11px;
+  font-size: 0.83rem;
+}
+
+.cs-view-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  margin-left: auto;
+}
+
+.cs-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-light);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.cs-view-tab:hover { background: rgba(255, 255, 255, 0.6); color: var(--text-dark); }
+
+.cs-view-tab.active {
+  background: #fff;
+  color: var(--primary-color);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+/* --- finding list rows (list view alternative to the card grid) --------- */
+.cs-finding-list { display: flex; flex-direction: column; gap: 10px; }
+
+.cs-finding-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 13px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.14s ease;
+}
+
+.cs-finding-row:hover {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+}
+
+.cs-finding-row:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.cs-finding-row-avatar { width: 30px; height: 30px; font-size: 0.72rem; flex-shrink: 0; }
+
+.cs-finding-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-finding-row-name { font-size: 0.78rem; font-weight: 600; color: var(--text-light); }
+
+.cs-finding-row-headline {
+  font-size: 0.9rem;
+  font-weight: 610;
+  color: var(--text-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-finding-row-meta {
+  font-size: 0.78rem;
+  color: var(--text-light);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cs-finding-row-chevron { color: #cbd5e1; flex-shrink: 0; }
+
 /* --- competitor rows ---------------------------------------------------- */
 .cs-rows { display: flex; flex-direction: column; gap: 10px; }
 
@@ -854,11 +998,16 @@
   .cs-row-desc { max-width: 100%; white-space: normal; }
   .cs-wizard-foot { flex-direction: column-reverse; align-items: stretch; }
   .cs-wizard-foot .cs-btn { justify-content: center; }
+  .cs-findings-toolbar { flex-direction: column; align-items: stretch; }
+  .cs-search-field { flex: 1 1 auto; }
+  .cs-view-tabs { margin-left: 0; }
+  .cs-finding-row { flex-wrap: wrap; }
+  .cs-finding-row-meta { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cs-card, .cs-btn, .cs-row, .cs-evidence-item { transition: none; }
-  .cs-card:hover, .cs-btn:hover:not(:disabled) { transform: none; }
+  .cs-card, .cs-btn, .cs-row, .cs-evidence-item, .cs-finding-row { transition: none; }
+  .cs-card:hover, .cs-btn:hover:not(:disabled), .cs-finding-row:hover { transform: none; }
   .cs-spinner { animation-duration: 2s; }
   .cs-skeleton { animation: none; }
 }

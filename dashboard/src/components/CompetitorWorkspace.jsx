@@ -13,8 +13,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight, Filter,
-  Layers, Lightbulb, Link2, Pencil, Plus, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
+  Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight,
+  Layers, LayoutGrid, Lightbulb, Link2, List, Pencil, Plus, Radar, RefreshCw, Search, ShieldCheck,
+  Sparkles, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
   IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
@@ -41,6 +42,11 @@ const IMPACT_FILTERS = [
   { key: 'high', label: 'High' },
   { key: 'medium', label: 'Medium' },
   { key: 'low', label: 'Low' },
+];
+
+const VIEW_MODES = [
+  { value: 'card', label: 'Cards', icon: LayoutGrid },
+  { value: 'list', label: 'List', icon: List },
 ];
 
 function FindingCard({ finding, onOpen }) {
@@ -119,6 +125,31 @@ function FindingCard({ finding, onOpen }) {
   );
 }
 
+function FindingRow({ finding, onOpen }) {
+  const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
+
+  return (
+    <button type="button" className="cs-finding-row" onClick={() => onOpen(finding.id)}>
+      <span className={`cs-pill cs-pill-${finding.impact_level}`}>
+        {IMPACT_LABELS[finding.impact_level] || finding.impact_level}
+      </span>
+      <span className="cs-avatar cs-finding-row-avatar" style={{ background: avatarGradient(finding.competitor_name) }} aria-hidden="true">
+        {initials(finding.competitor_name)}
+      </span>
+      <span className="cs-finding-row-main">
+        <span className="cs-finding-row-name">{finding.competitor_name}</span>
+        <span className="cs-finding-row-headline">{finding.headline}</span>
+      </span>
+      <span className="cs-finding-row-meta">
+        {finding.story_count} source{finding.story_count === 1 ? '' : 's'}
+        {evidence.length ? ` · ${evidence.length} cited` : ''}
+        {finding.generated_at ? ` · ${relativeTime(finding.generated_at)}` : ''}
+      </span>
+      <ChevronRight size={15} className="cs-finding-row-chevron" />
+    </button>
+  );
+}
+
 function StatTile({ icon: Icon, label, value, tone }) {
   return (
     <div className="cs-panel" style={{ padding: '15px 17px', flex: '1 1 150px' }}>
@@ -151,6 +182,18 @@ export default function CompetitorWorkspace() {
   const [showRunChoice, setShowRunChoice] = useState(false);
   const [notice, setNotice] = useState(null);
   const [impact, setImpact] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [findingsLoading, setFindingsLoading] = useState(false);
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      return window.localStorage.getItem('competitors-view-mode') === 'list' ? 'list' : 'card';
+    } catch {
+      return 'card';
+    }
+  });
   const [showCompetitors, setShowCompetitors] = useState(false);
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
@@ -191,7 +234,6 @@ export default function CompetitorWorkspace() {
         if (cancelled) return;
         setStudy(detail.study);
         setProfile(detail.profile);
-        setFindings(detail.findings || []);
         setCompetitors(competitorList.competitors || []);
         setScheduleState(scheduleDetail.schedule || null);
       } catch (caught) {
@@ -205,13 +247,55 @@ export default function CompetitorWorkspace() {
     };
   }, [studyId]);
 
-  const applyFilter = async (next) => {
-    setImpact(next);
+  // Debounce the free-text search the same way ArticlesPage does, so every
+  // keystroke doesn't fire its own request.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Findings are fetched separately from the study/competitors/schedule load
+  // above so that changing a filter never has to re-fetch all of those too.
+  useEffect(() => {
+    if (!studyId) return undefined;
+    let cancelled = false;
+    (async () => {
+      setFindingsLoading(true);
+      try {
+        const result = await listFindings(studyId, {
+          impact: impact || undefined,
+          search: search || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+        });
+        if (!cancelled) setFindings(result.findings || []);
+      } catch (caught) {
+        if (!cancelled) setError(caught.message);
+      } finally {
+        if (!cancelled) setFindingsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId, impact, search, dateFrom, dateTo]);
+
+  const hasFindingFilters = Boolean(impact || search || dateFrom || dateTo);
+
+  const clearFindingFilters = () => {
+    setImpact('');
+    setSearchInput('');
+    setSearch('');
+    setDateFrom('');
+    setDateTo('');
+  };
+
+  const changeViewMode = (mode) => {
+    setViewMode(mode);
     try {
-      const result = await listFindings(studyId, { impact: next || undefined });
-      setFindings(result.findings || []);
-    } catch (caught) {
-      setError(caught.message);
+      window.localStorage.setItem('competitors-view-mode', mode);
+    } catch {
+      // ignore - persistence is a nicety, not a requirement
     }
   };
 
@@ -238,7 +322,7 @@ export default function CompetitorWorkspace() {
         scrapedFirst: Boolean(result.scrape_run),
         scrapeRun: result.scrape_run || null,
       });
-      setImpact('');
+      clearFindingFilters();
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -720,24 +804,81 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      {findings.length ? (
+      {(findings.length > 0 || hasFindingFilters) ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 15, flexWrap: 'wrap' }}>
-            <Filter size={14} style={{ color: 'var(--text-light)' }} />
-            {IMPACT_FILTERS.map((option) => (
-              <button key={option.key} type="button"
-                className={`cs-btn cs-btn-sm${impact === option.key ? ' cs-btn-primary' : ''}`}
-                onClick={() => applyFilter(option.key)} aria-pressed={impact === option.key}>
-                {option.label}
+          <div className="cs-panel cs-findings-toolbar">
+            <label className="cs-search-field">
+              <Search size={16} />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search headline, summary, competitor..."
+              />
+            </label>
+
+            <select className="cs-select" value={impact} onChange={(event) => setImpact(event.target.value)}
+              aria-label="Filter by impact">
+              {IMPACT_FILTERS.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))}
+            </select>
+
+            <div className="cs-date-range">
+              <input type="date" className="cs-input" value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
+              <span>to</span>
+              <input type="date" className="cs-input" value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)} aria-label="To date" />
+            </div>
+
+            {hasFindingFilters ? (
+              <button type="button" className="cs-btn cs-btn-sm" onClick={clearFindingFilters}>
+                <X size={13} /> Clear filters
               </button>
-            ))}
+            ) : null}
+
+            <div className="cs-view-tabs" role="tablist" aria-label="Switch report view">
+              {VIEW_MODES.map((mode) => {
+                const Icon = mode.icon;
+                const isActive = viewMode === mode.value;
+                return (
+                  <button key={mode.value} type="button" role="tab" aria-selected={isActive}
+                    className={`cs-view-tab${isActive ? ' active' : ''}`} onClick={() => changeViewMode(mode.value)}>
+                    <Icon size={14} /> {mode.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="cs-card-grid">
-            {findings.map((finding) => (
-              <FindingCard key={finding.id} finding={finding}
-                onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
-            ))}
+          <div style={{ opacity: findingsLoading ? 0.6 : 1, transition: 'opacity 0.15s ease' }}>
+            {findings.length ? (
+              viewMode === 'list' ? (
+                <div className="cs-finding-list">
+                  {findings.map((finding) => (
+                    <FindingRow key={finding.id} finding={finding}
+                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
+                  ))}
+                </div>
+              ) : (
+                <div className="cs-card-grid">
+                  {findings.map((finding) => (
+                    <FindingCard key={finding.id} finding={finding}
+                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="cs-empty">
+                <div className="cs-empty-icon"><Search size={20} /></div>
+                <h3>No matching reports</h3>
+                <p>Try adjusting your search, impact, or date filters.</p>
+                <button type="button" className="cs-btn" onClick={clearFindingFilters}>
+                  <X size={15} /> Clear filters
+                </button>
+              </div>
+            )}
           </div>
         </>
       ) : (
