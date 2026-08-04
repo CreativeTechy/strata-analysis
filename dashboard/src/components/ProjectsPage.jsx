@@ -994,7 +994,7 @@ export default function ProjectsPage({
         <div className="admin-page-header">
           <div>
             <div className="admin-page-kicker">
-              <CalendarDays size={14} /> Project planner
+              <CalendarDays size={14} /> Opinion monitoring
             </div>
             <h1 className="admin-page-title">{heading}</h1>
             <p className="admin-page-subtitle">
@@ -1885,11 +1885,11 @@ export default function ProjectsPage({
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Project planner
+            <CalendarDays size={14} /> Opinion monitoring
           </div>
-          <h1 className="admin-page-title">Projects</h1>
+          <h1 className="admin-page-title">Opinion Monitor</h1>
           <p className="admin-page-subtitle">
-            Shape each news cycle as its own workspace, attach shared sources, and keep every scrape tied to a named project.
+            Track what people are saying about each project as its own workspace, attach shared sources, and keep every scrape tied to a named project.
           </p>
         </div>
         <div className="admin-page-toolbar">

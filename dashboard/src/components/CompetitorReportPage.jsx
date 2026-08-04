@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Calendar, Check, ChevronRight, ExternalLink, FileText,
   Filter, Lightbulb, Link2, ShieldCheck, Sparkles, Target, ThumbsDown,
@@ -24,6 +24,9 @@ import '../styles/Competitors.css';
 
 export default function CompetitorReportPage() {
   const { studyId, findingId } = useParams();
+  const location = useLocation();
+  const backTo = location.state?.from || `/competitors/${studyId}`;
+  const backLabel = location.state?.fromLabel || 'Back to workspace';
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -74,8 +77,8 @@ export default function CompetitorReportPage() {
   if (error || !data?.finding) {
     return (
       <div className="cs-page cs-report">
-        <Link to={`/competitors/${studyId}`} className="cs-link-back">
-          <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> Back to workspace
+        <Link to={backTo} className="cs-link-back">
+          <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> {backLabel}
         </Link>
         <div className="cs-alert cs-alert-error">
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -93,8 +96,8 @@ export default function CompetitorReportPage() {
 
   return (
     <div className="cs-page cs-report">
-      <Link to={`/competitors/${studyId}`} className="cs-link-back">
-        <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> Back to workspace
+      <Link to={backTo} className="cs-link-back">
+        <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> {backLabel}
       </Link>
 
       <div className="cs-report-hero">
@@ -313,7 +316,7 @@ export default function CompetitorReportPage() {
                   .filter((item) => item.id !== finding.id)
                   .slice(0, 6)
                   .map((item) => (
-                    <Link key={item.id} to={`/competitors/${studyId}/reports/${item.id}`}
+                    <Link key={item.id} to={`/competitors/${studyId}/reports/${item.id}`} state={location.state}
                       style={{ fontSize: '0.83rem', textDecoration: 'none', color: 'var(--text-light)' }}>
                       <span style={{ display: 'block', color: 'var(--text-dark)', fontWeight: 550, lineHeight: 1.4 }}>
                         {item.headline}

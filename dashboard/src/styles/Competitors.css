@@ -768,10 +768,10 @@
 
 .cs-link-back:hover { color: var(--text-dark); }
 
-/* --- pulse card + study summary (Dashboard/Reports embeds) -------------- */
-.cs-pulse-card, .cs-study-summary { margin-bottom: 20px; }
+/* --- pulse card (Dashboard/Reports embed) -------------------------------- */
+.cs-pulse-card { margin-bottom: 20px; }
 
-.cs-pulse-head, .cs-study-summary-head {
+.cs-pulse-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -790,33 +790,15 @@
   color: #94a3b8;
 }
 
-.cs-study-summary-head h3 {
-  margin: 6px 0 2px;
-  font-size: 1.08rem;
-  font-weight: 640;
-  color: var(--text-dark);
-}
-
-.cs-pulse-viewall {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--primary-color);
-  text-decoration: none;
-}
-
-.cs-pulse-stats {
+.cs-pulse-pagination {
   display: flex;
-  gap: 26px;
-  flex-wrap: wrap;
-  margin: 14px 0 4px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
 }
 
-.cs-pulse-stats > div { display: flex; flex-direction: column; gap: 2px; }
-.cs-pulse-stats strong { font-size: 1.3rem; font-weight: 680; color: var(--text-dark); }
-.cs-pulse-stats span { font-size: 0.76rem; color: var(--text-light); }
+.cs-pulse-pagination-status { font-size: 0.8rem; color: var(--text-light); }
 
 .cs-pulse-list {
   list-style: none;
@@ -853,21 +835,11 @@
 .cs-pulse-row-meta { font-size: 0.74rem; color: var(--text-light); }
 .cs-pulse-row-time { font-size: 0.74rem; color: var(--text-light); white-space: nowrap; flex-shrink: 0; }
 
-.cs-pulse-empty, .cs-pulse-empty-state p {
+.cs-pulse-empty {
   font-size: 0.85rem;
   color: var(--text-light);
   margin: 12px 0 0;
 }
-
-.cs-pulse-empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.cs-pulse-empty-state p { margin: 0; max-width: 52ch; }
 
 /* --- responsive --------------------------------------------------------- */
 @media (max-width: 1024px) {

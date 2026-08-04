@@ -2028,6 +2028,16 @@ h1, h2, h3 {
   padding: 12px;
 }
 
+.run-detail-source-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.run-detail-source-table tbody tr:hover {
+  background: rgba(0, 0, 0, 0.025);
+}
+
 .project-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);

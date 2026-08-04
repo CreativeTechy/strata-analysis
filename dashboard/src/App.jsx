@@ -12,7 +12,6 @@ import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorReportPage from './components/CompetitorReportPage';
 import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
-import CompetitorStudySummary from './components/CompetitorStudySummary.jsx';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
@@ -137,7 +136,7 @@ export default function App() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
           const ids = parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-          if (ids.length) return [...new Set(ids)];
+          if (ids.length) return [ids[0]];
         }
       } catch {
         // Ignore malformed localStorage and fall back to an empty selection.
@@ -156,6 +155,14 @@ export default function App() {
   const selectedProject = useMemo(
     () => projects.find((project) => Number(project.id) === Number(selectedProjectId)) || null,
     [projects, selectedProjectId]
+  );
+
+  // Competitor studies live in the same `projects` table (mode='competitor') but
+  // have their own workspace under /competitors, so the Opinion Monitor page only
+  // shows sentiment-mode projects.
+  const opinionMonitorProjects = useMemo(
+    () => projects.filter((project) => (project.mode || 'sentiment') !== 'competitor'),
+    [projects]
   );
 
 
@@ -203,10 +210,13 @@ export default function App() {
     return Number.isFinite(normalized) ? normalized : null;
   };
 
+  // Manual Run only ever scopes to a single project - collapse any stale
+  // multi-project selection (e.g. from localStorage written before this was
+  // single-select) down to just the first valid id.
   const normalizeWorkflowSelection = (ids, sourceProjects = projects) => {
     const availableIds = new Set(sourceProjects.map((project) => Number(project.id)));
-    const normalized = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && availableIds.has(id)))];
-    if (normalized.length) return normalized;
+    const firstValid = (ids || []).map((id) => Number(id)).find((id) => Number.isFinite(id) && availableIds.has(id));
+    if (firstValid != null) return [firstValid];
     if (sourceProjects.length) return [Number(sourceProjects[0].id)];
     return [];
   };
@@ -803,12 +813,10 @@ export default function App() {
           </ul>
         </header>
 
-        <CompetitorPulseCard />
-
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          {selectedProject?.mode === 'competitor' ? (
-            <CompetitorStudySummary studyId={selectedProject.id} />
-          ) : (
+        {selectedProject?.mode === 'competitor' ? (
+          <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel="Back to reports" />
+        ) : (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             <StatsOverview
               intelligence={liveReport}
               scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
@@ -819,8 +827,8 @@ export default function App() {
               sources={sources}
               period={reportPeriod}
             />
-          )}
-        </motion.div>
+          </motion.div>
+        )}
       </div>
     );
   };
@@ -902,7 +910,7 @@ export default function App() {
             path="/projects"
             element={(
               <ProjectsPage
-                projects={projects}
+                projects={opinionMonitorProjects}
                 sources={sources}
                 users={users}
                 onCreateProject={createProject}
@@ -916,7 +924,7 @@ export default function App() {
             element={(
               <RequirePermission permissions={['projects.create']}>
                 <ProjectsPage
-                  projects={projects}
+                  projects={opinionMonitorProjects}
                   sources={sources}
                   users={users}
                   onCreateProject={createProject}
@@ -933,7 +941,7 @@ export default function App() {
             element={(
               <RequirePermission permissions={['projects.update']}>
                 <ProjectsPage
-                  projects={projects}
+                  projects={opinionMonitorProjects}
                   sources={sources}
                   users={users}
                   onCreateProject={createProject}
@@ -949,7 +957,7 @@ export default function App() {
             path="/projects/:projectId"
             element={(
               <ProjectDetailPage
-                projects={projects}
+                projects={opinionMonitorProjects}
                 sources={sources}
                 users={users}
                 onDeleteProject={deleteProject}
