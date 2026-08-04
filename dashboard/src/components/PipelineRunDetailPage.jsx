@@ -1,6 +1,21 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Database, Loader2, AlertTriangle, ChevronDown, ChevronRight, ShieldAlert, CircleAlert, CircleCheck } from 'lucide-react';
+import {
+  ArrowLeft,
+  Database,
+  Loader2,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  ShieldAlert,
+  CircleAlert,
+  CircleCheck,
+  Rss,
+  Filter,
+  Save,
+  Layers,
+  ExternalLink,
+} from 'lucide-react';
 
 function prettyStage(stage) {
   if (!stage) return 'queued';
@@ -58,10 +73,26 @@ function projectNameForRun(run, projectsById) {
 }
 
 const STAGE_ROWS = [
-  { key: 'scrape', label: 'Scraping', startField: 'scrape_started_at', endField: 'scrape_finished_at' },
-  { key: 'clean', label: 'Cleaning', startField: 'clean_started_at', endField: 'clean_finished_at' },
-  { key: 'enrich', label: 'Enriching', startField: 'enrich_started_at', endField: 'enrich_finished_at' },
+  { key: 'scrape', label: 'Scraping', startField: 'scrape_started_at', endField: 'scrape_finished_at', Icon: Rss },
+  { key: 'clean', label: 'Cleaning', startField: 'clean_started_at', endField: 'clean_finished_at', Icon: Filter },
+  { key: 'enrich', label: 'Enriching', startField: 'enrich_started_at', endField: 'enrich_finished_at', Icon: Layers },
 ];
+
+const TOTAL_STATS = [
+  { key: 'articles_scraped', label: 'Articles scraped', Icon: Rss, tint: 'rgba(255, 159, 67, 0.14)', color: 'var(--primary-color)' },
+  { key: 'articles_cleaned', label: 'Articles cleaned', Icon: Filter, tint: 'rgba(46, 134, 222, 0.14)', color: '#2e86de' },
+  { key: 'articles_saved', label: 'Articles saved', Icon: Save, tint: 'rgba(46, 213, 115, 0.14)', color: '#2ed573' },
+  { key: 'crawl_pages', label: 'Pages crawled', Icon: Layers, tint: 'rgba(116, 125, 140, 0.14)', color: '#747d8c' },
+];
+
+// Anchor target for a source row: prefer the real configured URL recorded
+// during this run's fetch diagnostics; fall back to the source name only
+// when it happens to already be a URL (legacy rows predating source_url).
+function sourceHref(row) {
+  if (row.source_url) return row.source_url;
+  if (typeof row.source === 'string' && /^https?:\/\//i.test(row.source)) return row.source;
+  return null;
+}
 
 const SOURCE_COLUMNS = [
   { key: 'scraped', label: 'Scraped' },
@@ -88,6 +119,28 @@ function sourceStatusBadge(source) {
     return { label: 'Issue', color: '#ffb13b', Icon: CircleAlert };
   }
   return { label: 'OK', color: '#2ed573', Icon: CircleCheck };
+}
+
+function StatusBadge({ status }) {
+  const color = stageColor(status);
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '4px 12px',
+        borderRadius: 999,
+        background: `${color}1f`,
+        color,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        fontSize: '0.75rem',
+        letterSpacing: '0.03em',
+      }}
+    >
+      {status}
+    </span>
+  );
 }
 
 function SummaryField({ label, children }) {
@@ -183,15 +236,27 @@ export default function PipelineRunDetailPage({ projects = [] }) {
         </div>
       ) : !run ? null : (
         <>
+          <div className="admin-stats-grid">
+            {TOTAL_STATS.map(({ key, label, Icon, tint, color }) => (
+              <div className="admin-stat-card" key={key}>
+                <div className="admin-stat-icon" style={{ background: tint, color }}>
+                  <Icon size={18} />
+                </div>
+                <div>
+                  <span>{label}</span>
+                  <strong>{(run[key] || 0).toLocaleString()}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+
           <div className="glass-card run-detail-summary-grid" style={{ marginBottom: 18 }}>
             <SummaryField label="Run ID">
               <code style={{ fontSize: '0.8rem' }}>{run.id}</code>
             </SummaryField>
             <SummaryField label="Project">{projectName}</SummaryField>
             <SummaryField label="Status">
-              <span style={{ color: stageColor(run.status), fontWeight: 700, textTransform: 'uppercase', fontSize: '0.8rem' }}>
-                {run.status}
-              </span>
+              <StatusBadge status={run.status} />
             </SummaryField>
             <SummaryField label="Current stage">{prettyStage(run.stage)}</SummaryField>
             <SummaryField label="Started at">{formatDateTime(run.started_at)}</SummaryField>
@@ -212,7 +277,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {STAGE_ROWS.map(({ key, label, startField, endField }) => {
+                {STAGE_ROWS.map(({ key, label, startField, endField, Icon }) => {
                   const duration = stageDuration(run[startField], run[endField]);
                   return (
                     <div
@@ -221,13 +286,15 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        padding: '8px 12px',
-                        borderRadius: 10,
+                        padding: '10px 14px',
+                        borderRadius: 12,
                         background: 'rgba(0,0,0,0.03)',
                       }}
                     >
-                      <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{label}</span>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600 }}>
+                        <Icon size={15} style={{ color: 'var(--primary-color)' }} /> {label}
+                      </span>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-light)', fontWeight: duration.inProgress ? 700 : 400 }}>
                         {duration.text}
                         {duration.inProgress ? ' (in progress)' : ''}
                       </span>
@@ -248,9 +315,9 @@ export default function PipelineRunDetailPage({ projects = [] }) {
               <div className="run-detail-fallback">No per-source data recorded for this run yet.</div>
             ) : (
               <div className="table-scroll">
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <table className="run-detail-source-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
-                    <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
+                    <tr style={{ textAlign: 'left', background: 'var(--glass-bg)' }}>
                       <th style={{ padding: '8px 10px', width: 28 }} />
                       <th style={{ padding: '8px 10px' }}>Source</th>
                       <th style={{ padding: '8px 10px' }}>Fetch status</th>
@@ -267,6 +334,8 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                       const isExpanded = expandedSources.has(key);
                       const badge = sourceStatusBadge(row);
                       const hasDetails = Boolean(row.fetch_note);
+                      const href = sourceHref(row);
+                      const showNameSeparately = href && row.source && row.source !== href;
                       return (
                         <Fragment key={key}>
                           <tr style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
@@ -290,16 +359,46 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                                 </button>
                               ) : null}
                             </td>
-                            <td style={{ padding: '8px 10px', wordBreak: 'break-word', maxWidth: 220 }}>{row.source}</td>
+                            <td style={{ padding: '8px 10px', wordBreak: 'break-word', maxWidth: 280 }}>
+                              {showNameSeparately ? (
+                                <div style={{ fontWeight: 600, marginBottom: 2 }}>{row.source}</div>
+                              ) : null}
+                              {href ? (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`Visit ${href}`}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'flex-start',
+                                    gap: 4,
+                                    color: 'var(--primary-color)',
+                                    textDecoration: 'none',
+                                    fontWeight: showNameSeparately ? 400 : 600,
+                                    wordBreak: 'break-all',
+                                  }}
+                                >
+                                  {href}
+                                  <ExternalLink size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                </a>
+                              ) : (
+                                row.source
+                              )}
+                            </td>
                             <td style={{ padding: '8px 10px' }}>
                               <span
                                 style={{
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: 4,
+                                  padding: '3px 9px',
+                                  borderRadius: 999,
+                                  background: `${badge.color}1f`,
                                   color: badge.color,
                                   fontWeight: 600,
-                                  fontSize: '0.78rem',
+                                  fontSize: '0.75rem',
+                                  whiteSpace: 'nowrap',
                                 }}
                               >
                                 <badge.Icon size={13} /> {badge.label}
