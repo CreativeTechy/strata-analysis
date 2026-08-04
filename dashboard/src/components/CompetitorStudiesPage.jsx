@@ -40,7 +40,7 @@ export default function CompetitorStudiesPage() {
     <div className="cs-page">
       <div className="cs-head">
         <div>
-          <h1>Competitor studies</h1>
+          <h1>Competitor Analysis</h1>
           <p>
             Track what your competitors are doing, what it means for your business, and what to do
             about it. Separate from sentiment and opinion tracking, which answers what people are

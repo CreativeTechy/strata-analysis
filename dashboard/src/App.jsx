@@ -158,6 +158,14 @@ export default function App() {
     [projects, selectedProjectId]
   );
 
+  // Competitor studies live in the same `projects` table (mode='competitor') but
+  // have their own workspace under /competitors, so the Opinion Monitor page only
+  // shows sentiment-mode projects.
+  const opinionMonitorProjects = useMemo(
+    () => projects.filter((project) => (project.mode || 'sentiment') !== 'competitor'),
+    [projects]
+  );
+
 
   const workflowSelectedProjects = useMemo(() => {
     const selectedIds = new Set(workflowSelectedProjectIds.map((id) => Number(id)));
@@ -902,7 +910,7 @@ export default function App() {
             path="/projects"
             element={(
               <ProjectsPage
-                projects={projects}
+                projects={opinionMonitorProjects}
                 sources={sources}
                 users={users}
                 onCreateProject={createProject}
@@ -916,7 +924,7 @@ export default function App() {
             element={(
               <RequirePermission permissions={['projects.create']}>
                 <ProjectsPage
-                  projects={projects}
+                  projects={opinionMonitorProjects}
                   sources={sources}
                   users={users}
                   onCreateProject={createProject}
@@ -933,7 +941,7 @@ export default function App() {
             element={(
               <RequirePermission permissions={['projects.update']}>
                 <ProjectsPage
-                  projects={projects}
+                  projects={opinionMonitorProjects}
                   sources={sources}
                   users={users}
                   onCreateProject={createProject}
@@ -949,7 +957,7 @@ export default function App() {
             path="/projects/:projectId"
             element={(
               <ProjectDetailPage
-                projects={projects}
+                projects={opinionMonitorProjects}
                 sources={sources}
                 users={users}
                 onDeleteProject={deleteProject}

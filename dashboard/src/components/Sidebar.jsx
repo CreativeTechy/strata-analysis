@@ -23,12 +23,13 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 
 // The two experiences answer different questions and are kept visibly apart:
-// "Listening" is what people are saying (sentiment, opinions); "Competitors" is
-// what rival companies are doing and what to do about it. Mixing them in one flat
-// list is what made the old navigation ambiguous.
+// "Insights" is what people are saying (sentiment, opinions); "Monitoring" is
+// the two ongoing watch programs (your own brand's opinion monitor and rival
+// companies' competitor analysis). Mixing them in one flat list is what made
+// the old navigation ambiguous.
 const NAV_SECTIONS = [
   {
-    label: 'Listening',
+    label: 'Insights',
     items: [
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/reports', label: 'Reports', icon: BarChart3 },
@@ -37,19 +38,19 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Competitors',
+    label: 'Monitoring',
     items: [
-      { to: '/competitors', label: 'Studies', icon: Radar, permission: 'competitors.view' },
+      { to: '/projects', label: 'Opinion Monitor', icon: CalendarDays },
+      { to: '/competitors', label: 'Competitor Analysis', icon: Radar, permission: 'competitors.view' },
     ],
   },
   {
     label: 'Setup',
     items: [
       { to: '/sources', label: 'Sources', icon: Rss },
-      { to: '/projects', label: 'Projects', icon: CalendarDays },
       { to: '/workflow', label: 'Workflow', icon: GitMerge },
       { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
-      { to: '/analysis', label: 'Analysis', icon: ScanSearch },
+      { to: '/analysis', label: 'Performance Logs', icon: ScanSearch },
     ],
   },
 ];
