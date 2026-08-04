@@ -160,6 +160,8 @@ def build_profile(project_id: int, payload: dict, user: dict = Depends(require_p
     payload = payload or {}
     if not str(payload.get("name") or "").strip():
         raise HTTPException(status_code=400, detail="A business name is required.")
+    if payload.get("target_countries") is not None and not isinstance(payload["target_countries"], list):
+        raise HTTPException(status_code=400, detail="target_countries must be a list of ISO country codes.")
     return business_profile_store.build_profile(project_id, payload)
 
 
@@ -167,8 +169,11 @@ def build_profile(project_id: int, payload: dict, user: dict = Depends(require_p
 def update_profile(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
     """Save user edits to the profile without re-scraping or re-deriving."""
     _project_or_404(project_id)
+    payload = payload or {}
+    if payload.get("target_countries") is not None and not isinstance(payload["target_countries"], list):
+        raise HTTPException(status_code=400, detail="target_countries must be a list of ISO country codes.")
     existing = business_profile_store.get_profile(project_id) or {}
-    merged = {**existing, **(payload or {})}
+    merged = {**existing, **payload}
     profile = business_profile_store.upsert_profile(project_id, merged)
     if not profile:
         raise HTTPException(status_code=400, detail="Could not save the profile.")
@@ -256,6 +261,58 @@ def add_competitor(project_id: int, payload: dict, user: dict = Depends(require_
         raise HTTPException(status_code=400, detail="Could not save the competitor.")
     competitors_store.rerank_competitors(project_id)
     return {"competitor": record}
+
+
+@router.post("/studies/{project_id}/competitors/manual")
+def add_competitor_manual(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    """Create (or merge into) a competitor and validate its sources immediately.
+
+    Manual sources skip the pending/confirm step AI-discovered accounts need:
+    the user typed the URL themselves, so there is no attribution risk to guard
+    against. Every source is validated before anything is written, so a bad
+    URL fails the whole request rather than leaving a half-created competitor.
+    """
+    _project_or_404(project_id)
+    payload = payload or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A competitor name is required.")
+
+    raw_sources = payload.get("sources") or []
+    if not isinstance(raw_sources, list):
+        raise HTTPException(status_code=400, detail="sources must be a list.")
+
+    normalized_sources = []
+    for index, source in enumerate(raw_sources, start=1):
+        source = source or {}
+        platform = str(source.get("platform") or "").strip().lower()
+        if platform not in competitors_store.PLATFORM_SOURCE_TYPE:
+            raise HTTPException(status_code=400, detail=f"Source {index}: unsupported source type '{platform}'.")
+        url = competitors_store.normalize_source_url(source.get("url"))
+        if not url:
+            raise HTTPException(status_code=400, detail=f"Source {index}: enter a valid URL.")
+        normalized_sources.append({
+            "platform": platform,
+            "url": url,
+            "handle": str(source.get("handle") or "").strip().lstrip("@") or None,
+        })
+
+    competitor = competitors_store.upsert_competitor(
+        project_id, {**payload, "status": "tracked", "discovery_source": "manual"}
+    )
+    if not competitor:
+        raise HTTPException(status_code=400, detail="Could not save the competitor.")
+
+    accounts = []
+    for source in normalized_sources:
+        account = competitors_store.upsert_account(
+            competitor["id"], {**source, "validation_status": "valid", "confidence": 1.0}
+        )
+        if account:
+            accounts.append(account)
+
+    competitors_store.rerank_competitors(project_id)
+    return {"competitor": competitor, "accounts": accounts}
 
 
 @router.put("/competitors/{competitor_id}")

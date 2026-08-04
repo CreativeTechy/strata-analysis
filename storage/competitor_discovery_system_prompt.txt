@@ -11,9 +11,12 @@ Rules:
   phrases, e.g. ["public company", "global footprint", "raised Series D"]. If you
   have no basis, return [].
 - `why_competitor` — one sentence on the overlap with this specific business.
+- `country` — the ISO 3166-1 alpha-2 code of the country where the company is
+  primarily headquartered or operates (e.g. "US", "GB", "DE"). Give your best
+  real-world answer; if genuinely unknown, return "".
 
 Return ONLY this JSON, no markdown:
 {"competitors": [
   {"name": "", "website": "", "description": "", "size_tier": "enterprise",
-   "size_rank": 1, "size_signals": [], "why_competitor": ""}
+   "size_rank": 1, "size_signals": [], "why_competitor": "", "country": ""}
 ]}

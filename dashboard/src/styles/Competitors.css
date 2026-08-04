@@ -156,6 +156,9 @@
 .cs-pill-pending  { background: #fef3c7; color: #a16207; }
 .cs-pill-rejected { background: #fee2e2; color: #b91c1c; }
 
+.cs-pill-manual { background: #dcfce7; color: #15803d; }
+.cs-pill-ai     { background: #eef2ff; color: #4338ca; }
+
 .cs-pill-signal { background: #f8fafc; color: #475569; border: 1px solid #e9edf3; }
 
 .cs-pills { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -447,6 +450,74 @@
 }
 
 .cs-textarea { resize: vertical; min-height: 84px; line-height: 1.55; }
+
+.cs-select {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 13px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: var(--text-dark);
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cs-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
+}
+
+.cs-source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.cs-source-error {
+  font-size: 0.76rem;
+  color: #b91c1c;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.cs-spin { animation: cs-spin 0.9s linear infinite; }
+
+.cs-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.cs-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 0.86rem;
+  color: var(--text-dark);
+  cursor: pointer;
+}
+
+.cs-dropdown-item:hover,
+.cs-dropdown-item:focus {
+  background: #f1f5f9;
+}
 
 .cs-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 

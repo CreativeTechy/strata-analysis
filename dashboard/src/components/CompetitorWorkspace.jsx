@@ -14,13 +14,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight, Filter,
-  Layers, Lightbulb, Link2, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
+  Layers, Lightbulb, Link2, Plus, Radar, RefreshCw, Search, ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
-  IMPACT_LABELS, SIZE_TIER_LABELS, analyze, avatarGradient, discoverAccounts, getStudy,
-  initials, listAccounts, listCompetitors, listFindings, relativeTime, setCompetitorStatus,
+  IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
+  avatarGradient, discoverAccounts, discoverCompetitors, getStudy, initials, listAccounts,
+  listCompetitors, listFindings, pollDiscoveryRun, relativeTime, setCompetitorStatus,
   syncSources, validateAccount,
 } from '../competitorApi.js';
+import { countryLabel } from '../constants/countries.js';
+import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
 import '../styles/Competitors.css';
 
 const IMPACT_FILTERS = [
@@ -138,6 +141,10 @@ export default function CompetitorWorkspace() {
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
   const [channelBusy, setChannelBusy] = useState({});
+  const [showAddCompetitor, setShowAddCompetitor] = useState(false);
+  const [addingManual, setAddingManual] = useState(false);
+  const [discoveringCompetitors, setDiscoveringCompetitors] = useState(false);
+  const [discoveryNotice, setDiscoveryNotice] = useState(null);
 
   // Fetch inside the effect with a cancel guard, so switching studies mid-request
   // cannot resolve into the newly-selected study's state.
@@ -274,6 +281,58 @@ export default function CompetitorWorkspace() {
     }
   };
 
+  const addSourceToCompetitor = async (competitorId, source) => {
+    setChannelBusy((current) => ({ ...current, [competitorId]: true }));
+    try {
+      const result = await addAccount(competitorId, { ...source, validation_status: 'valid', confidence: 1 });
+      setAccountsByCompetitor((current) => ({
+        ...current,
+        [competitorId]: [...(current[competitorId] || []), result.account],
+      }));
+      await refreshCompetitorCounts();
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setChannelBusy((current) => ({ ...current, [competitorId]: false }));
+    }
+  };
+
+  const handleAddManualCompetitor = async (payload) => {
+    setError('');
+    setAddingManual(true);
+    try {
+      await addCompetitorManual(studyId, payload);
+      await refreshCompetitorCounts();
+      setShowAddCompetitor(false);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setAddingManual(false);
+    }
+  };
+
+  // Optional, from the workspace rather than onboarding - runs the same
+  // background discovery job and merges results into the existing list.
+  const runDiscovery = async () => {
+    setError('');
+    setDiscoveryNotice(null);
+    setDiscoveringCompetitors(true);
+    try {
+      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: true });
+      const run = await pollDiscoveryRun(studyId, queued.run_id);
+      if (run.status === 'failed') {
+        throw new Error(run.error || run.message || 'Competitor discovery failed.');
+      }
+      await refreshCompetitorCounts();
+      setShowCompetitors(true);
+      setDiscoveryNotice({ discovered: run.discovered || 0, rejected: run.rejected || [] });
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setDiscoveringCompetitors(false);
+    }
+  };
+
   const stats = useMemo(() => {
     const tracked = competitors.filter((item) => item.status === 'tracked');
     const pendingChannels = competitors.reduce((sum, item) => sum + (item.pending_account_count || 0), 0);
@@ -319,6 +378,10 @@ export default function CompetitorWorkspace() {
           <button type="button" className="cs-btn" onClick={() => setShowCompetitors((value) => !value)}>
             <Layers size={15} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}
           </button>
+          <button type="button" className="cs-btn" onClick={runDiscovery} disabled={discoveringCompetitors}>
+            {discoveringCompetitors ? <span className="cs-spinner" /> : <Radar size={15} />}
+            {discoveringCompetitors ? 'Discovering...' : 'Discover with AI'}
+          </button>
           <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
             {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
             {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
@@ -329,6 +392,19 @@ export default function CompetitorWorkspace() {
       {error ? (
         <div className="cs-alert cs-alert-error">
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+        </div>
+      ) : null}
+
+      {discoveryNotice ? (
+        <div className="cs-alert cs-alert-info">
+          <Sparkles size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            Discovered {discoveryNotice.discovered} competitor{discoveryNotice.discovered === 1 ? '' : 's'}.
+            {discoveryNotice.rejected.length
+              ? ` ${discoveryNotice.rejected.length} suggestion${discoveryNotice.rejected.length === 1 ? '' : 's'} dropped during checking.`
+              : ''}
+            {' '}Review them in the competitors list below.
+          </span>
         </div>
       ) : null}
 
@@ -391,6 +467,17 @@ export default function CompetitorWorkspace() {
           <p className="cs-panel-hint">
             Only tracked competitors are scraped and analysed. Ranked by size.
           </p>
+
+          <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: '1px solid #eef1f6' }}>
+            {showAddCompetitor ? (
+              <AddCompetitorForm onSubmit={handleAddManualCompetitor} busy={addingManual} />
+            ) : (
+              <button type="button" className="cs-btn cs-btn-sm" onClick={() => setShowAddCompetitor(true)}>
+                <Plus size={13} /> Add competitor manually
+              </button>
+            )}
+          </div>
+
           <div className="cs-rows">
             {competitors.map((competitor) => {
               const channelsOpen = expandedChannels.has(competitor.id);
@@ -411,6 +498,9 @@ export default function CompetitorWorkspace() {
                       </div>
                     </div>
                     <div className="cs-row-side">
+                      {competitor.country ? (
+                        <span className="cs-pill cs-pill-signal">{countryLabel(competitor.country)}</span>
+                      ) : null}
                       <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                         {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
                       </span>
@@ -436,12 +526,13 @@ export default function CompetitorWorkspace() {
                             {channelBusy[competitor.id] ? <span className="cs-spinner" /> : <Search size={13} />} Find channels
                           </button>
                         </div>
-                      ) : (
+                      ) : null}
+                      {accounts?.length ? (
                         accounts.map((account) => (
                           <div key={account.id} className="cs-row">
                             <div className="cs-row-main">
-                              <div className="cs-row-name" style={{ textTransform: 'capitalize' }}>
-                                {account.platform}
+                              <div className="cs-row-name">
+                                {PLATFORM_LABELS[account.platform] || account.platform}
                                 {account.handle ? <span style={{ fontWeight: 400, color: 'var(--text-light)' }}> @{account.handle}</span> : null}
                               </div>
                               <div className="cs-row-desc">{account.url}</div>
@@ -470,7 +561,13 @@ export default function CompetitorWorkspace() {
                             </div>
                           </div>
                         ))
-                      )}
+                      ) : null}
+                      {Array.isArray(accounts) ? (
+                        <AddSourceRow
+                          busy={Boolean(channelBusy[competitor.id])}
+                          onSubmit={(source) => addSourceToCompetitor(competitor.id, source)}
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
