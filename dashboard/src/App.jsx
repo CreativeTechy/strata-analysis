@@ -12,7 +12,6 @@ import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorReportPage from './components/CompetitorReportPage';
 import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
-import CompetitorStudySummary from './components/CompetitorStudySummary.jsx';
 import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
@@ -814,12 +813,10 @@ export default function App() {
           </ul>
         </header>
 
-        <CompetitorPulseCard />
-
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          {selectedProject?.mode === 'competitor' ? (
-            <CompetitorStudySummary studyId={selectedProject.id} />
-          ) : (
+        {selectedProject?.mode === 'competitor' ? (
+          <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel="Back to reports" />
+        ) : (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             <StatsOverview
               intelligence={liveReport}
               scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
@@ -830,8 +827,8 @@ export default function App() {
               sources={sources}
               period={reportPeriod}
             />
-          )}
-        </motion.div>
+          </motion.div>
+        )}
       </div>
     );
   };

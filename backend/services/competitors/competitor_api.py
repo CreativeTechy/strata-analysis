@@ -88,24 +88,19 @@ def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     }
 
 
-@router.get("/overview")
-def overview(user: dict = Depends(require_permission("competitors.view"))):
-    """Cross-study summary for the Dashboard/Reports pulse card: totals plus recent findings."""
-    totals = db.fetch_one(
-        """
-        select count(distinct p.id)::int as studies,
-               count(distinct c.id) filter (where c.status = 'tracked')::int as tracked_competitors,
-               count(distinct f.id) filter (where f.impact_level = 'high')::int as high_impact_findings
-        from projects p
-        left join competitors c on c.project_id = p.id
-        left join competitor_findings f on f.project_id = p.id
-        where p.mode = 'competitor'
-        """
-    ) or {"studies": 0, "tracked_competitors": 0, "high_impact_findings": 0}
-    return {
-        "totals": totals,
-        "recent_findings": competitor_analysis.list_recent_findings(limit=6),
-    }
+@router.get("/studies/{project_id}/findings")
+def list_study_findings(
+    project_id: int,
+    limit: int = 10,
+    offset: int = 0,
+    user: dict = Depends(require_permission("competitors.view")),
+):
+    """Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card."""
+    _project_or_404(project_id)
+    limit = max(1, min(int(limit), 50))
+    offset = max(0, int(offset))
+    findings, total = competitor_analysis.list_recent_findings(project_id, limit=limit, offset=offset)
+    return {"findings": findings, "total": total}
 
 
 @router.post("/studies")
