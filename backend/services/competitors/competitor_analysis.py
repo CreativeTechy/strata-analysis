@@ -436,7 +436,9 @@ _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 
 
 
 def list_findings(project_id: int, competitor_id: int | None = None,
-                  impact_level: str | None = None, latest_only: bool = True) -> list[dict]:
+                  impact_level: str | None = None, latest_only: bool = True,
+                  search: str | None = None, date_from: str | None = None,
+                  date_to: str | None = None) -> list[dict]:
     """Findings for the workspace, highest impact and most recent first.
 
     `latest_only` keeps one card per competitor — the newest — so the card grid
@@ -450,6 +452,17 @@ def list_findings(project_id: int, competitor_id: int | None = None,
     if impact_level in IMPACT_LEVELS:
         clauses.append("f.impact_level = %s")
         params.append(impact_level)
+    search = (search or "").strip()
+    if search:
+        clauses.append("(f.headline ilike %s or f.whats_up ilike %s or c.name ilike %s)")
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    if date_from:
+        clauses.append("f.generated_at >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append("f.generated_at < (%s::date + interval '1 day')")
+        params.append(date_to)
 
     dedupe = (
         "distinct on (f.competitor_id) " if latest_only else ""

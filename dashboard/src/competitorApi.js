@@ -43,7 +43,7 @@ export const updateStudy = (id, body) => request(`/studies/${id}`, { method: 'PU
 export const deleteStudy = (id) => request(`/studies/${id}`, { method: 'DELETE' });
 /** Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card. */
 export const listStudyFindings = (id, { limit = 10, offset = 0 } = {}) =>
-  request(`/studies/${id}/findings?limit=${limit}&offset=${offset}`);
+  request(`/studies/${id}/findings/recent?limit=${limit}&offset=${offset}`);
 
 // --- business profile ------------------------------------------------------
 export const getProfile = (id) => request(`/studies/${id}/profile`);

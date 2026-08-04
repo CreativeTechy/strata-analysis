@@ -88,8 +88,8 @@ def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     }
 
 
-@router.get("/studies/{project_id}/findings")
-def list_study_findings(
+@router.get("/studies/{project_id}/findings/recent")
+def list_recent_study_findings(
     project_id: int,
     limit: int = 10,
     offset: int = 0,
@@ -481,11 +481,14 @@ def analyze(project_id: int, payload: dict = None, user: dict = Depends(require_
 
 @router.get("/studies/{project_id}/findings")
 def list_findings(project_id: int, impact: str | None = None, competitor_id: int | None = None,
-                  history: bool = False, user: dict = Depends(require_permission("competitors.view"))):
+                  history: bool = False, search: str | None = None,
+                  date_from: str | None = None, date_to: str | None = None,
+                  user: dict = Depends(require_permission("competitors.view"))):
     _project_or_404(project_id)
     return {
         "findings": competitor_analysis.list_findings(
             project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
+            search=search, date_from=date_from, date_to=date_to,
         )
     }
 
