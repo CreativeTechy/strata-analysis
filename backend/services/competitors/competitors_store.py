@@ -18,9 +18,10 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 
 import db
+from services.competitors.countries import COUNTRIES
 
 COMPETITOR_COLUMNS = """
-    id, project_id, name, website, domain, description,
+    id, project_id, name, website, domain, description, country,
     size_tier, size_rank, size_signals, relevance_score,
     status, discovery_source, discovery_query,
     last_scraped_at, last_analyzed_at, created_at, updated_at
@@ -32,8 +33,11 @@ ACCOUNT_COLUMNS = """
 """
 
 # Maps an account platform onto the `sources.source_type` vocabulary the scraper
-# already understands, so no scraper changes are needed.
+# already understands, so no scraper changes are needed. `website`/`rss` are the
+# manual-entry kinds; `blog`/`news` stay for AI discovery's existing vocabulary.
 PLATFORM_SOURCE_TYPE = {
+    "website": "web",
+    "rss": "rss",
     "blog": "rss",
     "news": "web",
     "x": "social",
@@ -47,6 +51,24 @@ PLATFORM_SOURCE_TYPE = {
 def _domain(url: str) -> str:
     host = urlparse(str(url or "").strip()).netloc.lower()
     return host[4:] if host.startswith("www.") else host
+
+
+def normalize_source_url(url: str) -> str | None:
+    """Shape-check a manually entered source URL, defaulting to https://.
+
+    No network call - this only rejects input that could not possibly be a
+    URL (no dotted host), so a bad manual entry is caught before anything is
+    written rather than saved as an unreachable source.
+    """
+    url = str(url or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    netloc = urlparse(url).netloc.lower()
+    if not netloc or "." not in netloc:
+        return None
+    return url
 
 
 def _columns(spec: str) -> list[str]:
@@ -99,12 +121,15 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
 
     website = str(values.get("website") or "").strip() or None
     domain = str(values.get("domain") or "").strip().lower() or (_domain(website) if website else None) or None
+    raw_country = str(values.get("country") or "").strip().upper()
+    country = raw_country if raw_country in COUNTRIES else None
 
     payload = {
         "name": name,
         "website": website,
         "domain": domain,
         "description": str(values.get("description") or "").strip() or None,
+        "country": country,
         "size_tier": str(values.get("size_tier") or "unknown").strip().lower(),
         "size_rank": values.get("size_rank"),
         "size_signals": Jsonb(values.get("size_signals") or {}),
@@ -122,13 +147,17 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
     # competitor to "unknown" with no rank — silently reshuffling the workspace.
     # Each field below states what "no new information" looks like for it.
     KEEP_IF_ABSENT = (
-        "website", "domain", "description", "size_rank",
+        "website", "domain", "description", "country", "size_rank",
         "relevance_score", "discovery_query",
     )
     assignments_by_field = {
         # The user's decision to track outranks a later model suggestion.
         "status": "status = case when competitors.status = 'tracked' "
                   "then competitors.status else excluded.status end",
+        # A human typed this competitor in themselves; a later AI pass that
+        # happens to match the same domain/name must not relabel it as its own.
+        "discovery_source": "discovery_source = case when competitors.discovery_source = 'manual' "
+                            "then competitors.discovery_source else excluded.discovery_source end",
         # 'unknown' is the absence of a judgement, not a judgement of 'unknown'.
         "size_tier": "size_tier = case when excluded.size_tier = 'unknown' "
                      "then competitors.size_tier else excluded.size_tier end",
@@ -221,7 +250,7 @@ def list_accounts_for_project(project_id: int) -> list[dict]:
 
 
 def upsert_account(competitor_id: int, values: dict) -> dict | None:
-    url = str(values.get("url") or "").strip()
+    url = normalize_source_url(values.get("url"))
     platform = str(values.get("platform") or "").strip().lower()
     if not url or not platform:
         return None
@@ -236,10 +265,20 @@ def upsert_account(competitor_id: int, values: dict) -> dict | None:
     }
     fields = list(payload)
     # `url` is part of the conflict key, so re-asserting it in the update is
-    # redundant; excluding it also keeps the original casing stable.
-    assignments = ", ".join(f"{field} = excluded.{field}" for field in fields if field != "url")
+    # redundant; excluding it also keeps the original casing stable. A human
+    # decision (valid or rejected) must not be reset back to pending by a
+    # later automated pass finding the same URL.
+    assignments_by_field = {
+        "validation_status": "validation_status = case "
+                             "when competitor_accounts.validation_status <> 'pending' "
+                             "then competitor_accounts.validation_status else excluded.validation_status end",
+    }
+    assignments = ", ".join(
+        assignments_by_field.get(field, f"{field} = excluded.{field}")
+        for field in fields if field != "url"
+    )
 
-    return db.fetch_one(
+    row = db.fetch_one(
         f"""
         insert into competitor_accounts (competitor_id, {', '.join(fields)})
         values (%s, {', '.join(['%s'] * len(fields))})
@@ -248,6 +287,16 @@ def upsert_account(competitor_id: int, values: dict) -> dict | None:
         """,
         (int(competitor_id), *[payload[field] for field in fields]),
     )
+    if not row:
+        return None
+
+    # A manually-created account can arrive already `valid` - that must link
+    # into `sources` immediately, not only when validated later via the
+    # dedicated confirm/reject endpoint.
+    if row["validation_status"] == "valid" and not row.get("source_id"):
+        if link_account_as_source(row):
+            row = db.fetch_one(f"select {ACCOUNT_COLUMNS} from competitor_accounts where id = %s", (row["id"],))
+    return row
 
 
 def set_account_validation(account_id: int, status: str, reason: str = "") -> dict | None:

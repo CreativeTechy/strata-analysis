@@ -35,6 +35,7 @@ PROFILE = {
     "industry": "B2B SaaS",
     "market": "supply-chain planning and demand forecasting software",
     "geography": "North America and Western Europe",
+    "target_countries": ["US", "CA", "GB"],
     "positioning": "Forecasting accuracy without an ERP replacement, live in under 30 days.",
     "offerings": ["demand forecasting", "inventory optimisation", "supplier risk scoring"],
     "audience": ["operations directors", "supply-chain planners", "CFOs at mid-market manufacturers"],
@@ -51,7 +52,7 @@ PROFILE = {
 COMPETITORS = [
     {
         "name": "Kinaxis", "website": "https://kinaxis.example", "domain": "kinaxis.example",
-        "size_tier": "enterprise", "size_rank": 1,
+        "country": "CA", "size_tier": "enterprise", "size_rank": 1,
         "description": "Concurrent planning platform used by large manufacturers.",
         "size_signals": {"basis": ["publicly listed", "global enterprise footprint"],
                          "why_competitor": "Competes for the same planning budget one tier up.",
@@ -64,7 +65,7 @@ COMPETITORS = [
     },
     {
         "name": "Blue Yonder", "website": "https://blueyonder.example", "domain": "blueyonder.example",
-        "size_tier": "enterprise", "size_rank": 2,
+        "country": "US", "size_tier": "enterprise", "size_rank": 2,
         "description": "End-to-end supply chain suite, part of a larger group.",
         "size_signals": {"basis": ["acquired by a global group", "enterprise install base"],
                          "why_competitor": "Overlaps on forecasting despite a much broader suite.",
@@ -75,7 +76,7 @@ COMPETITORS = [
     },
     {
         "name": "Netstock", "website": "https://netstock.example", "domain": "netstock.example",
-        "size_tier": "smb", "size_rank": 3,
+        "country": "GB", "size_tier": "smb", "size_rank": 3,
         "description": "Inventory optimisation aimed at small and mid-size distributors.",
         "size_signals": {"basis": ["SMB focus", "self-serve onboarding"],
                          "why_competitor": "Undercuts on price for smaller manufacturers.",

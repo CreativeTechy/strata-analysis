@@ -22,6 +22,7 @@ import requests
 import db
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
+from services.competitors.countries import country_label, validate_countries
 
 PROMPT_VERSION = "competitor-profile-2026-07-27"
 
@@ -212,7 +213,7 @@ def derive_profile(name: str, website: str, description: str, scraped_text: str)
 # --------------------------------------------------------------------------- #
 PROFILE_COLUMNS = """
     id, project_id, name, website, description, industry, market, geography,
-    positioning, offerings, audience, differentiators, keywords,
+    target_countries, positioning, offerings, audience, differentiators, keywords,
     scrape_status, scrape_error, scraped_pages, scraped_chars, scraped_at,
     context_summary, analysis_model, prompt_version, created_at, updated_at
 """
@@ -236,6 +237,7 @@ def upsert_profile(project_id: int, values: dict) -> dict | None:
         "industry": (str(values.get("industry") or "").strip() or None),
         "market": (str(values.get("market") or "").strip() or None),
         "geography": (str(values.get("geography") or "").strip() or None),
+        "target_countries": Jsonb(validate_countries(values.get("target_countries"))),
         "positioning": (str(values.get("positioning") or "").strip() or None),
         "offerings": Jsonb(_as_list(values.get("offerings"))),
         "audience": Jsonb(_as_list(values.get("audience"))),
@@ -287,6 +289,7 @@ def build_profile(project_id: int, values: dict) -> dict:
         "name": derived.get("name") or name,
         "website": website,
         "description": description,
+        "target_countries": validate_countries(values.get("target_countries")),
         **{key: derived.get(key) for key in (
             "industry", "market", "geography", "positioning",
             "offerings", "audience", "differentiators", "keywords",
@@ -325,6 +328,9 @@ def profile_context(profile: dict | None) -> str:
         value = str(profile.get(key) or "").strip()
         if value:
             parts.append(f"{label}: {value}")
+    countries = validate_countries(profile.get("target_countries"))
+    if countries:
+        parts.append(f"Target countries: {', '.join(country_label(code) for code in countries)}")
     for label, key in (
         ("Offerings", "offerings"), ("Audience", "audience"),
         ("Differentiators", "differentiators"),

@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 import config
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
+from services.competitors.countries import COUNTRIES, country_label, validate_countries
 from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
 
 PROMPT_VERSION = "competitor-discovery-2026-07-27"
@@ -94,11 +95,23 @@ def _as_list(value, limit: int = 8) -> list[str]:
     return out
 
 
-def _ask_for_competitors(profile_context: str, exclude_domain: str, limit: int) -> list[dict]:
+def _ask_for_competitors(
+    profile_context: str, exclude_domain: str, limit: int,
+    target_countries: list[str] | None = None,
+) -> list[dict]:
+    directive = ""
+    if target_countries:
+        names = ", ".join(country_label(code) for code in target_countries)
+        directive = (
+            f"\n\nOnly list competitors primarily headquartered or operating in: {names}. "
+            f'For each competitor, set "country" to its ISO 3166-1 alpha-2 code. If you '
+            f"cannot find enough good matches inside these countries, you may include "
+            f"others, but still report their true country honestly."
+        )
     user_prompt = (
         f"{profile_context}\n\n"
         f"Their own domain (never list this as a competitor): {exclude_domain or 'unknown'}\n\n"
-        f"List up to {limit} competitors, largest first."
+        f"List up to {limit} competitors, largest first.{directive}"
     )
     try:
         raw = chat_completion(
@@ -176,7 +189,8 @@ def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborat
         return {"competitors": [], "rejected": [], "error": "No business profile to compare against."}
 
     own_domain = _domain(profile.get("website") or "")
-    suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS))
+    target_countries = validate_countries(profile.get("target_countries"))
+    suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), target_countries)
     if not suggestions:
         return {"competitors": [], "rejected": [], "error": "The model returned no competitors."}
 
@@ -200,6 +214,15 @@ def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborat
             continue
         if website and not _is_company_site(website):
             rejected.append({"name": name, "reason": f"{domain or website} is not a company's own site."})
+            continue
+
+        raw_country = str(entry.get("country") or "").strip().upper()
+        country = raw_country if raw_country in COUNTRIES else None
+        if target_countries and country and country not in target_countries:
+            rejected.append({
+                "name": name,
+                "reason": f"Located in {country_label(country)}, outside the target countries.",
+            })
             continue
 
         check = {"reachable": True, "search_hits": 0, "resolved_website": website}
@@ -234,6 +257,7 @@ def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborat
             "website": resolved or None,
             "domain": domain or None,
             "description": str(entry.get("description") or "").strip(),
+            "country": country,
             "size_tier": tier,
             "stated_rank": stated_rank,
             "size_signals": {

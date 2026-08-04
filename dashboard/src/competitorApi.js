@@ -55,6 +55,10 @@ export const discoverCompetitors = (id, body) => request(`/studies/${id}/discove
 export const getDiscoveryStatus = (id, runId) => request(`/studies/${id}/discover/${runId}`);
 export const listCompetitors = (id) => request(`/studies/${id}/competitors`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
+/** Creates a competitor and validates+links its sources in one call — the
+ *  manual-first path, as opposed to addCompetitor()+addAccount() one at a time. */
+export const addCompetitorManual = (id, body) =>
+  request(`/studies/${id}/competitors/manual`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>
   request(`/competitors/${competitorId}/status`, { method: 'POST', body: { status } });
 export const deleteCompetitor = (competitorId) =>
@@ -101,6 +105,55 @@ export const IMPACT_LABELS = { high: 'High impact', medium: 'Medium impact', low
 export const URGENCY_LABELS = { now: 'Now', this_quarter: 'This quarter', watch: 'Watch' };
 
 export const EFFORT_LABELS = { low: 'Low effort', medium: 'Medium effort', high: 'High effort' };
+
+/** The source kinds a manually-added competitor account can be. Mirrors
+ *  backend PLATFORM_SOURCE_TYPE (services/competitors/competitors_store.py). */
+export const SOURCE_KIND_OPTIONS = [
+  { value: 'website', label: 'Website' },
+  { value: 'rss', label: 'RSS / Feed' },
+  { value: 'x', label: 'X / Twitter' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'news', label: 'Blog / News URL' },
+];
+
+export const PLATFORM_LABELS = Object.fromEntries(
+  SOURCE_KIND_OPTIONS.map((option) => [option.value, option.label]),
+);
+
+/** Shape-only check mirroring the backend's normalize_source_url — enough to
+ *  catch an obviously-broken entry before it round-trips to the server. */
+export function isPlausibleUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  const withScheme = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  try {
+    const { hostname } = new URL(withScheme);
+    return hostname.includes('.');
+  } catch {
+    return false;
+  }
+}
+
+const DISCOVERY_POLL_MS = 2500;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Discovery runs as a backend job that can take minutes (LLM call + live web
+ *  corroboration + per-competitor account lookups), so it's queued rather than
+ *  awaited directly - poll until it reaches a terminal status. Shared by
+ *  onboarding and the workspace, which both trigger discovery. */
+export async function pollDiscoveryRun(studyId, runId) {
+  for (;;) {
+    const { run } = await getDiscoveryStatus(studyId, runId);
+    if (run.status === 'success' || run.status === 'failed') return run;
+    await sleep(DISCOVERY_POLL_MS);
+  }
+}
 
 /** Initials for a competitor avatar, e.g. "Blue Yonder" -> "BY". */
 export function initials(name) {
