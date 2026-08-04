@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info, LayoutGrid, List } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
@@ -18,6 +18,11 @@ const SORT_OPTIONS = [
 ];
 
 const PAGE_SIZES = [12, 24, 48, 96];
+
+const VIEW_MODES = [
+  { value: 'card', label: 'Cards', icon: LayoutGrid },
+  { value: 'list', label: 'List', icon: List },
+];
 
 function prettyLabel(value) {
   return String(value || '')
@@ -90,6 +95,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [exporting, setExporting] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      return window.localStorage.getItem('articles-view-mode') === 'list' ? 'list' : 'card';
+    } catch {
+      return 'card';
+    }
+  });
+  const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [detailArticleId, setDetailArticleId] = useState(null);
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -183,6 +196,24 @@ export default function ArticlesPage({ project = null, projectId = null, project
     loadDetail();
     return () => controller.abort();
   }, [detailArticleId]);
+
+  const changeViewMode = (mode) => {
+    setViewMode(mode);
+    try {
+      window.localStorage.setItem('articles-view-mode', mode);
+    } catch {
+      // ignore - persistence is a nicety, not a requirement
+    }
+  };
+
+  const toggleRowExpanded = (id) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const closeDetailModal = () => {
     setDetailArticleId(null);
@@ -482,6 +513,24 @@ export default function ArticlesPage({ project = null, projectId = null, project
             </span>
           </div>
           <div className="articles-pager-actions">
+            <div className="source-type-tabs" role="tablist" aria-label="Switch article view">
+              {VIEW_MODES.map((mode) => {
+                const Icon = mode.icon;
+                const isActive = viewMode === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`source-type-tab ${isActive ? 'active' : ''}`}
+                    onClick={() => changeViewMode(mode.value)}
+                  >
+                    <Icon size={14} /> {mode.label}
+                  </button>
+                );
+              })}
+            </div>
             <button className="btn-secondary" onClick={handleExportJsonl} disabled={loading || exporting || deletingAll}>
               <Download size={16} />
               {exporting ? 'Exporting...' : 'Export JSONL'}
@@ -503,11 +552,25 @@ export default function ArticlesPage({ project = null, projectId = null, project
         ) : null}
 
         {isInitialLoading ? (
-          <div className="articles-grid">
-            {Array.from({ length: Math.min(limit, 12) }).map((_, i) => (
-              <SkeletonArticleCard key={i} />
-            ))}
-          </div>
+          viewMode === 'list' ? (
+            <div className="articles-list">
+              {Array.from({ length: Math.min(limit, 12) }).map((_, i) => (
+                <div key={i} className="glass-card article-row article-skeleton" aria-hidden="true">
+                  <div className="skeleton-row">
+                    <div className="skeleton-pill skeleton-shimmer" style={{ width: '46%' }} />
+                    <div className="skeleton-pill skeleton-shimmer" style={{ width: '18%' }} />
+                    <div className="skeleton-pill skeleton-shimmer" style={{ width: '14%' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="articles-grid">
+              {Array.from({ length: Math.min(limit, 12) }).map((_, i) => (
+                <SkeletonArticleCard key={i} />
+              ))}
+            </div>
+          )
         ) : (
           <>
             {isRefreshing && (
@@ -522,99 +585,206 @@ export default function ArticlesPage({ project = null, projectId = null, project
               </div>
             )}
 
-            <div className="articles-grid">
-              <AnimatePresence>
-                {articles.map((article, i) => (
-                  <motion.div
-                    key={article.url}
-                    layout
-                    initial={{ opacity: 0, scale: 0.96, y: 16 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.96 }}
-                    transition={{ duration: 0.25, delay: Math.min((i % 12) * 0.03, 0.4) }}
-                    className="glass-card article-card"
-                    style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
-                  >
-                    <div className="article-header">
-                      <div className="article-meta">
-                        <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
-                          {article.sentiment || 'Neutral'}
-                        </span>
-                        <span className="badge category">
-                          {prettyLabel(article.article_category || article.category || 'general_article')}
-                        </span>
-                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
-                          Writer: {prettyLabel(article.writer_tone || 'neutral')}
-                        </span>
-                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
-                          Article: {prettyLabel(article.article_tone || 'neutral')}
-                        </span>
-                        <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
-                          Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
-                        </span>
-                        {article.relevance_score != null && (
-                          <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
-                        )}
-                        {article.project_similarity_score != null && (
-                          <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
-                        onClick={() => setDetailArticleId(article.id)}
-                        title="View analysis details"
+            {viewMode === 'list' ? (
+              <div className="articles-list">
+                <AnimatePresence>
+                  {articles.map((article, i) => {
+                    const isExpanded = expandedRows.has(article.id);
+                    return (
+                      <motion.div
+                        key={article.url}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2, delay: Math.min((i % 24) * 0.015, 0.3) }}
+                        className={`glass-card article-row ${isExpanded ? 'expanded' : ''}`}
+                        style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
                       >
-                        <Info size={13} /> Details
-                      </button>
-                    </div>
-
-                    <h3 className="article-title">
-                      <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                        {article.title || 'Untitled article'} <ExternalLink size={14} style={{ opacity: 0.5 }} />
-                      </a>
-                    </h3>
-
-                    <p className="article-summary">
-                      {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.')}
-                    </p>
-
-                    {article.insight_json?.frequent_ideas?.length ? (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                        {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
-                          <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-                            {item.idea}
+                        <button
+                          type="button"
+                          className="article-row-summary"
+                          onClick={() => toggleRowExpanded(article.id)}
+                          aria-expanded={isExpanded}
+                        >
+                          <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
+                            {article.sentiment || 'Neutral'}
                           </span>
-                        ))}
+                          <span className="article-row-title">{article.title || 'Untitled article'}</span>
+                          <span className="article-row-source">{article.source || 'Unknown source'}</span>
+                          <span className="article-row-date">
+                            <Calendar size={13} /> {articleDate(article.published)}
+                          </span>
+                          <ChevronDown size={16} className="article-row-chevron" />
+                        </button>
+
+                        {isExpanded ? (
+                          <div className="article-row-details">
+                            <div className="article-meta">
+                              <span className="badge category">
+                                {prettyLabel(article.article_category || article.category || 'general_article')}
+                              </span>
+                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
+                                Writer: {prettyLabel(article.writer_tone || 'neutral')}
+                              </span>
+                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
+                                Article: {prettyLabel(article.article_tone || 'neutral')}
+                              </span>
+                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
+                                Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
+                              </span>
+                              {article.relevance_score != null && (
+                                <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
+                              )}
+                              {article.project_similarity_score != null && (
+                                <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
+                              )}
+                            </div>
+
+                            <p className="article-summary">
+                              {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 220)}...` : 'No summary available.')}
+                            </p>
+
+                            {article.insight_json?.frequent_ideas?.length ? (
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                                {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
+                                  <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                                    {item.idea}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {(article.brands?.length > 0 || article.car_models?.length > 0) && (
+                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+                                {article.brands?.slice(0, 4).map((brand) => (
+                                  <span key={brand} style={{ fontSize: '0.75rem', color: 'var(--secondary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <Tag size={12} /> {brand}
+                                  </span>
+                                ))}
+                                {article.car_models?.slice(0, 4).map((model) => (
+                                  <span key={model} style={{ fontSize: '0.75rem', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <CarFront size={12} /> {model}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="article-row-details-actions">
+                              <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: 'none' }}>
+                                <ExternalLink size={13} /> Open original
+                              </a>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => setDetailArticleId(article.id)}
+                                title="View analysis details"
+                              >
+                                <Info size={13} /> Analysis details
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </div>
+            ) : (
+              <div className="articles-grid">
+                <AnimatePresence>
+                  {articles.map((article, i) => (
+                    <motion.div
+                      key={article.url}
+                      layout
+                      initial={{ opacity: 0, scale: 0.96, y: 16 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.96 }}
+                      transition={{ duration: 0.25, delay: Math.min((i % 12) * 0.03, 0.4) }}
+                      className="glass-card article-card"
+                      style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
+                    >
+                      <div className="article-header">
+                        <div className="article-meta">
+                          <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
+                            {article.sentiment || 'Neutral'}
+                          </span>
+                          <span className="badge category">
+                            {prettyLabel(article.article_category || article.category || 'general_article')}
+                          </span>
+                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
+                            Writer: {prettyLabel(article.writer_tone || 'neutral')}
+                          </span>
+                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
+                            Article: {prettyLabel(article.article_tone || 'neutral')}
+                          </span>
+                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
+                            Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
+                          </span>
+                          {article.relevance_score != null && (
+                            <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
+                          )}
+                          {article.project_similarity_score != null && (
+                            <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
+                          onClick={() => setDetailArticleId(article.id)}
+                          title="View analysis details"
+                        >
+                          <Info size={13} /> Details
+                        </button>
                       </div>
-                    ) : null}
 
-                    {(article.brands?.length > 0 || article.car_models?.length > 0) && (
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                        {article.brands?.slice(0, 2).map((brand) => (
-                          <span key={brand} style={{ fontSize: '0.75rem', color: 'var(--secondary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                            <Tag size={12} /> {brand}
-                          </span>
-                        ))}
-                        {article.car_models?.slice(0, 2).map((model) => (
-                          <span key={model} style={{ fontSize: '0.75rem', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                            <CarFront size={12} /> {model}
-                          </span>
-                        ))}
+                      <h3 className="article-title">
+                        <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+                          {article.title || 'Untitled article'} <ExternalLink size={14} style={{ opacity: 0.5 }} />
+                        </a>
+                      </h3>
+
+                      <p className="article-summary">
+                        {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.')}
+                      </p>
+
+                      {article.insight_json?.frequent_ideas?.length ? (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                          {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
+                            <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                              {item.idea}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {(article.brands?.length > 0 || article.car_models?.length > 0) && (
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+                          {article.brands?.slice(0, 2).map((brand) => (
+                            <span key={brand} style={{ fontSize: '0.75rem', color: 'var(--secondary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                              <Tag size={12} /> {brand}
+                            </span>
+                          ))}
+                          {article.car_models?.slice(0, 2).map((model) => (
+                            <span key={model} style={{ fontSize: '0.75rem', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                              <CarFront size={12} /> {model}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="article-footer">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <Calendar size={14} /> {articleDate(article.published)}
+                        </span>
+                        <span>{article.source || 'Unknown source'}</span>
                       </div>
-                    )}
-
-                    <div className="article-footer">
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <Calendar size={14} /> {articleDate(article.published)}
-                      </span>
-                      <span>{article.source || 'Unknown source'}</span>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
 
             {articles.length === 0 && (
               <div className="glass-card">
