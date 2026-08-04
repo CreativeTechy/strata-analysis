@@ -137,7 +137,7 @@ export default function App() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
           const ids = parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-          if (ids.length) return [...new Set(ids)];
+          if (ids.length) return [ids[0]];
         }
       } catch {
         // Ignore malformed localStorage and fall back to an empty selection.
@@ -211,10 +211,13 @@ export default function App() {
     return Number.isFinite(normalized) ? normalized : null;
   };
 
+  // Manual Run only ever scopes to a single project - collapse any stale
+  // multi-project selection (e.g. from localStorage written before this was
+  // single-select) down to just the first valid id.
   const normalizeWorkflowSelection = (ids, sourceProjects = projects) => {
     const availableIds = new Set(sourceProjects.map((project) => Number(project.id)));
-    const normalized = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && availableIds.has(id)))];
-    if (normalized.length) return normalized;
+    const firstValid = (ids || []).map((id) => Number(id)).find((id) => Number.isFinite(id) && availableIds.has(id));
+    if (firstValid != null) return [firstValid];
     if (sourceProjects.length) return [Number(sourceProjects[0].id)];
     return [];
   };

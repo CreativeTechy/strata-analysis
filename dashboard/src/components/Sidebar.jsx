@@ -48,7 +48,7 @@ const NAV_SECTIONS = [
     label: 'Setup',
     items: [
       { to: '/sources', label: 'Sources', icon: Rss },
-      { to: '/workflow', label: 'Workflow', icon: GitMerge },
+      { to: '/workflow', label: 'Manual Run', icon: GitMerge },
       { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
       { to: '/analysis', label: 'Performance Logs', icon: ScanSearch },
     ],
