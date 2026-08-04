@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 
 
 PROJECT_SELECT = (
-    "id,name,status,description,location,location_type,target_audience,hashtags,keywords,usernames,"
+    "id,name,mode,status,description,location,location_type,target_audience,hashtags,keywords,usernames,"
     "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,"
     "repeat_enabled,repeat_interval_value,repeat_interval_unit,first_run_at,repeat_weekdays,"
     "next_run_at,last_run_at,last_run_status,"
@@ -173,6 +173,7 @@ def _normalize_project(row, source_ids=None, user_ids=None):
     return {
         "id": row.get("id"),
         "name": (row.get("name") or "").strip(),
+        "mode": (row.get("mode") or "sentiment").strip().lower() or "sentiment",
         "status": (row.get("status") or "draft").strip().lower() or "draft",
         "description": (row.get("description") or "").strip(),
         "location": (row.get("location") or "").strip(),

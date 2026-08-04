@@ -253,6 +253,7 @@ def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved
         scraped_count = scraped.get(source, 0)
         diagnostic = diagnostics_by_source.get(source)
         source_stats[source] = {
+            "source_url": (diagnostic or {}).get("source_url"),
             "scraped": scraped_count,
             "duplicate": removed_counts.get("duplicate", 0),
             "blocked": removed_counts.get("blocked", 0),

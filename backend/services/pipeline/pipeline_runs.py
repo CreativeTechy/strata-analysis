@@ -49,6 +49,7 @@ def _normalize(row):
 def _normalize_source_stat(row):
     return {
         "source": row.get("source"),
+        "source_url": row.get("source_url"),
         "scraped": row.get("scraped") or 0,
         "duplicate": row.get("duplicate") or 0,
         "blocked": row.get("blocked") or 0,
@@ -234,7 +235,7 @@ def get_pipeline_run_sources(run_id):
     try:
         rows = db.fetch_all(
             """
-            select source, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
+            select source, source_url, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
                    http_status, network_blocked, fetch_note
             from pipeline_run_sources
             where run_id = %s
@@ -261,10 +262,11 @@ def upsert_pipeline_run_source_stats(run_id, source_stats):
             db.execute(
                 """
                 insert into pipeline_run_sources
-                    (run_id, source, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
+                    (run_id, source, source_url, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
                      http_status, network_blocked, fetch_note)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (run_id, source) do update set
+                    source_url = excluded.source_url,
                     scraped = excluded.scraped,
                     duplicate = excluded.duplicate,
                     blocked = excluded.blocked,
@@ -280,6 +282,7 @@ def upsert_pipeline_run_source_stats(run_id, source_stats):
                 (
                     run_id,
                     source_name,
+                    counts.get("source_url") or None,
                     int(counts.get("scraped") or 0),
                     int(counts.get("duplicate") or 0),
                     int(counts.get("blocked") or 0),

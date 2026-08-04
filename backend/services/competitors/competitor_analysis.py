@@ -480,9 +480,16 @@ def list_findings(project_id: int, competitor_id: int | None = None,
     return rows
 
 
-def list_recent_findings(limit: int = 6) -> list[dict]:
-    """Most recent findings across every competitor study, for the cross-study pulse card."""
-    return db.fetch_all(
+def list_recent_findings(project_id: int, limit: int = 10, offset: int = 0) -> tuple[list[dict], int]:
+    """Findings for one study, highest impact first, with a total count for pagination."""
+    where = "f.project_id = %s and f.validation_status != 'rejected'"
+
+    total = (db.fetch_one(
+        f"select count(*)::int as total from competitor_findings f where {where}",
+        (int(project_id),),
+    ) or {}).get("total") or 0
+
+    rows = db.fetch_all(
         f"""
         select {_finding_select()},
                c.name as competitor_name, c.size_tier,
@@ -490,12 +497,13 @@ def list_recent_findings(limit: int = 6) -> list[dict]:
         from competitor_findings f
         join competitors c on c.id = f.competitor_id
         join projects p on p.id = f.project_id
-        where f.validation_status != 'rejected'
-        order by f.generated_at desc
-        limit %s
+        where {where}
+        order by {_IMPACT_ORDER.replace('impact_level', 'f.impact_level')}, f.generated_at desc
+        limit %s offset %s
         """,
-        (int(limit),),
+        (int(project_id), int(limit), int(offset)),
     )
+    return rows, total
 
 
 def _finding_select() -> str:

@@ -159,15 +159,9 @@ export default function WorkflowPage({
   const workflowState = isScraping ? 'cleaning' : (hasData ? 'ready' : 'idle');
   const selectedProjectCount = selectedProjectIds.length;
   const projectLabel = useMemo(() => {
-    if (selectedProjects.length === 0) return projects.length ? 'select one or more projects' : 'no projects available';
-    if (selectedProjects.length === 1) return selectedProjects[0].name || '1 project';
-    return `${selectedProjects.length} selected projects`;
+    if (selectedProjects.length === 0) return projects.length ? 'select a project' : 'no projects available';
+    return selectedProjects[0].name || '1 project';
   }, [projects.length, selectedProjects]);
-  const selectedProjectNames = useMemo(
-    () => selectedProjects.map((project) => project.name).filter(Boolean).slice(0, 4),
-    [selectedProjects]
-  );
-  const hasMultipleProjects = projects.length > 1;
 
   const formatMatchScore = (value) => {
     const score = Number(value);
@@ -265,30 +259,15 @@ export default function WorkflowPage({
     return currentRun.message || '';
   }, [currentRun]);
 
-  const toggleSelectedProject = (projectId) => {
+  const selectProject = (projectId) => {
     const id = Number(projectId);
     if (!Number.isFinite(id)) return;
-
-    const isSelected = selectedProjectIds.includes(id);
-    if (isSelected && selectedProjectIds.length === 1) {
-      return;
-    }
-
-    const nextIds = isSelected
-      ? selectedProjectIds.filter((value) => Number(value) !== id)
-      : [...selectedProjectIds, id];
-    onChangeSelectedProjectIds([...new Set(nextIds)]);
+    onChangeSelectedProjectIds([id]);
   };
 
-  const selectAllProjects = () => {
-    onChangeSelectedProjectIds([...new Set(projects.map((project) => Number(project.id)).filter((id) => Number.isFinite(id)))]);
-  };
-
-  const runLabel = selectedProjectCount > 1
-    ? `Run Extractor for ${selectedProjectCount} Projects`
-    : selectedProjectCount === 1
-      ? 'Run Extractor for Project'
-      : 'Select Projects to Run';
+  const runLabel = selectedProjectCount > 0
+    ? 'Run Extractor for Project'
+    : 'Select a Project to Run';
 
   return (
     <div className="workflow-layout">
@@ -349,16 +328,15 @@ export default function WorkflowPage({
                 <div className="workflow-project-picker-header">
                   <div>
                     <div className="workflow-project-picker-kicker">Scope</div>
-                    <strong>Choose one or more projects to extract</strong>
+                    <strong>Choose a project to extract</strong>
                   </div>
                   <div className="workflow-project-picker-summary">
-                    <span className="panel-chip">{selectedProjectCount} selected</span>
                     <span className="panel-chip muted">{projects.length} total</span>
                   </div>
                 </div>
 
                 <div className="workflow-project-picker-note">
-                  The extractor will run once for each selected project, then the results below will merge the latest articles into a single view.
+                  The extractor runs for the selected project, then the results below reflect its latest articles.
                 </div>
 
                 {projects.length === 0 ? (
@@ -367,61 +345,37 @@ export default function WorkflowPage({
                     <span>No projects yet. Create a project first, then come back to run the workflow.</span>
                   </div>
                 ) : (
-                  <>
-                    <div className="workflow-project-picker-actions">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={selectAllProjects}
-                        disabled={!hasMultipleProjects || selectedProjectCount === projects.length}
-                        style={{ padding: '8px 10px', fontSize: '0.78rem' }}
-                      >
-                        Select all
-                      </button>
-                    </div>
-
-                    <div className="workflow-project-list">
-                      {projects.map((project) => {
-                        const isSelected = selectedProjectIds.includes(Number(project.id));
-                        return (
-                          <label key={project.id} className={`workflow-project-item ${isSelected ? 'selected' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelectedProject(project.id)}
-                              disabled={isScraping}
-                            />
-                            <div className="workflow-project-copy">
-                              <div className="workflow-project-topline">
-                                <strong>{project.name}</strong>
-                                <span className={`panel-chip ${isSelected ? 'success' : 'muted'}`}>
-                                  {isSelected ? 'Selected' : 'Unselected'}
-                                </span>
-                              </div>
-                              <div className="workflow-project-meta">
-                                <span>{project.status || 'draft'}</span>
-                                {project.location ? <span>{project.location}</span> : null}
-                                {(project.source_ids || []).length ? <span>{project.source_ids.length} source{project.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
-                              </div>
+                  <div className="workflow-project-list">
+                    {projects.map((project) => {
+                      const isSelected = selectedProjectIds.includes(Number(project.id));
+                      return (
+                        <label key={project.id} className={`workflow-project-item ${isSelected ? 'selected' : ''}`}>
+                          <input
+                            type="radio"
+                            name="workflow-project"
+                            checked={isSelected}
+                            onChange={() => selectProject(project.id)}
+                            disabled={isScraping}
+                          />
+                          <div className="workflow-project-copy">
+                            <div className="workflow-project-topline">
+                              <strong>{project.name}</strong>
+                              <span className={`panel-chip ${isSelected ? 'success' : 'muted'}`}>
+                                {isSelected ? 'Selected' : 'Unselected'}
+                              </span>
                             </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </>
+                            <div className="workflow-project-meta">
+                              <span>{project.status || 'draft'}</span>
+                              {project.location ? <span>{project.location}</span> : null}
+                              {(project.source_ids || []).length ? <span>{project.source_ids.length} source{project.source_ids.length === 1 ? '' : 's'}</span> : <span>No sources</span>}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-
-              {selectedProjectNames.length ? (
-                <div className="workflow-project-pills">
-                  {selectedProjectNames.map((name) => (
-                    <span key={name} className="workflow-project-pill">{name}</span>
-                  ))}
-                  {selectedProjects.length > selectedProjectNames.length ? (
-                    <span className="workflow-project-pill muted">+{selectedProjects.length - selectedProjectNames.length} more</span>
-                  ) : null}
-                </div>
-              ) : null}
 
               <div className="get-rows-header">
                 <div className="get-rows-header-copy">
@@ -679,7 +633,7 @@ export default function WorkflowPage({
                     </div>
 
                     <div className="save-btn" style={{ cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                      <CheckCircle2 size={18} /> Synced to Supabase
+                      <CheckCircle2 size={18} /> Synced to Database
                     </div>
                   </>
                 )}

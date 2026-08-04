@@ -163,9 +163,9 @@ export default function AnalysisPage({ projects = [] }) {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <ScanSearch size={14} /> Analysis pipeline
+            <ScanSearch size={14} /> Performance pipeline
           </div>
-          <h1 className="admin-page-title">Analysis</h1>
+          <h1 className="admin-page-title">Performance Logs</h1>
           <p className="admin-page-subtitle">
             Processing status, failures, and reprocessing for the article analysis pipeline.
           </p>
