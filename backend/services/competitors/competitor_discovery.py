@@ -201,8 +201,13 @@ def discover_competitors(
 
     own_domain = _domain(profile.get("website") or "")
     target_countries = validate_countries(profile.get("target_countries"))
+    filter_countries = target_countries
     log("Asking the model for competitor candidates...")
     suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), target_countries)
+    if not suggestions and target_countries:
+        log("No in-country candidates; retrying without the country restriction...")
+        suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), None)
+        filter_countries = []
     if not suggestions:
         return {"competitors": [], "rejected": [], "error": "The model returned no competitors."}
     log(f"Model suggested {len(suggestions)} candidates; checking each...")
@@ -231,7 +236,7 @@ def discover_competitors(
 
         raw_country = str(entry.get("country") or "").strip().upper()
         country = raw_country if raw_country in COUNTRIES else None
-        if target_countries and country and country not in target_countries:
+        if filter_countries and country and country not in filter_countries:
             rejected.append({
                 "name": name,
                 "reason": f"Located in {country_label(country)}, outside the target countries.",

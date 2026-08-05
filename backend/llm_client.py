@@ -270,6 +270,12 @@ def _build_request_body(*, messages, model, temperature, max_tokens, json_mode):
         body["instructions"] = instructions
     if json_mode:
         body["text"] = {"format": {"type": "json_object"}}
+    if config.LLM_REASONING_EFFORT:
+        # Reasoning models (e.g. gpt-5-nano) spend part of max_output_tokens on
+        # hidden reasoning before writing visible output - left at OpenAI's
+        # default effort, that can consume the whole budget and return nothing
+        # visible. See config.OPENAI_REASONING_EFFORT.
+        body["reasoning"] = {"effort": config.LLM_REASONING_EFFORT}
     return body
 
 

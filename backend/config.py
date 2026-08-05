@@ -92,6 +92,13 @@ OPENAI_CHAT_BASE_URL = os.environ.get(
     "OPENAI_CHAT_BASE_URL", _LLM_PROVIDER_DEFAULTS["openai"]["default_base_url"]
 )
 OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", _LLM_PROVIDER_DEFAULTS["openai"]["default_model"])
+# gpt-5-nano (the default OPENAI_CHAT_MODEL) is a reasoning model: the
+# Responses API spends part of max_output_tokens on hidden reasoning tokens
+# before writing any visible output. Left unset, OpenAI's default effort
+# ("medium") can burn the *entire* budget on reasoning and return nothing
+# visible even after llm_client.py's automatic retry-with-more-tokens - "low"
+# leaves enough room for the actual JSON/text reply. One of minimal/low/medium/high.
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "low").strip().lower()
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_CHAT_BASE_URL = os.environ.get(
@@ -104,11 +111,13 @@ _LLM_PROVIDER_VALUES = {
         "api_key": OPENAI_API_KEY,
         "base_url": OPENAI_CHAT_BASE_URL,
         "model": OPENAI_CHAT_MODEL,
+        "reasoning_effort": OPENAI_REASONING_EFFORT,
     },
     "deepseek": {
         "api_key": DEEPSEEK_API_KEY,
         "base_url": DEEPSEEK_CHAT_BASE_URL,
         "model": DEEPSEEK_CHAT_MODEL,
+        "reasoning_effort": None,
     },
 }
 
@@ -122,6 +131,7 @@ LLM_CHAT_BASE_URL = _active_values["base_url"]
 LLM_CHAT_MODEL = _active_values["model"]
 LLM_API_STYLE = _active_provider["api_style"]
 LLM_API_KEY_ENV_NAME = _active_provider["api_key_env"]
+LLM_REASONING_EFFORT = _active_values["reasoning_effort"]
 
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
