@@ -19,7 +19,7 @@
  * progress instead of an indeterminate spinner.
  */
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Building2, CalendarClock, Check, CheckCircle2, ChevronRight,
@@ -27,8 +27,8 @@ import {
 } from 'lucide-react';
 import {
   PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, avatarGradient, buildProfile,
-  createStudy, discoverCompetitors, initials, listAccounts, listCompetitors, pollDiscoveryRun,
-  saveProfile, setCompetitorStatus, setSchedule, validateAccount,
+  createStudy, discoverCompetitors, discoverTrackedAccounts, initials, listAccounts, listCompetitors,
+  pollDiscoveryRun, saveProfile, setCompetitorStatus, setSchedule, validateAccount,
 } from '../competitorApi.js';
 import { COUNTRIES, countryLabel } from '../constants/countries.js';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
@@ -48,13 +48,79 @@ const SCRAPE_STAGES = [
   'Writing your market context',
 ];
 
+// Phase 1 only finds and ranks competitors - channels are a separate step
+// (CHANNEL_STAGES below), so this list must not claim to do that too.
 const DISCOVERY_STAGES = [
   'Comparing your profile against the market',
   'Naming candidate competitors',
   'Checking each company actually exists',
+  'Filtering out duplicates and unlikely matches',
   'Ranking them by size',
-  'Locating their channels',
 ];
+
+// Phase 2: finding channels for whichever competitors got tracked.
+const CHANNEL_STAGES = [
+  'Checking each competitor’s site for a feed',
+  'Asking the model for known channels',
+  'Linking valid channels as sources',
+];
+
+/** Real-time progress lines from a discovery run's `logs` (see
+ *  competitorApi.js's pollDiscoveryRun `onUpdate`) — each poll can add more, so
+ *  this auto-scrolls to keep the latest line in view. Styled like StageList
+ *  (same row/icon language: a checkmark per finished line, a spinner on the
+ *  most recent one while the run is still active) so the real detail trail
+ *  reads as a continuation of that same progress UI rather than a separate
+ *  terminal-style log. Renders nothing until there's at least one line, and
+ *  stays visible after the run finishes so the trail can still be reviewed.
+ *  Exported so CompetitorWorkspace.jsx can reuse it, the same way it already
+ *  reuses ListEditor from this file. */
+export function DiscoveryLog({ logs, active }) {
+  const boxRef = useRef(null);
+  const [now, setNow] = useState(null);
+
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [logs?.length]);
+
+  // The backend can go quiet for a while on a single slow step (an LLM call
+  // has no sub-progress to report) - without this, the last line just sits
+  // there and reads as stuck. Ticking a counter next to it at least shows
+  // time is passing, not that the run died. `Date.now()` only ever runs here,
+  // inside an effect, never during render.
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active, logs?.length]);
+
+  if (!logs?.length) return null;
+
+  const lastTs = new Date(logs[logs.length - 1].ts).getTime();
+  const elapsed = now ? Math.max(0, Math.round((now - lastTs) / 1000)) : 0;
+
+  return (
+    <div className="cs-panel cs-discovery-log" style={{ marginTop: 14, background: '#fcfdff' }}>
+      <div className="cs-progress" ref={boxRef}>
+        {logs.map((entry, index) => {
+          const isCurrent = active && index === logs.length - 1;
+          return (
+            <div
+              key={index}
+              className={`cs-progress-row${isCurrent ? ' cs-progress-row-active' : ' cs-progress-row-done'}`}
+            >
+              {isCurrent ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />}
+              <span>
+                {entry.message}
+                {isCurrent && elapsed >= 4 ? ` (still working, ${elapsed}s)` : ''}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 /** Staged feedback for a slow request. Advances on a timer purely so the wait
  *  reads as progress; it never claims the work finished — that is driven by the
@@ -213,6 +279,7 @@ export default function CompetitorOnboarding() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [step1Mode, setStep1Mode] = useState(null); // 'ai' | 'manual' while step 1 is busy
 
   const [studyName, setStudyName] = useState('');
   const [studyId, setStudyId] = useState(null);
@@ -226,6 +293,8 @@ export default function CompetitorOnboarding() {
   const [rejected, setRejected] = useState([]);
   const [addingManual, setAddingManual] = useState(false);
   const [discovering, setDiscovering] = useState(false);
+  const [findingChannels, setFindingChannels] = useState(false);
+  const [discoveryLogs, setDiscoveryLogs] = useState([]);
 
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
@@ -245,19 +314,22 @@ export default function CompetitorOnboarding() {
     setCompetitors(result.competitors || []);
   };
 
+  const ensureStudy = async () => {
+    if (studyId) return studyId;
+    const created = await createStudy({
+      name: studyName.trim() || `${business.name.trim()} - competitor study`,
+    });
+    setStudyId(created.study.id);
+    return created.study.id;
+  };
+
   // Step 1 -> 2: create the study, scrape the site, derive the market context.
   const submitBusiness = async () => {
     setError('');
     setBusy(true);
+    setStep1Mode('ai');
     try {
-      let id = studyId;
-      if (!id) {
-        const created = await createStudy({
-          name: studyName.trim() || `${business.name.trim()} - competitor study`,
-        });
-        id = created.study.id;
-        setStudyId(id);
-      }
+      const id = await ensureStudy();
       const result = await buildProfile(id, { ...business, target_countries: targetCountries });
       setProfile(result.profile);
       setScrape(result.scrape);
@@ -271,6 +343,32 @@ export default function CompetitorOnboarding() {
       setError(caught.message);
     } finally {
       setBusy(false);
+      setStep1Mode(null);
+    }
+  };
+
+  // Step 1 -> 2, no AI: skip the scrape/derive call entirely and persist
+  // exactly what was typed in, so Step 2 opens blank and ready to fill in by hand.
+  const submitBusinessManually = async () => {
+    setError('');
+    setBusy(true);
+    setStep1Mode('manual');
+    try {
+      const id = await ensureStudy();
+      const saved = await saveProfile(id, {
+        name: business.name.trim(),
+        website: business.website.trim(),
+        description: business.description.trim(),
+        target_countries: targetCountries,
+      });
+      setProfile(saved.profile);
+      setScrape(null);
+      setStep(2);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setBusy(false);
+      setStep1Mode(null);
     }
   };
 
@@ -308,9 +406,10 @@ export default function CompetitorOnboarding() {
   const runAiSuggest = async () => {
     setError('');
     setDiscovering(true);
+    setDiscoveryLogs([]);
     try {
-      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: true });
-      const run = await pollDiscoveryRun(studyId, queued.run_id);
+      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: false });
+      const run = await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
       if (run.status === 'failed') {
         throw new Error(run.error || run.message || 'Competitor discovery failed.');
       }
@@ -320,6 +419,26 @@ export default function CompetitorOnboarding() {
       setError(caught.message);
     } finally {
       setDiscovering(false);
+    }
+  };
+
+  // Step 3 -> 4: before moving on, find channels for whichever competitors the
+  // user chose to track — best-effort, since a failure here shouldn't block
+  // scheduling (channels can still be found later from the workspace).
+  const continueToSchedule = async () => {
+    setFindingChannels(true);
+    setDiscoveryLogs([]);
+    try {
+      const queued = await discoverTrackedAccounts(studyId);
+      if (queued.run_id) {
+        await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
+        await refreshCompetitors();
+      }
+    } catch {
+      // best-effort — see comment above.
+    } finally {
+      setFindingChannels(false);
+      setStep(4);
     }
   };
 
@@ -509,12 +628,18 @@ export default function CompetitorOnboarding() {
 
           <div className="cs-wizard-foot">
             <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-              This takes about 20-40 seconds.
+              Reading your site takes about 20-40 seconds — or skip that and write the context yourself.
             </span>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={submitBusiness} disabled={!canLeaveStep1 || busy}>
-              {busy ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
-              {busy ? 'Reading your site...' : 'Read my site'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="cs-btn" onClick={submitBusinessManually} disabled={!canLeaveStep1 || busy}>
+                {busy && step1Mode === 'manual' ? <Loader2 size={15} className="cs-spin" /> : <Building2 size={15} />}
+                Write manually
+              </button>
+              <button type="button" className="cs-btn cs-btn-primary" onClick={submitBusiness} disabled={!canLeaveStep1 || busy}>
+                {busy && step1Mode === 'ai' ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
+                {busy && step1Mode === 'ai' ? 'Reading your site...' : 'Read my site with AI'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -596,7 +721,7 @@ export default function CompetitorOnboarding() {
             <h2 className="cs-panel-title"><Building2 size={16} /> Add your competitors</h2>
             <p className="cs-panel-hint">
               Add the companies you compete with directly. Sources you enter here are trusted
-              immediately and start scraping right away — no confirmation step needed.
+              immediately and start scraping right away.
             </p>
             <AddCompetitorForm onSubmit={handleAddManualCompetitor} busy={addingManual} />
           </div>
@@ -609,7 +734,7 @@ export default function CompetitorOnboarding() {
                 </h2>
                 <p className="cs-panel-hint" style={{ marginBottom: 0 }}>
                   Optional — AI compares your profile against the market and suggests competitors to
-                  review. Their channels still need a quick check before they count as valid.
+                  review. Track the ones you want, and their channels are found automatically.
                 </p>
               </div>
               <button type="button" className="cs-btn" onClick={runAiSuggest} disabled={discovering}>
@@ -623,6 +748,7 @@ export default function CompetitorOnboarding() {
                 <StageList stages={DISCOVERY_STAGES} />
               </div>
             ) : null}
+            {discovering ? <DiscoveryLog logs={discoveryLogs} active={discovering} /> : null}
 
             {rejected.length ? (
               <details style={{ marginTop: 16 }}>
@@ -643,8 +769,8 @@ export default function CompetitorOnboarding() {
           <div className="cs-panel">
             <h2 className="cs-panel-title"><Radar size={16} /> Your competitors</h2>
             <p className="cs-panel-hint">
-              <strong>{trackedCompetitors.length}</strong> tracked. Manual sources are valid
-              immediately; AI-suggested channels need a quick check before they are used.
+              <strong>{trackedCompetitors.length}</strong> tracked. Channels are found and used
+              immediately once a competitor is tracked, manual or AI-suggested.
             </p>
 
             {!competitors.length ? (
@@ -718,12 +844,6 @@ export default function CompetitorOnboarding() {
                                   <span className={`cs-pill cs-pill-${account.validation_status}`}>
                                     {account.validation_status}
                                   </span>
-                                  {account.validation_status !== 'valid' ? (
-                                    <button type="button" className="cs-btn cs-btn-sm"
-                                      onClick={() => decideAccount(competitor.id, account.id, 'valid')}>
-                                      <Check size={13} /> Confirm
-                                    </button>
-                                  ) : null}
                                   {account.validation_status !== 'rejected' ? (
                                     <button type="button" className="cs-btn cs-btn-sm cs-btn-danger"
                                       onClick={() => decideAccount(competitor.id, account.id, 'rejected')}>
@@ -746,6 +866,13 @@ export default function CompetitorOnboarding() {
               </div>
             )}
 
+            {findingChannels ? (
+              <div className="cs-panel" style={{ marginTop: 14, background: '#fcfdff' }}>
+                <StageList stages={CHANNEL_STAGES} />
+              </div>
+            ) : null}
+            {findingChannels ? <DiscoveryLog logs={discoveryLogs} active={findingChannels} /> : null}
+
             <div className="cs-wizard-foot">
               <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)} disabled={busy}>
                 <ArrowLeft size={15} /> Back
@@ -753,11 +880,13 @@ export default function CompetitorOnboarding() {
               <button
                 type="button"
                 className="cs-btn cs-btn-primary"
-                onClick={() => setStep(4)}
-                disabled={busy || !trackedCompetitors.length}
+                onClick={continueToSchedule}
+                disabled={busy || findingChannels || !trackedCompetitors.length}
               >
-                <ArrowRight size={15} />
-                Continue with {trackedCompetitors.length} competitor{trackedCompetitors.length === 1 ? '' : 's'}
+                {findingChannels ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
+                {findingChannels
+                  ? 'Finding channels...'
+                  : `Continue with ${trackedCompetitors.length} competitor${trackedCompetitors.length === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>

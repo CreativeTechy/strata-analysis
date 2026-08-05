@@ -56,6 +56,9 @@ export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { met
  *  Poll getDiscoveryStatus(id, run_id) until status is 'success' or 'failed'. */
 export const discoverCompetitors = (id, body) => request(`/studies/${id}/discover`, { method: 'POST', body });
 export const getDiscoveryStatus = (id, runId) => request(`/studies/${id}/discover/${runId}`);
+/** Phase 2: finds channels for every tracked competitor that doesn't have one yet.
+ *  Same queued/poll shape as discoverCompetitors — reuse pollDiscoveryRun on the result. */
+export const discoverTrackedAccounts = (id) => request(`/studies/${id}/discover-accounts`, { method: 'POST' });
 export const listCompetitors = (id) => request(`/studies/${id}/competitors`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
 /** Creates a competitor and validates+links its sources in one call — the
@@ -109,18 +112,31 @@ export const URGENCY_LABELS = { now: 'Now', this_quarter: 'This quarter', watch:
 
 export const EFFORT_LABELS = { low: 'Low effort', medium: 'Medium effort', high: 'High effort' };
 
-/** The source kinds a manually-added competitor account can be. Mirrors
- *  backend PLATFORM_SOURCE_TYPE (services/competitors/competitors_store.py). */
+/** The source kinds a manually-added competitor account can be — the same
+ *  scrapeable vocabulary as the project wizard's SOURCE_TYPE_OPTIONS
+ *  (dashboard/src/components/ProjectsPage.jsx) and backend
+ *  config.KNOWN_SOURCE_TYPES; mirrors backend PLATFORM_SOURCE_TYPE
+ *  (services/competitors/competitors_store.py). */
 export const SOURCE_KIND_OPTIONS = [
-  { value: 'website', label: 'Website' },
-  { value: 'rss', label: 'RSS / Feed' },
-  { value: 'x', label: 'X / Twitter' },
-  { value: 'linkedin', label: 'LinkedIn' },
-  { value: 'facebook', label: 'Facebook' },
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'youtube', label: 'YouTube' },
-  { value: 'news', label: 'Blog / News URL' },
+  { value: 'rss', label: 'RSS' },
+  { value: 'web', label: 'Web' },
+  { value: 'social', label: 'Social' },
+  { value: 'hashtag', label: 'Hashtag' },
+  { value: 'keyword', label: 'Keyword' },
+  { value: 'username', label: 'X Account' },
+  { value: 'reddit', label: 'Reddit' },
+  { value: 'telegram', label: 'Telegram' },
 ];
+
+/** These take a bare name/term instead of a URL — the source row hides its
+ *  URL field and derives the real URL server-side. */
+export const TERM_SOURCE_TYPES = new Set(['hashtag', 'keyword', 'username']);
+
+export const TERM_SOURCE_PLACEHOLDERS = {
+  hashtag: 'Hashtag, without # (e.g. EVSummit)',
+  username: 'X account, without @ (e.g. elonmusk)',
+  keyword: 'Keyword or phrase (e.g. electric vehicles)',
+};
 
 export const PLATFORM_LABELS = Object.fromEntries(
   SOURCE_KIND_OPTIONS.map((option) => [option.value, option.label]),
@@ -149,10 +165,13 @@ function sleep(ms) {
 /** Discovery runs as a backend job that can take minutes (LLM call + live web
  *  corroboration + per-competitor account lookups), so it's queued rather than
  *  awaited directly - poll until it reaches a terminal status. Shared by
- *  onboarding and the workspace, which both trigger discovery. */
-export async function pollDiscoveryRun(studyId, runId) {
+ *  onboarding and the workspace, which both trigger discovery.
+ *  `onUpdate`, if given, is called with the run on every poll (not just the
+ *  terminal one) so a caller can render its live `run.logs` as they arrive. */
+export async function pollDiscoveryRun(studyId, runId, onUpdate) {
   for (;;) {
     const { run } = await getDiscoveryStatus(studyId, runId);
+    if (onUpdate) onUpdate(run);
     if (run.status === 'success' || run.status === 'failed') return run;
     await sleep(DISCOVERY_POLL_MS);
   }

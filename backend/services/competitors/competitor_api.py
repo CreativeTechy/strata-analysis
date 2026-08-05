@@ -230,7 +230,7 @@ def discover(
 
     payload = payload or {}
     limit = max(3, min(int(payload.get("limit") or competitor_discovery.MAX_COMPETITORS), 20))
-    with_accounts = payload.get("with_accounts", True) is not False
+    with_accounts = bool(payload.get("with_accounts"))
 
     active = competitor_discovery.get_active_discovery_run(project_id)
     if active:
@@ -250,6 +250,36 @@ def discover_status(project_id: int, run_id: str, user: dict = Depends(require_p
     if not run or run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Discovery run not found.")
     return {"run": run}
+
+
+@router.post("/studies/{project_id}/discover-accounts")
+def discover_accounts_bulk(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_permission("competitors.analyze")),
+):
+    """Phase 2: find channels for every tracked competitor that doesn't have one yet.
+
+    Deliberately separate from discover() (Phase 1, finding the competitors
+    themselves) so channel discovery only spends LLM calls on companies the user
+    actually chose to track, not every AI suggestion.
+    """
+    _project_or_404(project_id)
+    targets = [
+        {"id": c["id"], "name": c["name"], "website": c.get("website")}
+        for c in competitors_store.competitor_overview(project_id)
+        if c["status"] == "tracked" and not c.get("account_count")
+    ]
+    if not targets:
+        return {"run_id": None, "status": "success", "message": "No tracked competitors need channels."}
+
+    active = competitor_discovery.get_active_discovery_run(project_id)
+    if active:
+        return {"run_id": active["run_id"], "status": active["status"]}
+
+    run_id = competitor_discovery.create_discovery_run(project_id)
+    background_tasks.add_task(competitor_discovery.run_accounts_discovery_job, run_id, project_id, targets)
+    return {"run_id": run_id, "status": "queued"}
 
 
 @router.post("/competitors/{competitor_id}/accounts/discover")
@@ -313,13 +343,14 @@ def add_competitor_manual(project_id: int, payload: dict, user: dict = Depends(r
         platform = str(source.get("platform") or "").strip().lower()
         if platform not in competitors_store.PLATFORM_SOURCE_TYPE:
             raise HTTPException(status_code=400, detail=f"Source {index}: unsupported source type '{platform}'.")
-        url = competitors_store.normalize_source_url(source.get("url"))
+        handle_input = str(source.get("handle") or "").strip().lstrip("@")
+        url = competitors_store.resolve_account_url(platform, source.get("url"), handle_input)
         if not url:
-            raise HTTPException(status_code=400, detail=f"Source {index}: enter a valid URL.")
+            raise HTTPException(status_code=400, detail=f"Source {index}: enter a valid value.")
         normalized_sources.append({
             "platform": platform,
             "url": url,
-            "handle": str(source.get("handle") or "").strip().lstrip("@") or None,
+            "handle": handle_input or None,
         })
 
     competitor = competitors_store.upsert_competitor(

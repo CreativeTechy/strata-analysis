@@ -19,6 +19,7 @@ from psycopg.types.json import Jsonb
 
 import db
 from services.competitors.countries import COUNTRIES
+from services.sources.sources_store import _derive_reddit_url, _derive_telegram_url, _derive_term_url
 
 COMPETITOR_COLUMNS = """
     id, project_id, name, website, domain, description, country,
@@ -33,11 +34,21 @@ ACCOUNT_COLUMNS = """
 """
 
 # Maps an account platform onto the `sources.source_type` vocabulary the scraper
-# already understands, so no scraper changes are needed. `website`/`rss` are the
-# manual-entry kinds; `blog`/`news` stay for AI discovery's existing vocabulary.
+# already understands, so no scraper changes are needed. The first block is the
+# manual-entry/discovery vocabulary shared with the project wizard
+# (dashboard SOURCE_KIND_OPTIONS / backend config.KNOWN_SOURCE_TYPES); the second
+# block is legacy platform values from before source types were unified, kept so
+# competitor_accounts rows created under the old vocabulary still resolve.
 PLATFORM_SOURCE_TYPE = {
-    "website": "web",
+    "web": "web",
     "rss": "rss",
+    "social": "social",
+    "hashtag": "hashtag",
+    "keyword": "keyword",
+    "username": "username",
+    "reddit": "reddit",
+    "telegram": "telegram",
+    "website": "web",
     "blog": "rss",
     "news": "web",
     "x": "social",
@@ -46,6 +57,29 @@ PLATFORM_SOURCE_TYPE = {
     "instagram": "social",
     "youtube": "social",
 }
+
+# Platforms whose "url" is derived from a bare name/handle rather than typed in
+# directly — mirrors services/sources/sources_store.py's own term/reddit/telegram
+# derivation, reused here so manually-added competitor sources go through the
+# same URL-shaping logic as the general sources API.
+TERM_PLATFORMS = {"hashtag", "keyword", "username"}
+
+
+def resolve_account_url(platform: str, url: str, handle: str) -> str | None:
+    """The real URL to store for a manually-entered competitor source.
+
+    Term-type platforms and reddit/telegram accept a bare name/handle instead of
+    a URL; everything else still requires a plausible URL via
+    normalize_source_url.
+    """
+    term = (handle or "").strip()
+    if platform in TERM_PLATFORMS:
+        return _derive_term_url(platform, term) or None
+    if platform == "reddit":
+        return _derive_reddit_url(url or term) or None
+    if platform == "telegram":
+        return _derive_telegram_url(url or term) or None
+    return normalize_source_url(url)
 
 
 def _domain(url: str) -> str:
@@ -250,14 +284,15 @@ def list_accounts_for_project(project_id: int) -> list[dict]:
 
 
 def upsert_account(competitor_id: int, values: dict) -> dict | None:
-    url = normalize_source_url(values.get("url"))
     platform = str(values.get("platform") or "").strip().lower()
+    handle_input = str(values.get("handle") or "").strip().lstrip("@")
+    url = resolve_account_url(platform, values.get("url"), handle_input)
     if not url or not platform:
         return None
 
     payload = {
         "platform": platform,
-        "handle": str(values.get("handle") or "").strip().lstrip("@") or None,
+        "handle": handle_input or None,
         "url": url,
         "confidence": values.get("confidence"),
         "validation_status": str(values.get("validation_status") or "pending").strip().lower(),
