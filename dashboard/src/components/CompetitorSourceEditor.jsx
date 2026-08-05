@@ -7,10 +7,47 @@
 
 import { useState } from 'react';
 import { AlertTriangle, Loader2, Plus, Trash2 } from 'lucide-react';
-import { SOURCE_KIND_OPTIONS, isPlausibleUrl } from '../competitorApi.js';
+import {
+  SOURCE_KIND_OPTIONS, TERM_SOURCE_TYPES, TERM_SOURCE_PLACEHOLDERS, isPlausibleUrl,
+} from '../competitorApi.js';
 
 function emptySource() {
-  return { platform: 'website', url: '', handle: '' };
+  return { platform: 'web', url: '', handle: '' };
+}
+
+/** One source row's inputs. Term-type platforms (hashtag/keyword/username) take a
+ *  bare name instead of a URL — the real URL is derived server-side — so they get a
+ *  single input bound to `handle` instead of the usual URL + optional-handle pair. */
+function SourceRowFields({ row, onChange }) {
+  if (TERM_SOURCE_TYPES.has(row.platform)) {
+    return (
+      <input
+        className="cs-input"
+        style={{ flex: '1 1 220px' }}
+        placeholder={TERM_SOURCE_PLACEHOLDERS[row.platform] || 'Value'}
+        value={row.handle}
+        onChange={(event) => onChange({ handle: event.target.value })}
+      />
+    );
+  }
+  return (
+    <>
+      <input
+        className="cs-input"
+        style={{ flex: '1 1 220px' }}
+        placeholder="https://..."
+        value={row.url}
+        onChange={(event) => onChange({ url: event.target.value })}
+      />
+      <input
+        className="cs-input"
+        style={{ flex: '0 1 140px' }}
+        placeholder="display name (optional)"
+        value={row.handle}
+        onChange={(event) => onChange({ handle: event.target.value })}
+      />
+    </>
+  );
 }
 
 /** Name/website/description + a dynamic list of source rows, for creating a
@@ -39,7 +76,9 @@ export function AddCompetitorForm({ onSubmit, busy, submitLabel = 'Add competito
 
     const usable = sources.filter((row) => row.url.trim() || row.handle.trim());
     usable.forEach((row, index) => {
-      if (!isPlausibleUrl(row.url)) {
+      if (TERM_SOURCE_TYPES.has(row.platform)) {
+        if (!row.handle.trim()) nextErrors[`source-${index}`] = 'Enter a value.';
+      } else if (!isPlausibleUrl(row.url)) {
         nextErrors[`source-${index}`] = 'Enter a valid URL.';
       }
     });
@@ -51,11 +90,11 @@ export function AddCompetitorForm({ onSubmit, busy, submitLabel = 'Add competito
       name: name.trim(),
       website: website.trim() || null,
       description: description.trim() || null,
-      sources: usable.map((row) => ({
-        platform: row.platform,
-        url: row.url.trim(),
-        handle: row.handle.trim() || null,
-      })),
+      sources: usable.map((row) => (
+        TERM_SOURCE_TYPES.has(row.platform)
+          ? { platform: row.platform, url: '', handle: row.handle.trim() }
+          : { platform: row.platform, url: row.url.trim(), handle: row.handle.trim() || null }
+      )),
     });
 
     setName('');
@@ -118,20 +157,7 @@ export function AddCompetitorForm({ onSubmit, busy, submitLabel = 'Add competito
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-          <input
-            className="cs-input"
-            style={{ flex: '1 1 220px' }}
-            placeholder="https://..."
-            value={row.url}
-            onChange={(event) => updateSource(index, { url: event.target.value })}
-          />
-          <input
-            className="cs-input"
-            style={{ flex: '0 1 140px' }}
-            placeholder="handle (optional)"
-            value={row.handle}
-            onChange={(event) => updateSource(index, { handle: event.target.value })}
-          />
+          <SourceRowFields row={row} onChange={(patch) => updateSource(index, patch)} />
           {sources.length > 1 ? (
             <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removeSource(index)} aria-label="Remove source">
               <Trash2 size={13} />
@@ -165,17 +191,24 @@ export function AddSourceRow({ onSubmit, busy }) {
   const [row, setRow] = useState(emptySource());
   const [error, setError] = useState('');
 
+  const isTermType = TERM_SOURCE_TYPES.has(row.platform);
+
   const submit = async () => {
-    if (!isPlausibleUrl(row.url)) {
+    if (isTermType) {
+      if (!row.handle.trim()) {
+        setError('Enter a value.');
+        return;
+      }
+    } else if (!isPlausibleUrl(row.url)) {
       setError('Enter a valid URL.');
       return;
     }
     setError('');
-    await onSubmit({
-      platform: row.platform,
-      url: row.url.trim(),
-      handle: row.handle.trim() || null,
-    });
+    await onSubmit(
+      isTermType
+        ? { platform: row.platform, url: '', handle: row.handle.trim() }
+        : { platform: row.platform, url: row.url.trim(), handle: row.handle.trim() || null },
+    );
     setRow(emptySource());
   };
 
@@ -187,21 +220,13 @@ export function AddSourceRow({ onSubmit, busy }) {
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </select>
-        <input
-          className="cs-input"
-          style={{ flex: '1 1 200px' }}
-          placeholder="https://..."
-          value={row.url}
-          onChange={(event) => setRow({ ...row, url: event.target.value })}
-        />
-        <input
-          className="cs-input"
-          style={{ flex: '0 1 130px' }}
-          placeholder="handle (optional)"
-          value={row.handle}
-          onChange={(event) => setRow({ ...row, handle: event.target.value })}
-        />
-        <button type="button" className="cs-btn cs-btn-sm" onClick={submit} disabled={busy || !row.url.trim()}>
+        <SourceRowFields row={row} onChange={(patch) => setRow({ ...row, ...patch })} />
+        <button
+          type="button"
+          className="cs-btn cs-btn-sm"
+          onClick={submit}
+          disabled={busy || (isTermType ? !row.handle.trim() : !row.url.trim())}
+        >
           {busy ? <Loader2 size={13} className="cs-spin" /> : <Plus size={13} />} Add
         </button>
       </div>

@@ -9,11 +9,10 @@ Two stages, deliberately separate:
    about the incumbents first, and because "prioritise by size" is the only
    ordering that is stable enough to be worth showing as a rank.
 
-2. `discover_accounts()` — resolves each competitor's owned channels (site feed,
-   X, LinkedIn, Facebook, YouTube, blog). Handle guessing is unreliable, so every
-   result carries a confidence and lands as `pending`: nothing reaches analysis
-   until it is validated. Attributing another company's posts to a competitor
-   would put false activity into a report someone plans against.
+2. `discover_accounts()` — resolves each competitor's owned channels (site feed, X,
+   hashtag, blog, news). Every result carries a confidence and is pre-approved
+   (`validation_status: "valid"`), so it's linked as a scrape source the moment
+   it's discovered — no manual confirmation step.
 
 Search and URL resolution reuse `project_discovery`, so there is one place that
 knows how to query the web and normalise a result.
@@ -35,7 +34,7 @@ from prompt_loader import load_prompt
 from services.competitors.countries import COUNTRIES, country_label, validate_countries
 from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
 
-PROMPT_VERSION = "competitor-discovery-2026-07-27"
+PROMPT_VERSION = "competitor-discovery-2026-08-05"
 
 SIZE_TIERS = ("enterprise", "mid_market", "smb", "startup", "unknown")
 TIER_WEIGHT = {"enterprise": 0, "mid_market": 1, "smb": 2, "startup": 3, "unknown": 4}
@@ -45,7 +44,10 @@ MAX_COMPETITORS = 12
 DISCOVERY_SYSTEM_PROMPT = load_prompt("competitor_discovery_system_prompt.txt")
 ACCOUNTS_SYSTEM_PROMPT = load_prompt("competitor_accounts_system_prompt.txt")
 
-VALID_PLATFORMS = {"x", "linkedin", "facebook", "youtube", "instagram", "blog", "news"}
+# Restricted to platforms we can actually scrape (backend/scraper/spiders/source_rss.py
+# and config.KNOWN_SOURCE_TYPES) — LinkedIn/Facebook/Instagram/YouTube are dropped
+# because nothing in this app fetches them.
+VALID_PLATFORMS = {"x", "hashtag", "blog", "news"}
 
 # Hosts that are never a company's own site, so never a competitor "website".
 NON_COMPANY_HOSTS = {
@@ -150,24 +152,30 @@ def _reachable(url: str) -> bool:
         return False
 
 
-def _corroborate(name: str, website: str) -> dict:
+def _corroborate(name: str, website: str, log=None) -> dict:
     """Check a suggested competitor against the live web.
 
     Returns `{reachable, search_hits, resolved_website}`. A company the LLM
     invented will typically have an unreachable domain and no search presence,
     which is what lets us drop it before it reaches the user.
     """
+    log = log or (lambda _msg: None)
     resolved = _normalize_url(website) if website else ""
     reachable = False
     if resolved and _is_company_site(resolved):
+        log(f"{name}: checking {resolved} is reachable...")
         reachable = _reachable(resolved)
+        log(f"{name}: site is {'reachable' if reachable else 'unreachable'}.")
 
     hits = 0
     try:
+        log(f'{name}: searching DuckDuckGo for "{name}" official site...')
         results = _search_duckduckgo(f'"{name}" official site', limit=4) or []
         if not results:
+            log(f"{name}: no DuckDuckGo results, falling back to Bing...")
             results = _search_bing(f'"{name}" official site', limit=4) or []
         hits = len(results)
+        log(f"{name}: found {hits} search result{'' if hits == 1 else 's'}.")
         if not resolved:
             for item in results:
                 candidate = _normalize_url(item.get("url") or "")
@@ -180,30 +188,35 @@ def _corroborate(name: str, website: str) -> dict:
     return {"reachable": reachable, "search_hits": hits, "resolved_website": resolved}
 
 
-def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborate: bool = True) -> dict:
+def discover_competitors(
+    profile: dict, limit: int = MAX_COMPETITORS, corroborate: bool = True, log=None,
+) -> dict:
     """Return `{competitors: [...], rejected: [...]}`, ranked largest first."""
     from services.competitors.business_profile_store import profile_context
 
+    log = log or (lambda _msg: None)
     context = profile_context(profile)
     if not context:
         return {"competitors": [], "rejected": [], "error": "No business profile to compare against."}
 
     own_domain = _domain(profile.get("website") or "")
     target_countries = validate_countries(profile.get("target_countries"))
+    log("Asking the model for competitor candidates...")
     suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), target_countries)
     if not suggestions:
         return {"competitors": [], "rejected": [], "error": "The model returned no competitors."}
+    log(f"Model suggested {len(suggestions)} candidates; checking each...")
 
-    accepted: list[dict] = []
     rejected: list[dict] = []
-    seen_domains: set[str] = {own_domain} if own_domain else set()
-    seen_names: set[str] = set()
 
+    # Pass 1 (cheap, sequential): filter out anything a plain field check can
+    # already decide - the network is only needed for what's left.
+    candidates: list[dict] = []
     for entry in suggestions:
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("name") or "").strip()
-        if not name or name.casefold() in seen_names:
+        if not name:
             continue
 
         website = str(entry.get("website") or "").strip()
@@ -225,14 +238,46 @@ def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborat
             })
             continue
 
-        check = {"reachable": True, "search_hits": 0, "resolved_website": website}
+        candidates.append({"entry": entry, "name": name, "website": website, "country": country})
+
+    # Pass 2 (concurrent): each candidate's web corroboration is an independent
+    # site fetch plus search-engine calls - run them in parallel rather than one
+    # after another, the same pattern _discover_accounts_concurrently uses.
+    checks: dict[int, dict] = {}
+    if corroborate and candidates:
+        with ThreadPoolExecutor(max_workers=min(6, len(candidates))) as pool:
+            futures = {
+                i: pool.submit(_corroborate, c["name"], c["website"], log)
+                for i, c in enumerate(candidates)
+            }
+        checks = {i: future.result() for i, future in futures.items()}
+
+    # Pass 3 (sequential, original order): the actual accept/reject decisions,
+    # unchanged from before - only the corroboration call itself moved to pass 2.
+    # Staying sequential and in order here is what preserves the original
+    # semantics: a name already accepted earlier silently drops a later repeat,
+    # and a later duplicate of an already-accepted domain still loses.
+    accepted: list[dict] = []
+    seen_domains: set[str] = {own_domain} if own_domain else set()
+    seen_names: set[str] = set()
+    for i, candidate in enumerate(candidates):
+        entry = candidate["entry"]
+        name = candidate["name"]
+        website = candidate["website"]
+        country = candidate["country"]
+
+        if name.casefold() in seen_names:
+            continue
+
+        check = checks.get(i) or {"reachable": True, "search_hits": 0, "resolved_website": website}
         if corroborate:
-            check = _corroborate(name, website)
             if not check["resolved_website"]:
                 rejected.append({"name": name, "reason": "No reachable website found."})
+                log(f"{name}: rejected — no reachable website found.")
                 continue
             if not check["reachable"] and check["search_hits"] == 0:
                 rejected.append({"name": name, "reason": "Could not corroborate that this company exists."})
+                log(f"{name}: rejected — could not corroborate that this company exists.")
                 continue
 
         resolved = check["resolved_website"] or website
@@ -252,6 +297,7 @@ def discover_competitors(profile: dict, limit: int = MAX_COMPETITORS, corroborat
         except (TypeError, ValueError):
             stated_rank = None
 
+        log(f"{name}: accepted.")
         accepted.append({
             "name": name,
             "website": resolved or None,
@@ -299,13 +345,15 @@ def _guess_site_feed(website: str) -> dict | None:
 
         found = find_feed_urls(website)
         if isinstance(found, list) and found:
-            return {"platform": "blog", "url": found[0].strip(), "handle": None, "confidence": 0.9}
+            return {"platform": "blog", "url": found[0].strip(), "handle": None,
+                    "confidence": 0.9, "validation_status": "valid"}
     except Exception:
         pass
     for hint in ("/feed", "/rss.xml", "/blog/feed"):
         candidate = website.rstrip("/") + hint
         if _reachable(candidate):
-            return {"platform": "blog", "url": candidate, "handle": None, "confidence": 0.7}
+            return {"platform": "blog", "url": candidate, "handle": None,
+                    "confidence": 0.7, "validation_status": "valid"}
     return None
 
 
@@ -335,26 +383,31 @@ def _handle_from_url(url: str) -> str | None:
     parts = [segment for segment in path.split("/") if segment]
     if not parts:
         return None
-    candidate = parts[-1] if parts[0] in {"company", "c", "user", "channel", "in"} else parts[0]
+    candidate = parts[-1] if parts[0] in {"company", "c", "user", "channel", "in", "hashtag"} else parts[0]
     return candidate if re.fullmatch(r"[A-Za-z0-9._-]{2,60}", candidate or "") else None
 
 
-def discover_accounts(name: str, website: str | None) -> list[dict]:
-    """Owned channels for one competitor. Every entry needs validation before use."""
+def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
+    """Owned channels for one competitor, pre-approved (`validation_status: "valid"`)
+    so they're linked as scrape sources immediately - no manual confirmation step."""
+    log = log or (lambda _msg: None)
     site = str(website or "").strip()
     accounts: list[dict] = []
     seen: set[str] = set()
 
+    log(f"{name}: checking for a site feed...")
     feed = _guess_site_feed(site)
     if feed:
+        log(f"{name}: found feed {feed['url']}")
         accounts.append(feed)
         seen.add(feed["url"].lower())
 
     if site:
         accounts.append({"platform": "news", "url": site, "handle": _domain(site),
-                         "confidence": 1.0})
+                         "confidence": 1.0, "validation_status": "valid"})
         seen.add(site.lower())
 
+    log(f"{name}: asking the model for known channels...")
     for entry in _ask_for_accounts(name, site):
         if not isinstance(entry, dict):
             continue
@@ -372,8 +425,10 @@ def discover_accounts(name: str, website: str | None) -> list[dict]:
             "url": url,
             "handle": str(entry.get("handle") or "").strip().lstrip("@") or _handle_from_url(url),
             "confidence": confidence,
+            "validation_status": "valid",
         })
 
+    log(f"{name}: found {len(accounts)} channel{'' if len(accounts) == 1 else 's'}.")
     return accounts
 
 
@@ -413,6 +468,7 @@ def create_discovery_run(project_id: int) -> str:
             "error": None,
             "discovered": 0,
             "rejected": [],
+            "logs": [],
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
         }
@@ -422,7 +478,14 @@ def create_discovery_run(project_id: int) -> str:
 def get_discovery_run(run_id: str) -> dict | None:
     with _runs_lock:
         run = _runs.get(run_id)
-        return dict(run) if run else None
+        if not run:
+            return None
+        copy = dict(run)
+        # A plain dict(run) still shares the same `logs` list object with the
+        # live run - copy it too so a response being serialized never reads a
+        # list a worker thread is concurrently appending to.
+        copy["logs"] = list(run.get("logs") or [])
+        return copy
 
 
 def get_active_discovery_run(project_id: int) -> dict | None:
@@ -440,14 +503,41 @@ def _update_discovery_run(run_id: str, **fields) -> None:
             run.update(fields, updated_at=_now_iso())
 
 
+def _append_log(run_id: str, message: str) -> None:
+    """Append one real-time progress line to a run - safe to call concurrently
+    from worker threads, guarded by the same lock as _update_discovery_run."""
+    with _runs_lock:
+        run = _runs.get(run_id)
+        if run is not None:
+            run.setdefault("logs", []).append({"ts": _now_iso(), "message": message})
+            run["updated_at"] = _now_iso()
+
+
+def _discover_accounts_concurrently(targets: list[dict], log=None) -> dict[int, list[dict]]:
+    """Run discover_accounts() for each `{id, name, website}` target in parallel.
+
+    Each target's account discovery is an independent LLM call plus a site fetch -
+    run them concurrently rather than one after another.
+    """
+    if not targets:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
+        futures = {
+            target["id"]: pool.submit(discover_accounts, target["name"], target.get("website"), log)
+            for target in targets
+        }
+    return {target_id: future.result() for target_id, future in futures.items()}
+
+
 def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, with_accounts: bool) -> None:
     """Background counterpart of the old synchronous discover() endpoint body."""
     from services.competitors import competitors_store
 
+    log = lambda msg: _append_log(run_id, msg)  # noqa: E731
     _update_discovery_run(run_id, status="running", stage="discovering",
                           message="Asking the model for competitors...")
     try:
-        result = discover_competitors(profile, limit=limit)
+        result = discover_competitors(profile, limit=limit, log=log)
         if result.get("error") and not result.get("competitors"):
             _update_discovery_run(run_id, status="failed", stage="error",
                                   message=result["error"], error=result["error"])
@@ -457,16 +547,9 @@ def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, w
 
         accounts_by_id = {}
         if with_accounts and records:
-            # Each competitor's account discovery is an independent LLM call plus
-            # a site fetch - run them concurrently rather than one after another.
             _update_discovery_run(run_id, stage="accounts",
                                   message=f"Resolving accounts for {len(records)} competitors...")
-            with ThreadPoolExecutor(max_workers=min(6, len(records))) as pool:
-                futures = {
-                    record["id"]: pool.submit(discover_accounts, record["name"], record.get("website"))
-                    for record in records
-                }
-            accounts_by_id = {record_id: future.result() for record_id, future in futures.items()}
+            accounts_by_id = _discover_accounts_concurrently(records, log=log)
 
         for record in records:
             for account in accounts_by_id.get(record["id"], []):
@@ -481,3 +564,34 @@ def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, w
     except Exception as exc:
         _update_discovery_run(run_id, status="failed", stage="error",
                               message="Competitor discovery crashed.", error=str(exc))
+
+
+def run_accounts_discovery_job(run_id: str, project_id: int, targets: list[dict]) -> None:
+    """Phase 2: find channels for a given set of already-tracked competitors.
+
+    `targets` is `[{id, name, website}, ...]` — the caller decides which competitors
+    qualify (see competitor_api.py's discover_accounts_bulk, which scopes this to
+    tracked competitors with no accounts yet).
+    """
+    from services.competitors import competitors_store
+
+    log = lambda msg: _append_log(run_id, msg)  # noqa: E731
+    _update_discovery_run(run_id, status="running", stage="accounts",
+                          message=f"Finding channels for {len(targets)} competitors...")
+    try:
+        accounts_by_id = _discover_accounts_concurrently(targets, log=log)
+        discovered = 0
+        for target in targets:
+            for account in accounts_by_id.get(target["id"], []):
+                if competitors_store.upsert_account(target["id"], account):
+                    discovered += 1
+
+        _update_discovery_run(
+            run_id, status="success", stage="done",
+            message=f"Found {discovered} channel{'' if discovered == 1 else 's'} "
+                    f"across {len(targets)} competitor{'' if len(targets) == 1 else 's'}.",
+            discovered=discovered, rejected=[],
+        )
+    except Exception as exc:
+        _update_discovery_run(run_id, status="failed", stage="error",
+                              message="Channel discovery crashed.", error=str(exc))

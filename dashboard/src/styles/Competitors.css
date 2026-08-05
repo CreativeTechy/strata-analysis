@@ -689,6 +689,15 @@
 .cs-progress-row-active { color: var(--text-dark); font-weight: 550; }
 .cs-progress-row-done { color: #15803d; }
 
+/* --- discovery log --------------------------------------------------------
+ * Same cs-panel/cs-progress look as the staged loading indicator (StageList)
+ * above - a real log just needs to scroll once it grows past a handful of
+ * lines, which the fixed-length stage list never had to. */
+.cs-discovery-log .cs-progress {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .cs-spinner {
   width: 15px;
   height: 15px;

@@ -19,15 +19,15 @@ import {
 } from 'lucide-react';
 import {
   IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
-  avatarGradient, deleteStudy, discoverAccounts, discoverCompetitors, getSchedule, getStudy, initials,
-  listAccounts, listCompetitors, listFindings, pollDiscoveryRun, relativeTime, saveProfile,
-  setCompetitorStatus, setSchedule, syncSources, updateStudy, validateAccount,
+  avatarGradient, deleteStudy, discoverAccounts, discoverCompetitors, discoverTrackedAccounts,
+  getSchedule, getStudy, initials, listAccounts, listCompetitors, listFindings, pollDiscoveryRun,
+  relativeTime, saveProfile, setCompetitorStatus, setSchedule, syncSources, updateStudy, validateAccount,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
-import { ListEditor } from './CompetitorOnboarding.jsx';
+import { DiscoveryLog, ListEditor } from './CompetitorOnboarding.jsx';
 import '../styles/Competitors.css';
 
 const STUDY_STATUS_OPTIONS = ['draft', 'active', 'archived'];
@@ -202,6 +202,8 @@ export default function CompetitorWorkspace() {
   const [addingManual, setAddingManual] = useState(false);
   const [discoveringCompetitors, setDiscoveringCompetitors] = useState(false);
   const [discoveryNotice, setDiscoveryNotice] = useState(null);
+  const [discoveringChannels, setDiscoveringChannels] = useState(false);
+  const [discoveryLogs, setDiscoveryLogs] = useState([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState({ name: '', description: '', status: 'active' });
@@ -522,9 +524,10 @@ export default function CompetitorWorkspace() {
     setError('');
     setDiscoveryNotice(null);
     setDiscoveringCompetitors(true);
+    setDiscoveryLogs([]);
     try {
-      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: true });
-      const run = await pollDiscoveryRun(studyId, queued.run_id);
+      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: false });
+      const run = await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
       if (run.status === 'failed') {
         throw new Error(run.error || run.message || 'Competitor discovery failed.');
       }
@@ -538,11 +541,38 @@ export default function CompetitorWorkspace() {
     }
   };
 
+  // Phase 2: find channels for every tracked competitor that doesn't have one
+  // yet, in one shot, instead of clicking "Find channels" per competitor.
+  const runChannelDiscovery = async () => {
+    setError('');
+    setDiscoveringChannels(true);
+    setDiscoveryLogs([]);
+    try {
+      const queued = await discoverTrackedAccounts(studyId);
+      if (queued.run_id) {
+        const run = await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
+        if (run.status === 'failed') {
+          throw new Error(run.error || run.message || 'Channel discovery failed.');
+        }
+        // Cached per-competitor account lists are now stale for whichever
+        // competitors just got new channels - drop the cache so re-expanding
+        // "Sources" re-fetches instead of showing the old (empty) list.
+        setAccountsByCompetitor({});
+        await refreshCompetitorCounts();
+      }
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setDiscoveringChannels(false);
+    }
+  };
+
   const stats = useMemo(() => {
     const tracked = competitors.filter((item) => item.status === 'tracked');
     const pendingChannels = competitors.reduce((sum, item) => sum + (item.pending_account_count || 0), 0);
     const highImpact = findings.filter((item) => item.impact_level === 'high').length;
-    return { tracked: tracked.length, pendingChannels, highImpact };
+    const channellessTracked = tracked.filter((item) => !item.account_count).length;
+    return { tracked: tracked.length, pendingChannels, highImpact, channellessTracked };
   }, [competitors, findings]);
 
   if (loading) {
@@ -587,6 +617,12 @@ export default function CompetitorWorkspace() {
             {discoveringCompetitors ? <span className="cs-spinner" /> : <Radar size={15} />}
             {discoveringCompetitors ? 'Discovering...' : 'Discover with AI'}
           </button>
+          {stats.channellessTracked > 0 && (
+            <button type="button" className="cs-btn" onClick={runChannelDiscovery} disabled={discoveringChannels}>
+              {discoveringChannels ? <span className="cs-spinner" /> : <Search size={15} />}
+              {discoveringChannels ? 'Finding channels...' : `Find channels (${stats.channellessTracked})`}
+            </button>
+          )}
           <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
             {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
             {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
@@ -615,6 +651,10 @@ export default function CompetitorWorkspace() {
           )}
         </div>
       </div>
+
+      {(discoveringCompetitors || discoveringChannels) ? (
+        <DiscoveryLog logs={discoveryLogs} active={discoveringCompetitors || discoveringChannels} />
+      ) : null}
 
       {error ? (
         <div className="cs-alert cs-alert-error">
@@ -773,12 +813,6 @@ export default function CompetitorWorkspace() {
                               <span className={`cs-pill cs-pill-${account.validation_status}`}>
                                 {account.validation_status}
                               </span>
-                              {account.validation_status !== 'valid' ? (
-                                <button type="button" className="cs-btn cs-btn-sm"
-                                  onClick={() => decideAccount(competitor.id, account.id, 'valid')}>
-                                  <Check size={13} /> Confirm
-                                </button>
-                              ) : null}
                               {account.validation_status !== 'rejected' ? (
                                 <button type="button" className="cs-btn cs-btn-sm cs-btn-danger"
                                   onClick={() => decideAccount(competitor.id, account.id, 'rejected')}>
