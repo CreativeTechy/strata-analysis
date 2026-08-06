@@ -35,6 +35,33 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   return payload ?? {};
 }
 
+/** Same error/response shape as request(), but for a FormData body — request()
+ *  always JSON-encodes, which would mangle a multipart upload and also fights
+ *  the browser's auto-generated Content-Type boundary if set manually. */
+async function requestForm(path, formData) {
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message =
+      payload?.detail || payload?.error || `Request failed (${response.status})`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return payload ?? {};
+}
+
 // --- studies ---------------------------------------------------------------
 export const listStudies = () => request('/studies');
 export const createStudy = (body) => request('/studies', { method: 'POST', body });
@@ -50,6 +77,40 @@ export const getProfile = (id) => request(`/studies/${id}/profile`);
 /** Scrapes the website and derives market context — expect this to take a while. */
 export const buildProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'POST', body });
 export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'PUT', body });
+
+// --- documents (offline studies) --------------------------------------------
+/** `status` moves uploaded -> processing -> processed/failed as chunked
+ *  extraction (per page/sheet, text-library or OCR, decided server-side) runs
+ *  in the background — see pollDocumentExtraction below. `total_chunks`/
+ *  `processed_chunks` are progress while active. `extraction_error` is a
+ *  summary of every chunk that failed and is set whenever any did, even if
+ *  status ends up 'processed' from the chunks that succeeded — always show it,
+ *  a partial failure shouldn't hide behind a plain success pill. Raw extracted
+ *  text isn't in this list — use getDocumentText/getDocumentChunks. */
+export const listDocuments = (id) => request(`/studies/${id}/documents`);
+export const uploadDocuments = (id, files) => {
+  const formData = new FormData();
+  for (const file of files) formData.append('files', file);
+  return requestForm(`/studies/${id}/documents`, formData);
+};
+export const deleteDocument = (documentId) => request(`/documents/${documentId}`, { method: 'DELETE' });
+export const getDocumentText = (documentId) => request(`/documents/${documentId}/text`);
+/** Per-page/sheet detail behind a document's rolled-up status — which part
+ *  failed and why, not just that something did. */
+export const getDocumentChunks = (documentId) => request(`/documents/${documentId}/chunks`);
+
+// --- document articles (candidates split out of extracted text) -----------
+/** A document's extracted text is split into one or more candidate "articles"
+ *  in the background — `articles_status` on the document (pending ->
+ *  generating -> ready/failed/skipped) tracks that, same polling shape as
+ *  extraction. Each candidate starts 'pending'; approving materializes it
+ *  into a real article (usable by the existing analysis pipeline), rejecting
+ *  just marks it — see pollArticleCandidates below. */
+export const listDocumentArticles = (id) => request(`/studies/${id}/document-articles`);
+export const setDocumentArticleStatus = (candidateId, status) =>
+  request(`/document-articles/${candidateId}/status`, { method: 'POST', body: { status } });
+export const approveAllDocumentArticles = (id) =>
+  request(`/studies/${id}/document-articles/approve-all`, { method: 'POST' });
 
 // --- competitors -----------------------------------------------------------
 /** Queues discovery as a background job; returns { run_id, status } immediately.
@@ -173,6 +234,46 @@ export async function pollDiscoveryRun(studyId, runId, onUpdate) {
     const { run } = await getDiscoveryStatus(studyId, runId);
     if (onUpdate) onUpdate(run);
     if (run.status === 'success' || run.status === 'failed') return run;
+    await sleep(DISCOVERY_POLL_MS);
+  }
+}
+
+const DOCUMENT_ACTIVE_STATUSES = new Set(['uploaded', 'processing']);
+
+/** Extraction has no separate run object like discovery does — the document
+ *  row's own `status` is the only progress signal, so this just re-lists until
+ *  none of the given document ids are still uploaded/processing.
+ *  `onUpdate` is called with the full current list on every poll. */
+export async function pollDocumentExtraction(studyId, documentIds, onUpdate) {
+  const pending = new Set(documentIds);
+  for (;;) {
+    const { documents } = await listDocuments(studyId);
+    if (onUpdate) onUpdate(documents);
+    const stillActive = documents.some(
+      (document) => pending.has(document.id) && DOCUMENT_ACTIVE_STATUSES.has(document.status),
+    );
+    if (!stillActive) return documents;
+    await sleep(DISCOVERY_POLL_MS);
+  }
+}
+
+const ARTICLES_ACTIVE_STATUSES = new Set(['pending', 'generating']);
+
+/** Candidate-article generation chains after extraction in the same
+ *  background task, so it can still be running after pollDocumentExtraction
+ *  above has already returned (extraction's own status left 'processing').
+ *  Polls a document's `articles_status` instead — same shape, different
+ *  field. Terminal values are 'ready'/'failed'/'skipped', so this always
+ *  converges even for documents whose extraction failed outright. */
+export async function pollArticleCandidates(studyId, documentIds, onUpdate) {
+  const pending = new Set(documentIds);
+  for (;;) {
+    const { documents } = await listDocuments(studyId);
+    if (onUpdate) onUpdate(documents);
+    const stillActive = documents.some(
+      (document) => pending.has(document.id) && ARTICLES_ACTIVE_STATUSES.has(document.articles_status),
+    );
+    if (!stillActive) return documents;
     await sleep(DISCOVERY_POLL_MS);
   }
 }

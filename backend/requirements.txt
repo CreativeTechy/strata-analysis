@@ -3,7 +3,16 @@ trafilatura>=1.9
 requests>=2.31
 psycopg[binary]>=3.2
 fastapi>=0.110
+python-multipart>=0.0.9  # required by FastAPI for UploadFile/File(...) parsing
 uvicorn[standard]>=0.29  # ~73.2 kB, plus platform-dependent standard extras 10-20 MB
-# sentence-transformers>=3.0.0  # ~596.4 kB, plus large ML transitive deps: torch 540-560 MB
+sentence-transformers>=3.0.0  # ~596.4 kB, plus large ML transitive deps: torch 540-560 MB
 bcrypt>=4.1
-# transformers>=4.40.0  # ~11.6 MB; needed for sentiment transformer
+transformers>=4.40.0  # ~11.6 MB; needed for sentiment transformer
+
+# Competitor document extraction (text path).
+pymupdf>=1.24     # PDF text + page rendering for the OCR fallback, ~15-40 MB
+python-docx>=1.1  # .docx, pure python
+openpyxl>=3.1     # .xlsx, pure python
+xlrd>=2.0         # legacy .xls only - xlrd 2.x dropped .xlsx support, hence openpyxl above
+Pillow>=10.0      # image decoding for OCR
+pytesseract>=0.3.10

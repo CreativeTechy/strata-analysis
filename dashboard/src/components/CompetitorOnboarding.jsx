@@ -1,19 +1,39 @@
 /**
  * Competitor study onboarding.
  *
- * Four steps, in the order the information actually becomes available:
+ * Step 1 (data source) branches the rest of the wizard in two:
  *
- *   1. Your business  — name + website. The website is what makes the rest work,
+ *   Online (AI discovery):
+ *   1. Data source
+ *   2. Your business  — name + website. The website is what makes the rest work,
  *                       so it is asked for first and its scrape is shown honestly.
- *   2. Market context — the AI's reading of the site, editable. Shown rather than
+ *   3. Market context — the AI's reading of the site, editable. Shown rather than
  *                       hidden because everything downstream is judged against it.
- *   3. Competitors    — manual-first: add competitors and their sources directly,
+ *   4. Competitors    — manual-first: add competitors and their sources directly,
  *                       and they are valid and scrape-ready immediately, no
  *                       confirmation step needed. "Suggest with AI" is an optional
  *                       action on the same screen; AI-suggested competitors and
  *                       their channels still need a quick review before they're
  *                       trusted the same way a manual entry already is.
- *   4. Schedule       — how often confirmed sources get re-scraped, then finish.
+ *   5. Schedule       — how often confirmed sources get re-scraped, then finish.
+ *
+ *   Offline (uploaded documents):
+ *   1. Data source
+ *   2. Upload documents — a study name plus the files themselves. Each upload
+ *                         is saved immediately, then extracted (text library or
+ *                         OCR, decided server-side) in the background; this step
+ *                         polls and shows each file's status as it resolves.
+ *                         Extraction success also kicks off splitting the text
+ *                         into candidate articles, reviewed next.
+ *   3. Review articles   — each document's extracted text is split into
+ *                         candidate articles by the LLM; approving one turns it
+ *                         into a real article the existing analysis pipeline can
+ *                         read later (same table scraped articles use), exactly
+ *                         like AI-suggested competitors need a look before
+ *                         they're trusted. "Approve all" is the fast path.
+ *   5. Schedule          — re-scraping doesn't apply with nothing to scrape, so
+ *                         this reuses the same step only for a consistent finish,
+ *                         then opens the workspace with approved articles ready.
  *
  * Long steps (scrape, discovery) run tens of seconds, so each shows staged
  * progress instead of an indeterminate spinner.
@@ -23,23 +43,36 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Building2, CalendarClock, Check, CheckCircle2, ChevronRight,
-  Globe, Link2, Loader2, Plus, Radar, Search, Sparkles, Trash2, X,
+  Database, FileCheck, FileText, Globe, Link2, ListChecks, Loader2, Plus, Radar, ScanText, Search, Sparkles,
+  Trash2, Upload, X,
 } from 'lucide-react';
 import {
-  PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, avatarGradient, buildProfile,
-  createStudy, discoverCompetitors, discoverTrackedAccounts, initials, listAccounts, listCompetitors,
-  pollDiscoveryRun, saveProfile, setCompetitorStatus, setSchedule, validateAccount,
+  PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, approveAllDocumentArticles, avatarGradient,
+  buildProfile, createStudy, deleteDocument, discoverCompetitors, discoverTrackedAccounts, initials, listAccounts,
+  listCompetitors, listDocumentArticles, pollArticleCandidates, pollDiscoveryRun, pollDocumentExtraction,
+  saveProfile, setCompetitorStatus, setDocumentArticleStatus, setSchedule, uploadDocuments, validateAccount,
 } from '../competitorApi.js';
 import { COUNTRIES, countryLabel } from '../constants/countries.js';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
 import '../styles/Competitors.css';
 
-const STEPS = [
-  { id: 1, label: 'Your business', icon: Building2 },
-  { id: 2, label: 'Market context', icon: Sparkles },
-  { id: 3, label: 'Competitors', icon: Radar },
-  { id: 4, label: 'Schedule', icon: CalendarClock },
-];
+/** Offline swaps step 3 for its own "Review articles" and skips step 4
+ *  (Competitors) entirely — there's nothing to track yet, so it's left out of
+ *  the chip row rather than shown as passed-through. */
+function getSteps(dataMode) {
+  const steps = [
+    { id: 1, label: 'Data source', icon: Database },
+    dataMode === 'offline'
+      ? { id: 2, label: 'Upload documents', icon: Upload }
+      : { id: 2, label: 'Your business', icon: Building2 },
+    dataMode === 'offline'
+      ? { id: 3, label: 'Review articles', icon: FileCheck }
+      : { id: 3, label: 'Market context', icon: Sparkles },
+    { id: 4, label: 'Competitors', icon: Radar },
+    { id: 5, label: 'Schedule', icon: CalendarClock },
+  ];
+  return dataMode === 'offline' ? steps.filter((s) => s.id !== 4) : steps;
+}
 
 const SCRAPE_STAGES = [
   'Fetching your website',
@@ -279,7 +312,8 @@ export default function CompetitorOnboarding() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [step1Mode, setStep1Mode] = useState(null); // 'ai' | 'manual' while step 1 is busy
+  const [step1Mode, setStep1Mode] = useState(null); // 'ai' | 'manual' while the business step is busy
+  const [dataMode, setDataMode] = useState(null); // 'online' | 'offline'
 
   const [studyName, setStudyName] = useState('');
   const [studyId, setStudyId] = useState(null);
@@ -288,6 +322,22 @@ export default function CompetitorOnboarding() {
   const [targetCountries, setTargetCountries] = useState([]);
   const [profile, setProfile] = useState(null);
   const [scrape, setScrape] = useState(null);
+
+  const [documents, setDocuments] = useState([]);
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [uploadingDocs, setUploadingDocs] = useState(false);
+  const [extractingDocs, setExtractingDocs] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const fileInputRef = useRef(null);
+  const documentsRef = useRef(documents);
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  const [articleCandidates, setArticleCandidates] = useState([]);
+  const [reviewingArticles, setReviewingArticles] = useState(false);
+  const [decidingCandidate, setDecidingCandidate] = useState({});
+  const [approvingAll, setApprovingAll] = useState(false);
 
   const [competitors, setCompetitors] = useState([]);
   const [rejected, setRejected] = useState([]);
@@ -308,6 +358,28 @@ export default function CompetitorOnboarding() {
     () => competitors.filter((competitor) => competitor.status === 'tracked'),
     [competitors],
   );
+  const visibleSteps = useMemo(() => getSteps(dataMode), [dataMode]);
+
+  const documentById = useMemo(
+    () => Object.fromEntries(documents.map((document) => [document.id, document])),
+    [documents],
+  );
+  const candidatesByDocument = useMemo(() => {
+    const groups = new Map();
+    for (const candidate of articleCandidates) {
+      if (!groups.has(candidate.document_id)) groups.set(candidate.document_id, []);
+      groups.get(candidate.document_id).push(candidate);
+    }
+    return groups;
+  }, [articleCandidates]);
+  const pendingCandidateCount = useMemo(
+    () => articleCandidates.filter((candidate) => candidate.status === 'pending').length,
+    [articleCandidates],
+  );
+  const approvedCandidateCount = useMemo(
+    () => articleCandidates.filter((candidate) => candidate.status === 'approved').length,
+    [articleCandidates],
+  );
 
   const refreshCompetitors = async () => {
     const result = await listCompetitors(studyId);
@@ -316,9 +388,8 @@ export default function CompetitorOnboarding() {
 
   const ensureStudy = async () => {
     if (studyId) return studyId;
-    const created = await createStudy({
-      name: studyName.trim() || `${business.name.trim()} - competitor study`,
-    });
+    const fallbackName = business.name.trim() ? `${business.name.trim()} - competitor study` : 'Untitled competitor study';
+    const created = await createStudy({ name: studyName.trim() || fallbackName });
     setStudyId(created.study.id);
     return created.study.id;
   };
@@ -369,6 +440,131 @@ export default function CompetitorOnboarding() {
     } finally {
       setBusy(false);
       setStep1Mode(null);
+    }
+  };
+
+  const addPendingFiles = (fileList) => {
+    setPendingFiles((current) => [...current, ...Array.from(fileList || [])]);
+  };
+
+  const removePendingFile = (index) => {
+    setPendingFiles((current) => current.filter((_, i) => i !== index));
+  };
+
+  const refreshArticleCandidates = async (id) => {
+    const result = await listDocumentArticles(id);
+    setArticleCandidates(result.articles || []);
+  };
+
+  // Offline step 2: create the study (if needed), upload whatever files are
+  // staged, then poll until each one's background extraction (text library or
+  // OCR, decided server-side) settles, then poll again until the candidate
+  // articles split out of that text are ready too — the upload button
+  // re-enables as soon as the files are saved, so a second batch can go up
+  // while the first is still extracting; both polls just re-list from the
+  // server, so overlapping calls converge on the same truth rather than
+  // conflicting.
+  const uploadPendingDocuments = async () => {
+    if (!pendingFiles.length) return;
+    setError('');
+    setUploadingDocs(true);
+    let id;
+    let uploadedIds;
+    try {
+      id = await ensureStudy();
+      const result = await uploadDocuments(id, pendingFiles);
+      uploadedIds = (result.documents || []).map((document) => document.id);
+      setPendingFiles([]);
+    } catch (caught) {
+      setError(caught.message);
+      setUploadingDocs(false);
+      return;
+    }
+    setUploadingDocs(false);
+    if (!uploadedIds.length) return;
+    setExtractingDocs(true);
+    try {
+      await pollDocumentExtraction(id, uploadedIds, setDocuments);
+      await pollArticleCandidates(id, uploadedIds, setDocuments);
+      await refreshArticleCandidates(id);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setExtractingDocs(false);
+    }
+  };
+
+  const removeDocument = async (documentId) => {
+    try {
+      await deleteDocument(documentId);
+      setDocuments((current) => current.filter((document) => document.id !== documentId));
+    } catch (caught) {
+      setError(caught.message);
+    }
+  };
+
+  // Offline step 3: resume watching for any document still generating
+  // candidates when this step is (re)entered — Continue on step 2 isn't
+  // gated on generation finishing, so it can still be running here. Reads
+  // documentsRef instead of depending on `documents` directly so this only
+  // re-runs on an actual step change, not on every document-list update the
+  // poll itself causes.
+  useEffect(() => {
+    if (step !== 3 || dataMode !== 'offline' || !studyId) return;
+    let cancelled = false;
+    (async () => {
+      const activeIds = documentsRef.current
+        .filter((document) => document.articles_status === 'pending' || document.articles_status === 'generating')
+        .map((document) => document.id);
+      if (activeIds.length) {
+        setReviewingArticles(true);
+        try {
+          await pollArticleCandidates(studyId, activeIds, (updated) => {
+            if (!cancelled) setDocuments(updated);
+          });
+        } catch (caught) {
+          if (!cancelled) setError(caught.message);
+        } finally {
+          if (!cancelled) setReviewingArticles(false);
+        }
+      }
+      if (!cancelled) {
+        try {
+          await refreshArticleCandidates(studyId);
+        } catch (caught) {
+          if (!cancelled) setError(caught.message);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, dataMode, studyId]);
+
+  const decideCandidate = async (candidateId, status) => {
+    setDecidingCandidate((current) => ({ ...current, [candidateId]: true }));
+    try {
+      const result = await setDocumentArticleStatus(candidateId, status);
+      setArticleCandidates((current) =>
+        current.map((candidate) => (candidate.id === candidateId ? result.article : candidate)),
+      );
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setDecidingCandidate((current) => ({ ...current, [candidateId]: false }));
+    }
+  };
+
+  const approveAllPending = async () => {
+    setError('');
+    setApprovingAll(true);
+    try {
+      await approveAllDocumentArticles(studyId);
+      await refreshArticleCandidates(studyId);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setApprovingAll(false);
     }
   };
 
@@ -502,8 +698,10 @@ export default function CompetitorOnboarding() {
     setError('');
     setBusy(true);
     try {
+      // Offline studies have nothing to scrape yet, so scheduling never applies
+      // regardless of what the (hidden, for offline) toggle happens to hold.
       await setSchedule(studyId, {
-        repeat_enabled: scheduleOn,
+        repeat_enabled: dataMode === 'offline' ? false : scheduleOn,
         repeat_interval_value: Math.max(1, Number(scheduleDays) || 1),
         repeat_interval_unit: 'days',
       });
@@ -528,19 +726,19 @@ export default function CompetitorOnboarding() {
       </div>
 
       <div className="cs-steps" role="list">
-        {STEPS.map((item, index) => {
+        {visibleSteps.map((item, index) => {
           const state = step === item.id ? ' cs-step-active' : step > item.id ? ' cs-step-done' : '';
           const Icon = item.icon;
           return (
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <div className={`cs-step${state}`} role="listitem" aria-current={step === item.id}>
                 <span className="cs-step-num">
-                  {step > item.id ? <Check size={12} /> : item.id}
+                  {step > item.id ? <Check size={12} /> : index + 1}
                 </span>
                 <Icon size={14} />
                 <span>{item.label}</span>
               </div>
-              {index < STEPS.length - 1 ? <ChevronRight size={14} className="cs-step-sep" /> : null}
+              {index < visibleSteps.length - 1 ? <ChevronRight size={14} className="cs-step-sep" /> : null}
             </div>
           );
         })}
@@ -553,8 +751,343 @@ export default function CompetitorOnboarding() {
         </div>
       ) : null}
 
-      {/* ---------------- Step 1: business ---------------- */}
+      {/* ---------------- Step 1: data source ---------------- */}
       {step === 1 ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><Database size={16} /> How should we build this study?</h2>
+          <p className="cs-panel-hint">
+            Choose where the data comes from. You can start a new study either way.
+          </p>
+
+          <div className="cs-mode-grid">
+            <button
+              type="button"
+              className={`cs-mode-card${dataMode === 'online' ? ' cs-mode-card-selected' : ''}`}
+              onClick={() => setDataMode('online')}
+            >
+              <div className="cs-mode-card-icon"><Globe size={20} /></div>
+              <div className="cs-mode-card-title">Online — AI discovery</div>
+              <p className="cs-mode-card-desc">
+                Strata reads your website and the open web to find competitors and their public
+                channels automatically, then keeps scraping them on a schedule.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              className={`cs-mode-card${dataMode === 'offline' ? ' cs-mode-card-selected' : ''}`}
+              onClick={() => setDataMode('offline')}
+            >
+              <div className="cs-mode-card-icon"><FileText size={20} /></div>
+              <div className="cs-mode-card-title">Offline — Upload documents</div>
+              <p className="cs-mode-card-desc">
+                Upload PDFs, images, Word, Excel or CSV files you already have. They're saved to the
+                study right away; reading them into competitors and findings is coming soon.
+              </p>
+              <span className="cs-pill cs-pill-signal" style={{ marginTop: 10 }}>Extraction coming soon</span>
+            </button>
+          </div>
+
+          <div className="cs-wizard-foot">
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
+              You can add competitors manually later regardless of which you pick.
+            </span>
+            <button
+              type="button"
+              className="cs-btn cs-btn-primary"
+              onClick={() => setStep(2)}
+              disabled={!dataMode}
+            >
+              <ArrowRight size={15} /> Continue
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 2 (offline): upload documents ---------------- */}
+      {step === 2 && dataMode === 'offline' ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><Upload size={16} /> Upload your documents</h2>
+          <p className="cs-panel-hint">
+            Add every file you want this study built from. You can add more later from the workspace
+            too — extraction just isn&rsquo;t built yet, so for now these are only saved.
+          </p>
+
+          <div className="cs-field">
+            <label className="cs-label" htmlFor="cs-offline-study-name">Study name</label>
+            <input
+              id="cs-offline-study-name"
+              className="cs-input"
+              value={studyName}
+              placeholder="Q3 competitor study"
+              onChange={(event) => setStudyName(event.target.value)}
+            />
+          </div>
+
+          <div className="cs-field">
+            <label className="cs-label" htmlFor="cs-offline-files">Files</label>
+            <div
+              className={`cs-dropzone${dropActive ? ' cs-dropzone-active' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragEnter={(event) => { event.preventDefault(); setDropActive(true); }}
+              onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+              onDragLeave={(event) => { event.preventDefault(); setDropActive(false); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDropActive(false);
+                addPendingFiles(event.dataTransfer.files);
+              }}
+            >
+              <div className="cs-dropzone-icon"><Upload size={20} /></div>
+              <div className="cs-dropzone-title">Drag files here, or click to browse</div>
+              <div className="cs-dropzone-hint">Multiple files at once are fine</div>
+              <div className="cs-dropzone-types">
+                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG'].map((ext) => (
+                  <span key={ext} className="cs-pill cs-pill-signal">{ext}</span>
+                ))}
+              </div>
+              <input
+                id="cs-offline-files"
+                ref={fileInputRef}
+                className="cs-sr-only"
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg"
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => {
+                  addPendingFiles(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+            </div>
+          </div>
+
+          {pendingFiles.length ? (
+            <div className="cs-rows" style={{ marginBottom: 14 }}>
+              {pendingFiles.map((file, index) => (
+                <div key={`${file.name}-${index}`} className="cs-row">
+                  <div className="cs-row-main">
+                    <div className="cs-row-name">{file.name}</div>
+                    <div className="cs-row-desc">{(file.size / 1024).toFixed(0)} KB — not uploaded yet</div>
+                  </div>
+                  <div className="cs-row-side">
+                    <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removePendingFile(index)}>
+                      <Trash2 size={13} /> Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="cs-btn cs-btn-primary"
+                onClick={uploadPendingDocuments}
+                disabled={uploadingDocs || !studyName.trim()}
+              >
+                {uploadingDocs ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
+                {uploadingDocs ? 'Uploading...' : `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          ) : null}
+
+          {documents.length ? (
+            <div className="cs-field">
+              <label className="cs-label">
+                Uploaded
+                <span className="cs-label-hint">
+                  {documents.length} file{documents.length === 1 ? '' : 's'}
+                  {extractingDocs ? ' — reading contents...' : ''}
+                </span>
+              </label>
+              <div className="cs-rows">
+                {documents.map((document) => {
+                  const active = document.status === 'uploaded' || document.status === 'processing';
+                  const progress = active && document.total_chunks ? ` (${document.processed_chunks || 0}/${document.total_chunks})` : '';
+                  const methodLabel = document.extraction_method === 'ocr'
+                    ? 'Extracted (OCR)'
+                    : document.extraction_method === 'mixed'
+                      ? 'Extracted (mixed)'
+                      : 'Extracted';
+                  return (
+                    <div key={document.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
+                      <div className="cs-row-main">
+                        <div className="cs-row-name">{document.original_filename}</div>
+                        <div className="cs-row-desc">{(document.size_bytes / 1024).toFixed(0)} KB</div>
+                        {/* Always shown when present — a partial extraction failure
+                            (some pages/sheets ok, others not) must not hide behind a
+                            plain "Extracted" pill just because status ended up ok. */}
+                        {document.extraction_error ? (
+                          <div
+                            style={{
+                              display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: 5,
+                              fontSize: '0.79rem', color: '#b91c1c', whiteSpace: 'normal', lineHeight: 1.5,
+                            }}
+                          >
+                            <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2 }} />
+                            <span>{document.extraction_error}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="cs-row-side">
+                        {active ? (
+                          <span className="cs-pill cs-pill-pending">
+                            <span className="cs-spinner" style={{ width: 11, height: 11 }} /> Reading{progress}...
+                          </span>
+                        ) : document.status === 'failed' ? (
+                          <span className="cs-pill cs-pill-rejected"><AlertTriangle size={11} /> Not extracted</span>
+                        ) : (
+                          <span className="cs-pill cs-pill-valid"><ScanText size={11} /> {methodLabel}</span>
+                        )}
+                        <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removeDocument(document.id)}>
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><Upload size={20} /></div>
+              <h3>No documents yet</h3>
+              <p>Choose files above, then upload them to attach them to this study.</p>
+            </div>
+          )}
+
+          <div className="cs-wizard-foot">
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)} disabled={uploadingDocs}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button
+              type="button"
+              className="cs-btn cs-btn-primary"
+              onClick={() => setStep(3)}
+              disabled={!documents.length || uploadingDocs}
+            >
+              <ArrowRight size={15} /> Continue to review articles
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 3 (offline): review extracted articles ---------------- */}
+      {step === 3 && dataMode === 'offline' ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><FileCheck size={16} /> Review extracted articles</h2>
+          <p className="cs-panel-hint">
+            Each item below was split out of one of your documents. Approving one turns it into an
+            article your study can run analysis on later, the same way a scraped article would;
+            rejecting leaves it out. Nothing here is final — you can leave items pending and decide later.
+          </p>
+
+          {reviewingArticles ? (
+            <div className="cs-panel" style={{ marginBottom: 16, background: '#fcfdff' }}>
+              <div className="cs-progress-row cs-progress-row-active">
+                <span className="cs-spinner" />
+                <span>Reading your documents into articles...</span>
+              </div>
+            </div>
+          ) : null}
+
+          {!reviewingArticles && !articleCandidates.length ? (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><FileCheck size={20} /></div>
+              <h3>No articles yet</h3>
+              <p>
+                {documents.some((document) => document.articles_status === 'failed')
+                  ? 'Splitting a document into articles failed — check its error on the upload step.'
+                  : 'Nothing usable was found in your documents.'}
+              </p>
+            </div>
+          ) : null}
+
+          {articleCandidates.length ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                <span style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                  <strong style={{ color: 'var(--text-dark)' }}>{approvedCandidateCount}</strong> approved,{' '}
+                  <strong style={{ color: 'var(--text-dark)' }}>{pendingCandidateCount}</strong> pending review
+                </span>
+                <button
+                  type="button"
+                  className="cs-btn cs-btn-primary"
+                  onClick={approveAllPending}
+                  disabled={approvingAll || !pendingCandidateCount}
+                >
+                  {approvingAll ? <Loader2 size={15} className="cs-spin" /> : <ListChecks size={15} />}
+                  {approvingAll ? 'Approving...' : `Approve all${pendingCandidateCount ? ` (${pendingCandidateCount})` : ''}`}
+                </button>
+              </div>
+
+              {[...candidatesByDocument.entries()].map(([documentId, candidates]) => (
+                <div key={documentId} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {documentById[documentId]?.original_filename || 'Document'}
+                  </div>
+                  <div className="cs-rows">
+                    {candidates.map((candidate) => (
+                      <div key={candidate.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
+                        <div className="cs-row-main">
+                          <div className="cs-row-name">{candidate.title}</div>
+                          <div className="cs-row-desc" style={{ whiteSpace: 'normal', maxWidth: 'none' }}>
+                            {candidate.summary}
+                          </div>
+                        </div>
+                        <div className="cs-row-side">
+                          {candidate.status === 'approved' ? (
+                            <span className="cs-pill cs-pill-valid"><Check size={11} /> Approved</span>
+                          ) : candidate.status === 'rejected' ? (
+                            <span className="cs-pill cs-pill-rejected"><X size={11} /> Rejected</span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="cs-btn cs-btn-sm cs-btn-danger"
+                                disabled={decidingCandidate[candidate.id]}
+                                onClick={() => decideCandidate(candidate.id, 'rejected')}
+                              >
+                                <X size={13} /> Reject
+                              </button>
+                              <button
+                                type="button"
+                                className="cs-btn cs-btn-sm cs-btn-primary"
+                                disabled={decidingCandidate[candidate.id]}
+                                onClick={() => decideCandidate(candidate.id, 'approved')}
+                              >
+                                {decidingCandidate[candidate.id] ? <Loader2 size={13} className="cs-spin" /> : <Check size={13} />} Approve
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : null}
+
+          <div className="cs-wizard-foot">
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(5)} disabled={reviewingArticles}>
+              <ArrowRight size={15} /> Continue to schedule
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 2 (online): business ---------------- */}
+      {step === 2 && dataMode !== 'offline' ? (
         <div className="cs-panel">
           <h2 className="cs-panel-title"><Building2 size={16} /> Tell us about your business</h2>
           <p className="cs-panel-hint">
@@ -627,9 +1160,14 @@ export default function CompetitorOnboarding() {
           ) : null}
 
           <div className="cs-wizard-foot">
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-              Reading your site takes about 20-40 seconds — or skip that and write the context yourself.
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)} disabled={busy}>
+                <ArrowLeft size={15} /> Back
+              </button>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
+                Reading your site takes about 20-40 seconds — or skip that and write the context yourself.
+              </span>
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="cs-btn" onClick={submitBusinessManually} disabled={!canLeaveStep1 || busy}>
                 {busy && step1Mode === 'manual' ? <Loader2 size={15} className="cs-spin" /> : <Building2 size={15} />}
@@ -644,8 +1182,8 @@ export default function CompetitorOnboarding() {
         </div>
       ) : null}
 
-      {/* ---------------- Step 2: market context ---------------- */}
-      {step === 2 && profile ? (
+      {/* ---------------- Step 3: market context ---------------- */}
+      {step === 3 && profile ? (
         <>
           {scrape ? (
             <div className={`cs-alert ${scrape.status === 'success' ? 'cs-alert-info' : 'cs-alert-warn'}`}>
@@ -702,7 +1240,7 @@ export default function CompetitorOnboarding() {
             </div>
 
             <div className="cs-wizard-foot">
-              <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)} disabled={busy}>
+              <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)} disabled={busy}>
                 <ArrowLeft size={15} /> Back
               </button>
               <button type="button" className="cs-btn cs-btn-primary" onClick={submitContext} disabled={busy}>
@@ -714,8 +1252,8 @@ export default function CompetitorOnboarding() {
         </>
       ) : null}
 
-      {/* ---------------- Step 3: competitors ---------------- */}
-      {step === 3 ? (
+      {/* ---------------- Step 4: competitors ---------------- */}
+      {step === 4 ? (
         <>
           <div className="cs-panel">
             <h2 className="cs-panel-title"><Building2 size={16} /> Add your competitors</h2>
@@ -874,7 +1412,7 @@ export default function CompetitorOnboarding() {
             {findingChannels ? <DiscoveryLog logs={discoveryLogs} active={findingChannels} /> : null}
 
             <div className="cs-wizard-foot">
-              <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)} disabled={busy}>
+              <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(3)} disabled={busy}>
                 <ArrowLeft size={15} /> Back
               </button>
               <button
@@ -893,30 +1431,46 @@ export default function CompetitorOnboarding() {
         </>
       ) : null}
 
-      {/* ---------------- Step 4: schedule + finish ---------------- */}
-      {step === 4 ? (
+      {/* ---------------- Step 5: schedule + finish ---------------- */}
+      {step === 5 ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Globe size={16} /> Keep it current</h2>
-          <p className="cs-panel-hint">
-            {trackedCompetitors.length} competitor{trackedCompetitors.length === 1 ? '' : 's'} ready to
-            track. Re-scrape their sources on a schedule, using the same pipeline scheduler as the
-            rest of Strata.
-          </p>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
-            <input type="checkbox" checked={scheduleOn} onChange={(event) => setScheduleOn(event.target.checked)} />
-            Scrape competitors automatically
-          </label>
-          {scheduleOn ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
-              <span>Every</span>
-              <input className="cs-input" type="number" min="1" style={{ width: 78 }}
-                value={scheduleDays} onChange={(event) => setScheduleDays(event.target.value)} />
-              <span>day(s)</span>
-            </div>
-          ) : null}
+          <h2 className="cs-panel-title"><Globe size={16} /> {dataMode === 'offline' ? "You're set" : 'Keep it current'}</h2>
+          {dataMode === 'offline' ? (
+            <p className="cs-panel-hint">
+              {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
+              {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
+              Automatic re-scraping doesn&rsquo;t apply here since there&rsquo;s nothing to scrape —
+              approved articles are ready whenever you run analysis from the workspace.
+            </p>
+          ) : (
+            <>
+              <p className="cs-panel-hint">
+                {trackedCompetitors.length} competitor{trackedCompetitors.length === 1 ? '' : 's'} ready to
+                track. Re-scrape their sources on a schedule, using the same pipeline scheduler as the
+                rest of Strata.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
+                <input type="checkbox" checked={scheduleOn} onChange={(event) => setScheduleOn(event.target.checked)} />
+                Scrape competitors automatically
+              </label>
+              {scheduleOn ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
+                  <span>Every</span>
+                  <input className="cs-input" type="number" min="1" style={{ width: 78 }}
+                    value={scheduleDays} onChange={(event) => setScheduleDays(event.target.value)} />
+                  <span>day(s)</span>
+                </div>
+              ) : null}
+            </>
+          )}
 
           <div className="cs-wizard-foot">
-            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(3)} disabled={busy}>
+            <button
+              type="button"
+              className="cs-btn cs-btn-ghost"
+              onClick={() => setStep(dataMode === 'offline' ? 3 : 4)}
+              disabled={busy}
+            >
               <ArrowLeft size={15} /> Back
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy}>

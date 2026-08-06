@@ -506,6 +506,129 @@
 }
 .cs-row-side { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
 
+/* --- data source mode cards (wizard step 1) ------------------------------ */
+.cs-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.cs-mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 16px;
+  padding: 18px 20px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.14s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.cs-mode-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 14px 26px -20px rgba(15, 23, 42, 0.35);
+}
+
+.cs-mode-card:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.cs-mode-card-selected {
+  border-color: #fed7aa;
+  background: #fff8f1;
+}
+
+.cs-mode-card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.cs-mode-card-selected .cs-mode-card-icon {
+  background: linear-gradient(135deg, #fb923c, #f97316);
+  color: #fff;
+}
+
+.cs-mode-card-title { font-size: 0.94rem; font-weight: 640; color: var(--text-dark); margin-bottom: 6px; }
+.cs-mode-card-desc { margin: 0; font-size: 0.82rem; color: var(--text-light); line-height: 1.55; }
+
+/* --- file dropzone (offline document upload) ----------------------------- */
+.cs-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cs-dropzone {
+  position: relative;
+  text-align: center;
+  padding: 34px 24px;
+  border: 1.5px dashed #dbe2ec;
+  border-radius: 16px;
+  background: #fcfdff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+
+.cs-dropzone:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.cs-dropzone:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.cs-dropzone-active {
+  border-color: #f97316;
+  background: #fff8f1;
+  transform: scale(1.005);
+}
+
+.cs-dropzone-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 13px;
+  background: #f1f5f9;
+  color: #64748b;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cs-dropzone-active .cs-dropzone-icon {
+  background: linear-gradient(135deg, #fb923c, #f97316);
+  color: #fff;
+}
+
+.cs-dropzone-title { font-size: 0.9rem; font-weight: 610; color: var(--text-dark); margin-bottom: 3px; }
+.cs-dropzone-hint { font-size: 0.79rem; color: var(--text-light); margin-bottom: 12px; }
+
+.cs-dropzone-types {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
 /* --- wizard ------------------------------------------------------------- */
 .cs-wizard { width: 100%; max-width: none; margin: 0; }
 
