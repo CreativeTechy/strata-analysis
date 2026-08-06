@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
 from services.competitors import business_profile_store
 from services.competitors import competitor_analysis
 from services.competitors import competitor_discovery
+from services.competitors import competitor_document_articles
+from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 import db
 from services.auth.auth import require_permission
@@ -203,6 +205,119 @@ def update_profile(project_id: int, payload: dict, user: dict = Depends(require_
     if not profile:
         raise HTTPException(status_code=400, detail="Could not save the profile.")
     return {"profile": profile}
+
+
+# --------------------------------------------------------------------------- #
+# Documents (offline studies) - upload, then extract text in the background.
+# --------------------------------------------------------------------------- #
+@router.get("/studies/{project_id}/documents")
+def list_documents(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """Poll this while any document's status is 'uploaded'/'processing' — that's
+    the only progress signal extraction has, no separate run-tracking needed."""
+    _project_or_404(project_id)
+    return {"documents": competitor_documents_store.list_documents(project_id)}
+
+
+@router.get("/documents/{document_id}/text")
+def get_document_text(document_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    text = competitor_documents_store.get_document_text(document_id)
+    if text is None:
+        raise HTTPException(status_code=404, detail="No extracted text for this document.")
+    return {"text": text}
+
+
+@router.get("/documents/{document_id}/chunks")
+def list_document_chunks(document_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """Per-page/sheet detail behind a document's rolled-up status and
+    extraction_error — which part failed and why, not just that something did."""
+    return {"chunks": competitor_documents_store.list_chunks(document_id)}
+
+
+@router.post("/studies/{project_id}/documents")
+async def upload_documents(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(require_permission("competitors.manage")),
+):
+    """Save uploaded documents for an offline study and queue extraction for each.
+
+    Extraction (especially OCR on a scanned PDF) can run well past a request's
+    gateway timeout, so it happens as a background task rather than inline —
+    same reasoning as competitor discovery below. The response returns as soon
+    as files are saved; the wizard polls GET .../documents for extraction status.
+    """
+    _project_or_404(project_id)
+    if not files:
+        raise HTTPException(status_code=400, detail="Choose at least one file to upload.")
+    if len(files) > competitor_documents_store.MAX_FILES_PER_UPLOAD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload at most {competitor_documents_store.MAX_FILES_PER_UPLOAD} files at a time.",
+        )
+    for upload in files:
+        if not competitor_documents_store.extension_allowed(upload.filename):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{upload.filename}' isn't a supported type "
+                    "(pdf, doc, docx, xls, xlsx, csv, png, jpg, jpeg)."
+                ),
+            )
+
+    saved = []
+    for upload in files:
+        content = await upload.read()
+        if len(content) > competitor_documents_store.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail=f"'{upload.filename}' is larger than 25 MB.")
+        record = competitor_documents_store.save_document(
+            project_id, filename=upload.filename, content=content, mime_type=upload.content_type
+        )
+        if record:
+            saved.append(record)
+            background_tasks.add_task(competitor_documents_store.process_document, record["id"])
+
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not save the uploaded documents.")
+    return {"documents": saved}
+
+
+@router.delete("/documents/{document_id}")
+def remove_document(document_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    if not competitor_documents_store.delete_document(document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Document articles - candidates split out of a document's extracted text,
+# reviewed and approved before they become real articles.
+# --------------------------------------------------------------------------- #
+@router.get("/studies/{project_id}/document-articles")
+def list_document_articles(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """Poll this while any document's articles_status is 'generating' — same
+    shape as list_documents for extraction, no separate run-tracking needed."""
+    _project_or_404(project_id)
+    return {"articles": competitor_document_articles.list_candidates(project_id)}
+
+
+@router.post("/document-articles/{candidate_id}/status")
+def set_document_article_status(
+    candidate_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))
+):
+    """Approving materializes the candidate into a real `articles` row
+    (see competitor_document_articles._materialize); rejecting just marks it."""
+    status = str((payload or {}).get("status") or "").strip().lower()
+    candidate = competitor_document_articles.set_status(candidate_id, status)
+    if not candidate:
+        raise HTTPException(status_code=400, detail="status must be pending, approved, or rejected.")
+    return {"article": candidate}
+
+
+@router.post("/studies/{project_id}/document-articles/approve-all")
+def approve_all_document_articles(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    _project_or_404(project_id)
+    return {"articles": competitor_document_articles.approve_all(project_id)}
 
 
 # --------------------------------------------------------------------------- #
