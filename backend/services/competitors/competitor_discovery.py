@@ -1,18 +1,26 @@
 """Find who the competitors are, rank them by size, and locate their accounts.
 
-Two stages, deliberately separate:
+Three stages, deliberately separate:
 
 1. `discover_competitors()` — asks the LLM for the real companies competing with
-   the profiled business, then corroborates each against live web search so a
-   hallucinated company or a dead domain is dropped before a human ever sees it.
+   the profiled business and shows the raw name list to the user immediately.
    Ranking is by size, because a user comparing themselves to the market cares
    about the incumbents first, and because "prioritise by size" is the only
-   ordering that is stable enough to be worth showing as a rank.
+   ordering that is stable enough to be worth showing as a rank. Live web
+   corroboration is *not* run here — a fast list beats a slow one, and most
+   suggestions never get tracked, so spending a fetch-plus-search per candidate
+   here would mostly be wasted.
 
-2. `discover_accounts()` — resolves each competitor's owned channels (site feed, X,
-   hashtag, blog, news). Every result carries a confidence and is pre-approved
-   (`validation_status: "valid"`), so it's linked as a scrape source the moment
-   it's discovered — no manual confirmation step.
+2. `verify_competitor()` — runs once a user actually tracks an AI-suggested
+   competitor: the same web corroboration `discover_competitors()` used to do
+   up front, now spent only on companies the user chose. Catches a hallucinated
+   name or dead domain before phase 3 spends an LLM call finding its channels.
+
+3. `discover_accounts()` — resolves each competitor's channels: owned accounts
+   (site feed, X, blog, news) plus hashtags worth monitoring them by. Every
+   result carries a confidence and is pre-approved (`validation_status: "valid"`),
+   so it's linked as a scrape source the moment it's discovered — no manual
+   confirmation step.
 
 Search and URL resolution reuse `project_discovery`, so there is one place that
 knows how to query the web and normalise a result.
@@ -48,6 +56,12 @@ ACCOUNTS_SYSTEM_PROMPT = load_prompt("competitor_accounts_system_prompt.txt")
 # and config.KNOWN_SOURCE_TYPES) — LinkedIn/Facebook/Instagram/YouTube are dropped
 # because nothing in this app fetches them.
 VALID_PLATFORMS = {"x", "hashtag", "blog", "news"}
+
+# Phase 3 asks for several X accounts (main brand, regional, support, product
+# lines) and several hashtags (branded + relevant industry ones worth
+# monitoring), not just one of each — cap per platform so a verbose model
+# response can't flood a competitor with low-value channels.
+MAX_ACCOUNTS_PER_PLATFORM = {"x": 5, "hashtag": 8, "blog": 2, "news": 1}
 
 # Hosts that are never a company's own site, so never a competitor "website".
 NON_COMPANY_HOSTS = {
@@ -186,6 +200,20 @@ def _corroborate(name: str, website: str, log=None) -> dict:
         pass
 
     return {"reachable": reachable, "search_hits": hits, "resolved_website": resolved}
+
+
+def verify_competitor(name: str, website: str | None, log=None) -> dict:
+    """Phase 2: corroborate one AI-suggested competitor against the live web.
+
+    Called when a user tracks it, not when it's first suggested — the same
+    check `discover_competitors()` used to run on every candidate up front,
+    now spent only on the ones actually chosen. Returns
+    `{verified, reachable, search_hits, resolved_website}`; `verified` is what
+    the old accept/reject rule in `discover_competitors()` used to decide.
+    """
+    check = _corroborate(name, website or "", log)
+    verified = bool(check["resolved_website"]) and (check["reachable"] or check["search_hits"] > 0)
+    return {**check, "verified": verified}
 
 
 def discover_competitors(
@@ -370,8 +398,8 @@ def _ask_for_accounts(name: str, website: str) -> list[dict]:
                 {"role": "user", "content": f"Company: {name}\nWebsite: {website or 'unknown'}"},
             ],
             temperature=0.0,
-            max_tokens=700,
-            timeout=60,
+            max_tokens=1400,
+            timeout=90,
         )
         parsed = json.loads(_strip_fences(raw))
     except (LLMError, json.JSONDecodeError, ValueError) as exc:
@@ -399,6 +427,7 @@ def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
     site = str(website or "").strip()
     accounts: list[dict] = []
     seen: set[str] = set()
+    counts: dict[str, int] = {}
 
     log(f"{name}: checking for a site feed...")
     feed = _guess_site_feed(site)
@@ -406,21 +435,39 @@ def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
         log(f"{name}: found feed {feed['url']}")
         accounts.append(feed)
         seen.add(feed["url"].lower())
+        counts["blog"] = counts.get("blog", 0) + 1
 
     if site:
         accounts.append({"platform": "news", "url": site, "handle": _domain(site),
                          "confidence": 1.0, "validation_status": "valid"})
         seen.add(site.lower())
+        counts["news"] = counts.get("news", 0) + 1
 
-    log(f"{name}: asking the model for known channels...")
-    for entry in _ask_for_accounts(name, site):
-        if not isinstance(entry, dict):
-            continue
+    log(f"{name}: asking the model for channels — X accounts and hashtags to monitor...")
+    candidates = [entry for entry in _ask_for_accounts(name, site) if isinstance(entry, dict)]
+    # X handles are the riskiest guess to widen — check each is a live account
+    # before it's linked as a scrape source, rather than trusting the model.
+    x_urls = {
+        _normalize_url(str(entry.get("url") or "").strip())
+        for entry in candidates
+        if str(entry.get("platform") or "").strip().lower() == "x"
+    }
+    reachable_x = {url for url in x_urls if url and _reachable(url)}
+    dropped_x = len(x_urls) - len(reachable_x)
+    if dropped_x:
+        log(f"{name}: dropped {dropped_x} X handle{'' if dropped_x == 1 else 's'} that didn't resolve.")
+
+    for entry in candidates:
         platform = str(entry.get("platform") or "").strip().lower()
         url = _normalize_url(str(entry.get("url") or "").strip())
         if platform not in VALID_PLATFORMS or not url or url.lower() in seen:
             continue
+        if platform == "x" and url not in reachable_x:
+            continue
+        if counts.get(platform, 0) >= MAX_ACCOUNTS_PER_PLATFORM.get(platform, 1):
+            continue
         seen.add(url.lower())
+        counts[platform] = counts.get(platform, 0) + 1
         try:
             confidence = max(0.0, min(float(entry.get("confidence", 0.5)), 1.0))
         except (TypeError, ValueError):
@@ -535,14 +582,19 @@ def _discover_accounts_concurrently(targets: list[dict], log=None) -> dict[int, 
 
 
 def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, with_accounts: bool) -> None:
-    """Background counterpart of the old synchronous discover() endpoint body."""
+    """Background counterpart of the old synchronous discover() endpoint body.
+
+    Phase 1 only — no live web corroboration. That check now runs per
+    competitor in `verify_competitor()`, at the point a user tracks one, so
+    the name list shows up as fast as the LLM call itself.
+    """
     from services.competitors import competitors_store
 
     log = lambda msg: _append_log(run_id, msg)  # noqa: E731
     _update_discovery_run(run_id, status="running", stage="discovering",
                           message="Asking the model for competitors...")
     try:
-        result = discover_competitors(profile, limit=limit, log=log)
+        result = discover_competitors(profile, limit=limit, corroborate=False, log=log)
         if result.get("error") and not result.get("competitors"):
             _update_discovery_run(run_id, status="failed", stage="error",
                                   message=result["error"], error=result["error"])
@@ -572,7 +624,7 @@ def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, w
 
 
 def run_accounts_discovery_job(run_id: str, project_id: int, targets: list[dict]) -> None:
-    """Phase 2: find channels for a given set of already-tracked competitors.
+    """Phase 3: find channels for a given set of already-tracked competitors.
 
     `targets` is `[{id, name, website}, ...]` — the caller decides which competitors
     qualify (see competitor_api.py's discover_accounts_bulk, which scopes this to
