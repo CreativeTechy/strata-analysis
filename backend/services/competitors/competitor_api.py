@@ -373,7 +373,7 @@ def discover_accounts_bulk(
     background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("competitors.analyze")),
 ):
-    """Phase 2: find channels for every tracked competitor that doesn't have one yet.
+    """Phase 3: find channels for every tracked competitor that doesn't have one yet.
 
     Deliberately separate from discover() (Phase 1, finding the competitors
     themselves) so channel discovery only spends LLM calls on companies the user
@@ -498,14 +498,37 @@ def update_competitor(competitor_id: int, payload: dict, user: dict = Depends(re
 
 @router.post("/competitors/{competitor_id}/status")
 def set_status(competitor_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
-    """Track or ignore a competitor. Tracking links its valid accounts as sources."""
+    """Track or ignore a competitor. Tracking links its valid accounts as sources.
+
+    Phase 2: the first time an AI-suggested competitor is tracked, corroborate
+    it against the live web here — the check discover() skips on every
+    candidate up front now runs once, only on the one the user actually chose.
+    Never blocks the track itself; a company that fails to corroborate still
+    gets tracked, just flagged, since the user has already decided to track it.
+    """
     competitor = _competitor_or_404(competitor_id)
     status = str((payload or {}).get("status") or "").strip().lower()
     record = competitors_store.set_competitor_status(competitor_id, status)
     if not record:
         raise HTTPException(status_code=400, detail="status must be suggested, tracked, or ignored.")
+
+    verification = None
+    signals = record.get("size_signals") or {}
+    if status == "tracked" and record.get("discovery_source") == "ai" and not signals.get("checked_live"):
+        verification = competitor_discovery.verify_competitor(record["name"], record.get("website"))
+        record = competitors_store.upsert_competitor(competitor["project_id"], {
+            **record,
+            "website": verification["resolved_website"] or record.get("website"),
+            "size_signals": {
+                **signals,
+                "checked_live": True,
+                "site_reachable": verification["reachable"],
+                "search_hits": verification["search_hits"],
+            },
+        }) or record
+
     sync = competitors_store.sync_project_sources(competitor["project_id"])
-    return {"competitor": record, "sources": sync}
+    return {"competitor": record, "sources": sync, "verification": verification}
 
 
 @router.delete("/competitors/{competitor_id}")

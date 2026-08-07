@@ -117,7 +117,7 @@ export const approveAllDocumentArticles = (id) =>
  *  Poll getDiscoveryStatus(id, run_id) until status is 'success' or 'failed'. */
 export const discoverCompetitors = (id, body) => request(`/studies/${id}/discover`, { method: 'POST', body });
 export const getDiscoveryStatus = (id, runId) => request(`/studies/${id}/discover/${runId}`);
-/** Phase 2: finds channels for every tracked competitor that doesn't have one yet.
+/** Phase 3: finds channels for every tracked competitor that doesn't have one yet.
  *  Same queued/poll shape as discoverCompetitors — reuse pollDiscoveryRun on the result. */
 export const discoverTrackedAccounts = (id) => request(`/studies/${id}/discover-accounts`, { method: 'POST' });
 export const listCompetitors = (id) => request(`/studies/${id}/competitors`);

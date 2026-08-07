@@ -14,8 +14,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight,
-  Layers, LayoutGrid, Lightbulb, Link2, List, Pencil, Plus, Radar, RefreshCw, Search, ShieldCheck,
-  Sparkles, Target, Trash2, TrendingUp, X,
+  ExternalLink, Layers, LayoutGrid, Lightbulb, Link2, List, Pencil, Plus, Radar, RefreshCw, Search,
+  ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
   IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
@@ -48,6 +48,32 @@ const VIEW_MODES = [
   { value: 'card', label: 'Cards', icon: LayoutGrid },
   { value: 'list', label: 'List', icon: List },
 ];
+
+const WORKSPACE_TABS = [
+  { value: 'reports', label: 'Reports', icon: BarChart3 },
+  { value: 'sources', label: 'Sources', icon: Link2 },
+];
+
+// Fixed identity -> colour mapping for the sources chart, in the order the
+// chart always draws them (never re-ordered by count, so a colour always
+// means the same platform group). The three hues are a validated-passing
+// subset of the standard categorical order (run
+// dataviz/scripts/validate_palette.js "#1baf7a,#2a78d6,#4a3aa7" to reproduce);
+// "Other" stays neutral gray rather than a fourth hue, and none of the three
+// overlap the green/amber/red already reserved for validation-status pills
+// elsewhere on this page.
+const SOURCE_GROUPS = [
+  { key: 'content', label: 'Owned content', platforms: new Set(['news', 'web', 'website', 'blog', 'rss']), color: '#1baf7a' },
+  { key: 'x', label: 'X accounts', platforms: new Set(['x']), color: '#2a78d6' },
+  { key: 'hashtag', label: 'Hashtags', platforms: new Set(['hashtag']), color: '#4a3aa7' },
+  { key: 'other', label: 'Other', platforms: new Set(), color: '#94a3b8' },
+];
+const SOURCE_GROUP_BY_KEY = Object.fromEntries(SOURCE_GROUPS.map((group) => [group.key, group]));
+
+function sourceGroupKey(platform) {
+  const found = SOURCE_GROUPS.find((group) => group.platforms.has(platform));
+  return found ? found.key : 'other';
+}
 
 function FindingCard({ finding, onOpen }) {
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
@@ -163,6 +189,162 @@ function StatTile({ icon: Icon, label, value, tone }) {
   );
 }
 
+const SOURCE_STATUS_FILTERS = [
+  { key: '', label: 'All statuses' },
+  { key: 'valid', label: 'Valid' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'rejected', label: 'Rejected' },
+];
+
+/** Bar-per-group chart, always in SOURCE_GROUPS order regardless of count -
+ *  a group's colour never changes as filters change which ones have data. */
+function SourceGroupChart({ groupCounts }) {
+  const rows = SOURCE_GROUPS.map((group) => ({ ...group, count: groupCounts[group.key] || 0 }));
+  const max = Math.max(1, ...rows.map((row) => row.count));
+
+  return (
+    <div className="cs-panel" style={{ marginBottom: 20 }}>
+      <h2 className="cs-panel-title"><BarChart3 size={16} /> Sources by channel</h2>
+      <p className="cs-panel-hint">Every discovered or manually-added source across all competitors, by channel type.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+        {rows.map((row) => (
+          <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ width: 128, flexShrink: 0, fontSize: '0.8rem', color: 'var(--text-dark)', fontWeight: 560 }}>
+              {row.label}
+            </span>
+            <div style={{ flex: 1, height: 16, borderRadius: 8, background: '#f1f5f9', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: `${(row.count / max) * 100}%`,
+                  minWidth: row.count ? 4 : 0,
+                  borderRadius: 8,
+                  background: row.color,
+                  transition: 'width 0.2s ease',
+                }}
+              />
+            </div>
+            <span style={{ width: 28, flexShrink: 0, textAlign: 'right', fontSize: '0.82rem', fontWeight: 650, color: 'var(--text-dark)' }}>
+              {row.count}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** All sources (competitor accounts) across the study in one place - the
+ *  per-competitor "Sources" drawer shows the same data scoped to one company;
+ *  this is the aggregate view across the whole study. */
+function SourcesPanel({
+  sources, total, groupCounts, search, onSearch, groupFilter, onGroupFilter,
+  statusFilter, onStatusFilter, onChooseCompetitors,
+}) {
+  return (
+    <>
+      <SourceGroupChart groupCounts={groupCounts} />
+
+      <div className="cs-panel">
+        <h2 className="cs-panel-title"><Link2 size={16} /> All sources</h2>
+        <p className="cs-panel-hint">
+          {total} source{total === 1 ? '' : 's'} across every tracked and suggested competitor.
+        </p>
+
+        {total ? (
+          <>
+            <div className="cs-panel cs-findings-toolbar" style={{ marginTop: 14 }}>
+              <label className="cs-search-field">
+                <Search size={16} />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => onSearch(event.target.value)}
+                  placeholder="Search competitor, handle, or URL..."
+                />
+              </label>
+
+              <select className="cs-select" value={groupFilter} onChange={(event) => onGroupFilter(event.target.value)}
+                aria-label="Filter by channel">
+                <option value="">All channels</option>
+                {SOURCE_GROUPS.map((group) => (
+                  <option key={group.key} value={group.key}>{group.label}</option>
+                ))}
+              </select>
+
+              <select className="cs-select" value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}
+                aria-label="Filter by validation status">
+                {SOURCE_STATUS_FILTERS.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {sources.length ? (
+              <div className="cs-rows" style={{ marginTop: 4 }}>
+                {sources.map((source) => {
+                  const group = SOURCE_GROUP_BY_KEY[sourceGroupKey(source.platform)];
+                  return (
+                    <div key={source.id} className="cs-row">
+                      <span
+                        aria-hidden="true"
+                        style={{ width: 8, height: 8, borderRadius: 4, background: group.color, flexShrink: 0 }}
+                      />
+                      <div
+                        className="cs-avatar"
+                        style={{ background: avatarGradient(source.competitor_name), width: 28, height: 28, fontSize: '0.68rem' }}
+                        aria-hidden="true"
+                      >
+                        {initials(source.competitor_name)}
+                      </div>
+                      <div className="cs-row-main">
+                        <div className="cs-row-name">
+                          {source.competitor_name}
+                          <span style={{ fontWeight: 400, color: 'var(--text-light)' }}>
+                            {' '}· {PLATFORM_LABELS[source.platform] || source.platform}
+                            {source.handle ? ` @${source.handle}` : ''}
+                          </span>
+                        </div>
+                        <div className="cs-row-desc">
+                          <a href={source.url} target="_blank" rel="noopener noreferrer"
+                            style={{ color: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            {source.url} <ExternalLink size={11} />
+                          </a>
+                        </div>
+                      </div>
+                      <div className="cs-row-side">
+                        {typeof source.confidence === 'number' ? (
+                          <span className="cs-pill cs-pill-signal">{Math.round(source.confidence * 100)}% confidence</span>
+                        ) : null}
+                        <span className={`cs-pill cs-pill-${source.validation_status}`}>{source.validation_status}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="cs-empty">
+                <div className="cs-empty-icon"><Search size={20} /></div>
+                <h3>No matching sources</h3>
+                <p>Try a different search term or clear the channel/status filters.</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="cs-empty">
+            <div className="cs-empty-icon"><Link2 size={20} /></div>
+            <h3>No sources yet</h3>
+            <p>Track a competitor and confirm or discover its channels to see them here.</p>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={onChooseCompetitors}>
+              <Layers size={15} /> Choose competitors
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function CompetitorWorkspace() {
   const { studyId } = useParams();
   const navigate = useNavigate();
@@ -195,9 +377,15 @@ export default function CompetitorWorkspace() {
     }
   });
   const [showCompetitors, setShowCompetitors] = useState(false);
+  const [activeTab, setActiveTab] = useState('reports');
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourceGroupFilter, setSourceGroupFilter] = useState('');
+  const [sourceStatusFilter, setSourceStatusFilter] = useState('');
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
   const [channelBusy, setChannelBusy] = useState({});
+  const [trackingBusy, setTrackingBusy] = useState({});
+  const [unverified, setUnverified] = useState({});
   const [showAddCompetitor, setShowAddCompetitor] = useState(false);
   const [addingManual, setAddingManual] = useState(false);
   const [discoveringCompetitors, setDiscoveringCompetitors] = useState(false);
@@ -423,12 +611,22 @@ export default function CompetitorWorkspace() {
   };
 
   const toggleTracking = async (competitor) => {
+    const nextStatus = competitor.status === 'tracked' ? 'ignored' : 'tracked';
+    setTrackingBusy((current) => ({ ...current, [competitor.id]: true }));
     try {
-      await setCompetitorStatus(competitor.id, competitor.status === 'tracked' ? 'ignored' : 'tracked');
+      // Phase 2: tracking an AI-suggested competitor for the first time
+      // triggers a live web check server-side, so this call can take a beat
+      // longer than a plain status flip — the button shows a spinner for it.
+      const statusResult = await setCompetitorStatus(competitor.id, nextStatus);
+      if (statusResult.verification) {
+        setUnverified((current) => ({ ...current, [competitor.id]: !statusResult.verification.verified }));
+      }
       const result = await listCompetitors(studyId);
       setCompetitors(result.competitors || []);
     } catch (caught) {
       setError(caught.message);
+    } finally {
+      setTrackingBusy((current) => ({ ...current, [competitor.id]: false }));
     }
   };
 
@@ -541,7 +739,7 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  // Phase 2: find channels for every tracked competitor that doesn't have one
+  // Phase 3: find channels for every tracked competitor that doesn't have one
   // yet, in one shot, instead of clicking "Find channels" per competitor.
   const runChannelDiscovery = async () => {
     setError('');
@@ -574,6 +772,44 @@ export default function CompetitorWorkspace() {
     const channellessTracked = tracked.filter((item) => !item.account_count).length;
     return { tracked: tracked.length, pendingChannels, highImpact, channellessTracked };
   }, [competitors, findings]);
+
+  // Every competitor already carries its full `accounts` list from
+  // listCompetitors() (see loadAll below) - no extra request needed to see
+  // every source across the study at once.
+  const allSources = useMemo(
+    () => competitors.flatMap((competitor) => (competitor.accounts || []).map((account) => ({
+      ...account,
+      competitor_id: competitor.id,
+      competitor_name: competitor.name,
+    }))),
+    [competitors],
+  );
+
+  const sourceGroupCounts = useMemo(() => {
+    const counts = Object.fromEntries(SOURCE_GROUPS.map((group) => [group.key, 0]));
+    for (const source of allSources) counts[sourceGroupKey(source.platform)] += 1;
+    return counts;
+  }, [allSources]);
+
+  const sourceStats = useMemo(() => ({
+    total: allSources.length,
+    valid: allSources.filter((source) => source.validation_status === 'valid').length,
+    pending: allSources.filter((source) => source.validation_status === 'pending').length,
+    rejected: allSources.filter((source) => source.validation_status === 'rejected').length,
+  }), [allSources]);
+
+  const filteredSources = useMemo(() => {
+    const query = sourceSearch.trim().toLowerCase();
+    return allSources.filter((source) => {
+      if (sourceGroupFilter && sourceGroupKey(source.platform) !== sourceGroupFilter) return false;
+      if (sourceStatusFilter && source.validation_status !== sourceStatusFilter) return false;
+      if (query) {
+        const haystack = `${source.competitor_name} ${source.handle || ''} ${source.url || ''}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+      return true;
+    });
+  }, [allSources, sourceGroupFilter, sourceStatusFilter, sourceSearch]);
 
   if (loading) {
     return (
@@ -719,14 +955,37 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
-        <StatTile icon={Radar} label="Tracked" value={stats.tracked} />
-        <StatTile icon={BarChart3} label="Reports" value={findings.length} />
-        <StatTile icon={TrendingUp} label="High impact" value={stats.highImpact}
-          tone={stats.highImpact ? '#b91c1c' : undefined} />
-        <StatTile icon={CalendarClock} label="Last run"
-          value={study?.last_run_at ? relativeTime(study.last_run_at) : 'Never'} />
+      <div className="cs-view-tabs" role="tablist" aria-label="Switch workspace tab" style={{ marginBottom: 16 }}>
+        {WORKSPACE_TABS.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.value;
+          return (
+            <button key={tab.value} type="button" role="tab" aria-selected={isActive}
+              className={`cs-view-tab${isActive ? ' active' : ''}`} onClick={() => setActiveTab(tab.value)}>
+              <Icon size={14} /> {tab.label}
+            </button>
+          );
+        })}
       </div>
+
+      {activeTab === 'sources' ? (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+          <StatTile icon={Link2} label="Total sources" value={sourceStats.total} />
+          <StatTile icon={ShieldCheck} label="Valid" value={sourceStats.valid} />
+          <StatTile icon={RefreshCw} label="Pending" value={sourceStats.pending}
+            tone={sourceStats.pending ? '#a16207' : undefined} />
+          <StatTile icon={X} label="Rejected" value={sourceStats.rejected} />
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+          <StatTile icon={Radar} label="Tracked" value={stats.tracked} />
+          <StatTile icon={BarChart3} label="Reports" value={findings.length} />
+          <StatTile icon={TrendingUp} label="High impact" value={stats.highImpact}
+            tone={stats.highImpact ? '#b91c1c' : undefined} />
+          <StatTile icon={CalendarClock} label="Last run"
+            value={study?.last_run_at ? relativeTime(study.last_run_at) : 'Never'} />
+        </div>
+      )}
 
       {showCompetitors ? (
         <div className="cs-panel" style={{ marginBottom: 20 }}>
@@ -771,12 +1030,30 @@ export default function CompetitorWorkspace() {
                       <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                         {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
                       </span>
+                      {competitor.status === 'tracked' && unverified[competitor.id] ? (
+                        <span
+                          className="cs-pill cs-pill-signal"
+                          title="Tracked, but a live web check couldn't confirm this company exists — worth a manual look."
+                        >
+                          Couldn’t verify
+                        </span>
+                      ) : null}
                       <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleChannels(competitor.id)}>
                         <Link2 size={13} /> {channelsOpen ? 'Hide channels' : 'Channels'}
                       </button>
-                      <button type="button" className={`cs-btn cs-btn-sm${competitor.status === 'tracked' ? ' cs-btn-primary' : ''}`}
-                        onClick={() => toggleTracking(competitor)}>
-                        {competitor.status === 'tracked' ? <><Check size={13} /> Tracking</> : 'Track'}
+                      <button
+                        type="button"
+                        className={`cs-btn cs-btn-sm${competitor.status === 'tracked' ? ' cs-btn-primary' : ''}`}
+                        onClick={() => toggleTracking(competitor)}
+                        disabled={Boolean(trackingBusy[competitor.id])}
+                      >
+                        {trackingBusy[competitor.id] ? (
+                          <span className="cs-spinner" />
+                        ) : competitor.status === 'tracked' ? (
+                          <><Check size={13} /> Tracking</>
+                        ) : (
+                          'Track'
+                        )}
                       </button>
                     </div>
                   </div>
@@ -838,7 +1115,20 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      {(findings.length > 0 || hasFindingFilters) ? (
+      {activeTab === 'sources' ? (
+        <SourcesPanel
+          sources={filteredSources}
+          total={allSources.length}
+          groupCounts={sourceGroupCounts}
+          search={sourceSearch}
+          onSearch={setSourceSearch}
+          groupFilter={sourceGroupFilter}
+          onGroupFilter={setSourceGroupFilter}
+          statusFilter={sourceStatusFilter}
+          onStatusFilter={setSourceStatusFilter}
+          onChooseCompetitors={() => setShowCompetitors(true)}
+        />
+      ) : (findings.length > 0 || hasFindingFilters) ? (
         <>
           <div className="cs-panel cs-findings-toolbar">
             <label className="cs-search-field">

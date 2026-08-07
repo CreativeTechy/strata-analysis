@@ -81,20 +81,20 @@ const SCRAPE_STAGES = [
   'Writing your market context',
 ];
 
-// Phase 1 only finds and ranks competitors - channels are a separate step
-// (CHANNEL_STAGES below), so this list must not claim to do that too.
+// Phase 1 only asks the model for names and ranks them - no web verification
+// yet (that happens per competitor when it's tracked) and channels are a
+// separate step (CHANNEL_STAGES below), so this list must not claim either.
 const DISCOVERY_STAGES = [
   'Comparing your profile against the market',
   'Naming candidate competitors',
-  'Checking each company actually exists',
   'Filtering out duplicates and unlikely matches',
   'Ranking them by size',
 ];
 
-// Phase 2: finding channels for whichever competitors got tracked.
+// Phase 3: finding channels for whichever competitors got tracked.
 const CHANNEL_STAGES = [
   'Checking each competitor’s site for a feed',
-  'Asking the model for known channels',
+  'Asking the model for X accounts and hashtags to monitor',
   'Linking valid channels as sources',
 ];
 
@@ -349,6 +349,9 @@ export default function CompetitorOnboarding() {
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
   const [sourceBusy, setSourceBusy] = useState({});
+  const [trackingBusy, setTrackingBusy] = useState({});
+  const [trackingAllBusy, setTrackingAllBusy] = useState(false);
+  const [unverified, setUnverified] = useState({});
 
   const [scheduleDays, setScheduleDays] = useState(1);
   const [scheduleOn, setScheduleOn] = useState(true);
@@ -356,6 +359,10 @@ export default function CompetitorOnboarding() {
   const canLeaveStep1 = business.name.trim().length > 0;
   const trackedCompetitors = useMemo(
     () => competitors.filter((competitor) => competitor.status === 'tracked'),
+    [competitors],
+  );
+  const untrackedCompetitors = useMemo(
+    () => competitors.filter((competitor) => competitor.status !== 'tracked'),
     [competitors],
   );
   const visibleSteps = useMemo(() => getSteps(dataMode), [dataMode]);
@@ -394,7 +401,7 @@ export default function CompetitorOnboarding() {
     return created.study.id;
   };
 
-  // Step 1 -> 2: create the study, scrape the site, derive the market context.
+  // Step 2 -> 3: create the study, scrape the site, derive the market context.
   const submitBusiness = async () => {
     setError('');
     setBusy(true);
@@ -409,7 +416,7 @@ export default function CompetitorOnboarding() {
           'The site was read but the market context could not be generated. Fill it in below and continue.',
         );
       }
-      setStep(2);
+      setStep(3);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -418,7 +425,7 @@ export default function CompetitorOnboarding() {
     }
   };
 
-  // Step 1 -> 2, no AI: skip the scrape/derive call entirely and persist
+  // Step 2 -> 3, no AI: skip the scrape/derive call entirely and persist
   // exactly what was typed in, so Step 2 opens blank and ready to fill in by hand.
   const submitBusinessManually = async () => {
     setError('');
@@ -434,7 +441,7 @@ export default function CompetitorOnboarding() {
       });
       setProfile(saved.profile);
       setScrape(null);
-      setStep(2);
+      setStep(3);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -577,7 +584,7 @@ export default function CompetitorOnboarding() {
       const saved = await saveProfile(studyId, profile);
       setProfile(saved.profile);
       await refreshCompetitors();
-      setStep(3);
+      setStep(4);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -618,7 +625,7 @@ export default function CompetitorOnboarding() {
     }
   };
 
-  // Step 3 -> 4: before moving on, find channels for whichever competitors the
+  // Step 4 -> 5: before moving on, find channels for whichever competitors the
   // user chose to track — best-effort, since a failure here shouldn't block
   // scheduling (channels can still be found later from the workspace).
   const continueToSchedule = async () => {
@@ -634,16 +641,66 @@ export default function CompetitorOnboarding() {
       // best-effort — see comment above.
     } finally {
       setFindingChannels(false);
-      setStep(4);
+      setStep(5);
     }
   };
 
   const toggleTracking = async (competitor) => {
+    const nextStatus = competitor.status === 'tracked' ? 'ignored' : 'tracked';
+    setTrackingBusy((current) => ({ ...current, [competitor.id]: true }));
     try {
-      await setCompetitorStatus(competitor.id, competitor.status === 'tracked' ? 'ignored' : 'tracked');
+      // Phase 2: tracking an AI-suggested competitor for the first time
+      // triggers a live web check server-side, so this call can take a beat
+      // longer than a plain status flip — the button shows a spinner for it.
+      const result = await setCompetitorStatus(competitor.id, nextStatus);
+      if (result.verification) {
+        setUnverified((current) => ({ ...current, [competitor.id]: !result.verification.verified }));
+      }
       await refreshCompetitors();
     } catch (caught) {
       setError(caught.message);
+    } finally {
+      setTrackingBusy((current) => ({ ...current, [competitor.id]: false }));
+    }
+  };
+
+  // Tracks every not-yet-tracked competitor in one go, so a user with a long
+  // AI-suggested list doesn't have to click "Track" once per row. Runs the
+  // per-competitor status calls (each one a live web check the first time an
+  // AI suggestion is tracked, see toggleTracking above) in parallel rather
+  // than one after another, and keeps going even if one of them fails.
+  const trackAllCompetitors = async () => {
+    const targets = untrackedCompetitors;
+    if (!targets.length) return;
+    setTrackingAllBusy(true);
+    setTrackingBusy((current) => ({
+      ...current,
+      ...Object.fromEntries(targets.map((competitor) => [competitor.id, true])),
+    }));
+    try {
+      const results = await Promise.allSettled(
+        targets.map((competitor) => setCompetitorStatus(competitor.id, 'tracked')),
+      );
+      setUnverified((current) => {
+        const next = { ...current };
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value.verification) {
+            next[targets[index].id] = !result.value.verification.verified;
+          }
+        });
+        return next;
+      });
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed) {
+        setError(`Tracked ${targets.length - failed} of ${targets.length} competitors — ${failed} failed.`);
+      }
+      await refreshCompetitors();
+    } finally {
+      setTrackingBusy((current) => ({
+        ...current,
+        ...Object.fromEntries(targets.map((competitor) => [competitor.id, false])),
+      }));
+      setTrackingAllBusy(false);
     }
   };
 
@@ -1305,11 +1362,21 @@ export default function CompetitorOnboarding() {
           </div>
 
           <div className="cs-panel">
-            <h2 className="cs-panel-title"><Radar size={16} /> Your competitors</h2>
-            <p className="cs-panel-hint">
-              <strong>{trackedCompetitors.length}</strong> tracked. Channels are found and used
-              immediately once a competitor is tracked, manual or AI-suggested.
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <h2 className="cs-panel-title" style={{ marginBottom: 4 }}><Radar size={16} /> Your competitors</h2>
+                <p className="cs-panel-hint" style={{ marginBottom: 0 }}>
+                  <strong>{trackedCompetitors.length}</strong> tracked. Channels are found and used
+                  immediately once a competitor is tracked, manual or AI-suggested.
+                </p>
+              </div>
+              {untrackedCompetitors.length ? (
+                <button type="button" className="cs-btn cs-btn-sm" onClick={trackAllCompetitors} disabled={trackingAllBusy}>
+                  {trackingAllBusy ? <span className="cs-spinner" /> : <Check size={13} />}
+                  {trackingAllBusy ? 'Tracking all...' : `Track all (${untrackedCompetitors.length})`}
+                </button>
+              ) : null}
+            </div>
 
             {!competitors.length ? (
               <div className="cs-empty">
@@ -1351,6 +1418,14 @@ export default function CompetitorOnboarding() {
                           <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                             {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
                           </span>
+                          {tracked && unverified[competitor.id] ? (
+                            <span
+                              className="cs-pill cs-pill-signal"
+                              title="Tracked, but a live web check couldn't confirm this company exists — worth a manual look."
+                            >
+                              Couldn’t verify
+                            </span>
+                          ) : null}
                           <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleChannels(competitor.id)}>
                             <Link2 size={13} /> {channelsOpen ? 'Hide sources' : 'Sources'}
                           </button>
@@ -1358,8 +1433,15 @@ export default function CompetitorOnboarding() {
                             type="button"
                             className={`cs-btn cs-btn-sm${tracked ? ' cs-btn-primary' : ''}`}
                             onClick={() => toggleTracking(competitor)}
+                            disabled={Boolean(trackingBusy[competitor.id])}
                           >
-                            {tracked ? <><Check size={13} /> Tracking</> : 'Track'}
+                            {trackingBusy[competitor.id] ? (
+                              <span className="cs-spinner" />
+                            ) : tracked ? (
+                              <><Check size={13} /> Tracking</>
+                            ) : (
+                              'Track'
+                            )}
                           </button>
                         </div>
                       </div>
