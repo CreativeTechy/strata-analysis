@@ -905,7 +905,22 @@ export default function ProjectsPage({
     setFillMode('ai');
     setWizardStep(STEP.discovery);
     try {
-      await generateMetadataFromAi();
+      const suggestions = await generateMetadataFromAi();
+      if (!suggestions) return;
+      const nextDraft = {
+        ...draft,
+        target_audience: suggestions.target_audience || draft.target_audience,
+        usernames: Array.isArray(suggestions.usernames)
+          ? sanitizeTermArray([...draft.usernames, ...suggestions.usernames])
+          : draft.usernames,
+        hashtags: Array.isArray(suggestions.hashtags)
+          ? sanitizeTermArray([...draft.hashtags, ...suggestions.hashtags])
+          : draft.hashtags,
+        keywords: Array.isArray(suggestions.keywords)
+          ? sanitizeTermArray([...draft.keywords, ...suggestions.keywords])
+          : draft.keywords,
+      };
+      await discoverSourcesFromDraft(nextDraft);
     } catch {
       // The UI already stores the error state for the user.
     }
@@ -1186,9 +1201,13 @@ export default function ProjectsPage({
                 type="button"
                 className={`btn-secondary ${fillMode === 'ai' ? 'active' : ''}`}
                 onClick={chooseAiFill}
-                disabled={!step1Complete || isSaving || isGeneratingMetadata}
+                disabled={!step1Complete || isSaving || isGeneratingMetadata || discoveryPhase !== 'idle'}
               >
-                {isGeneratingMetadata ? 'Generating with AI...' : 'Fill by AI'}
+                {isGeneratingMetadata
+                  ? 'Generating with AI...'
+                  : discoveryPhase !== 'idle'
+                  ? DISCOVERY_PHASE_LABELS[discoveryPhase]
+                  : 'Fill by AI'}
               </button>
             </div>
 
@@ -1256,6 +1275,82 @@ export default function ProjectsPage({
                     disabled={isSaving || isGeneratingMetadata}
                   />
                 </div>
+
+                <div className="admin-form-hint">
+                  {isEditRoute
+                    ? 'Selected sources stay reusable across projects. Prefilling looks at the current X accounts, hashtags, and keywords.'
+                    : 'Use AI to prefill sources from the X accounts, hashtags, and keywords above, then assign or add more sources in the next steps.'}
+                </div>
+
+                {lastDiscovery && (
+                  <div
+                    style={{
+                      padding: 14,
+                      borderRadius: 16,
+                      background: 'rgba(255,255,255,0.72)',
+                      border: '1px solid rgba(15, 23, 42, 0.08)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '0.92rem', color: 'var(--text-dark)' }}>Discovery results</strong>
+                      <span className="panel-chip">
+                        {(lastDiscovery.resolved_urls || []).length} source{(lastDiscovery.resolved_urls || []).length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+
+                    {(lastDiscovery.resolved_urls || []).length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {(lastDiscovery.resolved_urls || []).map((url) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              fontSize: '0.84rem',
+                              color: 'var(--text-dark)',
+                              textDecoration: 'none',
+                              padding: '10px 12px',
+                              borderRadius: 12,
+                              background: 'rgba(15, 23, 42, 0.04)',
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {url}
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                        No valid URLs were resolved from the X accounts, hashtags, and keywords for this save.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {discoveryPhase !== 'idle' && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {DISCOVERY_STEPS.map((step) => {
+                      const stepIndex = DISCOVERY_STEPS.findIndex((s) => s.key === step.key);
+                      const currentIndex = DISCOVERY_STEPS.findIndex((s) => s.key === discoveryPhase);
+                      const state = stepIndex < currentIndex ? 'done' : stepIndex === currentIndex ? 'active' : 'pending';
+                      return (
+                        <span
+                          key={step.key}
+                          className={`panel-chip ${state === 'done' ? 'success' : state === 'active' ? 'warning' : 'muted'}`}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                          {state === 'active' && <RefreshCw size={12} className="spin" />}
+                          {state === 'done' && <Check size={12} />}
+                          {step.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
 
                 <div className="project-wizard-nav-row">
                   <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5, maxWidth: 480 }}>
@@ -1682,118 +1777,9 @@ export default function ProjectsPage({
                 </div>
               </div>
 
-              {metadataError && (
-                <div
-                  style={{
-                    padding: '12px 14px',
-                    borderRadius: 14,
-                    background: 'rgba(255, 71, 87, 0.08)',
-                    border: '1px solid rgba(255, 71, 87, 0.16)',
-                    color: '#b42318',
-                    fontSize: '0.84rem',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {metadataError}
-                </div>
-              )}
-
-              <div className="admin-form-hint">
-                {isEditRoute
-                  ? 'Selected sources stay reusable across projects. Prefilling looks at the current X accounts, hashtags, and keywords.'
-                  : 'Use AI to prefill sources from the final X accounts, hashtags, and keywords, then create the project row.'}
-              </div>
-
-              {lastDiscovery && (
-                <div
-                  style={{
-                    padding: 14,
-                    borderRadius: 16,
-                    background: 'rgba(255,255,255,0.72)',
-                    border: '1px solid rgba(15, 23, 42, 0.08)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <strong style={{ fontSize: '0.92rem', color: 'var(--text-dark)' }}>Discovery results</strong>
-                    <span className="panel-chip">
-                      {(lastDiscovery.resolved_urls || []).length} source{(lastDiscovery.resolved_urls || []).length === 1 ? '' : 's'}
-                    </span>
-                  </div>
-
-                  {(lastDiscovery.resolved_urls || []).length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {(lastDiscovery.resolved_urls || []).map((url) => (
-                        <a
-                          key={url}
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            fontSize: '0.84rem',
-                            color: 'var(--text-dark)',
-                            textDecoration: 'none',
-                            padding: '10px 12px',
-                            borderRadius: 12,
-                            background: 'rgba(15, 23, 42, 0.04)',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          {url}
-                        </a>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                      No valid URLs were resolved from the X accounts, hashtags, and keywords for this save.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {discoveryPhase !== 'idle' && (
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {DISCOVERY_STEPS.map((step) => {
-                    const stepIndex = DISCOVERY_STEPS.findIndex((s) => s.key === step.key);
-                    const currentIndex = DISCOVERY_STEPS.findIndex((s) => s.key === discoveryPhase);
-                    const state = stepIndex < currentIndex ? 'done' : stepIndex === currentIndex ? 'active' : 'pending';
-                    return (
-                      <span
-                        key={step.key}
-                        className={`panel-chip ${state === 'done' ? 'success' : state === 'active' ? 'warning' : 'muted'}`}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                      >
-                        {state === 'active' && <RefreshCw size={12} className="spin" />}
-                        {state === 'done' && <Check size={12} />}
-                        {step.label}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-
               <div className="project-wizard-final-actions">
                 <button className="btn-secondary wizard-btn-fixed" type="button" onClick={() => setWizardStep(STEP.schedule)} disabled={isSaving}>
                   Back
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary wizard-btn-grow"
-                  onClick={() => discoverSourcesFromDraft()}
-                  disabled={!step1Complete || !step2Complete || isSaving || discoveryPhase !== 'idle' || isGeneratingMetadata}
-                >
-                  {discoveryPhase !== 'idle' ? (
-                    <>
-                      {discoveryPhase === 'success' ? <Check size={18} /> : <RefreshCw size={18} className="spin" />}
-                      {' '}{DISCOVERY_PHASE_LABELS[discoveryPhase]}
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={18} /> Prefill sources with AI
-                    </>
-                  )}
                 </button>
                 <button className="btn-primary wizard-btn-grow" onClick={submit} disabled={isSaving || !step1Complete || !step3Complete}>
                   {isSaving ? (

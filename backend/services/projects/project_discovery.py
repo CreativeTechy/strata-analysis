@@ -18,7 +18,7 @@ from parsel import Selector
 
 import config
 from llm_client import chat_completion
-from services.sources.sources_store import create_source
+from services.sources.sources_store import _default_name, create_source
 from services.projects.projects_store import set_project_sources
 
 SEARCH_HEADERS = {
@@ -211,15 +211,35 @@ def _search_bing(query, limit=5):
     return results
 
 
+OPINION_QUERY_SITES = ("reddit.com", "trustpilot.com", "yelp.com")
+
+
+def _opinion_queries(subject):
+    if not subject:
+        return []
+    queries = [
+        f"{subject} reviews",
+        f"{subject} customer reviews",
+        f"{subject} opinions",
+        f"{subject} complaints",
+    ]
+    queries.extend(f"site:{site} {subject}" for site in OPINION_QUERY_SITES)
+    return queries
+
+
 def _build_queries(project):
     terms = []
     terms.extend(_clean_terms(project.get("hashtags")))
     terms.extend(_clean_terms(project.get("keywords")))
     terms.extend(_clean_terms(project.get("usernames")))
     name = str(project.get("name") or "").strip()
-    description = str(project.get("description") or "").strip()
 
-    combined = []
+    # People's opinions are almost always discussed under the project's own
+    # name (reviews, forum threads, complaints) rather than under whichever
+    # hashtags/keywords happen to be set, so the name-based queries go first
+    # and survive the [:12] cap even when there are many terms.
+    combined = _opinion_queries(name)
+
     for term in terms:
         query_term = _search_term(term)
         if not query_term:
@@ -227,8 +247,7 @@ def _build_queries(project):
         combined.append(query_term)
         if name:
             combined.append(f"{name} {query_term}")
-        if description:
-            combined.append(f"{query_term} {description[:80]}")
+        combined.extend(_opinion_queries(query_term))
         combined.append(f"site:x.com {query_term}")
         combined.append(f"site:twitter.com {query_term}")
         if not query_term.startswith("@"):
@@ -238,7 +257,16 @@ def _build_queries(project):
     if name and not combined:
         combined.append(name)
 
-    return combined[:12]
+    seen = set()
+    deduped = []
+    for query in combined:
+        key = query.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(query)
+
+    return deduped[:12]
 
 
 def _fallback_candidates(project):
@@ -249,15 +277,29 @@ def _fallback_candidates(project):
     terms.extend(_clean_terms(project.get("usernames")))
     terms = [_search_term(term) for term in terms if _search_term(term)]
 
+    # The name itself is the subject people actually leave reviews/opinions
+    # under, so it needs to be a fallback subject even when no hashtags,
+    # keywords, or usernames were set on the project.
+    subjects = []
+    seen_subjects = set()
+    for subject in [name] + terms:
+        key = subject.lower()
+        if not subject or key in seen_subjects:
+            continue
+        seen_subjects.add(key)
+        subjects.append(subject)
+
     candidates = []
     seen = set()
-    for term in terms:
-        x_query = quote_plus(term)
-        x_url = f"https://x.com/search?q={x_query}&src=typed_query&f=live"
-        google_news_url = f"https://news.google.com/search?q={quote_plus(term)}"
+    for subject in subjects:
+        query = quote_plus(subject)
+        reddit_url = f"https://www.reddit.com/search/?q={query}"
+        x_url = f"https://x.com/search?q={query}&src=typed_query&f=live"
+        google_news_url = f"https://news.google.com/search?q={query}"
         for url, title, source in (
-            (x_url, f"X search: {term}", "x-search"),
-            (google_news_url, f"News search: {term}", "news-search"),
+            (reddit_url, f"Reddit discussion: {subject}", "reddit-search"),
+            (x_url, f"X search: {subject}", "x-search"),
+            (google_news_url, f"News search: {subject}", "news-search"),
         ):
             normalized = _normalize_url(url)
             if not normalized or normalized in seen:
@@ -267,9 +309,9 @@ def _fallback_candidates(project):
                 {
                     "url": normalized,
                     "title": title,
-                    "snippet": name or term,
+                    "snippet": name or subject,
                     "source": source,
-                    "query": term,
+                    "query": subject,
                 }
             )
     return candidates
@@ -311,14 +353,23 @@ def _ai_source_suggestions(project):
 
     project_context = _project_context(project)
     prompt = (
-        "You are helping discover sources for a project.\n"
-        "Use only the project hashtags, keywords, and usernames to propose likely sources.\n"
+        "You are helping discover sources that capture ordinary people's OPINIONS and REVIEWS about the "
+        "subject of a project (a brand, product, place, person, or topic) - not official/marketing pages "
+        "and not plain news coverage.\n"
+        "Work out the subject from the project name and description below, then propose sources where "
+        "real people discuss, rate, or complain about it - for example Reddit threads and subreddits, "
+        "review platforms (Trustpilot, Yelp, Google Reviews), forums, Q&A sites, and social media "
+        "discussion or comment threads.\n"
+        "For example, for a project named \"Starbucks Coffee\", prefer sources like r/starbucks or other "
+        "Reddit threads about Starbucks, Starbucks review pages on Trustpilot/Yelp, and similar public "
+        "opinion pages - not Starbucks' own corporate site or generic news articles about the company.\n"
         "Return ONLY JSON with this shape:\n"
         '{ "suggested_sources": [ { "kind": "url|domain|rss", "value": "https://...", "title": "...", "reason": "..." } ], "links": ["https://..."] }\n'
         "Return 5 to 10 suggestions when possible.\n"
-        "Suggested sources may be full article URLs, RSS feed URLs, publisher domains, or official social profile URLs.\n"
-        "Prefer official publisher or source URLs. Do not include Bing, DuckDuckGo, or generic search results.\n"
-        "If you return a domain, make it the publisher's main domain or homepage. If you return rss, make it the actual feed URL.\n\n"
+        "Prefer specific review/discussion pages over homepages. Do not include Bing, DuckDuckGo, or "
+        "generic search-engine result pages, and avoid the subject's own official/corporate site.\n"
+        "If you return a domain, make it the specific review or community page's domain, not just a "
+        "homepage. If you return rss, make it the actual feed URL.\n\n"
         f"Project context:\n{project_context or '(none)'}\n"
     )
 
