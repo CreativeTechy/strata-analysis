@@ -195,7 +195,7 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None):
     clauses = []
     params = []
 
@@ -229,6 +229,11 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
             clauses.append("id = any(%s)")
             params.append(article_ids)
 
+    source_url_value = _normalize_text(source_url)
+    if source_url_value:
+        clauses.append("lower(source_url) = %s")
+        params.append(source_url_value.lower())
+
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
         clauses.append("coalesce(published, created_at) >= %s")
@@ -244,7 +249,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -258,6 +263,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         project_id=project_id,
         date_from=date_from,
         date_to=date_to,
+        source_url=source_url,
     )
 
     try:
@@ -285,7 +291,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         return [], 0
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None):
     if not config.DATABASE_URL:
         return []
 
@@ -306,6 +312,7 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             select=select,
             date_from=date_from,
             date_to=date_to,
+            source_url=source_url,
         )
         if not batch:
             break
@@ -429,7 +436,7 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
+def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
@@ -439,6 +446,7 @@ def _search_results(search=None, sentiment=None, category=None, project_id=None,
         limit=SEARCH_SCAN_LIMIT,
         date_from=date_from,
         date_to=date_to,
+        source_url=source_url,
     )
     ranked_rows, matched_rows = _rank_search_rows(rows, search)
     if _normalize_text(search):
@@ -757,7 +765,7 @@ def _topic_summary(rows):
     }
 
 
-def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -769,6 +777,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             sentiment=sentiment,
             category=category,
             project_id=project_id,
+            source_url=source_url,
         )
         rows = rows[offset:offset + limit]
         rows = _attach_project_similarity_scores(rows, project_id)
@@ -789,6 +798,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         project_id=project_id,
         order=f"{field}.{direction}",
         select=ARTICLES_SELECT,
+        source_url=source_url,
     )
     rows = _attach_project_similarity_scores(rows, project_id)
     return {
@@ -800,7 +810,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None):
     search_text = _normalize_text(search)
     if search_text:
         rows, _ = _search_results(
@@ -808,6 +818,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             sentiment=sentiment,
             category=category,
             project_id=project_id,
+            source_url=source_url,
         )
         return _attach_project_similarity_scores(rows, project_id)
 
@@ -826,6 +837,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             project_id=project_id,
             order=f"{field}.{direction}",
             select=ARTICLES_SELECT,
+            source_url=source_url,
         )
         if not batch:
             break
