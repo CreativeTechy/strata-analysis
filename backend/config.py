@@ -149,6 +149,15 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+# --- Hugging Face Inference API (optional) -----------------------------------
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN", os.environ.get("HF_TOKEN", "")).strip()
+# Leave unset (the default) to use HF's shared "hf-inference" provider
+# routing - InferenceClient resolves the current host itself, so this repo
+# doesn't hardcode a URL that HF can (and has) moved. Only set this to point
+# at a dedicated HF Inference Endpoint's own URL instead.
+HF_API_BASE_URL = os.environ.get("HF_API_BASE_URL", "").strip()
+HF_API_TIMEOUT_SECONDS = float(os.environ.get("HF_API_TIMEOUT_SECONDS", "30") or 30)
+
 # Dedicated sentiment classifier (see sentiment_classifier.py) - the sole
 # source of article `overall_sentiment`/`sentiment`. The LLM is never used
 # for sentiment, so there is no toggle to fall back to it; if the classifier
@@ -157,8 +166,11 @@ SENTIMENT_CLASSIFIER_MODEL = os.environ.get(
     "SENTIMENT_CLASSIFIER_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest"
 ).strip()
 # "cpu", "cuda"/"cuda:0", or "auto" (use CUDA if torch reports it available, else CPU).
+# Only relevant when SENTIMENT_CLASSIFIER_PROVIDER is "local".
 SENTIMENT_CLASSIFIER_DEVICE = os.environ.get("SENTIMENT_CLASSIFIER_DEVICE", "cpu").strip()
 SENTIMENT_CONFIDENCE_THRESHOLD = float(os.environ.get("SENTIMENT_CONFIDENCE_THRESHOLD", "0.55") or 0.55)
+# "local" (default) or "hf_api" - see the Hugging Face Inference API section above.
+SENTIMENT_CLASSIFIER_PROVIDER = os.environ.get("SENTIMENT_CLASSIFIER_PROVIDER", "local").strip().lower()
 
 
 # --- Modular analysis pipeline (backend/analysis/) ---------------------------
@@ -178,10 +190,13 @@ SENTIMENT_CONFIDENCE_THRESHOLD = float(os.environ.get("SENTIMENT_CONFIDENCE_THRE
 CLASSIFICATION_MODEL = os.environ.get(
     "CLASSIFICATION_MODEL", "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
 ).strip()
+# Only relevant when CLASSIFICATION_PROVIDER is "local".
 CLASSIFICATION_DEVICE = os.environ.get("CLASSIFICATION_DEVICE", "cpu").strip()
 CLASSIFICATION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("CLASSIFICATION_CONFIDENCE_THRESHOLD", "0.4") or 0.4
 )
+# "local" (default) or "hf_api" - see the Hugging Face Inference API section above.
+CLASSIFICATION_PROVIDER = os.environ.get("CLASSIFICATION_PROVIDER", "local").strip().lower()
 
 # Structured extraction (summary/feedback lists/opinions/ideas/key points) now
 # goes through the configured LLM provider (llm_client.chat_completion), the

@@ -8,18 +8,21 @@ reliably and cheaply, so it's pulled out into its own path rather than
 trusted to the shared enrichment prompt.
 
 Model: `SENTIMENT_CLASSIFIER_MODEL` (default
-"cardiffnlp/twitter-roberta-base-sentiment-latest"), run on
-`SENTIMENT_CLASSIFIER_DEVICE` ("cpu" or "cuda"/"cuda:0"). That model is
-3-class (positive/negative/neutral) and can't express "mixed" - rather than
-force a "mixed" verdict out of logic that isn't there, this simply never
-returns "mixed".
+"cardiffnlp/twitter-roberta-base-sentiment-latest"). That model is 3-class
+(positive/negative/neutral) and can't express "mixed" - rather than force a
+"mixed" verdict out of logic that isn't there, this simply never returns
+"mixed".
 
-`transformers` is already a transitive dependency of sentence-transformers
-(see requirements.txt), so this normally requires no new install. If it's
-missing, misconfigured, or the model fails to load or errors at inference
-time, classify_sentiment() returns None - callers (enrich.py) must treat
-that as "no result" and fall back to a deterministic "neutral" plus logging,
-never to the LLM.
+`SENTIMENT_CLASSIFIER_PROVIDER` picks how the model actually runs: "local"
+(default) loads it in-process via `transformers.pipeline` on
+`SENTIMENT_CLASSIFIER_DEVICE` ("cpu" or "cuda"/"cuda:0"); "hf_api" instead
+calls it through Hugging Face's hosted Inference API (see
+hf_inference_client.py), which needs no local `transformers`/torch install
+but adds a network round trip and depends on HF's own availability/rate
+limits. If the classifier is unavailable, misconfigured, or the model fails
+to load/call or errors at inference time, classify_sentiment() returns
+None - callers (enrich.py) must treat that as "no result" and fall back to
+a deterministic "neutral" plus logging, never to the LLM.
 """
 
 from __future__ import annotations
@@ -78,6 +81,9 @@ def classify_sentiment(text: str):
     produce a usable label - callers must treat None as "no result" and
     default sentiment to "neutral" (with logging), never fall back to the
     LLM.
+
+    Runs locally (transformers.pipeline) or via HF's hosted Inference API,
+    per config.SENTIMENT_CLASSIFIER_PROVIDER - see hf_inference_client.py.
     """
     model_name = (config.SENTIMENT_CLASSIFIER_MODEL or "").strip()
     if not model_name:
@@ -88,24 +94,55 @@ def classify_sentiment(text: str):
     if not text:
         return None
 
+    provider = (config.SENTIMENT_CLASSIFIER_PROVIDER or "local").strip().lower()
+    if provider == "hf_api":
+        return _classify_via_hf_api(model_name, text[:512])
+    return _classify_via_local_pipeline(model_name, text[:512])
+
+
+def _classify_via_local_pipeline(model_name: str, text: str):
     classifier = _load_pipeline(model_name, config.SENTIMENT_CLASSIFIER_DEVICE or "cpu")
     if classifier is None:
         return None
 
     try:
-        result = classifier(text[:512])[0]
+        result = classifier(text)[0]
     except Exception:
         logger.exception("Sentiment classifier inference failed")
         return None
 
-    label = (result.get("label") or "").strip().lower()
+    return _normalize_label_score(result.get("label"), result.get("score"))
+
+
+def _classify_via_hf_api(model_name: str, text: str):
+    try:
+        from hf_inference_client import HFInferenceError, classify_text
+    except Exception:
+        logger.exception("hf_inference_client import failed")
+        return None
+
+    try:
+        results = classify_text(model_name, text)
+    except HFInferenceError:
+        logger.exception("HF Inference API sentiment classification failed")
+        return None
+
+    if not results:
+        return None
+
+    top = max(results, key=lambda item: item.get("score") or 0.0)
+    return _normalize_label_score(top.get("label"), top.get("score"))
+
+
+def _normalize_label_score(raw_label, raw_score):
+    label = (raw_label or "").strip().lower()
     label = _LABEL_ALIASES.get(label, label)
     if label not in ("positive", "negative", "neutral"):
         return None
 
     try:
-        score = float(result.get("score"))
-    except Exception:
+        score = float(raw_score)
+    except (TypeError, ValueError):
         score = 0.0
 
     return {"label": label, "score": score}

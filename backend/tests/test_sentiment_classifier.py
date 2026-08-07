@@ -89,5 +89,46 @@ class ClassifySentimentTests(unittest.TestCase):
             self.assertIsNone(sc.classify_sentiment("great product"))
 
 
+class ClassifySentimentHfApiTests(unittest.TestCase):
+    def setUp(self):
+        self._original_model = config.SENTIMENT_CLASSIFIER_MODEL
+        self._original_provider = config.SENTIMENT_CLASSIFIER_PROVIDER
+        config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
+        config.SENTIMENT_CLASSIFIER_PROVIDER = "hf_api"
+
+    def tearDown(self):
+        config.SENTIMENT_CLASSIFIER_MODEL = self._original_model
+        config.SENTIMENT_CLASSIFIER_PROVIDER = self._original_provider
+
+    def test_successful_classification_is_normalized(self):
+        with patch("hf_inference_client.classify_text", return_value=[{"label": "LABEL_2", "score": 0.87}]):
+            result = sc.classify_sentiment("I love this")
+        self.assertEqual(result, {"label": "positive", "score": 0.87})
+
+    def test_picks_highest_scoring_label_when_multiple_are_returned(self):
+        fake_results = [
+            {"label": "negative", "score": 0.1},
+            {"label": "positive", "score": 0.75},
+            {"label": "neutral", "score": 0.15},
+        ]
+        with patch("hf_inference_client.classify_text", return_value=fake_results):
+            result = sc.classify_sentiment("I love this")
+        self.assertEqual(result, {"label": "positive", "score": 0.75})
+
+    def test_empty_result_list_returns_none(self):
+        with patch("hf_inference_client.classify_text", return_value=[]):
+            self.assertIsNone(sc.classify_sentiment("I love this"))
+
+    def test_api_error_returns_none_instead_of_raising(self):
+        from hf_inference_client import HFInferenceError
+
+        with patch("hf_inference_client.classify_text", side_effect=HFInferenceError("boom")):
+            self.assertIsNone(sc.classify_sentiment("I love this"))
+
+    def test_unrecognized_label_returns_none(self):
+        with patch("hf_inference_client.classify_text", return_value=[{"label": "surprise", "score": 0.9}]):
+            self.assertIsNone(sc.classify_sentiment("huh"))
+
+
 if __name__ == "__main__":
     unittest.main()

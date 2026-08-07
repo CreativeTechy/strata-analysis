@@ -79,5 +79,51 @@ class ClassificationStageTests(unittest.TestCase):
         self.assertTrue(result["low_confidence"])
 
 
+class ClassificationStageHfApiTests(unittest.TestCase):
+    def setUp(self):
+        self._original_model = config.CLASSIFICATION_MODEL
+        self._original_threshold = config.CLASSIFICATION_CONFIDENCE_THRESHOLD
+        self._original_provider = config.CLASSIFICATION_PROVIDER
+        config.CLASSIFICATION_MODEL = "fake/model"
+        config.CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.4
+        config.CLASSIFICATION_PROVIDER = "hf_api"
+
+    def tearDown(self):
+        config.CLASSIFICATION_MODEL = self._original_model
+        config.CLASSIFICATION_CONFIDENCE_THRESHOLD = self._original_threshold
+        config.CLASSIFICATION_PROVIDER = self._original_provider
+
+    def test_confident_result_maps_back_to_snake_case_key(self):
+        fake_result = {
+            "labels": [labels.CATEGORY_HYPOTHESIS_LABELS["review"], labels.CATEGORY_HYPOTHESIS_LABELS["news"]],
+            "scores": [0.8, 0.1],
+        }
+        with patch("hf_inference_client.classify_zero_shot", return_value=fake_result):
+            result = classification.classify_category("This car review covers handling and comfort.")
+        self.assertEqual(result["label"], "review")
+        self.assertFalse(result["low_confidence"])
+
+    def test_low_confidence_falls_back_to_default(self):
+        fake_result = {"labels": [labels.CATEGORY_HYPOTHESIS_LABELS["review"]], "scores": [0.1]}
+        with patch("hf_inference_client.classify_zero_shot", return_value=fake_result):
+            result = classification.classify_category("ambiguous text")
+        self.assertEqual(result["label"], "general_article")
+        self.assertTrue(result["low_confidence"])
+
+    def test_api_error_falls_back_to_defaults(self):
+        from hf_inference_client import HFInferenceError
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=HFInferenceError("boom")):
+            result = classification.classify_category("text")
+        self.assertEqual(result["label"], "general_article")
+        self.assertTrue(result["low_confidence"])
+
+    def test_no_model_configured_falls_back_to_defaults(self):
+        config.CLASSIFICATION_MODEL = ""
+        result = classification.classify_category("text")
+        self.assertEqual(result["label"], "general_article")
+        self.assertTrue(result["low_confidence"])
+
+
 if __name__ == "__main__":
     unittest.main()
