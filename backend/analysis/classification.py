@@ -2,11 +2,14 @@
 (MoritzLaurer/mDeBERTa-v3-base-mnli-xnli by default).
 
 Runs as a `transformers` zero-shot-classification pipeline, lazy-loaded and
-reused across articles. Category, writer_tone, and article_tone are three
-independent zero-shot calls against the same model/text, since each asks a
-different question of it (writer_tone and article_tone are deliberately
-never conflated here - that only happens later, deterministically, in
-enrich.py's _compute_overall_tone).
+reused across articles - or, when `config.CLASSIFICATION_PROVIDER` is
+"hf_api" instead of the default "local", as calls to Hugging Face's hosted
+Inference API (see hf_inference_client.py), trading the local torch/
+transformers install for a network round trip per chunk. Category,
+writer_tone, and article_tone are three independent zero-shot calls against
+the same model/text, since each asks a different question of it
+(writer_tone and article_tone are deliberately never conflated here - that
+only happens later, deterministically, in enrich.py's _compute_overall_tone).
 """
 
 from __future__ import annotations
@@ -55,33 +58,68 @@ def _get_pipeline():
     return _load_pipeline(model_name, config.CLASSIFICATION_DEVICE or "cpu")
 
 
-def _classify_chunks(chunks, candidate_labels, hypothesis_template):
+def _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_template):
     classifier = _get_pipeline()
     if classifier is None:
         return None
+    try:
+        result = classifier(
+            chunk,
+            candidate_labels,
+            hypothesis_template=hypothesis_template,
+            multi_label=False,
+        )
+    except Exception:
+        logger.exception("Zero-shot classification inference failed")
+        return None
+    result_labels = result.get("labels") or []
+    result_scores = result.get("scores") or []
+    if not result_labels or not result_scores:
+        return None
+    return {"label": result_labels[0], "score": result_scores[0]}
 
+
+def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
+    model_name = (config.CLASSIFICATION_MODEL or "").strip()
+    if not model_name:
+        logger.warning("CLASSIFICATION_MODEL is empty; classification will fall back to defaults.")
+        return None
+    try:
+        from hf_inference_client import HFInferenceError, classify_zero_shot
+    except Exception:
+        logger.exception("hf_inference_client import failed")
+        return None
+    try:
+        result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
+    except HFInferenceError:
+        logger.exception("HF Inference API zero-shot classification failed")
+        return None
+    result_labels = result.get("labels") or []
+    result_scores = result.get("scores") or []
+    if not result_labels or not result_scores:
+        return None
+    return {"label": result_labels[0], "score": result_scores[0]}
+
+
+def _classify_one(chunk, candidate_labels, hypothesis_template):
+    provider = (config.CLASSIFICATION_PROVIDER or "local").strip().lower()
+    if provider == "hf_api":
+        return _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template)
+    return _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_template)
+
+
+def _classify_chunks(chunks, candidate_labels, hypothesis_template):
     score_by_label = defaultdict(float)
     count_by_label = defaultdict(int)
     for chunk in chunks:
         chunk = (chunk or "").strip()
         if not chunk:
             continue
-        try:
-            result = classifier(
-                chunk,
-                candidate_labels,
-                hypothesis_template=hypothesis_template,
-                multi_label=False,
-            )
-        except Exception:
-            logger.exception("Zero-shot classification inference failed")
+        result = _classify_one(chunk, candidate_labels, hypothesis_template)
+        if not result:
             continue
-        result_labels = result.get("labels") or []
-        result_scores = result.get("scores") or []
-        if not result_labels or not result_scores:
-            continue
-        score_by_label[result_labels[0]] += result_scores[0]
-        count_by_label[result_labels[0]] += 1
+        score_by_label[result["label"]] += result["score"]
+        count_by_label[result["label"]] += 1
 
     if not score_by_label:
         return None
