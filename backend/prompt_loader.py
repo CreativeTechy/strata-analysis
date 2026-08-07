@@ -1,4 +1,4 @@
-"""Loads LLM system prompts from the repo-level storage/ folder as plain text.
+"""Loads LLM system prompts from the repo-level storage/prompts/ folder as text.
 
 Keeping prompt copy in text files instead of Python string constants lets it be
 edited and reviewed as content rather than code, and gives every module one
@@ -11,10 +11,11 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
+PROMPTS_DIR = STORAGE_DIR / "prompts"
 
 
 def load_prompt(filename: str, fallback: str = "") -> str:
     try:
-        return (STORAGE_DIR / filename).read_text(encoding="utf-8").strip()
+        return (PROMPTS_DIR / filename).read_text(encoding="utf-8").strip()
     except Exception:
         return fallback.strip()

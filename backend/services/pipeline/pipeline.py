@@ -24,6 +24,7 @@ from services.pipeline.source_diagnostics import load_source_diagnostics, summar
 # which lives at backend root) and the enrich-stage subprocess below.
 BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_DIR = BASE_DIR.parent / "storage"
+RUNS_DIR = STORAGE_DIR / "runs"
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -166,7 +167,8 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
     env["PIPELINE_RUN_ID"] = run_id
     if project_id is not None:
         env["PIPELINE_PROJECT_ID"] = str(project_id)
-    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=STORAGE_DIR) as run_dir:
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=RUNS_DIR) as run_dir:
         run_path = Path(run_dir)
         raw_file = run_path / "articles.raw.json"
         enriched_file = run_path / "articles.enriched.json"
