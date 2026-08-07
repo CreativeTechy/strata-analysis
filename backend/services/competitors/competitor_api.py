@@ -24,6 +24,7 @@ from services.competitors import competitor_discovery
 from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
+from services.competitors import document_analysis
 import db
 from services.auth.auth import require_permission
 from services.pipeline.pipeline import run_scraper_pipeline
@@ -318,6 +319,25 @@ def set_document_article_status(
 def approve_all_document_articles(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
     _project_or_404(project_id)
     return {"articles": competitor_document_articles.approve_all(project_id)}
+
+
+@router.post("/studies/{project_id}/analyze-documents")
+def analyze_documents(project_id: int, user: dict = Depends(require_permission("competitors.analyze"))):
+    """Offline studies have no competitors to name until their evidence exists.
+
+    Names the companies the approved document articles are actually about,
+    tracks them, then runs the same `generate_findings` an online study uses -
+    see document_analysis.py for why that ordering has to happen here rather
+    than at upload time.
+    """
+    _project_or_404(project_id)
+    result = document_analysis.analyze_documents(project_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {
+        **result,
+        "findings": competitor_analysis.list_findings(project_id),
+    }
 
 
 # --------------------------------------------------------------------------- #

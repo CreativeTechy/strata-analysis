@@ -47,9 +47,9 @@ import {
   Trash2, Upload, X,
 } from 'lucide-react';
 import {
-  PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, approveAllDocumentArticles, avatarGradient,
-  buildProfile, createStudy, deleteDocument, discoverCompetitors, discoverTrackedAccounts, initials, listAccounts,
-  listCompetitors, listDocumentArticles, pollArticleCandidates, pollDiscoveryRun, pollDocumentExtraction,
+  PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyzeDocuments, approveAllDocumentArticles,
+  avatarGradient, buildProfile, createStudy, deleteDocument, discoverCompetitors, discoverTrackedAccounts, initials,
+  listAccounts, listCompetitors, listDocumentArticles, pollArticleCandidates, pollDiscoveryRun, pollDocumentExtraction,
   saveProfile, setCompetitorStatus, setDocumentArticleStatus, setSchedule, uploadDocuments, validateAccount,
 } from '../competitorApi.js';
 import { COUNTRIES, countryLabel } from '../constants/countries.js';
@@ -58,7 +58,9 @@ import '../styles/Competitors.css';
 
 /** Offline swaps step 3 for its own "Review articles" and skips step 4
  *  (Competitors) entirely — there's nothing to track yet, so it's left out of
- *  the chip row rather than shown as passed-through. */
+ *  the chip row rather than shown as passed-through. Step 5 is also swapped:
+ *  there's nothing to re-scrape, so instead of "Schedule" it runs analysis
+ *  straight off the approved articles and shows the resulting report. */
 function getSteps(dataMode) {
   const steps = [
     { id: 1, label: 'Data source', icon: Database },
@@ -69,10 +71,21 @@ function getSteps(dataMode) {
       ? { id: 3, label: 'Review articles', icon: FileCheck }
       : { id: 3, label: 'Market context', icon: Sparkles },
     { id: 4, label: 'Competitors', icon: Radar },
-    { id: 5, label: 'Schedule', icon: CalendarClock },
+    dataMode === 'offline'
+      ? { id: 5, label: 'Analyze & report', icon: ScanText }
+      : { id: 5, label: 'Schedule', icon: CalendarClock },
   ];
   return dataMode === 'offline' ? steps.filter((s) => s.id !== 4) : steps;
 }
+
+// Mirrors document_analysis.py's two-stage shape: name the companies the
+// documents are actually about, then run the same evidence-validation +
+// finding-generation an online study uses.
+const DOCUMENT_ANALYSIS_STAGES = [
+  'Reading approved articles for company names',
+  'Matching evidence to each company',
+  'Writing findings',
+];
 
 const SCRAPE_STAGES = [
   'Fetching your website',
@@ -339,6 +352,9 @@ export default function CompetitorOnboarding() {
   const [decidingCandidate, setDecidingCandidate] = useState({});
   const [approvingAll, setApprovingAll] = useState(false);
 
+  const [analyzingDocuments, setAnalyzingDocuments] = useState(false);
+  const [documentAnalysis, setDocumentAnalysis] = useState(null);
+
   const [competitors, setCompetitors] = useState([]);
   const [rejected, setRejected] = useState([]);
   const [addingManual, setAddingManual] = useState(false);
@@ -572,6 +588,23 @@ export default function CompetitorOnboarding() {
       setError(caught.message);
     } finally {
       setApprovingAll(false);
+    }
+  };
+
+  // Step 5 (offline): names the competitors the approved articles are
+  // actually about, tracks them, then generates one finding card per company
+  // — the same report an online study ends up with, just derived from
+  // documents instead of a live scrape.
+  const runDocumentAnalysis = async () => {
+    setError('');
+    setAnalyzingDocuments(true);
+    try {
+      const result = await analyzeDocuments(studyId);
+      setDocumentAnalysis(result);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setAnalyzingDocuments(false);
     }
   };
 
@@ -1137,7 +1170,7 @@ export default function CompetitorOnboarding() {
               <ArrowLeft size={15} /> Back
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(5)} disabled={reviewingArticles}>
-              <ArrowRight size={15} /> Continue to schedule
+              <ArrowRight size={15} /> Continue to analysis
             </button>
           </div>
         </div>
@@ -1513,46 +1546,80 @@ export default function CompetitorOnboarding() {
         </>
       ) : null}
 
-      {/* ---------------- Step 5: schedule + finish ---------------- */}
-      {step === 5 ? (
+      {/* ---------------- Step 5 (offline): analyze + report ---------------- */}
+      {step === 5 && dataMode === 'offline' ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Globe size={16} /> {dataMode === 'offline' ? "You're set" : 'Keep it current'}</h2>
-          {dataMode === 'offline' ? (
-            <p className="cs-panel-hint">
-              {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
-              {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
-              Automatic re-scraping doesn&rsquo;t apply here since there&rsquo;s nothing to scrape —
-              approved articles are ready whenever you run analysis from the workspace.
-            </p>
-          ) : (
-            <>
-              <p className="cs-panel-hint">
-                {trackedCompetitors.length} competitor{trackedCompetitors.length === 1 ? '' : 's'} ready to
-                track. Re-scrape their sources on a schedule, using the same pipeline scheduler as the
-                rest of Strata.
-              </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
-                <input type="checkbox" checked={scheduleOn} onChange={(event) => setScheduleOn(event.target.checked)} />
-                Scrape competitors automatically
-              </label>
-              {scheduleOn ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
-                  <span>Every</span>
-                  <input className="cs-input" type="number" min="1" style={{ width: 78 }}
-                    value={scheduleDays} onChange={(event) => setScheduleDays(event.target.value)} />
-                  <span>day(s)</span>
-                </div>
-              ) : null}
-            </>
-          )}
+          <h2 className="cs-panel-title"><ScanText size={16} /> Analyze & report</h2>
+          <p className="cs-panel-hint">
+            {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
+            {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
+            We&rsquo;ll read those articles for the companies they&rsquo;re actually about, track each
+            one, then generate a report card per company — the same report an AI-discovered study gets,
+            just built from what you uploaded instead of a live scrape. You can re-run this later from
+            the workspace once you approve more documents.
+          </p>
+
+          {analyzingDocuments ? <StageList stages={DOCUMENT_ANALYSIS_STAGES} /> : null}
+
+          {!analyzingDocuments && documentAnalysis ? (
+            <div className="cs-alert cs-alert-info" style={{ marginBottom: 16 }}>
+              <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                Generated {documentAnalysis.generated} report{documentAnalysis.generated === 1 ? '' : 's'} from{' '}
+                {documentAnalysis.articles_considered} approved article{documentAnalysis.articles_considered === 1 ? '' : 's'}
+                {documentAnalysis.derived_competitors?.length
+                  ? `, covering ${documentAnalysis.derived_competitors.map((c) => c.name).join(', ')}`
+                  : ''}.
+                {documentAnalysis.skipped?.length ? (
+                  <> {documentAnalysis.skipped.length} competitor{documentAnalysis.skipped.length === 1 ? '' : 's'} had no
+                    usable evidence.</>
+                ) : null}
+                {documentAnalysis.derivation_error ? <> {documentAnalysis.derivation_error}</> : null}
+              </span>
+            </div>
+          ) : null}
+
+          {!analyzingDocuments ? (
+            <button type="button" className="cs-btn cs-btn-primary" onClick={runDocumentAnalysis} style={{ marginBottom: 16 }}>
+              <Sparkles size={15} /> {documentAnalysis ? 'Re-run analysis' : 'Run analysis'}
+            </button>
+          ) : null}
 
           <div className="cs-wizard-foot">
-            <button
-              type="button"
-              className="cs-btn cs-btn-ghost"
-              onClick={() => setStep(dataMode === 'offline' ? 3 : 4)}
-              disabled={busy}
-            >
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(3)} disabled={busy}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy}>
+              {busy ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />} Open workspace
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 5 (online): schedule + finish ---------------- */}
+      {step === 5 && dataMode !== 'offline' ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><Globe size={16} /> Keep it current</h2>
+          <p className="cs-panel-hint">
+            {trackedCompetitors.length} competitor{trackedCompetitors.length === 1 ? '' : 's'} ready to
+            track. Re-scrape their sources on a schedule, using the same pipeline scheduler as the
+            rest of Strata.
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
+            <input type="checkbox" checked={scheduleOn} onChange={(event) => setScheduleOn(event.target.checked)} />
+            Scrape competitors automatically
+          </label>
+          {scheduleOn ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
+              <span>Every</span>
+              <input className="cs-input" type="number" min="1" style={{ width: 78 }}
+                value={scheduleDays} onChange={(event) => setScheduleDays(event.target.value)} />
+              <span>day(s)</span>
+            </div>
+          ) : null}
+
+          <div className="cs-wizard-foot">
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(4)} disabled={busy}>
               <ArrowLeft size={15} /> Back
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy}>

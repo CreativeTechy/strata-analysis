@@ -143,6 +143,10 @@ export const deleteAccount = (accountId) => request(`/accounts/${accountId}`, { 
 
 // --- analysis --------------------------------------------------------------
 export const analyze = (id, body) => request(`/studies/${id}/analyze`, { method: 'POST', body });
+/** Offline studies: names the competitors an offline study's approved
+ *  document articles are actually about, tracks them, then runs the same
+ *  finding generation `analyze()` triggers for an online study. */
+export const analyzeDocuments = (id) => request(`/studies/${id}/analyze-documents`, { method: 'POST' });
 export const listFindings = (id, params = {}) => {
   const query = new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),

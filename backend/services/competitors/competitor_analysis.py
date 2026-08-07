@@ -44,6 +44,12 @@ from prompt_loader import load_prompt
 PROMPT_VERSION = "competitor-analysis-2026-07-27"
 
 MIN_BODY_CHARS = 400
+# Uploaded-document candidates are LLM-split excerpts, often a paragraph or two
+# by nature (see document_article_extraction_system_prompt.txt) - holding them
+# to the scraped-article floor would reject good evidence as "too short" simply
+# for being short-form, which is what it's supposed to be.
+MIN_DOCUMENT_BODY_CHARS = 80
+DOCUMENT_URL_PREFIX = "document://"
 MAX_EVIDENCE_PER_CARD = 8
 MAX_TEXT_PER_EVIDENCE = 1800
 DEFAULT_PERIOD_DAYS = 30
@@ -149,7 +155,8 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
         haystack = f"{title}\n{article.get('summary') or ''}\n{body}"
 
         blocked = is_blocked_article(article.get("url"), title)
-        too_short = len(body) < MIN_BODY_CHARS
+        is_document = str(article.get("url") or "").startswith(DOCUMENT_URL_PREFIX)
+        too_short = len(body) < (MIN_DOCUMENT_BODY_CHARS if is_document else MIN_BODY_CHARS)
 
         for competitor_id, aliases in alias_map.items():
             matched = _mentions(haystack, aliases) if aliases else None
