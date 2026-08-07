@@ -42,7 +42,7 @@ from prompt_loader import load_prompt
 from services.competitors.countries import COUNTRIES, country_label, validate_countries
 from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
 
-PROMPT_VERSION = "competitor-discovery-2026-08-05"
+PROMPT_VERSION = "competitor-discovery-2026-08-07"
 
 SIZE_TIERS = ("enterprise", "mid_market", "smb", "startup", "unknown")
 TIER_WEIGHT = {"enterprise": 0, "mid_market": 1, "smb": 2, "startup": 3, "unknown": 4}
@@ -111,23 +111,126 @@ def _as_list(value, limit: int = 8) -> list[str]:
     return out
 
 
+# How many search queries to run for candidate grounding, and how many results to
+# keep from each. Kept small: this is one extra round of latency in front of the
+# discovery LLM call, and the point is to name real local players, not to dump a
+# SERP into the prompt.
+MAX_GROUNDING_QUERIES = 4
+GROUNDING_RESULTS_PER_QUERY = 5
+
+
+def _grounding_queries(profile: dict, target_countries: list[str]) -> list[str]:
+    """Search queries whose results should name the businesses really competing.
+
+    Built from the market/industry the profile already carries rather than the
+    business's own name: searching "competitors of Starbucks" returns the global
+    chains the model would have recalled anyway, whereas "best coffee shops in
+    Lebanon" returns the local independents that are the whole point of this.
+    """
+    market = str(profile.get("market") or "").strip()
+    industry = str(profile.get("industry") or "").strip()
+    name = str(profile.get("name") or "").strip()
+    category = market or industry
+    if not category and not name:
+        return []
+
+    places = [country_label(code) for code in target_countries] or [
+        str(profile.get("geography") or "").strip()
+    ]
+    places = [place for place in places if place]
+
+    queries: list[str] = []
+    for place in places:
+        if category:
+            queries.append(f"best {category} in {place}")
+            queries.append(f"top {category} companies in {place}")
+        if name:
+            queries.append(f"{name} competitors in {place}")
+    if not queries and name and category:
+        queries.append(f"{name} competitors {category}")
+    return queries[:MAX_GROUNDING_QUERIES]
+
+
+def _search_snippets(query: str) -> list[dict]:
+    try:
+        results = _search_duckduckgo(query, limit=GROUNDING_RESULTS_PER_QUERY) or []
+        if not results:
+            results = _search_bing(query, limit=GROUNDING_RESULTS_PER_QUERY) or []
+        return results
+    except Exception:
+        return []
+
+
+def _grounding_context(profile: dict, target_countries: list[str], log=None) -> str:
+    """Live search results for the profiled business's market, as prompt text.
+
+    Empty string when search finds nothing — grounding is best-effort, and a
+    failed or blocked search must degrade to the old recall-only behaviour
+    rather than break discovery.
+    """
+    log = log or (lambda _msg: None)
+    queries = _grounding_queries(profile, target_countries)
+    if not queries:
+        return ""
+
+    log(f"Searching the web for who really competes in this market ({len(queries)} queries)...")
+    with ThreadPoolExecutor(max_workers=min(4, len(queries))) as pool:
+        futures = [pool.submit(_search_snippets, query) for query in queries]
+    results = [item for future in futures for item in future.result()]
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for item in results:
+        title = str(item.get("title") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+        if not title or title.casefold() in seen:
+            continue
+        seen.add(title.casefold())
+        lines.append(f"- {title}" + (f" — {snippet[:220]}" if snippet else ""))
+
+    if not lines:
+        log("Search returned nothing usable; falling back to the model's own knowledge.")
+        return ""
+    log(f"Collected {len(lines)} search results to ground the candidate list.")
+    return "Web search results for this market:\n" + "\n".join(lines[:30])
+
+
 def _ask_for_competitors(
     profile_context: str, exclude_domain: str, limit: int,
     target_countries: list[str] | None = None,
+    scope: str = "all",
+    grounding: str = "",
 ) -> list[dict]:
+    """One discovery LLM call.
+
+    `scope` is "local" or "global" when the caller is splitting the ask in two
+    (see `discover_competitors`), or "all" for a single undifferentiated list.
+    """
     directive = ""
     if target_countries:
         names = ", ".join(country_label(code) for code in target_countries)
-        directive = (
-            f"\n\nOnly list competitors primarily headquartered or operating in: {names}. "
-            f'For each competitor, set "country" to its ISO 3166-1 alpha-2 code. If you '
-            f"cannot find enough good matches inside these countries, you may include "
-            f"others, but still report their true country honestly."
-        )
+        if scope == "global":
+            directive = (
+                f"\n\nList only large multinational or regional chains that compete with "
+                f"this business inside {names}, wherever they are headquartered. "
+                f'Set "country" to each company\'s true ISO 3166-1 alpha-2 home country code.'
+            )
+        else:
+            directive = (
+                f"\n\nEvery company you list MUST be primarily headquartered or operating in: "
+                f"{names}. Include local and independent players — single-country chains, "
+                f"regional favourites, well-known independents — not only international brands. "
+                f'Set "country" to its ISO 3166-1 alpha-2 code; omit any company you cannot '
+                f"place in one of these countries rather than guessing."
+            )
+    if grounding:
+        directive += f"\n\n{grounding}"
+
+    ordering = "largest first" if scope != "local" else "most significant first"
     user_prompt = (
         f"{profile_context}\n\n"
         f"Their own domain (never list this as a competitor): {exclude_domain or 'unknown'}\n\n"
-        f"List up to {limit} competitors, largest first.{directive}"
+        f"List up to {limit} competitors, {ordering}.{directive}"
     )
     try:
         raw = chat_completion(
@@ -145,7 +248,16 @@ def _ask_for_competitors(
         return []
 
     entries = parsed.get("competitors") if isinstance(parsed, dict) else None
-    return entries if isinstance(entries, list) else []
+    if not isinstance(entries, list):
+        return []
+    # Which ask produced an entry decides how the country screen treats it: the
+    # "global" ask deliberately requests foreign-headquartered chains that trade
+    # inside the target countries, so those must not then be rejected for being
+    # foreign. Read back in `_screen`, never stored.
+    for entry in entries:
+        if isinstance(entry, dict):
+            entry["_scope"] = scope
+    return entries
 
 
 def _reachable(url: str) -> bool:
@@ -230,11 +342,37 @@ def discover_competitors(
     own_domain = _domain(profile.get("website") or "")
     target_countries = validate_countries(profile.get("target_countries"))
     filter_countries = target_countries
-    log("Asking the model for competitor candidates...")
-    suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), target_countries)
+    capped = min(limit, MAX_COMPETITORS)
+    grounding = _grounding_context(profile, target_countries, log)
+
+    if target_countries:
+        # Two asks instead of one. A single size-ranked list spends every slot on
+        # the biggest names it can recall, which structurally excludes exactly the
+        # local players a country-scoped study exists to find - so the local half
+        # gets its own call and its own slots, and the two are merged (existing
+        # name/domain dedupe in pass 3 handles any overlap).
+        local_limit = max(3, capped // 2)
+        global_limit = max(3, capped - local_limit)
+        log(f"Asking the model for {local_limit} local and {global_limit} large competitors...")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            local_future = pool.submit(
+                _ask_for_competitors, context, own_domain, local_limit,
+                target_countries, "local", grounding,
+            )
+            global_future = pool.submit(
+                _ask_for_competitors, context, own_domain, global_limit,
+                target_countries, "global", grounding,
+            )
+        suggestions = (local_future.result() or []) + (global_future.result() or [])
+    else:
+        log("Asking the model for competitor candidates...")
+        suggestions = _ask_for_competitors(
+            context, own_domain, capped, None, "all", grounding,
+        )
+
     if not suggestions and target_countries:
         log("No in-country candidates; retrying without the country restriction...")
-        suggestions = _ask_for_competitors(context, own_domain, min(limit, MAX_COMPETITORS), None)
+        suggestions = _ask_for_competitors(context, own_domain, capped, None, "all", grounding)
         filter_countries = []
     if not suggestions:
         return {"competitors": [], "rejected": [], "error": "The model returned no competitors."}
@@ -244,34 +382,53 @@ def discover_competitors(
 
     # Pass 1 (cheap, sequential): filter out anything a plain field check can
     # already decide - the network is only needed for what's left.
-    candidates: list[dict] = []
-    for entry in suggestions:
-        if not isinstance(entry, dict):
-            continue
-        name = str(entry.get("name") or "").strip()
-        if not name:
-            continue
+    def _screen(countries: list[str]) -> tuple[list[dict], list[dict]]:
+        kept: list[dict] = []
+        dropped: list[dict] = []
+        for entry in suggestions:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                continue
 
-        website = str(entry.get("website") or "").strip()
-        domain = _domain(website)
+            website = str(entry.get("website") or "").strip()
+            domain = _domain(website)
 
-        if domain and domain == own_domain:
-            rejected.append({"name": name, "reason": "This is the user's own business."})
-            continue
-        if website and not _is_company_site(website):
-            rejected.append({"name": name, "reason": f"{domain or website} is not a company's own site."})
-            continue
+            if domain and domain == own_domain:
+                dropped.append({"name": name, "reason": "This is the user's own business."})
+                continue
+            if website and not _is_company_site(website):
+                dropped.append({"name": name, "reason": f"{domain or website} is not a company's own site."})
+                continue
 
-        raw_country = str(entry.get("country") or "").strip().upper()
-        country = raw_country if raw_country in COUNTRIES else None
-        if filter_countries and country and country not in filter_countries:
-            rejected.append({
-                "name": name,
-                "reason": f"Located in {country_label(country)}, outside the target countries.",
-            })
-            continue
+            raw_country = str(entry.get("country") or "").strip().upper()
+            country = raw_country if raw_country in COUNTRIES else None
+            if countries and entry.get("_scope") != "global":
+                # A blank/unrecognised country used to pass straight through, which
+                # is how globals with no country field filled a country-scoped
+                # study. With a target country set, unplaceable means rejected.
+                if not country:
+                    dropped.append({"name": name, "reason": "No country given, so it cannot be placed in the target countries."})
+                    continue
+                if country not in countries:
+                    dropped.append({
+                        "name": name,
+                        "reason": f"Located in {country_label(country)}, outside the target countries.",
+                    })
+                    continue
 
-        candidates.append({"entry": entry, "name": name, "website": website, "country": country})
+            kept.append({"entry": entry, "name": name, "website": website, "country": country})
+        return kept, dropped
+
+    candidates, rejected = _screen(filter_countries)
+    if filter_countries and not candidates:
+        # Every suggestion failed the country screen - a list the user can judge
+        # beats an empty one, so fall back to the unfiltered screen rather than
+        # returning nothing.
+        log("No candidate passed the country filter; keeping the unfiltered list instead.")
+        filter_countries = []
+        candidates, rejected = _screen([])
 
     # Pass 2 (concurrent): each candidate's web corroboration is an independent
     # site fetch plus search-engine calls - run them in parallel rather than one
