@@ -19,11 +19,14 @@ from content_guard import is_reddit_blocked_payload
 
 
 def proxy_meta(platform):
-    """{"proxy": url} for reddit/telegram if REDDIT_PROXY_URL/TELEGRAM_PROXY_URL
-    is set (see config.py), else {} - merge into a Scrapy request's meta dict
-    with `**proxy_meta(platform)`. Scrapy's own HttpProxyMiddleware reads
-    meta["proxy"], including any embedded user:pass basic-auth credentials."""
-    proxy = {"reddit": config.REDDIT_PROXY_URL, "telegram": config.TELEGRAM_PROXY_URL}.get(platform, "")
+    """{"proxy": url} to merge into a Scrapy request's meta dict with
+    `**proxy_meta(platform)`. Scrapy's own HttpProxyMiddleware reads
+    meta["proxy"], including any embedded user:pass basic-auth credentials.
+    reddit/telegram use their own REDDIT_PROXY_URL/TELEGRAM_PROXY_URL when
+    set; every platform (including reddit/telegram when unset) falls back to
+    the general SCRAPE_PROXY_URL. All unset (the default) returns {}."""
+    platform_proxy = {"reddit": config.REDDIT_PROXY_URL, "telegram": config.TELEGRAM_PROXY_URL}.get(platform, "")
+    proxy = platform_proxy or config.SCRAPE_PROXY_URL
     return {"proxy": proxy} if proxy else {}
 
 
