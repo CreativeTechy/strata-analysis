@@ -604,6 +604,7 @@ def get_articles(
     sentiment: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
+    source_url: str | None = None,
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
@@ -614,6 +615,7 @@ def get_articles(
         sentiment=sentiment,
         category=category,
         project_id=project_id,
+        source_url=source_url,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -666,6 +668,7 @@ def export_articles_jsonl(
     sentiment: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
+    source_url: str | None = None,
     sort: str = "published.desc",
     user: dict = Depends(require_permission("articles.view")),
 ):
@@ -674,6 +677,7 @@ def export_articles_jsonl(
         sentiment=sentiment,
         category=category,
         project_id=project_id,
+        source_url=source_url,
         sort=sort,
     )
 

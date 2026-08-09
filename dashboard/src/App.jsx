@@ -856,7 +856,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
           <Route path="/reports" element={renderReportsView()} />
-          <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
+          <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} sources={sources} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />
           <Route path="/analysis" element={<AnalysisPage projects={projects} />} />

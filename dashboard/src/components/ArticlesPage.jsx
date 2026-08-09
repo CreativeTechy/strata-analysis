@@ -69,7 +69,7 @@ function SkeletonArticleCard() {
   );
 }
 
-export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
+export default function ArticlesPage({ project = null, projectId = null, projects = [], sources = [] }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
     if (typeof projectId === 'object') {
@@ -84,6 +84,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [sentiment, setSentiment] = useState('all');
   const [category, setCategory] = useState('all');
   const [projectFilter, setProjectFilter] = useState(() => (normalizedProjectId != null ? String(normalizedProjectId) : 'all'));
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -121,12 +122,24 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, category, projectFilter, limit, sort]);
+  }, [search, sentiment, category, projectFilter, sourceFilter, limit, sort]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
     return projects.find((item) => String(item.id) === String(projectFilter)) || null;
   }, [projects, projectFilter]);
+
+  const sourceOptions = useMemo(() => {
+    if (!activeProject) return [];
+    const linkedIds = new Set((activeProject.source_ids || []).map((id) => Number(id)));
+    return (sources || [])
+      .filter((source) => linkedIds.has(Number(source.id)))
+      .map((source) => ({ value: source.url, label: source.name || source.url }));
+  }, [activeProject, sources]);
+
+  useEffect(() => {
+    setSourceFilter('all');
+  }, [projectFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -139,6 +152,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         if (sentiment !== 'all') params.set('sentiment', sentiment);
         if (category !== 'all') params.set('category', category);
         if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
+        if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -166,7 +180,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, projectFilter, limit, offset, sort, reloadToken]);
+  }, [search, sentiment, category, projectFilter, sourceFilter, limit, offset, sort, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -263,6 +277,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setCategory('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
+      setSourceFilter('all');
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -282,6 +297,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       if (sentiment !== 'all') params.set('sentiment', sentiment);
       if (category !== 'all') params.set('category', category);
       if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
+      if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
       params.set('sort', sort);
 
       const res = await fetch(`/api/articles/export?${params.toString()}`);
@@ -487,6 +503,22 @@ export default function ArticlesPage({ project = null, projectId = null, project
             ))}
           </select>
 
+          <select
+            className="filter-select"
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            disabled={!activeProject || sourceOptions.length === 0}
+          >
+            <option value="all">
+              {activeProject ? 'All sources' : 'Select a project for sources'}
+            </option>
+            {sourceOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
           <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -511,6 +543,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
               <Filter size={12} />
               {scopeLabel}
             </span>
+            {sourceFilter !== 'all' && (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                <Filter size={12} />
+                {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
+              </span>
+            )}
           </div>
           <div className="articles-pager-actions">
             <div className="source-type-tabs" role="tablist" aria-label="Switch article view">
