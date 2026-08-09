@@ -58,8 +58,14 @@ class SourceRssSpider(scrapy.Spider):
     name = "source_rss"
 
     custom_settings = {
-        # Be polite; raise these later when you add proxies.
-        "DOWNLOAD_DELAY": 1.0,
+        # Floor delay; AutoThrottle raises it per-domain based on observed
+        # latency instead of hammering every site at the same fixed interval,
+        # which is itself a bot signal to some anti-bot systems.
+        "DOWNLOAD_DELAY": 0.5,
+        "AUTOTHROTTLE_ENABLED": True,
+        "AUTOTHROTTLE_START_DELAY": 1.0,
+        "AUTOTHROTTLE_MAX_DELAY": 10.0,
+        "AUTOTHROTTLE_TARGET_CONCURRENCY": 1.0,
         "CONCURRENT_REQUESTS_PER_DOMAIN": 2,
         "ROBOTSTXT_OBEY": True,
         # A real UA avoids some trivial blocks.
@@ -68,6 +74,12 @@ class SourceRssSpider(scrapy.Spider):
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0 Safari/537.36"
         ),
+        # A bare UA with no Accept/Accept-Language is itself a bot signal to
+        # some anti-bot systems - fill in what a real browser sends.
+        "DEFAULT_REQUEST_HEADERS": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
         "RETRY_TIMES": 2,
     }
 
@@ -204,7 +216,17 @@ class SourceRssSpider(scrapy.Spider):
                     "source_url": url,
                     "source_type": source_type,
                     "source_name": source_name,
-                    "dont_obey_robotstxt": source_type in {"social", "username", "hashtag", "reddit", "telegram"},
+                    # "rss"/"keyword" sources are syndication feeds (or, for
+                    # "keyword", a Google News RSS search feed - see
+                    # sources_store._derive_term_url) the publisher already
+                    # intends for aggregation, so robots.txt is skipped for
+                    # them too. "web" sources crawl arbitrary same-domain
+                    # pages beyond any feed (see parse_page's follow_links),
+                    # which is exactly what robots.txt is meant to scope, so
+                    # it stays honored there.
+                    "dont_obey_robotstxt": source_type in {
+                        "social", "username", "hashtag", "reddit", "telegram", "rss", "keyword",
+                    },
                     # The telegram parser needs to see a raw redirect (private/
                     # missing channel) as its own status, not silently follow
                     # it into an unrelated app-install page - see

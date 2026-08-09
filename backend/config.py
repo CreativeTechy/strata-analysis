@@ -245,15 +245,20 @@ LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
 
-# --- Reddit/Telegram scraping: optional network egress ----------------------
-# Both platforms can anti-bot-block requests from datacenter/cloud IP ranges
-# (see scraper/spiders/source_rss.py's BLOCKED_STATUS_CODES/blocked-source
-# reporting, and services/pipeline/pipeline.py's summary of it). Routing just
-# these platforms' requests through a proxy is one mitigation for that.
-# Unset (the default) changes nothing - requests go out directly, same as
-# every other source type. Full proxy URL, e.g. `http://user:pass@host:port`
-# - Scrapy's HttpProxyMiddleware parses embedded basic-auth credentials from
-# the URL itself, no separate credential fields needed.
+# --- Scraping proxy: optional network egress ---------------------------------
+# Any source can anti-bot-block requests from datacenter/cloud IP ranges (see
+# scraper/spiders/source_rss.py's BLOCKED_STATUS_CODES/blocked-source
+# reporting, and services/pipeline/pipeline.py's summary of it). Routing
+# requests through a proxy is one mitigation for that. Unset (the default)
+# changes nothing - requests go out directly. Full proxy URL, e.g.
+# `http://user:pass@host:port` - Scrapy's HttpProxyMiddleware parses embedded
+# basic-auth credentials from the URL itself, no separate credential fields
+# needed.
+# SCRAPE_PROXY_URL is the fallback used for every source type (rss/web/
+# keyword/social/username/hashtag, and reddit/telegram when their own proxy
+# below is unset). REDDIT_PROXY_URL/TELEGRAM_PROXY_URL override it for just
+# those two platforms, e.g. to route them through a different proxy pool.
+SCRAPE_PROXY_URL = os.environ.get("SCRAPE_PROXY_URL", "").strip()
 REDDIT_PROXY_URL = os.environ.get("REDDIT_PROXY_URL", "").strip()
 TELEGRAM_PROXY_URL = os.environ.get("TELEGRAM_PROXY_URL", "").strip()
 
