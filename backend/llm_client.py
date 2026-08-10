@@ -1,11 +1,13 @@
-"""Thin client for the configured chat LLM provider (OpenAI or DeepSeek).
+"""Thin client for the configured chat LLM provider (OpenAI, DeepSeek, or Ollama).
 
-`config.LLM_PROVIDER` picks the active provider; this module is the only
-place that knows the difference between OpenAI's Responses API and the
-OpenAI-compatible chat-completions shape DeepSeek (and similar providers)
-use. Every caller goes through the single `chat_completion(...)` entry point
-below and never sees which provider or API shape actually served the
-request.
+`config.LLM_PROVIDER` picks the app-wide active provider; this module is the
+only place that knows the difference between OpenAI's Responses API and the
+OpenAI-compatible chat-completions shape DeepSeek/Ollama (and similar
+providers) use. Every caller goes through the single `chat_completion(...)`
+entry point below and never sees which provider or API shape actually served
+the request - unless it passes an explicit provider override (see
+`chat_completion`'s docstring), a caller gets whatever `config.LLM_*`
+currently resolves to.
 """
 
 from __future__ import annotations
@@ -174,8 +176,8 @@ def _extract_output_text_chat_completions(payload) -> str:
     )
 
 
-def _extract_output_text(payload) -> str:
-    if config.LLM_API_STYLE == "chat_completions":
+def _extract_output_text(payload, *, api_style) -> str:
+    if api_style == "chat_completions":
         return _extract_output_text_chat_completions(payload)
     return _extract_output_text_responses(payload)
 
@@ -203,13 +205,13 @@ def _raise_for_status(resp):
     raise LLMError(detail)
 
 
-def _post(url, body, timeout):
+def _post(url, body, timeout, *, api_key):
     try:
         resp = requests.post(
             url,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.LLM_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
             },
             json=body,
             timeout=timeout,
@@ -239,14 +241,14 @@ def _post(url, body, timeout):
     return payload
 
 
-def _build_request_body(*, messages, model, temperature, max_tokens, json_mode):
+def _build_request_body(*, messages, model, temperature, max_tokens, json_mode, api_style, reasoning_effort):
     """Build the provider-appropriate request body for the same logical inputs.
 
     This is the one place that adapts to the active provider's payload shape
     - callers always pass the same messages/temperature/max_tokens/timeout
     regardless of which provider is configured.
     """
-    if config.LLM_API_STYLE == "chat_completions":
+    if api_style == "chat_completions":
         body = {
             "model": model,
             "messages": messages,
@@ -270,30 +272,43 @@ def _build_request_body(*, messages, model, temperature, max_tokens, json_mode):
         body["instructions"] = instructions
     if json_mode:
         body["text"] = {"format": {"type": "json_object"}}
-    if config.LLM_REASONING_EFFORT:
+    if reasoning_effort:
         # Reasoning models (e.g. gpt-5-nano) spend part of max_output_tokens on
         # hidden reasoning before writing visible output - left at OpenAI's
         # default effort, that can consume the whole budget and return nothing
         # visible. See config.OPENAI_REASONING_EFFORT.
-        body["reasoning"] = {"effort": config.LLM_REASONING_EFFORT}
+        body["reasoning"] = {"effort": reasoning_effort}
     return body
 
 
-def _max_tokens_key():
-    return "max_tokens" if config.LLM_API_STYLE == "chat_completions" else "max_output_tokens"
+def _max_tokens_key(api_style):
+    return "max_tokens" if api_style == "chat_completions" else "max_output_tokens"
 
 
-def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60, json_mode=False):
+def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60, json_mode=False,
+                     api_key=None, base_url=None, api_style=None, reasoning_effort=None, api_key_env_name=None):
     """Send a chat request to the active provider and return its text reply.
 
     `json_mode=True` asks the provider to constrain its output to a single
     JSON object (OpenAI's/DeepSeek's native JSON-object response format).
     This only forces well-formed JSON syntax, not a particular shape -
     callers still need to validate the result against their own schema.
+
+    `api_key`/`base_url`/`api_style`/`reasoning_effort`/`api_key_env_name`
+    default to the app-wide `config.LLM_*` values when omitted. Pass them
+    together (e.g. from a feature-scoped `config.COMPETITOR_LLM_*` set) to
+    route just this call through a different provider without touching the
+    provider every other caller uses - also pass a matching `model` in that
+    case, since `model`'s own default below is the app-wide one too.
     """
-    url = (config.LLM_CHAT_BASE_URL or "").strip()
-    if not config.LLM_API_KEY or not url:
-        raise LLMConfigError(f"{config.LLM_API_KEY_ENV_NAME} is not configured")
+    api_key = config.LLM_API_KEY if api_key is None else api_key
+    base_url = ((config.LLM_CHAT_BASE_URL if base_url is None else base_url) or "").strip()
+    api_style = config.LLM_API_STYLE if api_style is None else api_style
+    reasoning_effort = config.LLM_REASONING_EFFORT if reasoning_effort is None else reasoning_effort
+    api_key_env_name = config.LLM_API_KEY_ENV_NAME if api_key_env_name is None else api_key_env_name
+
+    if not api_key or not base_url:
+        raise LLMConfigError(f"{api_key_env_name} is not configured")
 
     body = _build_request_body(
         messages=messages,
@@ -301,24 +316,26 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
         temperature=temperature,
         max_tokens=max_tokens,
         json_mode=json_mode,
+        api_style=api_style,
+        reasoning_effort=reasoning_effort,
     )
 
     try:
-        payload = _post(url, body, timeout)
+        payload = _post(base_url, body, timeout, api_key=api_key)
     except LLMBadRequestError as exc:
         # Some models only accept the default temperature (1) and reject any
         # other value - drop it and retry once rather than failing outright.
         if "temperature" in (exc.detail or "").lower():
             body = {k: v for k, v in body.items() if k != "temperature"}
-            payload = _post(url, body, timeout)
+            payload = _post(base_url, body, timeout, api_key=api_key)
         else:
             raise
 
     try:
-        return _extract_output_text(payload)
+        return _extract_output_text(payload, api_style=api_style)
     except LLMInvalidResponseError as exc:
         retry_body = body
-        max_tokens_key = _max_tokens_key()
+        max_tokens_key = _max_tokens_key(api_style)
         if exc.finish_reason == "max_output_tokens":
             # The model spent its entire token budget on hidden reasoning (or
             # hit the length cap) and never got to write visible content -
@@ -334,5 +351,5 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
             # Otherwise treat it as a transient glitch (stray refusal turn)
             # and retry once with the same request.
             print(f"llm_client: empty/invalid response ({exc.detail}); retrying once")
-        payload = _post(url, retry_body, timeout)
-        return _extract_output_text(payload)
+        payload = _post(base_url, retry_body, timeout, api_key=api_key)
+        return _extract_output_text(payload, api_style=api_style)

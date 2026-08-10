@@ -73,6 +73,18 @@ _LLM_PROVIDER_DEFAULTS = {
         "default_model": "deepseek-v4-pro",
         "api_style": "chat_completions",
     },
+    "ollama": {
+        # Ollama serves an OpenAI-compatible chat-completions endpoint on
+        # localhost and ignores the Authorization header entirely, so there
+        # is no real key to set - OLLAMA_API_KEY exists only so LLM_API_KEY
+        # is non-empty and llm_client's "not configured" guard doesn't fire.
+        "api_key_env": "OLLAMA_API_KEY",
+        "base_url_env": "OLLAMA_CHAT_BASE_URL",
+        "model_env": "OLLAMA_CHAT_MODEL",
+        "default_base_url": "http://localhost:11434/v1/chat/completions",
+        "default_model": "llama3.1",
+        "api_style": "chat_completions",
+    },
 }
 
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
@@ -106,6 +118,13 @@ DEEPSEEK_CHAT_BASE_URL = os.environ.get(
 )
 DEEPSEEK_CHAT_MODEL = os.environ.get("DEEPSEEK_CHAT_MODEL", _LLM_PROVIDER_DEFAULTS["deepseek"]["default_model"])
 
+# See the "ollama" entry above re: this key being a placeholder, not a secret.
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
+OLLAMA_CHAT_BASE_URL = os.environ.get(
+    "OLLAMA_CHAT_BASE_URL", _LLM_PROVIDER_DEFAULTS["ollama"]["default_base_url"]
+)
+OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", _LLM_PROVIDER_DEFAULTS["ollama"]["default_model"])
+
 _LLM_PROVIDER_VALUES = {
     "openai": {
         "api_key": OPENAI_API_KEY,
@@ -117,6 +136,12 @@ _LLM_PROVIDER_VALUES = {
         "api_key": DEEPSEEK_API_KEY,
         "base_url": DEEPSEEK_CHAT_BASE_URL,
         "model": DEEPSEEK_CHAT_MODEL,
+        "reasoning_effort": None,
+    },
+    "ollama": {
+        "api_key": OLLAMA_API_KEY,
+        "base_url": OLLAMA_CHAT_BASE_URL,
+        "model": OLLAMA_CHAT_MODEL,
         "reasoning_effort": None,
     },
 }
@@ -132,6 +157,25 @@ LLM_CHAT_MODEL = _active_values["model"]
 LLM_API_STYLE = _active_provider["api_style"]
 LLM_API_KEY_ENV_NAME = _active_provider["api_key_env"]
 LLM_REASONING_EFFORT = _active_values["reasoning_effort"]
+
+# Competitor analysis (backend/services/competitors/ - document splitting,
+# competitor naming, and finding generation) can run against a different
+# provider than the rest of the app (enrichment, Intelligence Copilot,
+# project/source discovery), e.g. Ollama for a fully offline setup, without
+# switching everything else over. Left unset (the default), it just inherits
+# LLM_PROVIDER above - nothing changes unless this is explicitly set.
+COMPETITOR_ANALYSIS_LLM_PROVIDER = os.environ.get("COMPETITOR_ANALYSIS_LLM_PROVIDER", "").strip().lower()
+if COMPETITOR_ANALYSIS_LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
+    COMPETITOR_ANALYSIS_LLM_PROVIDER = LLM_PROVIDER
+
+_competitor_provider = _LLM_PROVIDER_DEFAULTS[COMPETITOR_ANALYSIS_LLM_PROVIDER]
+_competitor_values = _LLM_PROVIDER_VALUES[COMPETITOR_ANALYSIS_LLM_PROVIDER]
+COMPETITOR_LLM_API_KEY = _competitor_values["api_key"]
+COMPETITOR_LLM_CHAT_BASE_URL = _competitor_values["base_url"]
+COMPETITOR_LLM_CHAT_MODEL = _competitor_values["model"]
+COMPETITOR_LLM_API_STYLE = _competitor_provider["api_style"]
+COMPETITOR_LLM_API_KEY_ENV_NAME = _competitor_provider["api_key_env"]
+COMPETITOR_LLM_REASONING_EFFORT = _competitor_values["reasoning_effort"]
 
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"

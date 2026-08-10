@@ -314,6 +314,12 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             temperature=0.2,
             max_tokens=1600,
             timeout=120,
+            model=config.COMPETITOR_LLM_CHAT_MODEL,
+            api_key=config.COMPETITOR_LLM_API_KEY,
+            base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
+            api_style=config.COMPETITOR_LLM_API_STYLE,
+            reasoning_effort=config.COMPETITOR_LLM_REASONING_EFFORT,
+            api_key_env_name=config.COMPETITOR_LLM_API_KEY_ENV_NAME,
         )
         parsed = json.loads(_strip_fences(raw))
     except (LLMError, json.JSONDecodeError, ValueError) as exc:
@@ -382,7 +388,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             counts["articles"],
             counts["stories"],
             "pending",
-            config.LLM_CHAT_MODEL,
+            config.COMPETITOR_LLM_CHAT_MODEL,
             PROMPT_VERSION,
             now,
         ),

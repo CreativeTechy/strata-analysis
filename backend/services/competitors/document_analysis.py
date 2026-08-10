@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 
+import config
 import db
 from llm_client import chat_completion
 from prompt_loader import load_prompt
@@ -104,6 +105,12 @@ def _ask_llm(corpus: str, own_business: str) -> list[dict]:
         temperature=0.1,
         max_tokens=2000,
         timeout=120,
+        model=config.COMPETITOR_LLM_CHAT_MODEL,
+        api_key=config.COMPETITOR_LLM_API_KEY,
+        base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
+        api_style=config.COMPETITOR_LLM_API_STYLE,
+        reasoning_effort=config.COMPETITOR_LLM_REASONING_EFFORT,
+        api_key_env_name=config.COMPETITOR_LLM_API_KEY_ENV_NAME,
     )
     parsed = json.loads(_strip_fences(raw))
     items = parsed.get("companies") if isinstance(parsed, dict) else parsed

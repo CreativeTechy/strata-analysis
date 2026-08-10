@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 
+import config
 import db
 from llm_client import chat_completion
 from prompt_loader import load_prompt
@@ -62,6 +63,12 @@ def _ask_llm(text: str, filename: str) -> list[dict]:
         temperature=0.2,
         max_tokens=3000,
         timeout=90,
+        model=config.COMPETITOR_LLM_CHAT_MODEL,
+        api_key=config.COMPETITOR_LLM_API_KEY,
+        base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
+        api_style=config.COMPETITOR_LLM_API_STYLE,
+        reasoning_effort=config.COMPETITOR_LLM_REASONING_EFFORT,
+        api_key_env_name=config.COMPETITOR_LLM_API_KEY_ENV_NAME,
     )
     parsed = json.loads(_strip_fences(raw))
     items = parsed.get("articles") if isinstance(parsed, dict) else parsed
