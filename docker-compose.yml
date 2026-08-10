@@ -25,6 +25,12 @@ services:
       context: ./backend
     env_file:
       - ./backend/.env
+    environment:
+      # Only takes effect when backend/.env sets LLM_PROVIDER=ollama - points
+      # at the containerized `ollama` service below instead of .env's
+      # localhost default, which would resolve to the backend container
+      # itself on the Docker network, not the ollama one.
+      - OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions
     depends_on:
       - db
     expose:
@@ -35,6 +41,41 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # Fully-offline local LLM, opt-in via `docker compose --profile ollama up`.
+  # Not started by a plain `docker compose up`, so deployments using
+  # OpenAI/DeepSeek pay no cost for it.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    profiles: ["ollama"]
+
+  # One-shot: pulls OLLAMA_CHAT_MODEL (backend/.env, default llama3.1) into
+  # the `ollama-data` volume once the server is healthy, then exits. Re-run
+  # via `docker compose --profile ollama up ollama-pull` after changing the
+  # model - already-pulled models are a no-op.
+  ollama-pull:
+    image: ollama/ollama:latest
+    env_file:
+      - ./backend/.env
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$${OLLAMA_CHAT_MODEL:-llama3.1}\""]
+    restart: "no"
+    profiles: ["ollama"]
 
   frontend:
     build:
@@ -58,3 +99,4 @@ services:
 volumes:
   pgdata:
   hf-cache:
+  ollama-data:

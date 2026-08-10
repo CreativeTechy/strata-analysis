@@ -46,6 +46,48 @@ class ProviderResolutionTests(unittest.TestCase):
         self.assertEqual(config.LLM_PROVIDER, "openai")
         self.assertEqual(config.LLM_API_STYLE, "responses")
 
+    def test_ollama_is_selectable_and_needs_no_real_api_key(self):
+        self._reload_with_env({"LLM_PROVIDER": "ollama"})
+        self.assertEqual(config.LLM_PROVIDER, "ollama")
+        self.assertEqual(config.LLM_API_STYLE, "chat_completions")
+        self.assertTrue(config.LLM_API_KEY)  # placeholder, but must be non-empty
+        self.assertIn("localhost", config.LLM_CHAT_BASE_URL)
+
+
+class CompetitorAnalysisProviderOverrideTests(unittest.TestCase):
+    """COMPETITOR_ANALYSIS_LLM_PROVIDER scopes Ollama (or any other provider)
+    to backend/services/competitors/ without touching the app-wide provider
+    every other feature (enrichment, Copilot chat, discovery) uses."""
+
+    def _reload_with_env(self, env: dict) -> None:
+        with patch.dict(os.environ, env, clear=True), patch.object(Path, "exists", return_value=False):
+            importlib.reload(config)
+
+    def tearDown(self):
+        importlib.reload(config)
+
+    def test_unset_inherits_the_app_wide_provider(self):
+        self._reload_with_env({"LLM_PROVIDER": "deepseek"})
+        self.assertEqual(config.COMPETITOR_ANALYSIS_LLM_PROVIDER, "deepseek")
+        self.assertEqual(config.COMPETITOR_LLM_CHAT_BASE_URL, config.LLM_CHAT_BASE_URL)
+        self.assertEqual(config.COMPETITOR_LLM_CHAT_MODEL, config.LLM_CHAT_MODEL)
+
+    def test_ollama_can_be_scoped_to_competitor_analysis_only(self):
+        self._reload_with_env({"LLM_PROVIDER": "deepseek", "COMPETITOR_ANALYSIS_LLM_PROVIDER": "ollama"})
+        # The app-wide provider (enrichment, Copilot, discovery) is untouched.
+        self.assertEqual(config.LLM_PROVIDER, "deepseek")
+        self.assertEqual(config.LLM_API_STYLE, "chat_completions")
+        self.assertNotIn("localhost", config.LLM_CHAT_BASE_URL)
+        # Only the competitor-analysis-scoped values point at Ollama.
+        self.assertEqual(config.COMPETITOR_ANALYSIS_LLM_PROVIDER, "ollama")
+        self.assertIn("localhost", config.COMPETITOR_LLM_CHAT_BASE_URL)
+        self.assertNotEqual(config.COMPETITOR_LLM_CHAT_BASE_URL, config.LLM_CHAT_BASE_URL)
+
+    def test_unknown_override_falls_back_to_the_app_wide_provider_not_deepseek(self):
+        self._reload_with_env({"LLM_PROVIDER": "openai", "COMPETITOR_ANALYSIS_LLM_PROVIDER": "not-a-real-provider"})
+        self.assertEqual(config.COMPETITOR_ANALYSIS_LLM_PROVIDER, "openai")
+        self.assertEqual(config.COMPETITOR_LLM_CHAT_BASE_URL, config.LLM_CHAT_BASE_URL)
+
 
 class RedditTelegramSourceTypeTests(unittest.TestCase):
     """reddit/telegram source-type inference and resolution (config.py's

@@ -36,13 +36,20 @@ active.
 
 Set `LLM_PROVIDER` in `backend/.env` to pick the backend:
 
-- `openai` (default) - uses OpenAI's Responses API. Requires `OPENAI_API_KEY`;
+- `deepseek` (default) - uses DeepSeek's OpenAI-compatible chat-completions
+  API. Requires `DEEPSEEK_API_KEY`; `DEEPSEEK_CHAT_BASE_URL` and
+  `DEEPSEEK_CHAT_MODEL` are optional overrides (default model
+  `deepseek-v4-pro`).
+- `openai` - uses OpenAI's Responses API. Requires `OPENAI_API_KEY`;
   `OPENAI_CHAT_BASE_URL` and `OPENAI_CHAT_MODEL` are optional overrides
   (default model `gpt-5-nano`).
-- `deepseek` - uses DeepSeek's OpenAI-compatible chat-completions API.
-  Requires `DEEPSEEK_API_KEY`; `DEEPSEEK_CHAT_BASE_URL` and
-  `DEEPSEEK_CHAT_MODEL` are optional overrides (default model
-  `deepseek-chat`).
+- `ollama` - fully offline/local, no API key or internet access needed. Talks
+  to a local model server that speaks the same chat-completions shape as
+  DeepSeek. `OLLAMA_CHAT_BASE_URL` and `OLLAMA_CHAT_MODEL` are optional
+  overrides (default model `llama3.1`). Under Docker, an `ollama` service and
+  a one-shot `ollama-pull` job are included behind the `ollama` Compose
+  profile - see [Docker Deployment](#docker-deployment). Outside Docker, run
+  `ollama serve` locally instead.
 
 Only the env vars for the selected provider need to be set - switching
 providers is a single env var change, no code changes or redeploy of a
@@ -51,6 +58,76 @@ the same stable, provider-neutral error codes (`llm_config_error`,
 `llm_auth_error`, `llm_rate_limited`, `llm_timeout`, `llm_unavailable`,
 `llm_bad_request`, `llm_invalid_response`) to the dashboard - raw provider
 errors are never sent to the client.
+
+#### Scoping a provider to competitor analysis only
+
+`LLM_PROVIDER` is app-wide - it also drives article enrichment, Intelligence
+Copilot chat, and project/source discovery. To use Ollama (or any other
+provider) for just `backend/services/competitors/` - document splitting,
+competitor naming, and finding generation - without switching those other
+features over, set `COMPETITOR_ANALYSIS_LLM_PROVIDER` instead:
+
+```
+LLM_PROVIDER=deepseek                       # everything else keeps using DeepSeek
+COMPETITOR_ANALYSIS_LLM_PROVIDER=ollama     # competitor analysis only uses the local model
+```
+
+Left unset (the default), competitor analysis just inherits `LLM_PROVIDER`,
+so nothing changes unless this is set explicitly. Competitor *discovery*
+(`backend/services/competitors/competitor_discovery.py` - suggesting
+competitors from the LLM's own knowledge and verifying them against the live
+web) and the business-profile scraper
+(`backend/services/competitors/business_profile_store.py`) stay on the
+app-wide provider regardless - both need live web access to do their job, so
+routing them to an offline model wouldn't make them offline anyway.
+
+### Ollama: model resource requirements
+
+Figures below are the commonly published sizes for each model's default
+(Q4_K_M-quantized) Ollama tag - not measured on this repo's own hardware.
+"Min RAM" is CPU-only inference; GPU VRAM is only needed if you want GPU
+acceleration (recommended - see the latency comparison below).
+
+| Model (`OLLAMA_CHAT_MODEL`) | Params | Download size | Min RAM (CPU) | Recommended VRAM (GPU) |
+|---|---|---|---|---|
+| `llama3.2:1b` | 1B | ~1.3 GB | ~2 GB | ~2 GB |
+| `llama3.2:3b` | 3B | ~2 GB | ~4 GB | ~4 GB |
+| `llama3.1:8b` (default) | 8B | ~4.7 GB | ~8 GB | ~6-8 GB |
+| `mistral:7b` | 7B | ~4.1 GB | ~8 GB | ~6 GB |
+| `qwen2.5:14b` | 14B | ~9 GB | ~16 GB | ~10-12 GB |
+| `gemma2:27b` | 27B | ~16 GB | ~32 GB | ~20 GB |
+| `mixtral:8x7b` | 47B (13B active) | ~26 GB | ~32 GB+ | ~24 GB |
+| `llama3.1:70b` | 70B | ~40 GB | ~64 GB+ | ~48 GB (or multi-GPU) |
+
+Rule of thumb: budget roughly the download size in RAM/VRAM just to load
+the model, plus headroom for context - the `ollama-pull` job's target
+(`OLLAMA_CHAT_MODEL` in `backend/.env`, default `llama3.1`, which resolves to
+the 8B tag) should stay within what the Docker host actually has free, since
+`ollama` has no graceful "not enough memory" path beyond an OOM kill.
+
+### Ollama vs. hosted APIs: round-trip time
+
+This app's three heaviest LLM calls - splitting a document into article
+candidates, naming competitors from evidence, and writing an analysis card
+(`backend/services/competitors/`) - request up to 1,600-3,000 output tokens
+per call and are currently given 90-120s timeouts (`chat_completion(...,
+timeout=...)`). That budget was set against hosted-provider latency; it does
+not necessarily hold for a local model, which matters when picking whether
+Ollama is viable for a given call site.
+
+| Backend | Typical throughput | Time for a ~2,000-token reply | Notes |
+|---|---|---|---|
+| DeepSeek / OpenAI (hosted) | tens-to-100+ tok/s, served on datacenter GPUs | ~3-10s end-to-end (incl. network) | What the existing 90-120s timeouts were sized for |
+| Ollama, CPU-only, 7-8B model | roughly 5-20 tok/s on a typical consumer CPU | ~2-7 minutes | Comfortably exceeds the current timeouts - would need `timeout=` raised at each call site, or a smaller model |
+| Ollama, CPU-only, 13B+ model | roughly 1-8 tok/s | ~4-30+ minutes | Not practical without a GPU |
+| Ollama, consumer GPU (8-24 GB VRAM), 7-8B model | roughly 40-100+ tok/s | ~20-50s | Closest to hosted-API latency; first request after container start also pays a one-time model-load cost (seconds to tens of seconds) that hosted APIs don't have |
+
+These are widely-cited hardware expectations, not a benchmark run against
+this project's own containerized `ollama` service - actual numbers depend
+heavily on the host's CPU/GPU. If you want real numbers, the `ollama`
+Compose profile can be brought up and timed directly against one of the
+three call sites above; ask and this can be run and measured rather than
+estimated.
 
 ## Clone And Run
 
@@ -167,11 +244,34 @@ This repo includes a full Docker stack:
 - `frontend` builds the React dashboard
 - `nginx` exposes the public app on port 80
 - `adminer` provides a database UI on port 8080
+- `ollama` / `ollama-pull` (opt-in, see below) run a fully local/offline LLM
 
 ### Start the stack
 
 ```bash
 docker compose up --build
+```
+
+### Fully offline LLM (Ollama), containerized
+
+To run the LLM entirely inside Docker instead of depending on a host-machine
+install, set `LLM_PROVIDER=ollama` in `backend/.env` (see
+[Choosing an LLM provider](#choosing-an-llm-provider)), then bring the stack
+up with the `ollama` profile enabled:
+
+```bash
+docker compose --profile ollama up --build
+```
+
+This starts an `ollama` service (the official `ollama/ollama` image, model
+weights persisted in the `ollama-data` volume) and a one-shot `ollama-pull`
+job that waits for it to be healthy and pulls `OLLAMA_CHAT_MODEL` (default
+`llama3.1`). Both stay off during a plain `docker compose up`, so deployments
+using OpenAI/DeepSeek pay no extra image pull or startup cost. To pull a
+different model after changing `OLLAMA_CHAT_MODEL`:
+
+```bash
+docker compose --profile ollama up ollama-pull
 ```
 
 ### What runs where
