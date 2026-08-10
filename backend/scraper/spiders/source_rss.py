@@ -54,6 +54,37 @@ def _parse_json_silent(text):
         return None
 
 
+# Response headers worth surfacing on a blocked fetch - which anti-bot/CDN
+# vendor issued the block (Server/Via/CF-*), and any hint about how long to
+# back off (Retry-After) - a bare status code alone doesn't say why.
+_BLOCK_DETAIL_HEADERS = (
+    b"Server", b"Via", b"CF-RAY", b"cf-mitigated", b"Retry-After",
+    b"WWW-Authenticate", b"X-Robots-Tag", b"Content-Type", b"X-Cache",
+)
+
+
+def _describe_blocked_response(response):
+    """Full diagnostic detail for a blocked (401/403/429) response: headers
+    that identify the blocking vendor/reason plus a short body preview (an
+    HTML challenge page reads very differently from a JSON API error, and
+    that distinction is lost if only the status code is kept)."""
+    headers = {}
+    for name in _BLOCK_DETAIL_HEADERS:
+        value = response.headers.get(name)
+        if value is not None:
+            headers[name.decode("ascii", "ignore")] = value.decode("utf-8", "ignore")
+    try:
+        body_preview = response.text[:300].strip().replace("\n", " ")
+    except Exception:
+        body_preview = ""
+    parts = [f"HTTP {response.status} for {response.url}."]
+    if headers:
+        parts.append(f"Headers: {headers}.")
+    if body_preview:
+        parts.append(f"Body preview: {body_preview!r}")
+    return " ".join(parts)
+
+
 class SourceRssSpider(scrapy.Spider):
     name = "source_rss"
 
@@ -152,6 +183,7 @@ class SourceRssSpider(scrapy.Spider):
         source_url = request.meta.get("source_url")
         message = str(getattr(failure, "value", "") or failure.getErrorMessage())
         self.logger.warning("Request failed for source %s: %s", source_name, message)
+        print(f"[source_rss] REQUEST FAILED source={source_name!r} url={source_url!r} error={message}")
         self._note_source_status(source_name, source_url, note=f"Request failed: {message}")
 
     def closed(self, reason):
@@ -260,13 +292,19 @@ class SourceRssSpider(scrapy.Spider):
         # deliberately do NOT feed into this, since one dead link among many
         # is normal web noise, not a sign the whole source is broken.
         if response.status in self.BLOCKED_STATUS_CODES:
+            detail = _describe_blocked_response(response)
             self.logger.warning(
                 "Source blocked (HTTP %s) - likely anti-bot protection against this server's "
                 "network, not a problem with the source URL itself: %s",
                 response.status,
                 response.url,
             )
-            self._note_source_status(source_name, source_url, http_status=response.status, blocked=True)
+            # Explicit print (not just self.logger) so this is visible in
+            # whatever captures this subprocess's stdout, regardless of the
+            # scrapy LOG_LEVEL in effect - the whole point is to surface the
+            # real cause (which vendor/why), not just "HTTP 403".
+            print(f"[source_rss] BLOCKED source={source_name!r} {detail}")
+            self._note_source_status(source_name, source_url, http_status=response.status, blocked=True, note=detail)
             return
         if source_type == "telegram" and is_telegram_channel_unavailable(response.status):
             self.logger.info(
@@ -279,8 +317,10 @@ class SourceRssSpider(scrapy.Spider):
             )
             return
         if response.status >= 400:
+            detail = _describe_blocked_response(response)
             self.logger.warning("HTTP %s fetching source: %s", response.status, response.url)
-            self._note_source_status(source_name, source_url, http_status=response.status)
+            print(f"[source_rss] HTTP ERROR source={source_name!r} {detail}")
+            self._note_source_status(source_name, source_url, http_status=response.status, note=detail)
             return
 
         content_type = (response.headers.get(b"Content-Type") or b"").decode("utf-8", "ignore").lower()

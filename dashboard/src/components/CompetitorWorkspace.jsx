@@ -54,6 +54,11 @@ const WORKSPACE_TABS = [
   { value: 'sources', label: 'Sources', icon: Link2 },
 ];
 
+// The unfiltered "All sources" list spans every account across every tracked
+// and suggested competitor - easily well past a screenful for a study with
+// many competitors, so it's paged rather than rendered all at once.
+const SOURCES_PAGE_SIZE = 20;
+
 // Fixed identity -> colour mapping for the sources chart, in the order the
 // chart always draws them (never re-ordered by count, so a colour always
 // means the same platform group). The three hues are a validated-passing
@@ -238,8 +243,8 @@ function SourceGroupChart({ groupCounts }) {
  *  per-competitor "Sources" drawer shows the same data scoped to one company;
  *  this is the aggregate view across the whole study. */
 function SourcesPanel({
-  sources, total, groupCounts, search, onSearch, groupFilter, onGroupFilter,
-  statusFilter, onStatusFilter, onChooseCompetitors,
+  sources, filteredTotal, total, groupCounts, search, onSearch, groupFilter, onGroupFilter,
+  statusFilter, onStatusFilter, onChooseCompetitors, page, totalPages, onPageChange,
 }) {
   return (
     <>
@@ -280,7 +285,7 @@ function SourcesPanel({
               </select>
             </div>
 
-            {sources.length ? (
+            {filteredTotal ? (
               <div className="cs-rows" style={{ marginTop: 4 }}>
                 {sources.map((source) => {
                   const group = SOURCE_GROUP_BY_KEY[sourceGroupKey(source.platform)];
@@ -329,6 +334,33 @@ function SourcesPanel({
                 <p>Try a different search term or clear the channel/status filters.</p>
               </div>
             )}
+
+            {filteredTotal ? (
+              <div className="cs-pagination">
+                <div className="cs-pagination-info">
+                  Showing {(page - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(page * SOURCES_PAGE_SIZE, filteredTotal)} of {filteredTotal}
+                </div>
+                <div className="cs-pagination-controls">
+                  <button
+                    type="button"
+                    className="cs-btn cs-btn-sm"
+                    onClick={() => onPageChange(Math.max(1, page - 1))}
+                    disabled={page <= 1}
+                  >
+                    Previous
+                  </button>
+                  <span className="cs-pill cs-pill-signal">Page {page} of {totalPages}</span>
+                  <button
+                    type="button"
+                    className="cs-btn cs-btn-sm"
+                    onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : (
           <div className="cs-empty">
@@ -381,6 +413,7 @@ export default function CompetitorWorkspace() {
   const [sourceSearch, setSourceSearch] = useState('');
   const [sourceGroupFilter, setSourceGroupFilter] = useState('');
   const [sourceStatusFilter, setSourceStatusFilter] = useState('');
+  const [sourcePage, setSourcePage] = useState(1);
   const [expandedChannels, setExpandedChannels] = useState(() => new Set());
   const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
   const [channelBusy, setChannelBusy] = useState({});
@@ -811,6 +844,24 @@ export default function CompetitorWorkspace() {
     });
   }, [allSources, sourceGroupFilter, sourceStatusFilter, sourceSearch]);
 
+  // A new search/filter should land back on page 1, not wherever the user was
+  // scrolled to on the old result set - adjusted during render (React's
+  // documented pattern for this) rather than an effect, so it takes effect in
+  // the same render as the filter change instead of one tick later.
+  const sourceFilterKey = `${sourceSearch}|${sourceGroupFilter}|${sourceStatusFilter}`;
+  const [prevSourceFilterKey, setPrevSourceFilterKey] = useState(sourceFilterKey);
+  if (sourceFilterKey !== prevSourceFilterKey) {
+    setPrevSourceFilterKey(sourceFilterKey);
+    setSourcePage(1);
+  }
+
+  const sourceTotalPages = Math.max(1, Math.ceil(filteredSources.length / SOURCES_PAGE_SIZE));
+  const sourceSafePage = Math.min(sourcePage, sourceTotalPages);
+  const pagedSources = useMemo(
+    () => filteredSources.slice((sourceSafePage - 1) * SOURCES_PAGE_SIZE, sourceSafePage * SOURCES_PAGE_SIZE),
+    [filteredSources, sourceSafePage],
+  );
+
   if (loading) {
     return (
       <div className="cs-page">
@@ -1025,7 +1076,17 @@ export default function CompetitorWorkspace() {
                     </div>
                     <div className="cs-row-side">
                       {competitor.country ? (
-                        <span className="cs-pill cs-pill-signal">{countryLabel(competitor.country)}</span>
+                        <span className="cs-pill cs-pill-signal" title="Where this company is headquartered">
+                          Based in {countryLabel(competitor.country)}
+                        </span>
+                      ) : null}
+                      {Array.isArray(competitor.operates_in_countries) && competitor.operates_in_countries.length ? (
+                        <span
+                          className="cs-pill cs-pill-signal"
+                          title="Where this competitor actually competes with your business"
+                        >
+                          Competes in {competitor.operates_in_countries.map(countryLabel).join(', ')}
+                        </span>
                       ) : null}
                       <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                         {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
@@ -1117,7 +1178,8 @@ export default function CompetitorWorkspace() {
 
       {activeTab === 'sources' ? (
         <SourcesPanel
-          sources={filteredSources}
+          sources={pagedSources}
+          filteredTotal={filteredSources.length}
           total={allSources.length}
           groupCounts={sourceGroupCounts}
           search={sourceSearch}
@@ -1127,6 +1189,9 @@ export default function CompetitorWorkspace() {
           statusFilter={sourceStatusFilter}
           onStatusFilter={setSourceStatusFilter}
           onChooseCompetitors={() => setShowCompetitors(true)}
+          page={sourceSafePage}
+          totalPages={sourceTotalPages}
+          onPageChange={setSourcePage}
         />
       ) : (findings.length > 0 || hasFindingFilters) ? (
         <>

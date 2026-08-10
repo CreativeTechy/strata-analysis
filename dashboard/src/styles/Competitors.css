@@ -648,9 +648,11 @@
   border-radius: 999px;
   font-size: 0.81rem;
   font-weight: 550;
+  font-family: inherit;
   color: var(--text-light);
   background: #f6f8fb;
   border: 1px solid transparent;
+  cursor: default;
 }
 
 .cs-step-active {
@@ -661,6 +663,10 @@
 }
 
 .cs-step-done { color: #15803d; background: #f0fdf4; }
+
+.cs-step-clickable { cursor: pointer; }
+.cs-step-clickable:hover { background: #dcfce7; }
+.cs-step-clickable:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
 
 .cs-step-num {
   width: 22px;
@@ -1122,6 +1128,21 @@
   .cs-report-cols { grid-template-columns: 1fr; }
 }
 
+.cs-pagination {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cs-pagination-info { font-size: 0.81rem; color: var(--text-light); }
+
+.cs-pagination-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
 @media (max-width: 720px) {
   .cs-page { padding: 20px 16px 44px; }
   .cs-grid-2 { grid-template-columns: 1fr; }
@@ -1135,6 +1156,8 @@
   .cs-view-tabs { margin-left: 0; }
   .cs-finding-row { flex-wrap: wrap; }
   .cs-finding-row-meta { width: 100%; }
+  .cs-pagination { justify-content: center; text-align: center; }
+  .cs-pagination-controls { justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

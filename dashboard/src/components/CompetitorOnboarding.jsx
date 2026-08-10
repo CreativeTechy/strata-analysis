@@ -48,9 +48,10 @@ import {
 } from 'lucide-react';
 import {
   PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyzeDocuments, approveAllDocumentArticles,
-  avatarGradient, buildProfile, createStudy, deleteDocument, discoverCompetitors, discoverTrackedAccounts, initials,
-  listAccounts, listCompetitors, listDocumentArticles, pollArticleCandidates, pollDiscoveryRun, pollDocumentExtraction,
-  saveProfile, setCompetitorStatus, setDocumentArticleStatus, setSchedule, uploadDocuments, validateAccount,
+  avatarGradient, buildProfile, createStudy, deleteDocument, discoverCompetitors, discoverTrackedAccounts,
+  getProfile, initials, listAccounts, listCompetitors, listDocumentArticles, listStudies, pollArticleCandidates,
+  pollDiscoveryRun, pollDocumentExtraction, saveProfile, setCompetitorStatus, setDocumentArticleStatus, setSchedule,
+  uploadDocuments, validateAccount,
 } from '../competitorApi.js';
 import { COUNTRIES, countryLabel } from '../constants/countries.js';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
@@ -336,6 +337,15 @@ export default function CompetitorOnboarding() {
   const [profile, setProfile] = useState(null);
   const [scrape, setScrape] = useState(null);
 
+  // 'new' builds a fresh business profile (scrape+AI, or manual); 'existing'
+  // reuses one already derived for a past study, skipping both.
+  const [businessMode, setBusinessMode] = useState('new');
+  const [existingBusinesses, setExistingBusinesses] = useState([]);
+  const [loadingBusinesses, setLoadingBusinesses] = useState(false);
+  const [businessSearch, setBusinessSearch] = useState('');
+  const [selectedBusinessId, setSelectedBusinessId] = useState(null);
+  const [selectedBusinessProfile, setSelectedBusinessProfile] = useState(null);
+
   const [documents, setDocuments] = useState([]);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [uploadingDocs, setUploadingDocs] = useState(false);
@@ -382,6 +392,14 @@ export default function CompetitorOnboarding() {
     [competitors],
   );
   const visibleSteps = useMemo(() => getSteps(dataMode), [dataMode]);
+  const filteredExistingBusinesses = useMemo(() => {
+    const query = businessSearch.trim().toLowerCase();
+    if (!query) return existingBusinesses;
+    return existingBusinesses.filter(
+      (b) => (b.business_name || '').toLowerCase().includes(query)
+        || (b.business_website || '').toLowerCase().includes(query),
+    );
+  }, [existingBusinesses, businessSearch]);
 
   const documentById = useMemo(
     () => Object.fromEntries(documents.map((document) => [document.id, document])),
@@ -432,6 +450,99 @@ export default function CompetitorOnboarding() {
           'The site was read but the market context could not be generated. Fill it in below and continue.',
         );
       }
+      setStep(3);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setBusy(false);
+      setStep1Mode(null);
+    }
+  };
+
+  // Businesses that already have a derived profile from a past study, deduped
+  // by website (falling back to name) so the same company scraped twice
+  // doesn't show up as two picks.
+  const loadExistingBusinesses = async () => {
+    setLoadingBusinesses(true);
+    try {
+      const { studies } = await listStudies();
+      const seen = new Set();
+      const businesses = [];
+      for (const study of studies || []) {
+        if (!study.business_name) continue;
+        const key = (study.business_website || study.business_name).trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        businesses.push(study);
+      }
+      setExistingBusinesses(businesses);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setLoadingBusinesses(false);
+    }
+  };
+
+  // Lazy-load once the user actually asks to reuse a business, not on every
+  // visit to step 2 — most studies create a new business and never need it.
+  useEffect(() => {
+    if (step !== 2 || dataMode === 'offline' || businessMode !== 'existing') return;
+    if (existingBusinesses.length || loadingBusinesses) return;
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await loadExistingBusinesses();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, dataMode, businessMode]);
+
+  const switchBusinessMode = (mode) => {
+    if (mode === businessMode) return;
+    setError('');
+    setBusinessMode(mode);
+    setSelectedBusinessId(null);
+    setSelectedBusinessProfile(null);
+    setBusiness({ name: '', website: '', description: '' });
+    setTargetCountries([]);
+  };
+
+  const chooseExistingBusiness = async (study) => {
+    setError('');
+    setSelectedBusinessId(study.id);
+    setSelectedBusinessProfile(null);
+    try {
+      const { profile: sourceProfile } = await getProfile(study.id);
+      if (!sourceProfile) {
+        setError('Could not load that business profile.');
+        return;
+      }
+      setBusiness({
+        name: sourceProfile.name || '',
+        website: sourceProfile.website || '',
+        description: sourceProfile.description || '',
+      });
+      setTargetCountries(sourceProfile.target_countries || []);
+      setSelectedBusinessProfile(sourceProfile);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  };
+
+  // Step 2 -> 3, reusing a business: no scrape, no LLM call — just copy the
+  // already-derived profile onto this study, still editable on the next step.
+  const continueWithExistingBusiness = async () => {
+    if (!selectedBusinessProfile) return;
+    setError('');
+    setBusy(true);
+    setStep1Mode('existing');
+    try {
+      const id = await ensureStudy();
+      const saved = await saveProfile(id, { ...selectedBusinessProfile, target_countries: targetCountries });
+      setProfile(saved.profile);
+      setScrape(null);
       setStep(3);
     } catch (caught) {
       setError(caught.message);
@@ -819,15 +930,27 @@ export default function CompetitorOnboarding() {
         {visibleSteps.map((item, index) => {
           const state = step === item.id ? ' cs-step-active' : step > item.id ? ' cs-step-done' : '';
           const Icon = item.icon;
+          // Only steps already completed can be jumped back to — their data is
+          // already loaded. A step not yet reached has nothing to show yet, so
+          // it stays inert rather than opening a blank/broken panel.
+          const clickable = step > item.id;
           return (
             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div className={`cs-step${state}`} role="listitem" aria-current={step === item.id}>
+              <button
+                type="button"
+                className={`cs-step${state}${clickable ? ' cs-step-clickable' : ''}`}
+                role="listitem"
+                aria-current={step === item.id}
+                onClick={clickable ? () => setStep(item.id) : undefined}
+                disabled={!clickable}
+                title={clickable ? `Back to ${item.label}` : undefined}
+              >
                 <span className="cs-step-num">
                   {step > item.id ? <Check size={12} /> : index + 1}
                 </span>
                 <Icon size={14} />
                 <span>{item.label}</span>
-              </div>
+              </button>
               {index < visibleSteps.length - 1 ? <ChevronRight size={14} className="cs-step-sep" /> : null}
             </div>
           );
@@ -1187,48 +1310,124 @@ export default function CompetitorOnboarding() {
           </p>
 
           <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-biz-name">Business name</label>
-            <input
-              id="cs-biz-name"
-              className="cs-input"
-              value={business.name}
-              placeholder="Northwind Analytics"
-              onChange={(event) => setBusiness({ ...business, name: event.target.value })}
-            />
+            <label className="cs-label">Business</label>
+            <div className="cs-view-tabs" style={{ marginLeft: 0, marginBottom: 4 }}>
+              <button
+                type="button"
+                className={`cs-view-tab${businessMode === 'new' ? ' active' : ''}`}
+                onClick={() => switchBusinessMode('new')}
+              >
+                <Plus size={13} /> Create new
+              </button>
+              <button
+                type="button"
+                className={`cs-view-tab${businessMode === 'existing' ? ' active' : ''}`}
+                onClick={() => switchBusinessMode('existing')}
+              >
+                <Search size={13} /> Choose existing
+              </button>
+            </div>
           </div>
 
-          <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-biz-site">
-              Website<span className="cs-label-hint">strongly recommended</span>
-            </label>
-            <input
-              id="cs-biz-site"
-              className="cs-input"
-              value={business.website}
-              placeholder="northwind.com"
-              onChange={(event) => setBusiness({ ...business, website: event.target.value })}
-            />
-          </div>
+          {businessMode === 'existing' ? (
+            <div className="cs-field">
+              <div style={{ position: 'relative' }}>
+                <div className="cs-search-field">
+                  <Search size={14} />
+                  <input
+                    value={businessSearch}
+                    placeholder="Search a business you've studied before..."
+                    onChange={(event) => setBusinessSearch(event.target.value)}
+                  />
+                </div>
+                {filteredExistingBusinesses.length ? (
+                  <div className="cs-dropdown" style={{ position: 'static', marginTop: 8 }}>
+                    {filteredExistingBusinesses.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="cs-dropdown-item"
+                        style={selectedBusinessId === item.id
+                          ? { background: '#f1f5f9', fontWeight: 600 } : undefined}
+                        onClick={() => chooseExistingBusiness(item)}
+                      >
+                        {item.business_name}
+                        {item.business_website ? (
+                          <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text-light)' }}>
+                            {item.business_website}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
 
-          <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-biz-desc">
-              Anything else<span className="cs-label-hint">optional</span>
-            </label>
-            <textarea
-              id="cs-biz-desc"
-              className="cs-textarea"
-              value={business.description}
-              placeholder="What you sell, who buys it, which markets you care about."
-              onChange={(event) => setBusiness({ ...business, description: event.target.value })}
-            />
-          </div>
+              {loadingBusinesses ? (
+                <p className="cs-panel-hint"><Loader2 size={13} className="cs-spin" /> Loading past businesses...</p>
+              ) : null}
+              {!loadingBusinesses && !existingBusinesses.length ? (
+                <p className="cs-panel-hint">No previous business profiles yet — switch to "Create new" above.</p>
+              ) : null}
+              {selectedBusinessProfile ? (
+                <div className="cs-alert cs-alert-info" style={{ marginTop: 10 }}>
+                  <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                  <span>
+                    Reusing <strong>{selectedBusinessProfile.name}</strong>&rsquo;s market context — no
+                    re-scraping or AI wait needed. You can still edit it on the next step.
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
-          <CountryPicker
-            label="Target countries"
-            hint="optional — leave blank to search globally"
-            values={targetCountries}
-            onChange={setTargetCountries}
-          />
+          {businessMode === 'new' ? (
+            <>
+              <div className="cs-field">
+                <label className="cs-label" htmlFor="cs-biz-name">Business name</label>
+                <input
+                  id="cs-biz-name"
+                  className="cs-input"
+                  value={business.name}
+                  placeholder="Northwind Analytics"
+                  onChange={(event) => setBusiness({ ...business, name: event.target.value })}
+                />
+              </div>
+
+              <div className="cs-field">
+                <label className="cs-label" htmlFor="cs-biz-site">
+                  Website<span className="cs-label-hint">strongly recommended</span>
+                </label>
+                <input
+                  id="cs-biz-site"
+                  className="cs-input"
+                  value={business.website}
+                  placeholder="northwind.com"
+                  onChange={(event) => setBusiness({ ...business, website: event.target.value })}
+                />
+              </div>
+
+              <div className="cs-field">
+                <label className="cs-label" htmlFor="cs-biz-desc">
+                  Anything else<span className="cs-label-hint">optional</span>
+                </label>
+                <textarea
+                  id="cs-biz-desc"
+                  className="cs-textarea"
+                  value={business.description}
+                  placeholder="What you sell, who buys it, which markets you care about."
+                  onChange={(event) => setBusiness({ ...business, description: event.target.value })}
+                />
+              </div>
+
+              <CountryPicker
+                label="Target countries"
+                hint="optional — leave blank to search globally"
+                values={targetCountries}
+                onChange={setTargetCountries}
+              />
+            </>
+          ) : null}
 
           <div className="cs-field">
             <label className="cs-label" htmlFor="cs-study-name">
@@ -1243,7 +1442,7 @@ export default function CompetitorOnboarding() {
             />
           </div>
 
-          {busy ? (
+          {busy && businessMode === 'new' ? (
             <div className="cs-panel" style={{ marginTop: 18, background: '#fcfdff' }}>
               <StageList stages={SCRAPE_STAGES} />
             </div>
@@ -1255,18 +1454,34 @@ export default function CompetitorOnboarding() {
                 <ArrowLeft size={15} /> Back
               </button>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                Reading your site takes about 20-40 seconds — or skip that and write the context yourself.
+                {businessMode === 'existing'
+                  ? 'Reusing a saved profile skips the website read entirely.'
+                  : 'Reading your site takes about 20-40 seconds — or skip that and write the context yourself.'}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" className="cs-btn" onClick={submitBusinessManually} disabled={!canLeaveStep1 || busy}>
-                {busy && step1Mode === 'manual' ? <Loader2 size={15} className="cs-spin" /> : <Building2 size={15} />}
-                Write manually
-              </button>
-              <button type="button" className="cs-btn cs-btn-primary" onClick={submitBusiness} disabled={!canLeaveStep1 || busy}>
-                {busy && step1Mode === 'ai' ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
-                {busy && step1Mode === 'ai' ? 'Reading your site...' : 'Read my site with AI'}
-              </button>
+              {businessMode === 'existing' ? (
+                <button
+                  type="button"
+                  className="cs-btn cs-btn-primary"
+                  onClick={continueWithExistingBusiness}
+                  disabled={!selectedBusinessProfile || busy}
+                >
+                  {busy ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
+                  {busy ? 'Saving...' : 'Continue with this business'}
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="cs-btn" onClick={submitBusinessManually} disabled={!canLeaveStep1 || busy}>
+                    {busy && step1Mode === 'manual' ? <Loader2 size={15} className="cs-spin" /> : <Building2 size={15} />}
+                    Write manually
+                  </button>
+                  <button type="button" className="cs-btn cs-btn-primary" onClick={submitBusiness} disabled={!canLeaveStep1 || busy}>
+                    {busy && step1Mode === 'ai' ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
+                    {busy && step1Mode === 'ai' ? 'Reading your site...' : 'Read my site with AI'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1446,7 +1661,17 @@ export default function CompetitorOnboarding() {
                             {isManual ? 'Manual' : 'AI suggested'}
                           </span>
                           {competitor.country ? (
-                            <span className="cs-pill cs-pill-signal">{countryLabel(competitor.country)}</span>
+                            <span className="cs-pill cs-pill-signal" title="Where this company is headquartered">
+                              Based in {countryLabel(competitor.country)}
+                            </span>
+                          ) : null}
+                          {Array.isArray(competitor.operates_in_countries) && competitor.operates_in_countries.length ? (
+                            <span
+                              className="cs-pill cs-pill-signal"
+                              title="Where this competitor actually competes with your business"
+                            >
+                              Competes in {competitor.operates_in_countries.map(countryLabel).join(', ')}
+                            </span>
                           ) : null}
                           <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                             {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}

@@ -18,12 +18,12 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 
 import db
-from services.competitors.countries import COUNTRIES
+from services.competitors.countries import COUNTRIES, validate_countries
 from services.sources.sources_store import _derive_reddit_url, _derive_telegram_url, _derive_term_url
 
 COMPETITOR_COLUMNS = """
     id, project_id, name, website, domain, description, country,
-    size_tier, size_rank, size_signals, relevance_score,
+    operates_in_countries, size_tier, size_rank, size_signals, relevance_score,
     status, discovery_source, discovery_query,
     last_scraped_at, last_analyzed_at, created_at, updated_at
 """
@@ -164,6 +164,7 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
         "domain": domain,
         "description": str(values.get("description") or "").strip() or None,
         "country": country,
+        "operates_in_countries": Jsonb(validate_countries(values.get("operates_in_countries"))),
         "size_tier": str(values.get("size_tier") or "unknown").strip().lower(),
         "size_rank": values.get("size_rank"),
         "size_signals": Jsonb(values.get("size_signals") or {}),
@@ -198,6 +199,9 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
         # An empty object carries no signals; keep whatever we already knew.
         "size_signals": "size_signals = case when excluded.size_signals = '{}'::jsonb "
                         "then competitors.size_signals else excluded.size_signals end",
+        # An empty list carries no new "where they compete with us" info.
+        "operates_in_countries": "operates_in_countries = case when excluded.operates_in_countries = '[]'::jsonb "
+                                 "then competitors.operates_in_countries else excluded.operates_in_countries end",
     }
     assignments = ", ".join(
         assignments_by_field.get(

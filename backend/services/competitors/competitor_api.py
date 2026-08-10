@@ -25,6 +25,7 @@ from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
+from services.competitors.countries import validate_countries
 import db
 from services.auth.auth import require_permission
 from services.pipeline.pipeline import run_scraper_pipeline
@@ -420,7 +421,9 @@ def discover_accounts_bulk(
 @router.post("/competitors/{competitor_id}/accounts/discover")
 def discover_competitor_accounts(competitor_id: int, user: dict = Depends(require_permission("competitors.analyze"))):
     competitor = _competitor_or_404(competitor_id)
-    found = competitor_discovery.discover_accounts(competitor["name"], competitor.get("website"))
+    profile = business_profile_store.get_profile(competitor["project_id"]) or {}
+    target_countries = validate_countries(profile.get("target_countries"))
+    found = competitor_discovery.discover_accounts(competitor["name"], competitor.get("website"), target_countries)
     for account in found:
         competitors_store.upsert_account(competitor_id, account)
     return {"accounts": competitors_store.list_accounts(competitor_id)}
