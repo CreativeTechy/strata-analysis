@@ -41,12 +41,16 @@ def build_fetch_note(diagnostic, scraped_count):
     of it (e.g. a legitimately empty subreddit). "" for a healthy source."""
     diagnostic = diagnostic or {}
     if diagnostic.get("network_blocked"):
-        return (
+        base = (
             f"Blocked (HTTP {diagnostic.get('http_status')}) - likely anti-bot protection "
             "against this server's network, not a problem with the source itself."
         )
+        detail = diagnostic.get("note")
+        return f"{base} {detail}" if detail else base
     if diagnostic.get("http_status"):
-        return f"HTTP {diagnostic['http_status']} - the source's page could not be fetched."
+        base = f"HTTP {diagnostic['http_status']} - the source's page could not be fetched."
+        detail = diagnostic.get("note")
+        return f"{base} {detail}" if detail else base
     if diagnostic.get("note"):
         return diagnostic["note"]
     if not scraped_count:

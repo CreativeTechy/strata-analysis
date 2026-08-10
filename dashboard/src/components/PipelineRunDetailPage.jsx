@@ -266,7 +266,23 @@ export default function PipelineRunDetailPage({ projects = [] }) {
               {total.inProgress ? ' (in progress)' : ''}
             </SummaryField>
             <SummaryField label="Message">{run.message || '—'}</SummaryField>
-            {run.error ? <SummaryField label="Error">{run.error}</SummaryField> : null}
+            {run.error ? (
+              <SummaryField label="Error">
+                <pre
+                  style={{
+                    margin: 0,
+                    fontFamily: 'inherit',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {run.error}
+                </pre>
+              </SummaryField>
+            ) : null}
           </div>
 
           <div className="glass-card" style={{ marginBottom: 18 }}>

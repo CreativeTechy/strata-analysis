@@ -418,7 +418,24 @@ def discover_competitors(
                     })
                     continue
 
-            kept.append({"entry": entry, "name": name, "website": website, "country": country})
+            # Where this candidate actually competes with the user's business,
+            # as opposed to `country` (its home base). A "local" entry was
+            # screened above to already be inside the target countries, so its
+            # home country is where it competes. A "global" entry (McDonald's
+            # for a Lebanon study) was asked for precisely because it competes
+            # *inside* the target countries regardless of where it's from, so
+            # that's what belongs here, not its US headquarters.
+            if entry.get("_scope") == "global" and countries:
+                operates_in = list(countries)
+            elif country:
+                operates_in = [country]
+            else:
+                operates_in = list(countries) if countries else []
+
+            kept.append({
+                "entry": entry, "name": name, "website": website,
+                "country": country, "operates_in_countries": operates_in,
+            })
         return kept, dropped
 
     candidates, rejected = _screen(filter_countries)
@@ -455,6 +472,7 @@ def discover_competitors(
         name = candidate["name"]
         website = candidate["website"]
         country = candidate["country"]
+        operates_in_countries = candidate["operates_in_countries"]
 
         if name.casefold() in seen_names:
             continue
@@ -494,6 +512,7 @@ def discover_competitors(
             "domain": domain or None,
             "description": str(entry.get("description") or "").strip(),
             "country": country,
+            "operates_in_countries": operates_in_countries,
             "size_tier": tier,
             "stated_rank": stated_rank,
             "size_signals": {
@@ -547,12 +566,23 @@ def _guess_site_feed(website: str) -> dict | None:
     return None
 
 
-def _ask_for_accounts(name: str, website: str) -> list[dict]:
+def _ask_for_accounts(name: str, website: str, target_countries: list[str] | None = None) -> list[dict]:
+    directive = ""
+    if target_countries:
+        names = ", ".join(country_label(code) for code in target_countries)
+        directive = (
+            f"\n\nThis company is being tracked as a competitor specifically inside: "
+            f"{names}. Prefer channels relevant there — the main global brand account, "
+            f"or a regional account that actually covers {names} — over an account "
+            f"scoped to somewhere else. Skip a regional handle for a different single "
+            f"country (e.g. a Canada-only account is no use for a Lebanon-scoped study) "
+            f"unless it is the only account you know of."
+        )
     try:
         raw = chat_completion(
             messages=[
                 {"role": "system", "content": ACCOUNTS_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Company: {name}\nWebsite: {website or 'unknown'}"},
+                {"role": "user", "content": f"Company: {name}\nWebsite: {website or 'unknown'}{directive}"},
             ],
             temperature=0.0,
             max_tokens=1400,
@@ -577,9 +607,52 @@ def _handle_from_url(url: str) -> str | None:
     return candidate if re.fullmatch(r"[A-Za-z0-9._-]{2,60}", candidate or "") else None
 
 
-def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _words(text: str) -> set[str]:
+    return set(_WORD_RE.findall(str(text or "").casefold()))
+
+
+def _foreign_region_hit(handle: str, url: str, target_countries: list[str] | None) -> str | None:
+    """Name of a country this channel looks scoped to, when that isn't one of
+    the target countries — catches something like "@McD_Canada" surviving into
+    a Lebanon-scoped study. `_ask_for_accounts` is told to avoid these; this is
+    the backstop for when it doesn't listen.
+
+    Only single-word country names are checked, to keep false positives rare —
+    a multi-word name like "United States" would otherwise false-match on a
+    bare mention of "united" or "states".
+    """
+    if not target_countries:
+        return None
+    words = _words(f"{handle} {url}")
+    if not words:
+        return None
+    target_words = {word for code in target_countries for word in _words(country_label(code))}
+    for code, name in COUNTRIES.items():
+        if code in target_countries:
+            continue
+        name_words = _words(name)
+        if len(name_words) != 1:
+            continue
+        word = next(iter(name_words))
+        if len(word) > 3 and word in words and word not in target_words:
+            return name
+    return None
+
+
+def discover_accounts(
+    name: str, website: str | None, target_countries: list[str] | None = None, log=None,
+) -> list[dict]:
     """Owned channels for one competitor, pre-approved (`validation_status: "valid"`)
-    so they're linked as scrape sources immediately - no manual confirmation step."""
+    so they're linked as scrape sources immediately - no manual confirmation step.
+
+    `target_countries` is the study's target countries, when set: they steer the
+    model towards channels relevant to competing there (see `_ask_for_accounts`)
+    and, as a backstop, get a mismatched regional handle dropped outright rather
+    than linked as a source that won't benefit this study.
+    """
     log = log or (lambda _msg: None)
     site = str(website or "").strip()
     accounts: list[dict] = []
@@ -601,7 +674,7 @@ def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
         counts["news"] = counts.get("news", 0) + 1
 
     log(f"{name}: asking the model for channels — X accounts and hashtags to monitor...")
-    candidates = [entry for entry in _ask_for_accounts(name, site) if isinstance(entry, dict)]
+    candidates = [entry for entry in _ask_for_accounts(name, site, target_countries) if isinstance(entry, dict)]
     # X handles are the riskiest guess to widen — check each is a live account
     # before it's linked as a scrape source, rather than trusting the model.
     x_urls = {
@@ -614,12 +687,17 @@ def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
     if dropped_x:
         log(f"{name}: dropped {dropped_x} X handle{'' if dropped_x == 1 else 's'} that didn't resolve.")
 
+    dropped_region = 0
     for entry in candidates:
         platform = str(entry.get("platform") or "").strip().lower()
         url = _normalize_url(str(entry.get("url") or "").strip())
         if platform not in VALID_PLATFORMS or not url or url.lower() in seen:
             continue
         if platform == "x" and url not in reachable_x:
+            continue
+        handle = str(entry.get("handle") or "").strip()
+        if _foreign_region_hit(handle, url, target_countries):
+            dropped_region += 1
             continue
         if counts.get(platform, 0) >= MAX_ACCOUNTS_PER_PLATFORM.get(platform, 1):
             continue
@@ -636,6 +714,9 @@ def discover_accounts(name: str, website: str | None, log=None) -> list[dict]:
             "confidence": confidence,
             "validation_status": "valid",
         })
+    if dropped_region:
+        log(f"{name}: dropped {dropped_region} channel{'' if dropped_region == 1 else 's'} "
+            f"scoped to a different region than this study targets.")
 
     log(f"{name}: found {len(accounts)} channel{'' if len(accounts) == 1 else 's'}.")
     return accounts
@@ -722,7 +803,9 @@ def _append_log(run_id: str, message: str) -> None:
             run["updated_at"] = _now_iso()
 
 
-def _discover_accounts_concurrently(targets: list[dict], log=None) -> dict[int, list[dict]]:
+def _discover_accounts_concurrently(
+    targets: list[dict], target_countries: list[str] | None = None, log=None,
+) -> dict[int, list[dict]]:
     """Run discover_accounts() for each `{id, name, website}` target in parallel.
 
     Each target's account discovery is an independent LLM call plus a site fetch -
@@ -732,7 +815,9 @@ def _discover_accounts_concurrently(targets: list[dict], log=None) -> dict[int, 
         return {}
     with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
         futures = {
-            target["id"]: pool.submit(discover_accounts, target["name"], target.get("website"), log)
+            target["id"]: pool.submit(
+                discover_accounts, target["name"], target.get("website"), target_countries, log,
+            )
             for target in targets
         }
     return {target_id: future.result() for target_id, future in futures.items()}
@@ -763,7 +848,8 @@ def run_discovery_job(run_id: str, project_id: int, profile: dict, limit: int, w
         if with_accounts and records:
             _update_discovery_run(run_id, stage="accounts",
                                   message=f"Resolving accounts for {len(records)} competitors...")
-            accounts_by_id = _discover_accounts_concurrently(records, log=log)
+            target_countries = validate_countries(profile.get("target_countries"))
+            accounts_by_id = _discover_accounts_concurrently(records, target_countries=target_countries, log=log)
 
         for record in records:
             for account in accounts_by_id.get(record["id"], []):
@@ -788,12 +874,15 @@ def run_accounts_discovery_job(run_id: str, project_id: int, targets: list[dict]
     tracked competitors with no accounts yet).
     """
     from services.competitors import competitors_store
+    from services.competitors.business_profile_store import get_profile
 
     log = lambda msg: _append_log(run_id, msg)  # noqa: E731
     _update_discovery_run(run_id, status="running", stage="accounts",
                           message=f"Finding channels for {len(targets)} competitors...")
     try:
-        accounts_by_id = _discover_accounts_concurrently(targets, log=log)
+        profile = get_profile(project_id) or {}
+        target_countries = validate_countries(profile.get("target_countries"))
+        accounts_by_id = _discover_accounts_concurrently(targets, target_countries=target_countries, log=log)
         discovered = 0
         for target in targets:
             for account in accounts_by_id.get(target["id"], []):

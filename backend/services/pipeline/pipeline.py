@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -228,7 +229,21 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 raise PipelineCancelled()
 
             stats = _load_pipeline_stats(stats_file)
-            diagnostics_summary = summarize_notable_diagnostics(load_source_diagnostics(str(run_path)))
+            diagnostics = load_source_diagnostics(str(run_path))
+            # Debug visibility: print every source that had a fetch problem
+            # (403/blocked/etc.) straight to the backend console, with the
+            # full detail captured in source_rss.py - the run's own
+            # status/message stay "success" here (a blocked source doesn't
+            # fail the whole run), so without this the real cause is only
+            # visible by opening the run's per-source breakdown afterward.
+            for entry in diagnostics:
+                if entry.get("http_status") or entry.get("note"):
+                    print(
+                        f"[pipeline] source diagnostic: {entry.get('source_name')!r} "
+                        f"-> HTTP {entry.get('http_status')} blocked={entry.get('network_blocked')} "
+                        f"note={entry.get('note')}"
+                    )
+            diagnostics_summary = summarize_notable_diagnostics(diagnostics)
             completion_message = "Pipeline complete." + (f" {diagnostics_summary}" if diagnostics_summary else "")
             _finish_run(
                 run_id,
@@ -254,6 +269,21 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
             )
             print(f"Pipeline {run_id} cancelled.")
         except subprocess.CalledProcessError as e:
+            # str(e) alone is just "Command '...' returned non-zero exit
+            # status N." - no hint of *why* (a 403 alone won't trigger this,
+            # since scrapy still exits 0 on a blocked source; this fires for
+            # a harder failure such as a spider crash) - print cmd/returncode
+            # plus whatever fetch diagnostics did get written before the
+            # crash, so the real cause is visible in the backend console.
+            diagnostics = load_source_diagnostics(str(run_path))
+            for entry in diagnostics:
+                if entry.get("http_status") or entry.get("note"):
+                    print(
+                        f"[pipeline] source diagnostic (at failure): {entry.get('source_name')!r} "
+                        f"-> HTTP {entry.get('http_status')} blocked={entry.get('network_blocked')} "
+                        f"note={entry.get('note')}"
+                    )
+            print(f"Pipeline failed: cmd={e.cmd} returncode={e.returncode}")
             _finish_run(
                 run_id,
                 project_id,
@@ -263,17 +293,17 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 error=str(e),
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
-            print(f"Pipeline failed: {e}")
         except Exception as e:
+            print(f"Pipeline crashed: {e}")
+            traceback.print_exc()
             _finish_run(
                 run_id,
                 project_id,
                 status="failed",
                 stage="error",
                 message="Pipeline crashed.",
-                error=str(e),
+                error=f"{e}\n{traceback.format_exc()}",
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
-            print(f"Pipeline crashed: {e}")
         finally:
             _clear_cancellation(run_id)
