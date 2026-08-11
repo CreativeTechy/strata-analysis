@@ -26,6 +26,8 @@ from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
 from services.competitors.countries import validate_countries
+from services.projects.projects_store import REPEAT_WEEKDAYS
+from psycopg.types.json import Jsonb
 import db
 from services.auth.auth import require_permission
 from services.pipeline.pipeline import run_scraper_pipeline
@@ -720,7 +722,8 @@ def get_schedule(project_id: int, user: dict = Depends(require_permission("compe
     return {"schedule": db.fetch_one(
         """
         select repeat_enabled, repeat_interval_value, repeat_interval_unit,
-               repeat_weekdays, first_run_at, next_run_at, last_run_at, last_run_status
+               repeat_weekdays, first_run_at, next_run_at, last_run_at, last_run_status,
+               start_date, end_date
         from projects where id = %s
         """,
         (int(project_id),),
@@ -729,7 +732,13 @@ def get_schedule(project_id: int, user: dict = Depends(require_permission("compe
 
 @router.put("/studies/{project_id}/schedule")
 def set_schedule(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
-    """Enable recurring competitor scrapes via the existing project scheduler."""
+    """Enable recurring competitor scrapes via the existing project scheduler.
+
+    Also carries the data retrieval window (start_date/end_date) - the same
+    columns Opinion Monitor projects use to scope which article publish dates
+    get pulled in. The dashboard keeps this window's span in sync with the
+    repeat interval; the backend just persists whatever it's given.
+    """
     _project_or_404(project_id)
     payload = payload or {}
     enabled = bool(payload.get("repeat_enabled"))
@@ -742,6 +751,23 @@ def set_schedule(project_id: int, payload: dict, user: dict = Depends(require_pe
         raise HTTPException(status_code=400, detail="repeat_interval_value must be a positive number.")
 
     first_run = payload.get("first_run_at") or None
+    start_date = str(payload.get("start_date") or "").strip() or None
+    end_date = str(payload.get("end_date") or "").strip() or None
+
+    # Only touch weekdays when the caller actually sent the field - the
+    # workspace's simpler reschedule call doesn't, and a bare interval change
+    # there must not silently clear a day restriction set during onboarding.
+    weekdays_param = None
+    if "repeat_weekdays" in payload:
+        seen = set()
+        weekdays = []
+        for day in payload.get("repeat_weekdays") or []:
+            text = str(day or "").strip().lower()
+            if text and text in REPEAT_WEEKDAYS and text not in seen:
+                seen.add(text)
+                weekdays.append(text)
+        weekdays_param = Jsonb(weekdays)
+
     schedule = db.fetch_one(
         """
         update projects
@@ -752,12 +778,16 @@ def set_schedule(project_id: int, payload: dict, user: dict = Depends(require_pe
                next_run_at = case
                    when %s then coalesce(%s::timestamptz, next_run_at, now())
                    else null
-               end
+               end,
+               start_date = coalesce(%s::date, start_date),
+               end_date = coalesce(%s::date, end_date),
+               repeat_weekdays = coalesce(%s::jsonb, repeat_weekdays)
          where id = %s
         returning repeat_enabled, repeat_interval_value, repeat_interval_unit,
-                  first_run_at, next_run_at, last_run_at, last_run_status
+                  repeat_weekdays, first_run_at, next_run_at, last_run_at, last_run_status,
+                  start_date, end_date
         """,
-        (enabled, value, unit, first_run, enabled, first_run, int(project_id)),
+        (enabled, value, unit, first_run, enabled, first_run, start_date, end_date, weekdays_param, int(project_id)),
     )
     return {"schedule": schedule}
 

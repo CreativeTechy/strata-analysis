@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
+import { REPEAT_UNIT_OPTIONS } from '../constants/schedule.js';
 import '../styles/Projects.css';
 import {
   CalendarDays,
@@ -101,11 +102,6 @@ const emptyDraft = {
 };
 
 const STATUS_OPTIONS = ['draft', 'active', 'archived'];
-const REPEAT_UNIT_OPTIONS = [
-  { value: 'minutes', label: 'Minutes' },
-  { value: 'hours', label: 'Hours' },
-  { value: 'days', label: 'Days' },
-];
 const LOCATION_TYPE_OPTIONS = [
   { value: 'on_site', label: 'On site' },
   { value: 'remote', label: 'Remote' },
@@ -308,7 +304,7 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
   );
 }
 
-function WeekdayPicker({ values, onChange, disabled }) {
+export function WeekdayPicker({ values, onChange, disabled }) {
   const toggleDay = (day) => {
     onChange(values.includes(day) ? values.filter((value) => value !== day) : [...values, day]);
   };

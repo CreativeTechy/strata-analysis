@@ -54,7 +54,9 @@ import {
   uploadDocuments, validateAccount,
 } from '../competitorApi.js';
 import { COUNTRIES, countryLabel } from '../constants/countries.js';
+import { REPEAT_UNIT_OPTIONS } from '../constants/schedule.js';
 import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
+import { WeekdayPicker } from './ProjectsPage.jsx';
 import '../styles/Competitors.css';
 
 /** Offline swaps step 3 for its own "Review articles" and skips step 4
@@ -321,6 +323,27 @@ function CountryPicker({ label, hint, values, onChange }) {
   );
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDaysIso(dateIso, days) {
+  if (!dateIso) return '';
+  const parsed = new Date(`${dateIso}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return '';
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+// The retrieval window is date-granular, so a minutes/hours interval still
+// needs to resolve to at least a 1-day-wide window rather than 0.
+function intervalToDays(value, unit) {
+  const amount = Math.max(1, Number(value) || 1);
+  if (unit === 'minutes') return Math.max(1, Math.ceil(amount / 1440));
+  if (unit === 'hours') return Math.max(1, Math.ceil(amount / 24));
+  return amount;
+}
+
 export default function CompetitorOnboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
@@ -379,8 +402,17 @@ export default function CompetitorOnboarding() {
   const [trackingAllBusy, setTrackingAllBusy] = useState(false);
   const [unverified, setUnverified] = useState({});
 
-  const [scheduleDays, setScheduleDays] = useState(1);
+  const [scheduleIntervalValue, setScheduleIntervalValue] = useState(1);
+  const [scheduleIntervalUnit, setScheduleIntervalUnit] = useState('days');
+  const [scheduleWeekdays, setScheduleWeekdays] = useState([]);
   const [scheduleOn, setScheduleOn] = useState(true);
+  // Defaults to today rather than blank, since the window is required before
+  // finishing — no effect needed, this only ever needs to run once.
+  const [retrievalStart, setRetrievalStart] = useState(() => todayIso());
+  // Only holds a real value while the schedule toggle is off (manual entry);
+  // while it's on, the window's end is derived fresh each render below so
+  // changing the repeat interval resizes it without a setState-in-effect.
+  const [retrievalEnd, setRetrievalEnd] = useState('');
 
   const canLeaveStep1 = business.name.trim().length > 0;
   const trackedCompetitors = useMemo(
@@ -895,6 +927,16 @@ export default function CompetitorOnboarding() {
     }
   };
 
+  // While the repeat schedule is on, the window's end is derived fresh from
+  // the interval on every render - the same start_date/end_date columns
+  // Opinion Monitor projects use to scope which article publish dates get
+  // pulled in - so "every 7 days" always means a 7-day window with no stale
+  // state to keep in sync. Turning the schedule off freezes it at whatever it
+  // last resolved to, then hands editing over to the retrievalEnd state.
+  const scheduleWindowDays = intervalToDays(scheduleIntervalValue, scheduleIntervalUnit);
+  const effectiveRetrievalEnd = scheduleOn ? addDaysIso(retrievalStart, scheduleWindowDays) : retrievalEnd;
+  const retrievalWindowValid = dataMode === 'offline' || Boolean(retrievalStart && effectiveRetrievalEnd);
+
   const finish = async () => {
     setError('');
     setBusy(true);
@@ -903,8 +945,11 @@ export default function CompetitorOnboarding() {
       // regardless of what the (hidden, for offline) toggle happens to hold.
       await setSchedule(studyId, {
         repeat_enabled: dataMode === 'offline' ? false : scheduleOn,
-        repeat_interval_value: Math.max(1, Number(scheduleDays) || 1),
-        repeat_interval_unit: 'days',
+        repeat_interval_value: Math.max(1, Number(scheduleIntervalValue) || 1),
+        repeat_interval_unit: scheduleIntervalUnit,
+        repeat_weekdays: scheduleWeekdays,
+        start_date: dataMode === 'offline' ? null : retrievalStart,
+        end_date: dataMode === 'offline' ? null : effectiveRetrievalEnd,
       });
       navigate(`/competitors/${studyId}`);
     } catch (caught) {
@@ -1370,13 +1415,21 @@ export default function CompetitorOnboarding() {
                 <p className="cs-panel-hint">No previous business profiles yet — switch to "Create new" above.</p>
               ) : null}
               {selectedBusinessProfile ? (
-                <div className="cs-alert cs-alert-info" style={{ marginTop: 10 }}>
-                  <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
-                  <span>
-                    Reusing <strong>{selectedBusinessProfile.name}</strong>&rsquo;s market context — no
-                    re-scraping or AI wait needed. You can still edit it on the next step.
-                  </span>
-                </div>
+                <>
+                  <div className="cs-alert cs-alert-info" style={{ marginTop: 10 }}>
+                    <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                    <span>
+                      Reusing <strong>{selectedBusinessProfile.name}</strong>&rsquo;s market context — no
+                      re-scraping or AI wait needed. You can still edit it on the next step.
+                    </span>
+                  </div>
+                  <CountryPicker
+                    label="Target countries"
+                    hint="carried over from that business — edit for this study"
+                    values={targetCountries}
+                    onChange={setTargetCountries}
+                  />
+                </>
               ) : null}
             </div>
           ) : null}
@@ -1831,23 +1884,80 @@ export default function CompetitorOnboarding() {
             rest of Strata.
           </p>
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
-            <input type="checkbox" checked={scheduleOn} onChange={(event) => setScheduleOn(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={scheduleOn}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                // Freeze the derived end date into editable state right as the
+                // toggle turns off, so the field doesn't go blank.
+                if (!checked) setRetrievalEnd(effectiveRetrievalEnd);
+                setScheduleOn(checked);
+              }}
+            />
             Scrape competitors automatically
           </label>
           {scheduleOn ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
-              <span>Every</span>
-              <input className="cs-input" type="number" min="1" style={{ width: 78 }}
-                value={scheduleDays} onChange={(event) => setScheduleDays(event.target.value)} />
-              <span>day(s)</span>
+            <div className="cs-panel" style={{ margin: '0 0 4px', background: '#fcfdff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem', flexWrap: 'wrap' }}>
+                <span>Every</span>
+                <input className="cs-input" type="number" min="1" style={{ width: 78 }}
+                  value={scheduleIntervalValue} onChange={(event) => setScheduleIntervalValue(event.target.value)} />
+                <select
+                  className="cs-input"
+                  style={{ width: 130 }}
+                  value={scheduleIntervalUnit}
+                  onChange={(event) => setScheduleIntervalUnit(event.target.value)}
+                >
+                  {REPEAT_UNIT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <WeekdayPicker values={scheduleWeekdays} onChange={setScheduleWeekdays} />
+              </div>
             </div>
           ) : null}
+
+          <div className="cs-field" style={{ marginTop: 18 }}>
+            <label className="cs-label">
+              Data retrieval window
+              <span className="cs-label-hint">
+                {scheduleOn ? 'required — end date follows your repeat schedule' : 'required'}
+              </span>
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+              <input
+                className="cs-input"
+                type="date"
+                style={{ width: 160 }}
+                value={retrievalStart}
+                onChange={(event) => setRetrievalStart(event.target.value)}
+              />
+              <span style={{ color: 'var(--text-light)' }}>to</span>
+              <input
+                className="cs-input"
+                type="date"
+                style={{ width: 160 }}
+                value={effectiveRetrievalEnd}
+                min={retrievalStart || undefined}
+                disabled={scheduleOn}
+                onChange={(event) => setRetrievalEnd(event.target.value)}
+              />
+            </div>
+            <p className="cs-panel-hint" style={{ marginTop: 8, marginBottom: 0 }}>
+              {scheduleOn
+                ? `Scopes which article publish dates get pulled in — kept at ${scheduleWindowDays} day(s) wide to match "every ${Math.max(1, Number(scheduleIntervalValue) || 1)} ${scheduleIntervalUnit}" above. Change the interval and this window resizes with it.`
+                : 'Scopes which article publish dates get pulled in for this study.'}
+            </p>
+          </div>
 
           <div className="cs-wizard-foot">
             <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(4)} disabled={busy}>
               <ArrowLeft size={15} /> Back
             </button>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy}>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy || !retrievalWindowValid}>
               {busy ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />} Open workspace
             </button>
           </div>
