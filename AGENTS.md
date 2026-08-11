@@ -6,7 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Pipeline: Scrapy spider → AI enrichment → Supabase/Postgres → FastAPI → React dashboard.
 
-- `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `sources` table (or `SOURCES` env var override), discovers article links, extracts text via trafilatura.
+- `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `sources` table (scoped to the selected project's sources when `PIPELINE_PROJECT_ID` is set), discovers article links, extracts text via trafilatura.
 - `backend/enrich.py` - tags/cleans articles using the configured LLM (via `llm_client.chat_completion`), falling back to neutral defaults if the call fails.
 - `backend/store.py` - upserts enriched articles into Supabase.
 - `backend/main.py` - FastAPI app: scraping, sources, projects, chat (Intelligence Copilot, also via `llm_client.chat_completion`) endpoints.

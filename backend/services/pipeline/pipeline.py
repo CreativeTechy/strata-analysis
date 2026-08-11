@@ -182,10 +182,7 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
         if project_id is not None:
             try:
                 sources = list_sources_for_project(project_id)
-                source_urls = [source.get("url") for source in sources if source.get("url")]
-                if source_urls:
-                    env["SOURCES"] = ",".join(source_urls)
-                else:
+                if not any(source.get("url") for source in sources):
                     _finish_run(
                         run_id,
                         project_id,

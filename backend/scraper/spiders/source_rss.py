@@ -4,8 +4,9 @@ Generic source spider: RSS discovery -> web/social page fetch -> trafilatura ext
 Run from the backend/ directory:
     scrapy crawl source_rss -O <output-file>
 
-Sources come from Supabase via config.load_source_records() (or the SOURCES env var
-override), so adding/removing a publisher does not require code changes. The
+Sources come from Supabase via config.load_source_records() (scoped to the
+selected project's sources when PIPELINE_PROJECT_ID is set), so adding/removing
+a publisher does not require code changes. The
 spider never hand-writes CSS selectors per site -- trafilatura extracts
 title/date/text generically, so one spider covers every publisher.
 """

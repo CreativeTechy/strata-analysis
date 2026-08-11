@@ -468,34 +468,36 @@ def _discover_feed_urls(url: str):
 
 
 def load_source_records():
-    """Return configured source records with source_type preserved."""
-    env_sources = os.environ.get("SOURCES", "").strip()
-    if env_sources:
-        raw_urls = [u.strip() for u in env_sources.split(",") if u.strip()]
-        return [
-            _normalize_source_record(
-                {
-                    "url": url,
-                    "name": urlparse(url).netloc or url,
-                    "enabled": True,
-                    "source_type": _infer_source_type(url),
-                    "source": "env",
-                }
-            )
-            for url in raw_urls
-        ]
+    """Return configured source records with source_type preserved.
 
+    Scoped to the project's assigned sources when PIPELINE_PROJECT_ID is set
+    (the scraper subprocess always has this when a project was selected -
+    see run_scraper_pipeline), otherwise every source in the table.
+    """
     if not DATABASE_URL:
         return []
 
+    project_id = os.environ.get("PIPELINE_PROJECT_ID", "").strip()
     try:
-        records = db.fetch_all(
-            """
-            select id, url, name, enabled, source_type, created_at, updated_at
-            from sources
-            order by created_at asc
-            """
-        )
+        if project_id:
+            records = db.fetch_all(
+                """
+                select s.id, s.url, s.name, s.enabled, s.source_type, s.created_at, s.updated_at
+                from sources s
+                inner join project_sources ps on ps.source_id = s.id
+                where ps.project_id = %s
+                order by s.created_at asc
+                """,
+                (int(project_id),),
+            )
+        else:
+            records = db.fetch_all(
+                """
+                select id, url, name, enabled, source_type, created_at, updated_at
+                from sources
+                order by created_at asc
+                """
+            )
     except Exception:
         return []
 

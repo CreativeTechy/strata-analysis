@@ -14,8 +14,9 @@ it in Supabase, and surfaces it in the dashboard.
 ## Stages
 
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
-   Supabase `sources` or the `SOURCES` env var override, discovers article links,
-   and extracts clean title/date/text with trafilatura.
+   Supabase `sources` (scoped to the selected project's sources when running
+   for a specific project), discovers article links, and extracts clean
+   title/date/text with trafilatura.
 2. Enricher - `backend/services/articles/enrich.py`. Cleans and tags each
    article with AI, then falls back to neutral defaults if the request fails.
 3. Saver - `backend/services/articles/store.py`. Upserts enriched articles
