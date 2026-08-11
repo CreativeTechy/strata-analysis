@@ -462,6 +462,12 @@ export default function ProjectsPage({
   const [discoveryPhase, setDiscoveryPhase] = useState('idle');
   const [showDiscoverySuccessModal, setShowDiscoverySuccessModal] = useState(false);
   const discoveryPhaseTimersRef = useRef([]);
+  // Id of the project currently loaded into the draft - lets the reset effect
+  // below tell "switched to a different project" apart from "the same
+  // project's array reference changed" (e.g. syncTermSourcesToDraft's
+  // onCreateSource call triggers a projects refetch mid-wizard), which would
+  // otherwise wipe in-progress edits and kick the wizard back to step 1.
+  const loadedProjectIdRef = useRef(null);
   const [metadataError, setMetadataError] = useState('');
   const [showNewSourceForm, setShowNewSourceForm] = useState(false);
   const [newSourceDraft, setNewSourceDraft] = useState(emptyNewSourceDraft);
@@ -590,6 +596,7 @@ export default function ProjectsPage({
 
   useEffect(() => {
     if (!isFormRoute) {
+      loadedProjectIdRef.current = null;
       setDraft(emptyDraft);
       setLastDiscovery(null);
       setInitialDraft(emptyDraft);
@@ -610,10 +617,21 @@ export default function ProjectsPage({
 
     if (isEditRoute) {
       if (!currentProject) {
-        setDraft(emptyDraft);
-        setInitialDraft(emptyDraft);
+        if (loadedProjectIdRef.current !== editingId) {
+          setDraft(emptyDraft);
+          setInitialDraft(emptyDraft);
+        }
         return;
       }
+
+      if (loadedProjectIdRef.current === Number(currentProject.id)) {
+        // Same project already loaded - this fired only because the projects
+        // array got a new reference (e.g. a source-creation refetch), not
+        // because the user switched projects. Leave the in-progress draft
+        // and wizard step alone.
+        return;
+      }
+      loadedProjectIdRef.current = Number(currentProject.id);
 
       const draftFromProject = {
         name: currentProject.name || '',
@@ -657,6 +675,7 @@ export default function ProjectsPage({
       return;
     }
 
+    loadedProjectIdRef.current = null;
     setDraft(emptyDraft);
     setSourceAssignQuery('');
     setUserAssignQuery('');
@@ -673,7 +692,7 @@ export default function ProjectsPage({
     setNewSourceDraft(emptyNewSourceDraft);
     setNewSourceError('');
     setActiveSourceTab('all');
-  }, [currentProject, isEditRoute, isFormRoute]);
+  }, [currentProject, isEditRoute, isFormRoute, editingId]);
 
   const discardChanges = () => {
     setShowCancelModal(false);
@@ -754,13 +773,16 @@ export default function ProjectsPage({
     }
   };
 
+  // Returns the full set of term-derived source ids (existing + newly synced) so
+  // callers that need them immediately (e.g. submit()) aren't stuck reading
+  // draft.source_ids before the setDraft below has applied.
   const syncTermSourcesToDraft = async () => {
     const terms = [
       ...draft.usernames.map((term) => ({ term, source_type: 'username' })),
       ...draft.hashtags.map((term) => ({ term, source_type: 'hashtag' })),
       ...draft.keywords.map((term) => ({ term, source_type: 'keyword' })),
     ];
-    if (!terms.length || !onCreateSource) return;
+    if (!terms.length || !onCreateSource) return draft.source_ids;
 
     setIsSyncingSources(true);
     try {
@@ -773,12 +795,14 @@ export default function ProjectsPage({
         .filter(Boolean)
         .map((source) => Number(source.id))
         .filter((id) => Number.isFinite(id));
+      const mergedIds = Array.from(new Set([...draft.source_ids, ...ids]));
       if (ids.length) {
         setDraft((prev) => ({
           ...prev,
           source_ids: Array.from(new Set([...prev.source_ids, ...ids])),
         }));
       }
+      return mergedIds;
     } finally {
       setIsSyncingSources(false);
     }
@@ -924,32 +948,39 @@ export default function ProjectsPage({
 
   const submit = async () => {
     if (isSaving) return;
-
-    const payload = {
-      name: draft.name.trim(),
-      status: draft.status,
-      description: draft.description.trim(),
-      location: draft.location.trim(),
-      location_type: draft.location_type || null,
-      target_audience: draft.target_audience.trim(),
-      usernames: sanitizeTermArray(draft.usernames),
-      hashtags: sanitizeTermArray(draft.hashtags),
-      keywords: sanitizeTermArray(draft.keywords),
-      start_date: draft.start_date || null,
-      end_date: draft.end_date || null,
-      source_ids: draft.source_ids,
-      ...(canLinkUsers ? { user_ids: draft.user_ids } : {}),
-      repeat_enabled: Boolean(draft.repeat_enabled),
-      repeat_interval_value: draft.repeat_interval_value,
-      repeat_interval_unit: draft.repeat_interval_unit,
-      first_run_at: fromDateTimeLocalInput(draft.first_run_at),
-      repeat_weekdays: sanitizeTermArray(draft.repeat_weekdays),
-    };
-
-    if (!payload.name) return;
+    if (!draft.name.trim()) return;
 
     setIsSaving(true);
     try {
+      // Terms (keywords/hashtags/usernames) only turn into actual scraped sources
+      // once synced here - relying solely on the discovery step's own "Continue"
+      // click meant terms added/edited after that step, or reached by jumping
+      // straight to a later step, never got a source_ids entry. Syncing again on
+      // every submit (idempotent - create_source upserts on url) guarantees the
+      // saved project always reflects the current keywords/hashtags/usernames.
+      const syncedSourceIds = await syncTermSourcesToDraft();
+
+      const payload = {
+        name: draft.name.trim(),
+        status: draft.status,
+        description: draft.description.trim(),
+        location: draft.location.trim(),
+        location_type: draft.location_type || null,
+        target_audience: draft.target_audience.trim(),
+        usernames: sanitizeTermArray(draft.usernames),
+        hashtags: sanitizeTermArray(draft.hashtags),
+        keywords: sanitizeTermArray(draft.keywords),
+        start_date: draft.start_date || null,
+        end_date: draft.end_date || null,
+        source_ids: Array.from(new Set([...draft.source_ids, ...(syncedSourceIds || [])])),
+        ...(canLinkUsers ? { user_ids: draft.user_ids } : {}),
+        repeat_enabled: Boolean(draft.repeat_enabled),
+        repeat_interval_value: draft.repeat_interval_value,
+        repeat_interval_unit: draft.repeat_interval_unit,
+        first_run_at: fromDateTimeLocalInput(draft.first_run_at),
+        repeat_weekdays: sanitizeTermArray(draft.repeat_weekdays),
+      };
+
       if (editingId) {
         await onUpdateProject?.(editingId, payload);
       } else {
