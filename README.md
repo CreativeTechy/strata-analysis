@@ -347,16 +347,10 @@ Set `MIGRATE_ON_STARTUP=false` to manage migrations out of band instead — e.g.
 when several backend replicas share one database and only the deploy step should
 migrate it.
 
-### Backfilling the signal layer
+### The signal layer
 
-Two derived columns are populated from data already in Postgres — no re-scraping
-and no model calls:
-
-```bash
-# from backend/
-python backfill_signal_layer.py --dry-run    # report only
-python backfill_signal_layer.py              # both passes
-```
+Two derived columns are populated automatically as articles are stored — no
+re-scraping and no model calls:
 
 - **dates** — parses the free-text `articles.published` into `published_at` plus
   a `published_precision` of `exact`, `day`, or `unknown`. Rows whose date cannot
