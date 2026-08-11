@@ -2,13 +2,20 @@
 
 Used by both the /scrape endpoint and the interval scheduler so there is a
 single place that runs the pipeline and records its outcome.
+
+A single `scrapy crawl` subprocess does the whole run - scraping, cleaning,
+enriching, and saving each article as it's scraped (see
+scraper/pipelines.py's StreamingEnrichPipeline), rather than the previous
+two-subprocess design (a full `scrapy crawl -O raw_file` followed by a
+separate `python -m services.articles.enrich` pass over the whole file).
+That's what lets the dashboard's per-source breakdown fill in source by
+source while the crawl is still running, instead of only appearing once the
+slowest source in the run finishes.
 """
 
-import json
 import os
 import platform
 import subprocess
-import sys
 import tempfile
 import threading
 import traceback
@@ -16,8 +23,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services.projects.projects_store import list_sources_for_project, record_run_completion
-from services.pipeline.pipeline_runs import update_pipeline_run
-from services.pipeline.source_diagnostics import load_source_diagnostics, summarize_notable_diagnostics
+from services.pipeline.pipeline_runs import (
+    get_pipeline_run,
+    get_pipeline_run_sources,
+    update_pipeline_run,
+    upsert_pipeline_run_source_stats,
+)
+from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics, summarize_notable_diagnostics
 
 # services/pipeline/pipeline.py -> services/pipeline -> services -> backend/.
 # BASE_DIR must be the backend root (not this file's own directory): it's
@@ -131,15 +143,42 @@ def _run_step(run_id, cmd, cwd, env):
         raise subprocess.CalledProcessError(returncode, cmd)
 
 
-def _load_pipeline_stats(stats_file: Path):
-    if not stats_file.exists():
-        return {}
-    try:
-        return json.loads(stats_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+def _merge_fetch_diagnostics(run_id, workdir):
+    """Fold the spider's end-of-run fetch diagnostics (source_diagnostics.json
+    - only ever writable once the whole crawl closes, so this can't be
+    streamed per-item like the rest of a source's stats) into whatever
+    pipeline_run_sources rows StreamingEnrichPipeline already wrote live
+    during the run. Also adds a row for a source that produced zero items at
+    all (e.g. fully blocked) and therefore never got a row from the pipeline.
+    Returns the diagnostics list too, for the caller's own console logging.
+    """
+    diagnostics = load_source_diagnostics(workdir)
+    diagnostics_by_source = {
+        entry.get("source_name"): entry for entry in diagnostics if entry.get("source_name")
+    }
+    existing_rows = {row["source"]: row for row in get_pipeline_run_sources(run_id)}
 
-
+    merged = {}
+    for source in set(diagnostics_by_source) | set(existing_rows):
+        row = existing_rows.get(source) or {}
+        diagnostic = diagnostics_by_source.get(source)
+        scraped_count = int(row.get("scraped") or 0)
+        merged[source] = {
+            "source_url": (diagnostic or {}).get("source_url") or row.get("source_url"),
+            "scraped": scraped_count,
+            "duplicate": row.get("duplicate", 0),
+            "blocked": row.get("blocked", 0),
+            "date_filtered": row.get("date_filtered", 0),
+            "kept": row.get("kept", 0),
+            "enriched": row.get("enriched", 0),
+            "saved": row.get("saved", 0),
+            "http_status": (diagnostic or {}).get("http_status"),
+            "network_blocked": bool((diagnostic or {}).get("network_blocked")),
+            "fetch_note": build_fetch_note(diagnostic, scraped_count),
+        }
+    if merged:
+        upsert_pipeline_run_source_stats(run_id, merged)
+    return diagnostics
 
 
 def _finish_run(run_id, project_id, **fields):
@@ -150,7 +189,8 @@ def _finish_run(run_id, project_id, **fields):
 
 
 def run_scraper_pipeline(run_id: str, project_id: int | None = None):
-    """Scrape -> enrich -> save. enrich.py performs the Postgres upsert."""
+    """Scrape, clean, enrich, and save - all within one `scrapy crawl`
+    subprocess (see scraper/pipelines.py's StreamingEnrichPipeline)."""
     if _is_cancel_requested(run_id):
         _finish_run(
             run_id,
@@ -171,13 +211,11 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f"run-{run_id}-", dir=RUNS_DIR) as run_dir:
         run_path = Path(run_dir)
+        # Debug artifact only now - StreamingEnrichPipeline processes each
+        # item as it's scraped, so nothing reads this file back afterward the
+        # way enrich.py used to.
         raw_file = run_path / "articles.raw.json"
-        enriched_file = run_path / "articles.enriched.json"
-        stats_file = run_path / "pipeline.stats.json"
         env["PIPELINE_WORKDIR"] = str(run_path)
-        env["PIPELINE_RAW_FILE"] = str(raw_file)
-        env["PIPELINE_ENRICHED_FILE"] = str(enriched_file)
-        env["PIPELINE_STATS_FILE"] = str(stats_file)
 
         if project_id is not None:
             try:
@@ -202,31 +240,24 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                 run_id,
                 status="running",
                 stage="scrape",
-                message="Starting scrape...",
+                message="Starting scrape and enrichment...",
                 started_at=scrape_start,
                 scrape_started_at=scrape_start,
             )
-            print("1. Scraping configured sources...")
+            print("Scraping, cleaning, enriching, and saving sources...")
             _run_step(run_id, ["scrapy", "crawl", "source_rss", "-O", str(raw_file)], BASE_DIR, env)
-
-            update_pipeline_run(
-                run_id,
-                stage="clean",
-                message="Scrape complete. Cleaning articles...",
-                scrape_finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("2. Cleaning + enriching + saving...")
-            # enrich.py now lives at services/articles/enrich.py, not next to
-            # this file, so it can't be run as a bare relative filename -
-            # `-m` resolves it as a module via BASE_DIR (backend root) on
-            # sys.path, same mechanism uvicorn/pytest already rely on.
-            _run_step(run_id, [sys.executable, "-m", "services.articles.enrich"], BASE_DIR, env)
 
             if _is_cancel_requested(run_id):
                 raise PipelineCancelled()
 
-            stats = _load_pipeline_stats(stats_file)
-            diagnostics = load_source_diagnostics(str(run_path))
+            scrape_finished = datetime.now(timezone.utc).isoformat()
+            update_pipeline_run(run_id, scrape_finished_at=scrape_finished)
+
+            # Fetch-level diagnostics (was a source blocked/404/DNS-failed)
+            # are only ever knowable once the whole crawl closes - this folds
+            # them into the pipeline_run_sources rows StreamingEnrichPipeline
+            # already wrote live during the run (see _merge_fetch_diagnostics).
+            diagnostics = _merge_fetch_diagnostics(run_id, str(run_path))
             # Debug visibility: print every source that had a fetch problem
             # (403/blocked/etc.) straight to the backend console, with the
             # full detail captured in source_rss.py - the run's own
@@ -242,15 +273,21 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                     )
             diagnostics_summary = summarize_notable_diagnostics(diagnostics)
             completion_message = "Pipeline complete." + (f" {diagnostics_summary}" if diagnostics_summary else "")
+
+            # articles_scraped/cleaned/saved were already kept live-updated
+            # throughout the run (by the spider itself and by
+            # StreamingEnrichPipeline respectively) - read the current row
+            # back rather than a stats file no longer written anywhere.
+            final_run = get_pipeline_run(run_id) or {}
             _finish_run(
                 run_id,
                 project_id,
                 status="success",
                 stage="done",
                 message=completion_message,
-                articles_scraped=int(stats.get("articles_scraped") or 0),
-                articles_cleaned=int(stats.get("articles_cleaned") or 0),
-                articles_saved=int(stats.get("articles_saved") or 0),
+                articles_scraped=int(final_run.get("articles_scraped") or 0),
+                articles_cleaned=int(final_run.get("articles_cleaned") or 0),
+                articles_saved=int(final_run.get("articles_saved") or 0),
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
             print("Pipeline complete!")
@@ -272,7 +309,10 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
             # a harder failure such as a spider crash) - print cmd/returncode
             # plus whatever fetch diagnostics did get written before the
             # crash, so the real cause is visible in the backend console.
-            diagnostics = load_source_diagnostics(str(run_path))
+            # StreamingEnrichPipeline's per-source rows already reflect
+            # whatever it got through before the crash - still worth folding
+            # in fetch diagnostics for whatever they cover.
+            diagnostics = _merge_fetch_diagnostics(run_id, str(run_path))
             for entry in diagnostics:
                 if entry.get("http_status") or entry.get("note"):
                     print(

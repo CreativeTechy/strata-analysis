@@ -16,13 +16,24 @@ it in Supabase, and surfaces it in the dashboard.
 1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
    Supabase `sources` (scoped to the selected project's sources when running
    for a specific project), discovers article links, and extracts clean
-   title/date/text with trafilatura.
+   title/date/text with trafilatura. `keyword` sources also query GDELT's
+   free news-search API (`backend/scraper/gdelt.py`, on by default) and, when
+   `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_ENGINE_ID` are configured, a general web
+   search via `backend/scraper/web_search.py` (Google Custom Search JSON
+   API), alongside their Google News RSS feed.
 2. Enricher - `backend/services/articles/enrich.py`. Cleans and tags each
    article with AI, then falls back to neutral defaults if the request fails.
+   For a backend-triggered run, this happens per article as it's scraped
+   (`backend/scraper/pipelines.py`'s `StreamingEnrichPipeline`, calling into
+   `enrich.py`'s own functions) rather than as a separate pass after the
+   whole crawl finishes - see [Run the pipeline manually](#6-run-the-pipeline-manually)
+   for the batch/offline alternative.
 3. Saver - `backend/services/articles/store.py`. Upserts enriched articles
-   into Supabase.
+   into Supabase, immediately after each article is enriched.
 4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
-   backend API.
+   backend API. A running pipeline's detail page polls for updates, so a
+   source's results (and any other source's) appear as soon as that source
+   finishes, without waiting for the whole run.
 
 A single configured LLM provider is used everywhere in this app for AI:
 article enrichment (`backend/services/articles/enrich.py`), Intelligence
@@ -229,7 +240,11 @@ The dashboard expects the backend on `http://localhost:8000` unless you set
 
 ### 6. Run the pipeline manually
 
-You can run the scrape/enrich/save flow directly from the backend folder:
+You can run the scrape/enrich/save flow directly from the backend folder.
+This is the offline/dev path - the streaming item pipeline that enriches as
+it scrapes (used by the `/scrape` endpoint and the scheduler) only activates
+when `PIPELINE_RUN_ID` is set, so a bare manual run like this stays as two
+separate steps against a plain JSON file:
 
 ```bash
 scrapy crawl source_rss -O articles.json

@@ -325,6 +325,73 @@ def reddit_oauth_configured() -> bool:
     return bool(REDDIT_OAUTH_CLIENT_ID and REDDIT_OAUTH_CLIENT_SECRET)
 
 
+# --- Google Custom Search (optional) -----------------------------------------
+# General-web-search tier for "keyword" sources (see scraper/web_search.py and
+# source_rss.py's start()) - a keyword otherwise only reaches Google News via
+# its RSS feed, missing ordinary (non-news) web pages that mention it. Create
+# a Programmable Search Engine at https://programmablesearchengine.google.com/
+# (set it to search the whole web) for the engine id, and an API key with the
+# Custom Search API enabled at https://console.cloud.google.com/apis/credentials.
+# Free for 100 queries/day, then billed - unconfigured (the default) simply
+# skips this tier and keyword sources behave exactly as before.
+GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "").strip()
+GOOGLE_CSE_ENGINE_ID = os.environ.get("GOOGLE_CSE_ENGINE_ID", "").strip()
+
+
+def google_cse_configured() -> bool:
+    return bool(GOOGLE_CSE_API_KEY and GOOGLE_CSE_ENGINE_ID)
+
+
+# --- GDELT (optional, on by default) -----------------------------------------
+# Free, no-key news-search tier for "keyword" sources (see scraper/gdelt.py) -
+# GDELT's own global news index, queried alongside (not instead of) the
+# Google News RSS feed, so a keyword's news coverage doesn't depend solely on
+# resolving Google's redirect-wrapper links. Set to false/0/no to disable.
+GDELT_ENABLED = os.environ.get("GDELT_ENABLED", "true").strip().lower() not in {"false", "0", "no"}
+
+
+# --- Streaming enrichment concurrency ----------------------------------------
+# How many articles StreamingEnrichPipeline (scraper/pipelines.py) enriches in
+# parallel, off Scrapy's reactor thread, instead of one at a time blocking the
+# whole crawl. Kept deliberately low by default rather than tuned to any one
+# provider's ceiling, since LLM_PROVIDER is user-selectable and the limiting
+# factor differs a lot by provider:
+#   - deepseek: no published per-minute limit, but a shared *concurrency* cap
+#     (500-2500 in-flight requests) at the account level, across everything
+#     else that account is doing too - not just this app.
+#   - openai: tier-based (by cumulative spend); a fresh/low-spend account's
+#     Tier 1 default is generously above this default for a small/cheap model,
+#     but nowhere near unlimited.
+#   - ollama: no external rate limit at all, but real local hardware/VRAM
+#     throughput instead - a low default avoids swamping a single local
+#     model server (and the local embedding model, which competes for the
+#     same CPU/GPU) with too many simultaneous generations.
+# Raise this if you have a well-provisioned account/host and have confirmed
+# your own provider's actual limits comfortably clear it.
+try:
+    ENRICH_CONCURRENCY = max(1, int(os.environ.get("ENRICH_CONCURRENCY", "4")))
+except ValueError:
+    ENRICH_CONCURRENCY = 4
+
+
+# --- Google News link-decode concurrency -------------------------------------
+# How many news.google.com/rss/articles/... redirect-wrapper links
+# source_rss.py's parse_feed() decodes at once (see googlenewsdecoder in
+# CLAUDE.md). A Google News search feed carries up to ~100 of these, each
+# decode being a real network round trip (fetch the wrapper page, then a
+# signed batchexecute call) - resolved one at a time this was measured at
+# 7-11 minutes for a single feed, blocking the whole crawl for that entire
+# span. Higher than ENRICH_CONCURRENCY by default: this endpoint's own
+# rate-limiting is undocumented (unlike the LLM providers ENRICH_CONCURRENCY
+# is sized against), so this is a starting point to tune from, not a
+# researched ceiling - lower it if you see a rise in decode failures
+# (skipped links, not errors - see _resolve_google_news_link).
+try:
+    GOOGLE_NEWS_DECODE_CONCURRENCY = max(1, int(os.environ.get("GOOGLE_NEWS_DECODE_CONCURRENCY", "8")))
+except ValueError:
+    GOOGLE_NEWS_DECODE_CONCURRENCY = 8
+
+
 # Apply pending schema migrations when the API starts. Set false to manage them
 # out of band (`python migrate.py`) — e.g. when several backend replicas share
 # one database and only a deploy step should migrate it.

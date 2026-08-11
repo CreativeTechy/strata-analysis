@@ -268,11 +268,17 @@ def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved
     upsert_pipeline_run_source_stats(PIPELINE_RUN_ID, source_stats)
 
 
-def clean_articles(articles):
+def clean_articles(articles, seen_urls=None):
     """Returns (cleaned_articles, removed_counts_by_source), the latter tallying
     why an article didn't make it past dedup/quality filtering (see
-    pipeline_run_sources - "duplicate" and "blocked" buckets)."""
-    seen_urls = set()
+    pipeline_run_sources - "duplicate" and "blocked" buckets).
+
+    `seen_urls` defaults to a fresh set (this call's own batch only, the
+    original behavior). Pass a set you own across repeated single-article
+    calls - see scraper/pipelines.py's streaming pipeline - to dedup across
+    the whole run instead of just within one call's batch."""
+    if seen_urls is None:
+        seen_urls = set()
     cleaned = []
     removed_by_source = defaultdict(lambda: {"duplicate": 0, "blocked": 0})
     for a in articles:

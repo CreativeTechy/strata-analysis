@@ -11,10 +11,12 @@ spider never hand-writes CSS selectors per site -- trafilatura extracts
 title/date/text generically, so one spider covers every publisher.
 """
 
+import asyncio
 import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -22,6 +24,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 import scrapy
 import trafilatura
+from googlenewsdecoder import gnewsdecoder
 from trafilatura.feeds import find_feed_urls
 
 import config
@@ -42,10 +45,26 @@ from scraper.social_sources import (
     reddit_oauth_headers,
     reddit_oauth_request_url,
 )
+from scraper.gdelt import gdelt_search
+from scraper.web_search import google_cse_search
 from services.pipeline.pipeline_runs import update_pipeline_run
 
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
 TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
+
+# For the seed request's "handle_httpstatus_list" meta below - deliberately
+# excludes 3xx. Scrapy's RedirectMiddleware checks this same meta key (and
+# handle_httpstatus_all) to decide whether IT should treat a status as
+# "the spider wants to see this raw" and skip auto-following it - so a
+# request whose 3xx code appears here (or handle_httpstatus_all=True) never
+# gets its redirect followed at all, arriving at parse_source as the bare
+# redirect stub instead of the real page. This bit us for real: Google
+# News's own RSS search endpoint (a "keyword" source's URL) 302s once before
+# its actual XML response, and handle_httpstatus_all=True (this list's
+# previous form) was silently swallowing that redirect - every keyword
+# source saw a content-type-less redirect stub, matched no feed/article
+# shape, and reported 0 articles with no visible error at all.
+_ERROR_STATUS_CODES = list(range(400, 600))
 
 
 def _parse_json_silent(text):
@@ -53,6 +72,10 @@ def _parse_json_silent(text):
         return json.loads(text)
     except (TypeError, ValueError):
         return None
+
+
+def _is_google_news_link(url):
+    return urlparse(url or "").netloc.lower().removeprefix("www.") == "news.google.com"
 
 
 # Response headers worth surfacing on a blocked fetch - which anti-bot/CDN
@@ -136,6 +159,12 @@ class SourceRssSpider(scrapy.Spider):
         # per-source breakdown enrich.py already tracks by scraped-item count.
         self._source_reports = {}
         self._reddit_oauth_token = None
+        # Off-reactor pool for resolving Google News redirect-wrapper links
+        # concurrently (see parse_feed) - each decode is a real network round
+        # trip (fetch + signed batchexecute call), and a feed carries up to
+        # ~100 of them; resolved one at a time this blocked the whole crawl
+        # for 7-11 minutes per feed. Shut down in closed().
+        self._decode_executor = ThreadPoolExecutor(max_workers=config.GOOGLE_NEWS_DECODE_CONCURRENCY)
 
     def _push_progress(self, force=False):
         if not PIPELINE_RUN_ID:
@@ -194,6 +223,11 @@ class SourceRssSpider(scrapy.Spider):
         DB access of its own, only the run-level progress pushed via
         update_pipeline_run, which the next pipeline stage immediately
         overwrites once this subprocess exits."""
+        # No pending work by this point - every parse_feed() call already
+        # awaited its own links before yielding its last request, so the
+        # crawl can't have finished with any decode still in flight.
+        self._decode_executor.shutdown(wait=True)
+
         if not self._source_reports:
             return
         workdir = os.environ.get("PIPELINE_WORKDIR", "").strip()
@@ -266,14 +300,73 @@ class SourceRssSpider(scrapy.Spider):
                     # content_guard.is_telegram_channel_unavailable.
                     "dont_redirect": source_type == "telegram",
                     # Without this, Scrapy's HttpErrorMiddleware silently drops
-                    # any non-2xx/3xx response before parse_source ever sees
-                    # it - every source type needs this now (not just
-                    # reddit/telegram), so a plain 404/500 on the source's own
-                    # page is visible too. See parse_source's status check.
-                    "handle_httpstatus_all": True,
+                    # any non-2xx response before parse_source ever sees it -
+                    # every source type needs this (not just reddit/telegram),
+                    # so a plain 404/500 on the source's own page is visible
+                    # too. See parse_source's status check. Scoped to 4xx/5xx
+                    # only (not handle_httpstatus_all) - see _ERROR_STATUS_CODES'
+                    # comment for why 3xx must stay out of this list.
+                    "handle_httpstatus_list": _ERROR_STATUS_CODES,
                     **proxy_meta(source_type),
                 },
             )
+
+            if source_type == "keyword" and config.google_cse_configured():
+                # General-web-search tier: the Google News RSS feed above only
+                # ever surfaces news coverage, missing ordinary web pages
+                # (blogs, forums, brand/retailer pages, ...) that mention the
+                # keyword - see scraper/web_search.py. Best-effort: a failed
+                # or unconfigured CSE call already returns [], so this is a
+                # no-op rather than a source-level failure when unavailable.
+                cse_results = google_cse_search(source_name)
+                if cse_results:
+                    self.logger.info(
+                        "Keyword %r -> %d general-web search result(s)", source_name, len(cse_results)
+                    )
+                for result in cse_results:
+                    result_url = (result.get("url") or "").strip()
+                    if not result_url:
+                        continue
+                    yield scrapy.Request(
+                        result_url,
+                        callback=self.parse_web_search_hit,
+                        meta={
+                            # Same reasoning as parse_feed's followed links -
+                            # keep the configured keyword source's own URL so
+                            # articles.source_url still matches sources.url.
+                            "source_url": url,
+                            "source_name": source_name,
+                            **proxy_meta("web"),
+                        },
+                    )
+
+            if source_type == "keyword" and config.GDELT_ENABLED:
+                # News-search tier: GDELT's own global news index, queried
+                # alongside (not instead of) the Google News RSS feed above -
+                # see scraper/gdelt.py. Unlike the CSE tier, each hit is
+                # already a specific article (not a site to crawl), so this
+                # goes straight to parse_article with no link-following.
+                gdelt_results = gdelt_search(source_name)
+                if gdelt_results:
+                    self.logger.info(
+                        "Keyword %r -> %d GDELT news result(s)", source_name, len(gdelt_results)
+                    )
+                for result in gdelt_results:
+                    result_url = (result.get("url") or "").strip()
+                    if not result_url:
+                        continue
+                    yield scrapy.Request(
+                        result_url,
+                        callback=self.parse_article,
+                        meta={
+                            # Same reasoning as parse_feed's followed links -
+                            # keep the configured keyword source's own URL so
+                            # articles.source_url still matches sources.url.
+                            "source_url": url,
+                            "source_name": source_name,
+                            **proxy_meta("web"),
+                        },
+                    )
         self._push_progress(force=True)
 
     def start_requests(self):
@@ -281,7 +374,7 @@ class SourceRssSpider(scrapy.Spider):
         # hook as a compatibility fallback for older runners.
         yield from ()
 
-    def parse_source(self, response):
+    async def parse_source(self, response):
         source_type = (response.meta.get("source_type") or "rss").strip().lower()
         source_name = response.meta.get("source_name")
         source_url = response.meta.get("source_url")
@@ -332,11 +425,17 @@ class SourceRssSpider(scrapy.Spider):
             content_type or "unknown content-type",
         )
 
+        # "yield from" is invalid syntax inside an async def (parse_source
+        # has to be one to await parse_feed's concurrent link resolution
+        # below) - a plain for-loop over these still-synchronous generators
+        # has the same effect.
         if source_type == "reddit":
-            yield from self.parse_reddit_listing(response)
+            for request in self.parse_reddit_listing(response):
+                yield request
             return
         if source_type == "telegram":
-            yield from self.parse_telegram_channel(response)
+            for request in self.parse_telegram_channel(response):
+                yield request
             return
 
         is_feed_like = (
@@ -350,21 +449,28 @@ class SourceRssSpider(scrapy.Spider):
             # Feed content is unambiguous regardless of the configured source_type -
             # e.g. a "keyword" source now points at a Google News RSS search feed
             # (see sources_store._derive_term_url), not a plain web page.
-            yield from self.parse_feed(response)
+            # parse_feed is an async generator (it awaits concurrent Google
+            # News link resolution) - "yield from" can't delegate to one,
+            # hence "async for" instead, same effect.
+            async for request in self.parse_feed(response):
+                yield request
             return
 
         if source_type == "rss":
-            yield from self.parse_homepage(response)
+            for request in self.parse_homepage(response):
+                yield request
             return
 
         if source_type in {"social", "username", "hashtag"}:
-            yield from self.parse_social_page(response)
+            for request in self.parse_social_page(response):
+                yield request
             return
 
         follow_links = source_type in {"web", "keyword"}
-        yield from self.parse_page(response, follow_links=follow_links)
+        for request in self.parse_page(response, follow_links=follow_links):
+            yield request
 
-    def parse_feed(self, response):
+    async def parse_feed(self, response):
         """Parse RSS/Atom XML and follow each article link."""
         self._progress_pages += 1
         self._push_progress()
@@ -375,21 +481,75 @@ class SourceRssSpider(scrapy.Spider):
 
         self.logger.info("Feed %s -> %d article links", response.url, len(links))
 
-        for url in links:
-            url = url.strip()
-            if url:
-                yield response.follow(
-                    url,
-                    callback=self.parse_article,
-                    # Propagate the configured source's own URL unchanged,
-                    # not this feed page's URL - articles.source_url is
-                    # matched exact-string against sources.url elsewhere
-                    # (see services/intelligence/intelligence.py's
-                    # keyword_existence_over_time source filter), so
-                    # overwriting it here would silently break that filter
-                    # for any source that goes through a homepage/feed hop.
-                    meta={"source_url": response.meta.get("source_url"), "source_name": response.meta.get("source_name")},
-                )
+        cleaned_links = [url.strip() for url in links if url and url.strip()]
+        # A Google News RSS <link> is a redirect-wrapper
+        # (news.google.com/rss/articles/<id>), not the publisher URL -
+        # fetching it directly returns a short interstitial page that gets
+        # filtered out downstream (too short / consent title), so the source
+        # ends up reporting 0 articles despite a healthy feed fetch. Resolve
+        # every one to its real article URL concurrently, streaming each as
+        # its OWN resolution finishes rather than waiting for the whole
+        # batch (see _resolve_links_as_completed) - one at a time (a real
+        # network round trip each) was measured at 7-11 minutes for a
+        # single ~100-link feed, blocking the whole crawl that entire time;
+        # waiting for the full concurrent batch still let one slow/retried
+        # (e.g. 429'd) decode hold up every other link that had already
+        # resolved. Skip a link entirely if its resolution fails rather than
+        # following one that can only ever yield an interstitial.
+        async for url in self._resolve_links_as_completed(cleaned_links):
+            if not url:
+                continue
+            yield response.follow(
+                url,
+                callback=self.parse_article,
+                # Propagate the configured source's own URL unchanged,
+                # not this feed page's URL - articles.source_url is
+                # matched exact-string against sources.url elsewhere
+                # (see services/intelligence/intelligence.py's
+                # keyword_existence_over_time source filter), so
+                # overwriting it here would silently break that filter
+                # for any source that goes through a homepage/feed hop.
+                meta={"source_url": response.meta.get("source_url"), "source_name": response.meta.get("source_name")},
+            )
+
+    async def _resolve_links_as_completed(self, urls):
+        """Yield each url in `urls` as soon as it's ready - a non-Google-News
+        link immediately (no resolution needed), a Google News link once its
+        own decode finishes on self._decode_executor
+        (config.GOOGLE_NEWS_DECODE_CONCURRENCY workers). Decodes run
+        concurrently and are yielded in whichever order they finish, not
+        submission order, so a slow/retried one never delays the others."""
+        decode_futures = []
+        loop = asyncio.get_event_loop()
+        for url in urls:
+            if _is_google_news_link(url):
+                decode_futures.append(loop.run_in_executor(self._decode_executor, self._resolve_google_news_link, url))
+            else:
+                yield url
+        for future in asyncio.as_completed(decode_futures):
+            yield await future
+
+    def _resolve_google_news_link(self, wrapped_url):
+        """Decode a news.google.com/rss/articles/<id> link to its real
+        publisher URL via googlenewsdecoder (handles both the legacy local
+        base64 payload and the current signed-batchexecute lookup Google
+        requires for newer links). Runs on self._decode_executor's worker
+        threads (see _resolve_links_concurrently), same trade-off as this
+        file's other blocking auxiliary lookups (e.g. _hydrate_tweet) - just
+        parallelized across a small pool instead of one at a time."""
+        try:
+            result = gnewsdecoder(wrapped_url, interval=1)
+        except Exception as exc:
+            self.logger.debug("Google News link decode failed for %s: %s", wrapped_url, exc)
+            return None
+        if isinstance(result, dict) and result.get("status") and result.get("decoded_url"):
+            return result["decoded_url"]
+        self.logger.debug(
+            "Google News link decode returned no url for %s: %s",
+            wrapped_url,
+            (result or {}).get("message") if isinstance(result, dict) else result,
+        )
+        return None
 
     def parse_homepage(self, response):
         """Fallback for RSS homepage URLs that do not expose a feed directly."""
@@ -462,6 +622,14 @@ class SourceRssSpider(scrapy.Spider):
                     "source_name": response.meta.get("source_name"),
                 },
             )
+
+    def parse_web_search_hit(self, response):
+        """One of up to 10 general-web-search results for a keyword source
+        (see start()/scraper/web_search.py). A search hit is often a listing/
+        section page rather than a single article, so it's crawled exactly
+        like a "web" source - extract if it's itself an article, and follow
+        same-domain links to find the articles on it."""
+        yield from self.parse_page(response, follow_links=True)
 
     def parse_social_page(self, response):
         """Best-effort extraction for X/Twitter sources."""

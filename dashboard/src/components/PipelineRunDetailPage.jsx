@@ -72,10 +72,13 @@ function projectNameForRun(run, projectsById) {
   return run.project_id != null ? `Project #${run.project_id}` : 'Unassigned';
 }
 
+// Scraping, cleaning, enriching, and saving all happen interleaved within a
+// single crawl now (see backend/scraper/pipelines.py's StreamingEnrichPipeline) -
+// one source can finish while another is still being fetched, so separate
+// clean/enrich start-finish timestamps for the whole run no longer mean
+// anything distinct from the scrape span itself.
 const STAGE_ROWS = [
-  { key: 'scrape', label: 'Scraping', startField: 'scrape_started_at', endField: 'scrape_finished_at', Icon: Rss },
-  { key: 'clean', label: 'Cleaning', startField: 'clean_started_at', endField: 'clean_finished_at', Icon: Filter },
-  { key: 'enrich', label: 'Enriching', startField: 'enrich_started_at', endField: 'enrich_finished_at', Icon: Layers },
+  { key: 'scrape', label: 'Scraping & enriching', startField: 'scrape_started_at', endField: 'scrape_finished_at', Icon: Rss },
 ];
 
 const TOTAL_STATS = [
@@ -172,28 +175,54 @@ export default function PipelineRunDetailPage({ projects = [] }) {
     if (!runId) return undefined;
 
     let cancelled = false;
-    setLoading(true);
-    setError('');
+    let intervalId = null;
+
+    const load = ({ showLoading = false } = {}) => {
+      if (showLoading) {
+        setLoading(true);
+        setError('');
+      }
+      return fetch(`/api/pipeline-runs/${runId}`)
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load run (${res.status})`);
+          if (cancelled) return null;
+          setRun(data?.run || null);
+          setSources(Array.isArray(data?.sources) ? data.sources : []);
+          return data?.run || null;
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err?.message || 'Failed to load run details.');
+          return null;
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setLoading(false);
+        });
+    };
+
     setRun(null);
     setSources([]);
-
-    fetch(`/api/pipeline-runs/${runId}`)
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load run (${res.status})`);
-        if (cancelled) return;
-        setRun(data?.run || null);
-        setSources(Array.isArray(data?.sources) ? data.sources : []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || 'Failed to load run details.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    load({ showLoading: true }).then((loadedRun) => {
+      if (cancelled) return;
+      const status = (loadedRun?.status || '').toLowerCase();
+      if (status !== 'queued' && status !== 'running') return;
+      // Per-source rows fill in live while the run is active (see
+      // backend/scraper/pipelines.py's StreamingEnrichPipeline) - poll until
+      // the run reaches a terminal status instead of leaving this static.
+      intervalId = setInterval(() => {
+        load().then((polledRun) => {
+          const polledStatus = (polledRun?.status || '').toLowerCase();
+          if (polledRun && polledStatus !== 'queued' && polledStatus !== 'running' && intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+        });
+      }, 3000);
+    });
 
     return () => {
       cancelled = true;
+      if (intervalId) clearInterval(intervalId);
     };
   }, [runId]);
 
@@ -286,7 +315,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           <div className="glass-card" style={{ marginBottom: 18 }}>
-            <h3 className="run-detail-section-title">Per-stage timings</h3>
+            <h3 className="run-detail-section-title">Timing</h3>
             {!run.has_detail ? (
               <div className="run-detail-fallback">
                 Details unavailable for legacy run — this run finished before per-stage timing was tracked.
