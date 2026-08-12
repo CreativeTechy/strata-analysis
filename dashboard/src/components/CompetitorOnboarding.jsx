@@ -15,7 +15,12 @@
  *                       action on the same screen; AI-suggested competitors and
  *                       their channels still need a quick review before they're
  *                       trusted the same way a manual entry already is.
- *   5. Schedule       — how often confirmed sources get re-scraped, then finish.
+ *   5. Channels       — every channel found for a tracked competitor, manual or
+ *                       AI-discovered, is listed here already included (channels
+ *                       are trusted by default, same as a manually-entered
+ *                       competitor). Discard any that aren't actually theirs, or
+ *                       add one yourself if something's missing, before moving on.
+ *   6. Schedule       — how often confirmed sources get re-scraped, then finish.
  *
  *   Offline (uploaded documents):
  *   1. Data source
@@ -31,9 +36,11 @@
  *                         read later (same table scraped articles use), exactly
  *                         like AI-suggested competitors need a look before
  *                         they're trusted. "Approve all" is the fast path.
- *   5. Schedule          — re-scraping doesn't apply with nothing to scrape, so
- *                         this reuses the same step only for a consistent finish,
- *                         then opens the workspace with approved articles ready.
+ *   5. Schedule          — re-scraping doesn't apply with nothing to scrape, and
+ *                         there are no competitor channels to review either, so
+ *                         this reuses the same step id only for a consistent
+ *                         finish, then opens the workspace with approved articles
+ *                         ready.
  *
  * Long steps (scrape, discovery) run tens of seconds, so each shows staged
  * progress instead of an indeterminate spinner.
@@ -60,10 +67,11 @@ import { WeekdayPicker } from './ProjectsPage.jsx';
 import '../styles/Competitors.css';
 
 /** Offline swaps step 3 for its own "Review articles" and skips step 4
- *  (Competitors) entirely — there's nothing to track yet, so it's left out of
- *  the chip row rather than shown as passed-through. Step 5 is also swapped:
- *  there's nothing to re-scrape, so instead of "Schedule" it runs analysis
- *  straight off the approved articles and shows the resulting report. */
+ *  (Competitors) and step 5 (Channels) entirely — there's nothing to track or
+ *  find channels for yet, so they're left out of the chip row rather than
+ *  shown as passed-through. Step 5 (Channels)/6 (Schedule) also collapse into
+ *  a single id 5: there's nothing to re-scrape or review, so instead it runs
+ *  analysis straight off the approved articles and shows the resulting report. */
 function getSteps(dataMode) {
   const steps = [
     { id: 1, label: 'Data source', icon: Database },
@@ -76,7 +84,8 @@ function getSteps(dataMode) {
     { id: 4, label: 'Competitors', icon: Radar },
     dataMode === 'offline'
       ? { id: 5, label: 'Analyze & report', icon: ScanText }
-      : { id: 5, label: 'Schedule', icon: CalendarClock },
+      : { id: 5, label: 'Channels', icon: Link2 },
+    ...(dataMode === 'offline' ? [] : [{ id: 6, label: 'Schedule', icon: CalendarClock }]),
   ];
   return dataMode === 'offline' ? steps.filter((s) => s.id !== 4) : steps;
 }
@@ -110,7 +119,9 @@ const DISCOVERY_STAGES = [
 // Phase 3: finding channels for whichever competitors got tracked.
 const CHANNEL_STAGES = [
   'Checking each competitor’s site for a feed',
-  'Asking the model for X accounts and hashtags to monitor',
+  'Searching the web for their real accounts and hashtags',
+  'Asking the model for X accounts, hashtags, and keywords to monitor',
+  'Searching for review and discussion pages',
   'Linking valid channels as sources',
 ];
 
@@ -422,6 +433,13 @@ export default function CompetitorOnboarding() {
   const untrackedCompetitors = useMemo(
     () => competitors.filter((competitor) => competitor.status !== 'tracked'),
     [competitors],
+  );
+  // Only counts competitors whose accounts have already loaded (undefined
+  // means "not fetched yet", not "found nothing") - avoids a misleading 0
+  // flashing before step 5's own effect has loaded them.
+  const channellessTracked = useMemo(
+    () => trackedCompetitors.filter((competitor) => accountsByCompetitor[competitor.id]?.length === 0).length,
+    [trackedCompetitors, accountsByCompetitor],
   );
   const visibleSteps = useMemo(() => getSteps(dataMode), [dataMode]);
   const filteredExistingBusinesses = useMemo(() => {
@@ -774,7 +792,14 @@ export default function CompetitorOnboarding() {
     try {
       const result = await addCompetitorManual(studyId, payload);
       await refreshCompetitors();
-      setAccountsByCompetitor((current) => ({ ...current, [result.competitor.id]: result.accounts || [] }));
+      // Only pre-seed the cache when there's something to show immediately -
+      // an empty array here would look identical to "already fetched, found
+      // nothing" to every reader of this cache (step 4's drawer, step 5's
+      // auto-load), permanently hiding channels that automatic discovery
+      // finds for this competitor later since nothing would think to re-fetch.
+      if (result.accounts?.length) {
+        setAccountsByCompetitor((current) => ({ ...current, [result.competitor.id]: result.accounts }));
+      }
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -801,10 +826,11 @@ export default function CompetitorOnboarding() {
     }
   };
 
-  // Step 4 -> 5: before moving on, find channels for whichever competitors the
-  // user chose to track — best-effort, since a failure here shouldn't block
-  // scheduling (channels can still be found later from the workspace).
-  const continueToSchedule = async () => {
+  // Step 4 -> 5: before showing the channels review step, find channels for
+  // whichever competitors the user chose to track — best-effort, since a
+  // failure here shouldn't block moving on (channels can still be found later
+  // from the workspace, and the review step below shows whatever came back).
+  const continueToChannels = async () => {
     setFindingChannels(true);
     setDiscoveryLogs([]);
     try {
@@ -818,6 +844,40 @@ export default function CompetitorOnboarding() {
     } finally {
       setFindingChannels(false);
       setStep(5);
+    }
+  };
+
+  // Step 5's own "Find more channels" button — reruns the same bulk job as
+  // above for any tracked competitor still without one (more may have been
+  // tracked since, or the first pass came back empty), but stays on this step
+  // and, unlike the automatic pass above, surfaces a failure instead of
+  // swallowing it, since this is an explicit user action rather than a
+  // best-effort step transition. Also re-fetches each competitor's account
+  // list afterwards, since accounts are only lazy-loaded once per competitor.
+  const findMoreChannels = async () => {
+    setError('');
+    setFindingChannels(true);
+    setDiscoveryLogs([]);
+    try {
+      const queued = await discoverTrackedAccounts(studyId);
+      if (queued.run_id) {
+        await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
+      }
+      await refreshCompetitors();
+      const results = await Promise.allSettled(
+        trackedCompetitors.map((competitor) => listAccounts(competitor.id)),
+      );
+      setAccountsByCompetitor((current) => {
+        const next = { ...current };
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') next[trackedCompetitors[index].id] = result.value.accounts || [];
+        });
+        return next;
+      });
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setFindingChannels(false);
     }
   };
 
@@ -926,6 +986,22 @@ export default function CompetitorOnboarding() {
       setSourceBusy((current) => ({ ...current, [competitorId]: false }));
     }
   };
+
+  // Step 5 shows every tracked competitor's channels at once instead of the
+  // per-competitor drawer step 4 uses, so make sure they're all loaded the
+  // moment this step is reached rather than waiting for a click.
+  useEffect(() => {
+    if (step !== 5 || dataMode !== 'online') return;
+    trackedCompetitors
+      .filter((competitor) => !accountsByCompetitor[competitor.id])
+      .forEach((competitor) => {
+        listAccounts(competitor.id)
+          .then((result) => {
+            setAccountsByCompetitor((current) => ({ ...current, [competitor.id]: result.accounts || [] }));
+          })
+          .catch(() => {});
+      });
+  }, [step, dataMode, trackedCompetitors, accountsByCompetitor]);
 
   // While the repeat schedule is on, the window's end is derived fresh from
   // the interval on every render - the same start_date/end_date columns
@@ -1811,7 +1887,7 @@ export default function CompetitorOnboarding() {
               <button
                 type="button"
                 className="cs-btn cs-btn-primary"
-                onClick={continueToSchedule}
+                onClick={continueToChannels}
                 disabled={busy || findingChannels || !trackedCompetitors.length}
               >
                 {findingChannels ? <Loader2 size={15} className="cs-spin" /> : <ArrowRight size={15} />}
@@ -1822,6 +1898,103 @@ export default function CompetitorOnboarding() {
             </div>
           </div>
         </>
+      ) : null}
+
+      {/* ---------------- Step 5 (online): review channels ---------------- */}
+      {step === 5 && dataMode !== 'offline' ? (
+        <div className="cs-panel">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h2 className="cs-panel-title" style={{ marginBottom: 4 }}><Link2 size={16} /> Review channels</h2>
+              <p className="cs-panel-hint" style={{ marginBottom: 0 }}>
+                Every channel found for your tracked competitors is listed below and already included —
+                discard any that aren&rsquo;t actually theirs, or add one yourself if something&rsquo;s missing.
+              </p>
+            </div>
+            {channellessTracked > 0 ? (
+              <button type="button" className="cs-btn cs-btn-sm" onClick={findMoreChannels} disabled={findingChannels}>
+                {findingChannels ? <span className="cs-spinner" /> : <Search size={13} />}
+                {findingChannels ? 'Finding...' : `Find more channels (${channellessTracked})`}
+              </button>
+            ) : null}
+          </div>
+
+          {findingChannels ? (
+            <div className="cs-panel" style={{ marginTop: 14, background: '#fcfdff' }}>
+              <StageList stages={CHANNEL_STAGES} />
+            </div>
+          ) : null}
+          {findingChannels ? <DiscoveryLog logs={discoveryLogs} active={findingChannels} /> : null}
+
+          {!findingChannels && !trackedCompetitors.length ? (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><Link2 size={20} /></div>
+              <h3>No tracked competitors</h3>
+              <p>Go back and track at least one competitor first.</p>
+            </div>
+          ) : null}
+
+          {!findingChannels ? trackedCompetitors.map((competitor) => {
+            const accounts = accountsByCompetitor[competitor.id];
+            return (
+              <div key={competitor.id} style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div
+                    className="cs-avatar"
+                    style={{ background: avatarGradient(competitor.name), width: 26, height: 26, fontSize: '0.68rem' }}
+                    aria-hidden="true"
+                  >
+                    {initials(competitor.name)}
+                  </div>
+                  <strong style={{ fontSize: '0.88rem' }}>{competitor.name}</strong>
+                </div>
+                <div className="cs-rows" style={{ marginLeft: 30 }}>
+                  {!accounts ? (
+                    <div className="cs-row-desc" style={{ padding: '8px 0' }}>Loading channels...</div>
+                  ) : !accounts.length ? (
+                    <div className="cs-row-desc" style={{ padding: '8px 0' }}>No channels found yet.</div>
+                  ) : (
+                    accounts.map((account) => (
+                      <div key={account.id} className="cs-row">
+                        <div className="cs-row-main">
+                          <div className="cs-row-name">
+                            {PLATFORM_LABELS[account.platform] || account.platform}
+                            {account.handle ? <span style={{ fontWeight: 400, color: 'var(--text-light)' }}> @{account.handle}</span> : null}
+                          </div>
+                          <div className="cs-row-desc">{account.url}</div>
+                        </div>
+                        <div className="cs-row-side">
+                          <span className={`cs-pill cs-pill-${account.validation_status}`}>
+                            {account.validation_status}
+                          </span>
+                          {account.validation_status !== 'rejected' ? (
+                            <button type="button" className="cs-btn cs-btn-sm cs-btn-danger"
+                              onClick={() => decideAccount(competitor.id, account.id, 'rejected')}>
+                              <Trash2 size={13} /> Not theirs
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  <AddSourceRow
+                    busy={Boolean(sourceBusy[competitor.id])}
+                    onSubmit={(source) => addSourceToCompetitor(competitor.id, source)}
+                  />
+                </div>
+              </div>
+            );
+          }) : null}
+
+          <div className="cs-wizard-foot">
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(4)} disabled={busy}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(6)} disabled={busy}>
+              <ArrowRight size={15} /> Continue
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {/* ---------------- Step 5 (offline): analyze + report ---------------- */}
@@ -1874,8 +2047,8 @@ export default function CompetitorOnboarding() {
         </div>
       ) : null}
 
-      {/* ---------------- Step 5 (online): schedule + finish ---------------- */}
-      {step === 5 && dataMode !== 'offline' ? (
+      {/* ---------------- Step 6 (online): schedule + finish ---------------- */}
+      {step === 6 && dataMode !== 'offline' ? (
         <div className="cs-panel">
           <h2 className="cs-panel-title"><Globe size={16} /> Keep it current</h2>
           <p className="cs-panel-hint">
@@ -1954,7 +2127,7 @@ export default function CompetitorOnboarding() {
           </div>
 
           <div className="cs-wizard-foot">
-            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(4)} disabled={busy}>
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(5)} disabled={busy}>
               <ArrowLeft size={15} /> Back
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy || !retrievalWindowValid}>

@@ -17,10 +17,19 @@ Three stages, deliberately separate:
    name or dead domain before phase 3 spends an LLM call finding its channels.
 
 3. `discover_accounts()` — resolves each competitor's channels: owned accounts
-   (site feed, X, blog, news) plus hashtags worth monitoring them by. Every
-   result carries a confidence and is pre-approved (`validation_status: "valid"`),
-   so it's linked as a scrape source the moment it's discovered — no manual
-   confirmation step.
+   (site feed, X, blog, news) plus hashtags and search keywords worth
+   monitoring them by. A couple of live web searches ground the LLM call the
+   same way `discover_competitors()`'s grounding does, since the model's own
+   memory of a smaller or regional competitor's actual handles is exactly
+   where it's weakest and most likely to hallucinate. Review/discussion pages
+   (Reddit, Trustpilot, Yelp) are found the same grounded way but never asked
+   of the model at all — a review-site URL isn't something a model can
+   reliably recall, but it's exactly the kind of normally-indexed page search
+   finds well, so `_review_candidates()` links the actual search hit directly
+   (guarded by a name-overlap check, since everything here still gets linked
+   as `valid` with no further confirmation). Every result carries a confidence
+   and is pre-approved (`validation_status: "valid"`), so it's linked as a
+   scrape source the moment it's discovered — no manual confirmation step.
 
 Search and URL resolution reuse `project_discovery`, so there is one place that
 knows how to query the web and normalise a result.
@@ -40,7 +49,10 @@ import config
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors.countries import COUNTRIES, country_label, validate_countries
-from services.projects.project_discovery import _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo
+from services.projects.project_discovery import (
+    OPINION_QUERY_SITES, _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo,
+)
+from services.sources.sources_store import _derive_term_url
 
 PROMPT_VERSION = "competitor-discovery-2026-08-07"
 
@@ -54,14 +66,21 @@ ACCOUNTS_SYSTEM_PROMPT = load_prompt("competitor_accounts_system_prompt.txt")
 
 # Restricted to platforms we can actually scrape (backend/scraper/spiders/source_rss.py
 # and config.KNOWN_SOURCE_TYPES) — LinkedIn/Facebook/Instagram/YouTube are dropped
-# because nothing in this app fetches them.
-VALID_PLATFORMS = {"x", "hashtag", "blog", "news"}
+# because nothing in this app fetches them. `reddit`/`web` are found via direct
+# web-search hits (see _review_candidates), never asked of the LLM - unlike an
+# X handle or hashtag, a review-site URL isn't something a model can reliably
+# recall, but it's exactly the kind of normally-indexed page search engines do
+# find well.
+VALID_PLATFORMS = {"x", "hashtag", "keyword", "blog", "news", "reddit", "web"}
 
 # Phase 3 asks for several X accounts (main brand, regional, support, product
-# lines) and several hashtags (branded + relevant industry ones worth
-# monitoring), not just one of each — cap per platform so a verbose model
-# response can't flood a competitor with low-value channels.
-MAX_ACCOUNTS_PER_PLATFORM = {"x": 5, "hashtag": 8, "blog": 2, "news": 1}
+# lines), several hashtags (branded + relevant industry ones worth monitoring),
+# and a few search keywords (catches news coverage a hashtag or owned account
+# would miss), not just one of each — cap per platform so a verbose model
+# response can't flood a competitor with low-value channels. `reddit`/`web`
+# come from search hits rather than the model, but are capped the same way for
+# the same reason.
+MAX_ACCOUNTS_PER_PLATFORM = {"x": 5, "hashtag": 8, "keyword": 5, "blog": 2, "news": 1, "reddit": 2, "web": 3}
 
 # Hosts that are never a company's own site, so never a competitor "website".
 NON_COMPANY_HOSTS = {
@@ -566,7 +585,110 @@ def _guess_site_feed(website: str) -> dict | None:
     return None
 
 
-def _ask_for_accounts(name: str, website: str, target_countries: list[str] | None = None) -> list[dict]:
+# Phase 3's own grounding, mirroring _grounding_context (Phase 1) but scoped to
+# one competitor's channels rather than the whole market. Kept to 2 queries -
+# unlike Phase 1's single grounding pass shared across every candidate, this
+# runs once per competitor (already fanned out up to 6-wide by
+# _discover_accounts_concurrently), so each extra query multiplies real
+# search-engine load.
+ACCOUNT_GROUNDING_QUERIES = 2
+
+
+def _account_grounding_queries(name: str) -> list[str]:
+    if not name:
+        return []
+    return [f"{name} twitter OR X account", f"{name} hashtag campaign"][:ACCOUNT_GROUNDING_QUERIES]
+
+
+def _account_grounding_context(name: str, log=None) -> str:
+    """Live search results for one competitor's own channels, as prompt text.
+
+    Empty string when search finds nothing — grounding is best-effort here too,
+    same as Phase 1: a failed or blocked search must degrade to the model's own
+    recall rather than break discovery.
+    """
+    log = log or (lambda _msg: None)
+    queries = _account_grounding_queries(name)
+    if not queries:
+        return ""
+
+    log(f"{name}: searching the web for their real accounts and hashtags...")
+    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        futures = [pool.submit(_search_snippets, query) for query in queries]
+    results = [item for future in futures for item in future.result()]
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for item in results:
+        title = str(item.get("title") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+        if not title or title.casefold() in seen:
+            continue
+        seen.add(title.casefold())
+        lines.append(f"- {title}" + (f" — {snippet[:220]}" if snippet else ""))
+
+    if not lines:
+        log(f"{name}: search returned nothing usable; falling back to the model's own knowledge.")
+        return ""
+    log(f"{name}: found {len(lines)} search result{'' if len(lines) == 1 else 's'} to ground channel discovery.")
+    return "Web search results for this company's channels:\n" + "\n".join(lines[:20])
+
+
+def _name_overlap_ok(name: str, text: str) -> bool:
+    """True when enough of `name`'s words show up in `text` to trust a search
+    hit is really about this competitor rather than a same-named unrelated
+    result — everything `discover_accounts()` finds is linked as `valid`
+    immediately, so this is the only check standing between a search hit and
+    it being linked as a source.
+    """
+    name_words = _words(name)
+    if not name_words:
+        return False
+    overlap = name_words & _words(text)
+    return len(overlap) >= max(1, (len(name_words) + 1) // 2)
+
+
+def _review_candidates(name: str, log=None) -> list[dict]:
+    """Third-party pages actually about this competitor — review sites and
+    discussion threads — found from real search hits rather than asked of the
+    model: unlike an X handle or a hashtag, a review-site URL isn't something
+    a model can reliably recall, but it's exactly the kind of normally-indexed
+    page a search engine finds well. Reuses the same site list the general
+    project-source discovery already searches (`OPINION_QUERY_SITES`).
+    """
+    log = log or (lambda _msg: None)
+    if not name:
+        return []
+    queries = {site: f"site:{site} {name}" for site in OPINION_QUERY_SITES}
+    log(f"{name}: searching for review and discussion pages...")
+    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        futures = {site: pool.submit(_search_snippets, query) for site, query in queries.items()}
+    candidates = []
+    for site, future in futures.items():
+        results = future.result() or []
+        # Only the best-matching hit per site — a flood of loosely-related
+        # results from one review site would be noise, not more coverage.
+        match = next(
+            (r for r in results if _name_overlap_ok(name, f"{r.get('title', '')} {r.get('snippet', '')}")),
+            None,
+        )
+        if not match or not match.get("url"):
+            continue
+        candidates.append({
+            "platform": "reddit" if "reddit.com" in site else "web",
+            "url": match["url"],
+            "handle": None,
+            "confidence": 0.6,
+            "validation_status": "valid",
+        })
+    log(f"{name}: found {len(candidates)} matching review/discussion page{'' if len(candidates) == 1 else 's'}."
+        if candidates else f"{name}: no matching review or discussion pages found.")
+    return candidates
+
+
+def _ask_for_accounts(
+    name: str, website: str, target_countries: list[str] | None = None, grounding: str = "",
+) -> list[dict]:
     directive = ""
     if target_countries:
         names = ", ".join(country_label(code) for code in target_countries)
@@ -578,6 +700,8 @@ def _ask_for_accounts(name: str, website: str, target_countries: list[str] | Non
             f"country (e.g. a Canada-only account is no use for a Lebanon-scoped study) "
             f"unless it is the only account you know of."
         )
+    if grounding:
+        directive += f"\n\n{grounding}"
     try:
         raw = chat_completion(
             messages=[
@@ -673,8 +797,15 @@ def discover_accounts(
         seen.add(site.lower())
         counts["news"] = counts.get("news", 0) + 1
 
-    log(f"{name}: asking the model for channels — X accounts and hashtags to monitor...")
-    candidates = [entry for entry in _ask_for_accounts(name, site, target_countries) if isinstance(entry, dict)]
+    grounding = _account_grounding_context(name, log)
+    log(f"{name}: asking the model for channels — X accounts, hashtags, and keywords to monitor...")
+    candidates = [
+        entry for entry in _ask_for_accounts(name, site, target_countries, grounding) if isinstance(entry, dict)
+    ]
+    # Review/discussion pages are found directly from search hits, not asked
+    # of the model — see _review_candidates. They join the same list so the
+    # dedup/per-platform-cap/region-mismatch handling below applies uniformly.
+    candidates.extend(_review_candidates(name, log))
     # X handles are the riskiest guess to widen — check each is a live account
     # before it's linked as a scrape source, rather than trusting the model.
     x_urls = {
@@ -690,12 +821,20 @@ def discover_accounts(
     dropped_region = 0
     for entry in candidates:
         platform = str(entry.get("platform") or "").strip().lower()
-        url = _normalize_url(str(entry.get("url") or "").strip())
+        handle = str(entry.get("handle") or "").strip()
+        # `keyword` has no canonical URL of its own — the model is asked to
+        # give the search phrase in `handle`, and the real (Google News RSS
+        # search) URL is derived from it, the same way a manually-added
+        # keyword source is, rather than trusting whatever `url` the model
+        # made up for it.
+        if platform == "keyword":
+            url = _derive_term_url("keyword", handle or str(entry.get("url") or "").strip())
+        else:
+            url = _normalize_url(str(entry.get("url") or "").strip())
         if platform not in VALID_PLATFORMS or not url or url.lower() in seen:
             continue
         if platform == "x" and url not in reachable_x:
             continue
-        handle = str(entry.get("handle") or "").strip()
         if _foreign_region_hit(handle, url, target_countries):
             dropped_region += 1
             continue
@@ -710,7 +849,7 @@ def discover_accounts(
         accounts.append({
             "platform": platform,
             "url": url,
-            "handle": str(entry.get("handle") or "").strip().lstrip("@") or _handle_from_url(url),
+            "handle": handle.lstrip("@") or _handle_from_url(url),
             "confidence": confidence,
             "validation_status": "valid",
         })

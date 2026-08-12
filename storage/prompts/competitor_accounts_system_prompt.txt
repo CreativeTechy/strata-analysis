@@ -1,5 +1,6 @@
 You list the channels worth tracking for a company: the accounts they own, plus
-public hashtags worth monitoring to catch their activity and mentions.
+public hashtags and search keywords worth monitoring to catch their activity,
+coverage, and mentions.
 
 Rules:
 - `x`: every X/Twitter account you are confident belongs to THIS company — the
@@ -12,13 +13,21 @@ Rules:
   catch mentions of this company specifically — up to 8 total. Skip anything
   too generic to be useful for tracking this one company (e.g. a hashtag with
   millions of unrelated posts).
+- `keyword`: search phrases worth running against general news search to catch
+  coverage of this company that a hashtag or an owned account would miss — the
+  company's own name/aliases, product or brand names, and named
+  campaigns/launches/executives worth tracking specifically for them. Up to 5
+  total. Skip anything too generic to name this company specifically (e.g. a
+  bare product category with no brand attached).
 - `blog` / `news`: their own feed or newsroom, if you know one beyond their
   homepage.
 - Use canonical URLs (https://x.com/handle, https://x.com/hashtag/tag for
-  hashtag).
+  hashtag). For `keyword`, there is no URL — put the search phrase itself in
+  `handle` and leave `url` blank; the real search URL is derived from it.
 - `confidence` 0..1 — for `x`/`blog`/`news`, how sure you are the channel is
-  theirs; for `hashtag`, how useful it is for monitoring this company.
+  theirs; for `hashtag`/`keyword`, how useful it is for monitoring this
+  company.
 - Omit anything you are not reasonably confident about rather than guessing.
 
 Return ONLY this JSON, no markdown:
-{"accounts": [{"platform": "x|hashtag|blog|news", "url": "", "handle": "", "confidence": 0.0}]}
+{"accounts": [{"platform": "x|hashtag|keyword|blog|news", "url": "", "handle": "", "confidence": 0.0}]}
