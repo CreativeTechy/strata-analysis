@@ -52,6 +52,21 @@ function sourceTypeLabel(sourceType) {
   return match ? match.label : (sourceType || 'RSS');
 }
 
+// "keyword" sources are crawled as a bare Google News/GDELT/CSE search query
+// (see backend/services/sources/sources_store.py's _derive_term_url), so a
+// generic term like "coffee" alone returns industry-wide news, not news
+// about this project. Prefixing the project name scopes the query to the
+// project (e.g. "Starbucks coffee") instead. Hashtag/username terms already
+// resolve to a specific page (an X hashtag/profile), not a search query, so
+// they don't need this.
+function scopeKeywordTerm(projectName, term, sourceType) {
+  const trimmedTerm = (term || '').trim();
+  if (sourceType !== 'keyword') return trimmedTerm;
+  const trimmedName = (projectName || '').trim();
+  if (!trimmedName || trimmedTerm.toLowerCase().includes(trimmedName.toLowerCase())) return trimmedTerm;
+  return `${trimmedName} ${trimmedTerm}`.trim();
+}
+
 const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
 
 const DISCOVERY_STEPS = [
@@ -206,7 +221,7 @@ function normalizeDraftForCompare(value) {
   };
 }
 
-function TermChipsField({ label, placeholder, values, onChange, options = [], disabled }) {
+function TermChipsField({ label, placeholder, values, onChange, options = [], disabled, hint }) {
   const [manualValue, setManualValue] = useState('');
 
   const availableOptions = useMemo(
@@ -299,6 +314,9 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
             </option>
           ))}
         </select>
+      )}
+      {hint && (
+        <span style={{ fontSize: '0.76rem', color: 'var(--text-light)', lineHeight: 1.4 }}>{hint}</span>
       )}
     </div>
   );
@@ -744,7 +762,9 @@ export default function ProjectsPage({
     const isTermType = TERM_SOURCE_TYPES.has(newSourceDraft.source_type);
     const payload = {
       url: isTermType ? '' : newSourceDraft.url.trim(),
-      name: newSourceDraft.name.trim(),
+      name: isTermType
+        ? scopeKeywordTerm(draft.name, newSourceDraft.name, newSourceDraft.source_type)
+        : newSourceDraft.name.trim(),
       source_type: newSourceDraft.source_type,
       enabled: true,
       project_ids: [],
@@ -788,7 +808,12 @@ export default function ProjectsPage({
     try {
       const created = await Promise.all(
         terms.map(({ term, source_type }) =>
-          onCreateSource({ name: term, source_type, enabled: true, project_ids: [] }).catch(() => null)
+          onCreateSource({
+            name: scopeKeywordTerm(draft.name, term, source_type),
+            source_type,
+            enabled: true,
+            project_ids: [],
+          }).catch(() => null)
         )
       );
       const ids = created
@@ -1300,6 +1325,11 @@ export default function ProjectsPage({
                     onChange={(next) => setDraft((prev) => ({ ...prev, keywords: next }))}
                     options={globalTermOptions.keyword}
                     disabled={isSaving || isGeneratingMetadata}
+                    hint={
+                      draft.name.trim()
+                        ? `Each keyword is searched together with the project name, e.g. "${scopeKeywordTerm(draft.name, draft.keywords[0] || 'coffee', 'keyword')}" - so results stay specific to this project.`
+                        : 'Each keyword is searched together with the project name, so results stay specific to this project.'
+                    }
                   />
                 </div>
 
