@@ -3,23 +3,122 @@
    ever touches this page - the shared index.css / App.css rules for
    .articles-toolbar, .articles-grid, .article-card, etc. are untouched. */
 
-/* --- Toolbar select overflow guard ---
-   Grid items default to min-width: auto, so a <select> with a long
-   option (e.g. "Ownership Experience", a long project name) can force
-   its track wider than the auto-fit minmax(150px, 1fr) track intends,
-   which risks the toolbar (and page) overflowing horizontally at
-   in-between widths. Resetting min-width to 0 and truncating with an
-   ellipsis keeps every control inside its assigned track at any
-   viewport from 1920px down to 320px. */
-.articles-page-shell .articles-toolbar .filter-select {
+/* --- Filters row: two side-by-side panels (sources+dates, search+sentiment+sort) ---
+   Each panel is its own glass-card so the filters read as two related
+   groups instead of one long row of unrelated controls. Flex-wrap lets
+   controls reflow instead of overflowing at in-between widths. */
+.articles-page-shell .articles-filters-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.articles-page-shell .articles-filter-panel {
+  flex: 1 1 320px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Long option text (a project's linked source name, etc.) truncates
+   instead of forcing the flex item - and the panel - wider. */
+.articles-page-shell .articles-filter-panel .filter-select {
+  flex: 1 1 160px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.articles-page-shell .articles-toolbar .articles-search {
+.articles-page-shell .articles-filter-panel input[type='date'] {
+  flex: 1 1 130px;
   min-width: 0;
+}
+
+.articles-page-shell .articles-filter-panel .articles-search {
+  flex: 2 1 220px;
+  min-width: 200px;
+}
+
+/* --- Search bar: focus ring, inline clear button, in-flight spinner ---
+   The base .articles-search rule (index.css) has no focus state and no
+   way to clear a query except backspacing it out. */
+.articles-page-shell .articles-search {
+  border: 1px solid transparent;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.articles-page-shell .articles-search:focus-within {
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.articles-page-shell .articles-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-light);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+.articles-page-shell .articles-search-clear:hover {
+  background: rgba(255, 71, 87, 0.14);
+  color: #e03131;
+}
+
+/* Reuses the .loading-spinner keyframes (index.css) at a smaller size
+   that fits inside the search bar instead of the full-size variant. */
+.articles-page-shell .articles-search-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 159, 67, 0.18);
+  border-top-color: var(--primary-color);
+  animation: spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+/* --- Scraped date range: labelled so it reads as "when the pipeline
+   fetched this article" rather than an unexplained bare date picker,
+   which is easy to mistake for the article's published date. */
+.articles-page-shell .articles-date-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 100%;
+}
+
+.articles-page-shell .articles-date-range-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-light);
+  white-space: nowrap;
+}
+
+.articles-page-shell .articles-date-range-sep {
+  font-size: 0.82rem;
+  color: var(--text-light);
+}
+
+@media (max-width: 900px) {
+  .articles-page-shell .articles-filter-panel {
+    flex-basis: 100%;
+  }
 }
 
 /* --- Summary row (left side of the toolbar-row) --- */
@@ -31,16 +130,59 @@
   flex-wrap: wrap;
 }
 
-/* --- Export / Previous / Next actions ---
-   No flex-wrap previously meant this row of three buttons could
-   overflow the page on narrow screens. Wrap by default, and stack to
-   full-width, comfortably tappable buttons below the 640px breakpoint
-   (matching the .toolbar-button full-width pattern used elsewhere). */
+/* --- Page size / Export / pagination actions ---
+   Wrap by default, and stack to full-width, comfortably tappable
+   controls below the 640px breakpoint (matching the .toolbar-button
+   full-width pattern used elsewhere). Only this row's own direct
+   children are stretched full-width - the pagination cluster manages
+   its own (compact) buttons instead of inheriting the same rule. */
 .articles-page-shell .articles-pager-actions {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* --- Pagination cluster: Previous, numbered pages, Next --- */
+.articles-page-shell .articles-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.articles-page-shell .articles-page-btn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--text-dark);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.articles-page-shell .articles-page-btn:hover:not(:disabled) {
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.articles-page-shell .articles-page-btn.active {
+  background: linear-gradient(135deg, #ff6b35, #ff8a5c);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.articles-page-shell .articles-page-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.articles-page-shell .articles-page-ellipsis {
+  color: var(--text-light);
+  padding: 0 4px;
 }
 
 @media (max-width: 640px) {
@@ -50,9 +192,19 @@
     align-items: stretch;
   }
 
-  .articles-page-shell .articles-pager-actions button {
+  .articles-page-shell .articles-pager-actions > button,
+  .articles-page-shell .articles-pager-actions > select {
     width: 100%;
     justify-content: center;
+    min-height: 44px;
+  }
+
+  .articles-page-shell .articles-pagination {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .articles-page-shell .articles-pagination button {
     min-height: 44px;
   }
 }

@@ -377,6 +377,7 @@ create index if not exists articles_published_idx on public.articles (published 
 create index if not exists articles_sentiment_idx on public.articles (sentiment);
 create index if not exists articles_article_category_idx on public.articles (article_category);
 create index if not exists articles_analyzed_at_idx on public.articles (analyzed_at desc);
+create index if not exists articles_fetched_at_idx on public.articles (fetched_at desc);
 
 create index if not exists project_sources_project_idx on public.project_sources (project_id);
 create index if not exists project_sources_source_idx on public.project_sources (source_id);

@@ -608,6 +608,8 @@ def get_articles(
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
+    scraped_from: str | None = None,
+    scraped_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     return list_articles(
@@ -619,6 +621,8 @@ def get_articles(
         limit=limit,
         offset=offset,
         sort=sort,
+        scraped_from=scraped_from,
+        scraped_to=scraped_to,
     )
 
 
@@ -670,6 +674,8 @@ def export_articles_jsonl(
     project_id: int | None = None,
     source_url: str | None = None,
     sort: str = "published.desc",
+    scraped_from: str | None = None,
+    scraped_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     rows = export_articles(
@@ -679,6 +685,8 @@ def export_articles_jsonl(
         project_id=project_id,
         source_url=source_url,
         sort=sort,
+        scraped_from=scraped_from,
+        scraped_to=scraped_to,
     )
 
     def line_stream():

@@ -1011,7 +1011,6 @@ export default function CompetitorOnboarding() {
   // last resolved to, then hands editing over to the retrievalEnd state.
   const scheduleWindowDays = intervalToDays(scheduleIntervalValue, scheduleIntervalUnit);
   const effectiveRetrievalEnd = scheduleOn ? addDaysIso(retrievalStart, scheduleWindowDays) : retrievalEnd;
-  const retrievalWindowValid = dataMode === 'offline' || Boolean(retrievalStart && effectiveRetrievalEnd);
 
   const finish = async () => {
     setError('');
@@ -1024,8 +1023,8 @@ export default function CompetitorOnboarding() {
         repeat_interval_value: Math.max(1, Number(scheduleIntervalValue) || 1),
         repeat_interval_unit: scheduleIntervalUnit,
         repeat_weekdays: scheduleWeekdays,
-        start_date: dataMode === 'offline' ? null : retrievalStart,
-        end_date: dataMode === 'offline' ? null : effectiveRetrievalEnd,
+        start_date: dataMode === 'offline' ? null : retrievalStart || null,
+        end_date: dataMode === 'offline' ? null : effectiveRetrievalEnd || null,
       });
       navigate(`/competitors/${studyId}`);
     } catch (caught) {
@@ -2097,7 +2096,7 @@ export default function CompetitorOnboarding() {
             <label className="cs-label">
               Data retrieval window
               <span className="cs-label-hint">
-                {scheduleOn ? 'required — end date follows your repeat schedule' : 'required'}
+                {scheduleOn ? 'optional — end date follows your repeat schedule when start is set' : 'optional'}
               </span>
             </label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
@@ -2121,8 +2120,8 @@ export default function CompetitorOnboarding() {
             </div>
             <p className="cs-panel-hint" style={{ marginTop: 8, marginBottom: 0 }}>
               {scheduleOn
-                ? `Scopes which article publish dates get pulled in — kept at ${scheduleWindowDays} day(s) wide to match "every ${Math.max(1, Number(scheduleIntervalValue) || 1)} ${scheduleIntervalUnit}" above. Change the interval and this window resizes with it.`
-                : 'Scopes which article publish dates get pulled in for this study.'}
+                ? `Optional — scopes which article publish dates get pulled in, kept at ${scheduleWindowDays} day(s) wide to match "every ${Math.max(1, Number(scheduleIntervalValue) || 1)} ${scheduleIntervalUnit}" above when a start date is set. Leave the start date blank to pull in articles from any date instead.`
+                : 'Optional — scopes which article publish dates get pulled in. Leave blank to pull in articles from any date.'}
             </p>
           </div>
 
@@ -2130,7 +2129,7 @@ export default function CompetitorOnboarding() {
             <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(5)} disabled={busy}>
               <ArrowLeft size={15} /> Back
             </button>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy || !retrievalWindowValid}>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={busy}>
               {busy ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />} Open workspace
             </button>
           </div>

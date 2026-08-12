@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info, LayoutGrid, List } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
 import '../styles/Articles.css';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
-const CATEGORIES = ['all', 'review', 'comparison', 'complaint', 'news', 'ownership_experience', 'buying_guide', 'general_article'];
 const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },
   { value: 'published.asc', label: 'Oldest first' },
@@ -36,6 +35,12 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
+function scrapedAtLabel(value) {
+  if (!value) return 'Unknown';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
 function formatMatchScore(value) {
   const score = Number(value);
   if (!Number.isFinite(score)) return '';
@@ -45,6 +50,20 @@ function formatMatchScore(value) {
 function confidencePct(value) {
   const score = Number(value);
   return Number.isFinite(score) ? `${Math.round(score * 100)}%` : null;
+}
+
+function getPageNumbers(currentPage, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages = [1];
+  if (currentPage > 3) pages.push('...');
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+  for (let page = start; page <= end; page += 1) pages.push(page);
+  if (currentPage < totalPages - 2) pages.push('...');
+  pages.push(totalPages);
+  return pages;
 }
 
 function SkeletonArticleCard() {
@@ -82,12 +101,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sentiment, setSentiment] = useState('all');
-  const [category, setCategory] = useState('all');
   const [projectFilter, setProjectFilter] = useState(() => (normalizedProjectId != null ? String(normalizedProjectId) : 'all'));
   const [sourceFilter, setSourceFilter] = useState('all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
+  const [scrapedFrom, setScrapedFrom] = useState('');
+  const [scrapedTo, setScrapedTo] = useState('');
   const [articles, setArticles] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -111,6 +131,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [detailReprocessing, setDetailReprocessing] = useState(false);
   const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
+  const searchInputRef = useRef(null);
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
   const canReprocess = hasPermission('pipeline.run');
@@ -122,7 +143,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, category, projectFilter, sourceFilter, limit, sort]);
+  }, [search, sentiment, projectFilter, sourceFilter, limit, sort, scrapedFrom, scrapedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -150,9 +171,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
         const params = new URLSearchParams();
         if (search) params.set('search', search);
         if (sentiment !== 'all') params.set('sentiment', sentiment);
-        if (category !== 'all') params.set('category', category);
         if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
         if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
+        if (scrapedFrom) params.set('scraped_from', scrapedFrom);
+        if (scrapedTo) params.set('scraped_to', scrapedTo);
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -180,7 +202,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, category, projectFilter, sourceFilter, limit, offset, sort, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, limit, offset, sort, scrapedFrom, scrapedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -261,6 +283,18 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const scopeLabel = projectFilter === 'all' ? 'All projects' : (activeProject?.name || 'Selected project');
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
+  const searchBusy = Boolean(searchInput) && (searchInput.trim() !== search || loading);
+
+  const clearSearch = () => {
+    setSearchInput('');
+    setSearch('');
+    searchInputRef.current?.focus();
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const currentPage = Math.min(totalPages, Math.floor(offset / limit) + 1);
+  const pageNumbers = useMemo(() => getPageNumbers(currentPage, totalPages), [currentPage, totalPages]);
+  const goToPage = (page) => setOffset((page - 1) * limit);
 
   const handleDeleteAll = async () => {
     if (deletingAll) return;
@@ -275,9 +309,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSearchInput('');
       setSearch('');
       setSentiment('all');
-      setCategory('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
+      setScrapedFrom('');
+      setScrapedTo('');
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -295,9 +330,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
       const params = new URLSearchParams();
       if (search) params.set('search', search);
       if (sentiment !== 'all') params.set('sentiment', sentiment);
-      if (category !== 'all') params.set('category', category);
       if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
       if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
+      if (scrapedFrom) params.set('scraped_from', scrapedFrom);
+      if (scrapedTo) params.set('scraped_to', scrapedTo);
       params.set('sort', sort);
 
       const res = await fetch(`/api/articles/export?${params.toString()}`);
@@ -334,12 +370,34 @@ export default function ArticlesPage({ project = null, projectId = null, project
             </div>
             <h1 className="admin-page-title">Articles</h1>
             <p className="admin-page-subtitle">
-              Server-side search, sentiment, category, project, sort, and pagination powered by the API.
+              Server-side search, sentiment, project, sort, and pagination powered by the API.
               {project ? ` Dashboard project: ${project.name}.` : ' Showing all projects.'}
             </p>
           </div>
 
           <div className="dashboard-hero-actions">
+            <div className="report-project-control">
+              <label className="report-project-control-label" htmlFor="articles-project-select">
+                <FolderKanban size={13} /> Project scope
+              </label>
+              <div className="report-project-select-wrap">
+                <FolderKanban size={16} aria-hidden="true" />
+                <select
+                  id="articles-project-select"
+                  className="filter-select report-project-select"
+                  value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}
+                  aria-label="Project scope for articles"
+                >
+                  <option value="all">All projects</option>
+                  {projects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.status || 'draft'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             {canDeleteAll && (
               <button
                 className="btn-secondary"
@@ -466,74 +524,99 @@ export default function ArticlesPage({ project = null, projectId = null, project
           {detailActionMessage ? <p style={{ marginTop: 10, fontSize: '0.85rem', color: 'var(--text-light)' }}>{detailActionMessage}</p> : null}
         </ConfirmModal>
 
-        <div className="glass-card articles-toolbar">
-          <label className="articles-search">
-            <Search size={18} color="var(--text-light)" />
-            <input
-              type="text"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Search title, summary, source..."
-              style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem' }}
-            />
-          </label>
-
-          <select className="filter-select" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
-            <option value="all">All projects</option>
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} ({item.status || 'draft'})
+        <div className="articles-filters-row">
+          <div className="glass-card articles-filter-panel">
+            <select
+              className="filter-select"
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              disabled={!activeProject || sourceOptions.length === 0}
+            >
+              <option value="all">
+                {activeProject ? 'All sources' : 'Select a project for sources'}
               </option>
-            ))}
-          </select>
+              {sourceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
 
-          <select className="filter-select" value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
-            {SENTIMENTS.map((value) => (
-              <option key={value} value={value}>
-                {value === 'all' ? 'All sentiments' : value[0].toUpperCase() + value.slice(1)}
-              </option>
-            ))}
-          </select>
+            <div className="articles-date-range">
+              <span className="articles-date-range-label">
+                <Calendar size={14} /> Scraped between
+              </span>
+              <input
+                type="date"
+                className="filter-select"
+                value={scrapedFrom}
+                max={scrapedTo || undefined}
+                onChange={(e) => setScrapedFrom(e.target.value)}
+                title="Only show articles scraped on or after this date"
+                aria-label="Scraped from date"
+              />
+              <span className="articles-date-range-sep">to</span>
+              <input
+                type="date"
+                className="filter-select"
+                value={scrapedTo}
+                min={scrapedFrom || undefined}
+                onChange={(e) => setScrapedTo(e.target.value)}
+                title="Only show articles scraped on or before this date"
+                aria-label="Scraped to date"
+              />
+            </div>
+          </div>
 
-          <select className="filter-select" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {CATEGORIES.map((value) => (
-              <option key={value} value={value}>
-                {value === 'all' ? 'All categories' : prettyLabel(value)}
-              </option>
-            ))}
-          </select>
+          <div className="glass-card articles-filter-panel">
+            <label className="articles-search">
+              <Search size={18} color="var(--text-light)" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && searchInput) {
+                    e.stopPropagation();
+                    clearSearch();
+                  }
+                }}
+                placeholder="Search title, summary, source..."
+                aria-label="Search articles"
+                style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem' }}
+              />
+              {searchBusy ? (
+                <span className="articles-search-spinner" aria-hidden="true" />
+              ) : searchInput ? (
+                <button
+                  type="button"
+                  className="articles-search-clear"
+                  onClick={clearSearch}
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+            </label>
 
-          <select
-            className="filter-select"
-            value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
-            disabled={!activeProject || sourceOptions.length === 0}
-          >
-            <option value="all">
-              {activeProject ? 'All sources' : 'Select a project for sources'}
-            </option>
-            {sourceOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <select className="filter-select" value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
+              {SENTIMENTS.map((value) => (
+                <option key={value} value={value}>
+                  {value === 'all' ? 'All sentiments' : value[0].toUpperCase() + value.slice(1)}
+                </option>
+              ))}
+            </select>
 
-          <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-
-          <select className="filter-select" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size} per page
-              </option>
-            ))}
-          </select>
+            <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="admin-toolbar-row" style={{ justifyContent: 'space-between' }}>
@@ -547,6 +630,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 <Filter size={12} />
                 {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
+              </span>
+            )}
+            {(scrapedFrom || scrapedTo) && (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                <Calendar size={12} />
+                Scraped {scrapedFrom || 'any'} to {scrapedTo || 'any'}
               </span>
             )}
           </div>
@@ -569,16 +658,43 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 );
               })}
             </div>
+            <select className="filter-select" value={limit} onChange={(e) => setLimit(Number(e.target.value))} aria-label="Articles per page">
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size} per page
+                </option>
+              ))}
+            </select>
             <button className="btn-secondary" onClick={handleExportJsonl} disabled={loading || exporting || deletingAll}>
               <Download size={16} />
               {exporting ? 'Exporting...' : 'Export JSONL'}
             </button>
-            <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
-              <ChevronLeft size={16} /> Previous
-            </button>
-            <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
-              Next <ChevronRight size={16} />
-            </button>
+            <div className="articles-pagination" role="navigation" aria-label="Articles pagination">
+              <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
+                <ChevronLeft size={16} /> Previous
+              </button>
+              {pageNumbers.map((page, index) =>
+                page === '...' ? (
+                  <span key={`ellipsis-${index}`} className="articles-page-ellipsis">
+                    &hellip;
+                  </span>
+                ) : (
+                  <button
+                    key={page}
+                    type="button"
+                    className={`articles-page-btn ${page === currentPage ? 'active' : ''}`}
+                    onClick={() => goToPage(page)}
+                    disabled={loading}
+                    aria-current={page === currentPage ? 'page' : undefined}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+              <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -671,6 +787,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
                               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
                                 Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
                               </span>
+                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When the pipeline scraped this article">
+                                <Calendar size={11} style={{ marginRight: 4 }} /> Scraped: {scrapedAtLabel(article.fetched_at)}
+                              </span>
                               {article.relevance_score != null && (
                                 <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
                               )}
@@ -759,6 +878,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
                           <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
                             Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
                           </span>
+                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When the pipeline scraped this article">
+                            <Calendar size={11} style={{ marginRight: 4 }} /> Scraped: {scrapedAtLabel(article.fetched_at)}
+                          </span>
                           {article.relevance_score != null && (
                             <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
                           )}
@@ -831,7 +953,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                     <Search size={18} />
                   </div>
                   <strong>No articles found</strong>
-                  <span>Try adjusting your search, sentiment, category, or project filters.</span>
+                  <span>Try adjusting your search, sentiment, source, date range, or project filters.</span>
                 </div>
               </div>
             )}
