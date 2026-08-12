@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+import config
 from analysis.aggregation import build_topic_insight, compute_overall_tone
 from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_models
 from content_guard import is_blocked_article
@@ -19,7 +20,7 @@ from embeddings import build_article_embedding_text, get_embedding
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
 from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics
-from services.articles.store import save_articles
+from services.articles.store import get_existing_enrichment, save_articles
 
 MIN_TEXT_LENGTH = 200
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
@@ -221,6 +222,19 @@ def _source_key(article):
     return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
 
 
+def _reuse_existing_enrichment(article, existing_map):
+    """An already-stored, successful analysis for this article's URL, if one
+    exists AND was produced by today's PIPELINE_VERSION - None otherwise, so
+    a pipeline/prompt upgrade doesn't leave old articles stuck reusing
+    stale-version analysis forever (see config.SKIP_EXISTING_ARTICLES)."""
+    if not existing_map:
+        return None
+    existing = existing_map.get(article.get("url"))
+    if not existing or existing.get("analysis_pipeline_version") != PIPELINE_VERSION:
+        return None
+    return existing
+
+
 def _set_run_timestamps(**fields):
     if not PIPELINE_RUN_ID:
         return
@@ -230,7 +244,7 @@ def _set_run_timestamps(**fields):
         print(f"Pipeline timestamp update failed: {e}")
 
 
-def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved):
+def _persist_source_stats(scraped, removed, date_filtered, skipped_existing, kept, enriched, saved):
     if not PIPELINE_RUN_ID:
         return
 
@@ -246,7 +260,10 @@ def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved
         if entry.get("source_name")
     }
 
-    sources = set(scraped) | set(removed) | set(date_filtered) | set(kept) | set(enriched) | set(saved) | set(diagnostics_by_source)
+    sources = (
+        set(scraped) | set(removed) | set(date_filtered) | set(skipped_existing)
+        | set(kept) | set(enriched) | set(saved) | set(diagnostics_by_source)
+    )
     source_stats = {}
     for source in sources:
         removed_counts = removed.get(source) or {}
@@ -258,6 +275,7 @@ def _persist_source_stats(scraped, removed, date_filtered, kept, enriched, saved
             "duplicate": removed_counts.get("duplicate", 0),
             "blocked": removed_counts.get("blocked", 0),
             "date_filtered": date_filtered.get(source, 0),
+            "skipped_existing": skipped_existing.get(source, 0),
             "kept": kept.get(source, 0),
             "enriched": enriched.get(source, 0),
             "saved": saved.get(source, 0),
@@ -384,7 +402,7 @@ def main():
             enrich_started_at=clean_finished_at,
             enrich_finished_at=clean_finished_at,
         )
-        _persist_source_stats(scraped_by_source, removed_by_source, {}, {}, {}, {})
+        _persist_source_stats(scraped_by_source, removed_by_source, {}, {}, {}, {}, {})
         push_run_progress(
             stats,
             stage="done",
@@ -427,8 +445,11 @@ def main():
         message="Cleaning complete. Enriching articles...",
     )
 
+    existing_by_url = get_existing_enrichment([a.get("url") for a in articles]) if config.SKIP_EXISTING_ARTICLES else {}
+
     enriched = []
     enriched_by_source = Counter()
+    skipped_existing_by_source = Counter()
     for idx, article in enumerate(articles):
         title = article.get("title", "")[:60]
         progress = {
@@ -441,6 +462,14 @@ def main():
             stage="enrich",
             message=f"Enriching articles {idx + 1}/{len(articles)}...",
         )
+
+        reused = _reuse_existing_enrichment(article, existing_by_url)
+        if reused is not None:
+            print(f"[{idx + 1}/{len(articles)}] Already enriched, reusing: {title}")
+            skipped_existing_by_source[_source_key(article)] += 1
+            enriched.append({**article, **reused})
+            continue
+
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
         enrichment = enrich_article(article, project_context=project_context)
         if enrichment is None:
@@ -501,6 +530,7 @@ def main():
         scraped_by_source,
         removed_by_source,
         date_filtered_by_source,
+        skipped_existing_by_source,
         kept_by_source,
         enriched_by_source,
         saved_by_source,

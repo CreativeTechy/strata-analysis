@@ -169,6 +169,7 @@ def _merge_fetch_diagnostics(run_id, workdir):
             "duplicate": row.get("duplicate", 0),
             "blocked": row.get("blocked", 0),
             "date_filtered": row.get("date_filtered", 0),
+            "skipped_existing": row.get("skipped_existing", 0),
             "kept": row.get("kept", 0),
             "enriched": row.get("enriched", 0),
             "saved": row.get("saved", 0),

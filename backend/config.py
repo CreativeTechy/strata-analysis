@@ -350,6 +350,18 @@ def google_cse_configured() -> bool:
 GDELT_ENABLED = os.environ.get("GDELT_ENABLED", "true").strip().lower() not in {"false", "0", "no"}
 
 
+# --- Skip re-enrichment for already-known articles ---------------------------
+# When a scraped URL is already in the `articles` table with a successful
+# analysis from the *current* enrichment version (analysis_pipeline_version ==
+# PIPELINE_VERSION - see services/articles/enrich.py), reuse that stored
+# analysis instead of paying for another LLM + embedding call. The article
+# still flows through the normal save path either way, so a project seeing it
+# for the first time still gets linked to it. Set false to force every scrape
+# run to re-enrich everything (reanalyze.py's per-article endpoint is the
+# other way to force a re-enrichment without this).
+SKIP_EXISTING_ARTICLES = _env_bool("SKIP_EXISTING_ARTICLES", True)
+
+
 # --- Streaming enrichment concurrency ----------------------------------------
 # How many articles StreamingEnrichPipeline (scraper/pipelines.py) enriches in
 # parallel, off Scrapy's reactor thread, instead of one at a time blocking the

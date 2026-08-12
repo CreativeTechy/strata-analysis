@@ -54,6 +54,7 @@ def _normalize_source_stat(row):
         "duplicate": row.get("duplicate") or 0,
         "blocked": row.get("blocked") or 0,
         "date_filtered": row.get("date_filtered") or 0,
+        "skipped_existing": row.get("skipped_existing") or 0,
         "kept": row.get("kept") or 0,
         "enriched": row.get("enriched") or 0,
         "saved": row.get("saved") or 0,
@@ -235,7 +236,7 @@ def get_pipeline_run_sources(run_id):
     try:
         rows = db.fetch_all(
             """
-            select source, source_url, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
+            select source, source_url, scraped, duplicate, blocked, date_filtered, skipped_existing, kept, enriched, saved,
                    http_status, network_blocked, fetch_note
             from pipeline_run_sources
             where run_id = %s
@@ -250,9 +251,9 @@ def get_pipeline_run_sources(run_id):
 
 def upsert_pipeline_run_source_stats(run_id, source_stats):
     """Persist the per-source breakdown for a run. `source_stats` is a dict of
-    source name -> {scraped, duplicate, blocked, date_filtered, kept, enriched,
-    saved, http_status, network_blocked, fetch_note}. Called once at the end
-    of enrich.py for runs that have has_detail=true."""
+    source name -> {scraped, duplicate, blocked, date_filtered, skipped_existing,
+    kept, enriched, saved, http_status, network_blocked, fetch_note}. Called
+    once at the end of enrich.py for runs that have has_detail=true."""
     if not config.DATABASE_URL or not run_id or not source_stats:
         return
 
@@ -262,15 +263,16 @@ def upsert_pipeline_run_source_stats(run_id, source_stats):
             db.execute(
                 """
                 insert into pipeline_run_sources
-                    (run_id, source, source_url, scraped, duplicate, blocked, date_filtered, kept, enriched, saved,
-                     http_status, network_blocked, fetch_note)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (run_id, source, source_url, scraped, duplicate, blocked, date_filtered, skipped_existing,
+                     kept, enriched, saved, http_status, network_blocked, fetch_note)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (run_id, source) do update set
                     source_url = excluded.source_url,
                     scraped = excluded.scraped,
                     duplicate = excluded.duplicate,
                     blocked = excluded.blocked,
                     date_filtered = excluded.date_filtered,
+                    skipped_existing = excluded.skipped_existing,
                     kept = excluded.kept,
                     enriched = excluded.enriched,
                     saved = excluded.saved,
@@ -287,6 +289,7 @@ def upsert_pipeline_run_source_stats(run_id, source_stats):
                     int(counts.get("duplicate") or 0),
                     int(counts.get("blocked") or 0),
                     int(counts.get("date_filtered") or 0),
+                    int(counts.get("skipped_existing") or 0),
                     int(counts.get("kept") or 0),
                     int(counts.get("enriched") or 0),
                     int(counts.get("saved") or 0),

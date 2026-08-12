@@ -8,8 +8,9 @@ while other sources are still being crawled, instead of waiting for the
 slowest source in the run.
 
 Reuses services/articles/enrich.py's exact per-article logic (clean, dedup,
-date-window filter, analyze, embed, persist per-source stats) rather than
-duplicating it - enrich.py itself stays as the batch/manual CLI entry point
+date-window filter, skip-if-already-analyzed, analyze, embed, persist
+per-source stats) rather than duplicating it - enrich.py itself stays as the
+batch/manual CLI entry point
 (`scrapy crawl -O articles.json` then `python -m services.articles.enrich`,
 still documented for offline/dev use), now sharing this file's logic instead
 of diverging from it.
@@ -80,6 +81,7 @@ class StreamingEnrichPipeline:
         self.scraped_by_source = Counter()
         self.removed_by_source = defaultdict(lambda: {"duplicate": 0, "blocked": 0})
         self.date_filtered_by_source = Counter()
+        self.skipped_existing_by_source = Counter()
         self.kept_by_source = Counter()
         self.enriched_by_source = Counter()
         self.saved_by_source = Counter()
@@ -118,22 +120,36 @@ class StreamingEnrichPipeline:
             self.articles_cleaned_total += 1
 
         # --- slow section: no lock held, runs concurrently across threads ---
-        enrichment = enrich.enrich_article(article, project_context=self.project_context)
-        if enrichment is None:
-            enrichment = dict(enrich.DEFAULT_ENRICHMENT)
-        if not enrichment.get("embedding_json"):
-            embedding_text = build_article_embedding_text(article, enrichment)
-            embedding = get_embedding(embedding_text)
-            if embedding:
-                enrichment.update(embedding)
-        if not enrichment.get("analyzed_at"):
-            enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
+        # Same reuse-if-already-analyzed check as enrich.py's batch main() -
+        # see enrich.get_existing_enrichment/_reuse_existing_enrichment for
+        # why (skip the LLM/embedding calls for a URL already successfully
+        # analyzed under the current PIPELINE_VERSION).
+        reused = None
+        if config.SKIP_EXISTING_ARTICLES:
+            existing = enrich.get_existing_enrichment([article["url"]])
+            reused = enrich._reuse_existing_enrichment(article, existing)
+
+        if reused is not None:
+            enrichment = dict(reused)
+        else:
+            enrichment = enrich.enrich_article(article, project_context=self.project_context)
+            if enrichment is None:
+                enrichment = dict(enrich.DEFAULT_ENRICHMENT)
+            if not enrichment.get("embedding_json"):
+                embedding_text = build_article_embedding_text(article, enrichment)
+                embedding = get_embedding(embedding_text)
+                if embedding:
+                    enrichment.update(embedding)
+            if not enrichment.get("analyzed_at"):
+                enrichment["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         enriched_article = {**article, **enrichment}
         saved_count, saved_delta = save_articles([enriched_article])
         # --- end slow section ---
 
         with self.lock:
-            if enrichment.get("analysis_status") == "success":
+            if reused is not None:
+                self.skipped_existing_by_source[source] += 1
+            elif enrichment.get("analysis_status") == "success":
                 self.enriched_by_source[source] += 1
             self.enriched_articles.append(enriched_article)
             self.articles_saved_total += saved_count
@@ -157,6 +173,7 @@ class StreamingEnrichPipeline:
             scraped_snapshot = Counter(self.scraped_by_source)
             removed_snapshot = {source: dict(counts) for source, counts in self.removed_by_source.items()}
             date_filtered_snapshot = Counter(self.date_filtered_by_source)
+            skipped_existing_snapshot = Counter(self.skipped_existing_by_source)
             kept_snapshot = Counter(self.kept_by_source)
             enriched_snapshot = Counter(self.enriched_by_source)
             saved_snapshot = Counter(self.saved_by_source)
@@ -174,6 +191,7 @@ class StreamingEnrichPipeline:
             scraped_snapshot,
             removed_snapshot,
             date_filtered_snapshot,
+            skipped_existing_snapshot,
             kept_snapshot,
             enriched_snapshot,
             saved_snapshot,

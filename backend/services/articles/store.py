@@ -466,6 +466,35 @@ def _replace_idea_clusters_for_article(article_id, project_id, frequent_ideas):
         _log_db_error(f"  idea cluster write error for article {article_id}", e)
 
 
+def get_existing_enrichment(urls):
+    """For URLs already stored with a successful analysis, return
+    {url: {field: value, ...}} using exactly ARTICLE_MUTABLE_FIELDS' shape -
+    safe to use as a drop-in `enrichment` dict wherever enrich_article()'s
+    result normally goes, so a caller can skip re-running the LLM/embedding
+    stage for a URL it already has a good analysis for.
+
+    Callers still decide whether a given hit is actually reusable (see
+    services/articles/enrich.py's PIPELINE_VERSION check) - this only
+    filters on analysis_status, not on which version produced it."""
+    urls = [u for u in (urls or []) if u]
+    if not urls or not config.DATABASE_URL:
+        return {}
+
+    fields = [f for f in ARTICLE_MUTABLE_FIELDS if f != "url"]
+    try:
+        rows = db.fetch_all(
+            "select url, {} from articles where url = any(%s) and analysis_status = 'success'".format(
+                ", ".join(fields)
+            ),
+            (urls,),
+        )
+    except Exception as e:
+        _log_db_error("  existing-enrichment lookup error", e)
+        return {}
+
+    return {row["url"]: {field: row.get(field) for field in fields} for row in rows or []}
+
+
 def _source_key(article):
     return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
 

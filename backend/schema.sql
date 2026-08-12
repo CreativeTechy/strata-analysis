@@ -149,6 +149,7 @@ create table if not exists public.pipeline_run_sources (
     duplicate      integer not null default 0,
     blocked        integer not null default 0,
     date_filtered  integer not null default 0,
+    skipped_existing integer not null default 0,
     kept           integer not null default 0,
     enriched       integer not null default 0,
     saved          integer not null default 0,

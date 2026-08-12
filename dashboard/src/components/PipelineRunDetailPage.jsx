@@ -102,6 +102,7 @@ const SOURCE_COLUMNS = [
   { key: 'duplicate', label: 'Duplicate' },
   { key: 'blocked', label: 'Blocked' },
   { key: 'date_filtered', label: 'Date filtered' },
+  { key: 'skipped_existing', label: 'Already enriched' },
   { key: 'kept', label: 'Kept' },
   { key: 'enriched', label: 'Enriched' },
   { key: 'saved', label: 'Saved' },
@@ -280,9 +281,6 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           <div className="glass-card run-detail-summary-grid" style={{ marginBottom: 18 }}>
-            <SummaryField label="Run ID">
-              <code style={{ fontSize: '0.8rem' }}>{run.id}</code>
-            </SummaryField>
             <SummaryField label="Project">{projectName}</SummaryField>
             <SummaryField label="Status">
               <StatusBadge status={run.status} />

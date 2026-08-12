@@ -97,7 +97,7 @@ class PersistSourceStatsTests(unittest.TestCase):
 
     def test_no_pipeline_run_id_skips_persist_entirely(self):
         with patch.object(enrich, "PIPELINE_RUN_ID", ""), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
-            enrich._persist_source_stats({}, {}, {}, {}, {}, {})
+            enrich._persist_source_stats({}, {}, {}, {}, {}, {}, {})
         mock_upsert.assert_not_called()
 
     def test_zero_scraped_source_gets_a_row_via_diagnostics_alone(self):
@@ -105,7 +105,7 @@ class PersistSourceStatsTests(unittest.TestCase):
             enrich, "load_source_diagnostics",
             return_value=[{"source_name": "r/messi", "http_status": 403, "network_blocked": True}],
         ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
-            enrich._persist_source_stats({}, {}, {}, {}, {}, {})
+            enrich._persist_source_stats({}, {}, {}, {}, {}, {}, {})
 
         mock_upsert.assert_called_once()
         run_id, stats = mock_upsert.call_args[0]
@@ -119,7 +119,7 @@ class PersistSourceStatsTests(unittest.TestCase):
         with patch.object(enrich, "PIPELINE_RUN_ID", "run-1"), patch.object(
             enrich, "load_source_diagnostics", return_value=[]
         ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
-            enrich._persist_source_stats(Counter({"good-source": 3}), {}, {}, {}, {}, {})
+            enrich._persist_source_stats(Counter({"good-source": 3}), {}, {}, {}, {}, {}, {})
 
         _, stats = mock_upsert.call_args[0]
         self.assertEqual(stats["good-source"]["scraped"], 3)
@@ -131,7 +131,7 @@ class PersistSourceStatsTests(unittest.TestCase):
             enrich, "load_source_diagnostics", return_value=[]
         ), patch.object(enrich, "upsert_pipeline_run_source_stats") as mock_upsert:
             # date_filtered still references the source even though nothing was scraped/kept.
-            enrich._persist_source_stats({}, {}, Counter({"quiet-source": 1}), {}, {}, {})
+            enrich._persist_source_stats({}, {}, Counter({"quiet-source": 1}), {}, {}, {}, {})
 
         _, stats = mock_upsert.call_args[0]
         self.assertEqual(stats["quiet-source"]["fetch_note"], "Returned 0 articles.")
