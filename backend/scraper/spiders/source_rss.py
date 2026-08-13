@@ -30,6 +30,7 @@ from trafilatura.feeds import find_feed_urls
 import config
 from config import load_source_records
 from content_guard import (
+    TWEET_STATUS_RE,
     is_blocked_domain,
     is_consent_title,
     is_telegram_channel_unavailable,
@@ -50,7 +51,6 @@ from scraper.web_search import google_cse_search
 from services.pipeline.pipeline_runs import update_pipeline_run
 
 PIPELINE_RUN_ID = os.environ.get("PIPELINE_RUN_ID", "").strip()
-TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
 
 # For the seed request's "handle_httpstatus_list" meta below - deliberately
 # excludes 3xx. Scrapy's RedirectMiddleware checks this same meta key (and
@@ -367,6 +367,45 @@ class SourceRssSpider(scrapy.Spider):
                             **proxy_meta("web"),
                         },
                     )
+
+            if source_type == "hashtag" and config.google_cse_configured():
+                # A hashtag page (x.com/hashtag/<tag>) is itself a
+                # client-rendered shell with no tweets or links in its raw
+                # HTML (confirmed by hand against the live site - unlike a
+                # profile page, X does not server-render anything there for
+                # crawlers), so there's nothing to follow from the seed
+                # request in parse_social_page below. Instead, ask Google CSE
+                # for individual tweet URLs mentioning the hashtag and only
+                # follow the ones that are actual /status/ links - each then
+                # goes through the same fxtwitter hydration path
+                # (_yield_article/_hydrate_tweet) already used for tweets
+                # discovered via a profile page. Best-effort and often sparse
+                # (X blocks most of its own site from being indexed - see
+                # x.com/robots.txt), but it is the only way left to discover
+                # tweets for a hashtag without X API access.
+                tag = url.rsplit("/hashtag/", 1)[-1].strip("/") or source_name
+                cse_results = google_cse_search(f'"#{tag}" (site:x.com OR site:twitter.com)')
+                tweet_urls = [
+                    (result.get("url") or "").strip()
+                    for result in cse_results
+                    if TWEET_STATUS_RE.search(result.get("url") or "")
+                ]
+                if tweet_urls:
+                    self.logger.info(
+                        "Hashtag %r -> %d tweet link(s) via Google CSE", source_name, len(tweet_urls)
+                    )
+                for tweet_url in tweet_urls:
+                    yield scrapy.Request(
+                        tweet_url,
+                        callback=self.parse_article,
+                        meta={
+                            "source_url": url,
+                            "source_type": "social",
+                            "source_name": source_name,
+                            "dont_obey_robotstxt": True,
+                            **proxy_meta("social"),
+                        },
+                    )
         self._push_progress(force=True)
 
     def start_requests(self):
@@ -637,6 +676,10 @@ class SourceRssSpider(scrapy.Spider):
         self._push_progress()
         self.logger.info("Social page %s -> extracting", response.url)
 
+        source_type = (response.meta.get("source_type") or "social").strip().lower()
+        source_name = response.meta.get("source_name")
+        source_url = response.meta.get("source_url")
+
         yield from self._yield_article(response)
 
         seen = set()
@@ -660,6 +703,30 @@ class SourceRssSpider(scrapy.Spider):
                     "source_name": response.meta.get("source_name"),
                     "dont_obey_robotstxt": True,
                 },
+            )
+
+        if source_type == "hashtag" and not seen and not config.google_cse_configured():
+            # Unlike a profile page (x.com/<handle>), which X still
+            # server-renders a few /status/ links into for crawlers/SEO, a
+            # hashtag/search page (x.com/hashtag/<tag>) is a pure
+            # client-rendered shell with zero tweet content in the raw HTML -
+            # confirmed by hand against the live site. Without Google CSE
+            # configured (see start()'s hashtag tier, which discovers tweet
+            # links a different way), there's nothing left that can find
+            # tweets for this source, so this is worth calling out as a
+            # known limitation rather than a transient fetch failure. Once
+            # CSE is configured this note no longer fires - the CSE tier's
+            # own results (or lack thereof) speak for themselves via the
+            # normal scraped-count diagnostics.
+            self._note_source_status(
+                source_name,
+                source_url,
+                note=(
+                    "X hashtag pages are rendered client-side after login and expose no "
+                    "tweets to an unauthenticated crawler. Configure GOOGLE_CSE_API_KEY/"
+                    "GOOGLE_CSE_ENGINE_ID to discover tweet links via search instead, or "
+                    "try an X profile/username source."
+                ),
             )
 
     def parse_reddit_listing(self, response):

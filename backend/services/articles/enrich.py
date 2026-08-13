@@ -15,7 +15,7 @@ from pathlib import Path
 import config
 from analysis.aggregation import build_topic_insight, compute_overall_tone
 from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_models
-from content_guard import is_blocked_article
+from content_guard import is_blocked_article, is_tweet_url
 from embeddings import build_article_embedding_text, get_embedding
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
@@ -309,7 +309,11 @@ def clean_articles(articles, seen_urls=None):
         # Secondary safeguard: the scraper already rejects Google consent/search
         # pages (see content_guard.py), but this also catches rows coming from
         # an articles.json produced before that guard existed.
-        if len(text) < MIN_TEXT_LENGTH or not a.get("title") or is_blocked_article(url, a.get("title")):
+        # Tweets are exempt from the length floor - a short reply or one-line
+        # take is normal for a tweet, not a stub (_hydrate_tweet in
+        # source_rss.py already guarantees non-empty text for these).
+        min_length = 0 if is_tweet_url(url) else MIN_TEXT_LENGTH
+        if len(text) < min_length or not a.get("title") or is_blocked_article(url, a.get("title")):
             removed_by_source[source]["blocked"] += 1
             continue
         seen_urls.add(url)

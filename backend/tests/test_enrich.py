@@ -44,6 +44,19 @@ class CleanArticlesTests(unittest.TestCase):
         self.assertEqual(cleaned, [])
         self.assertEqual(removed["example.com"]["blocked"], 1)
 
+    def test_short_tweet_is_kept(self):
+        articles = [
+            self._article(
+                url="https://x.com/someuser/status/1234567890",
+                title="@someuser",
+                text="lol nice",
+                source="x.com/someuser",
+            )
+        ]
+        cleaned, removed = enrich.clean_articles(articles)
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(removed["x.com/someuser"]["blocked"], 0)
+
     def test_clean_article_is_kept(self):
         articles = [self._article()]
         cleaned, removed = enrich.clean_articles(articles)
