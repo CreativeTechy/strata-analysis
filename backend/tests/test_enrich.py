@@ -83,7 +83,10 @@ class EnrichArticleTests(unittest.TestCase):
     """enrich_article() is now a thin, defensive wrapper around
     analysis.orchestrator.analyze_article() - the pipeline's own stage logic
     is tested in test_analysis_*.py. This only covers enrich_article()'s
-    contract with the rest of enrich.py: delegate, and never raise."""
+    contract with the rest of enrich.py: delegate, swallow an ordinary bug,
+    but re-raise an LLMError (provider call failed) instead of masking it as
+    a per-article failure - see scraper/pipelines.py/services/pipeline/
+    pipeline.py for how the caller treats that as fatal and stops the run."""
 
     def test_delegates_to_the_orchestrator_and_returns_its_result(self):
         sentinel = {"summary": "ok", "sentiment": "positive"}
@@ -101,6 +104,29 @@ class EnrichArticleTests(unittest.TestCase):
     def test_orchestrator_raising_is_caught_and_returns_none(self):
         with patch("services.articles.enrich.analyze_article", side_effect=RuntimeError("boom")):
             self.assertIsNone(enrich.enrich_article({"title": "t", "text": "x" * 300}))
+
+    def test_orchestrator_raising_llm_error_propagates(self):
+        from llm_client import LLMQuotaError
+
+        with patch(
+            "services.articles.enrich.analyze_article",
+            side_effect=LLMQuotaError("402 - Insufficient Balance"),
+        ):
+            with self.assertRaises(LLMQuotaError):
+                enrich.enrich_article({"title": "t", "text": "x" * 300})
+
+    def test_orchestrator_raising_hf_inference_error_propagates(self):
+        """Same fatal treatment as LLMError, but for the Hugging Face
+        Inference API path (SENTIMENT_CLASSIFIER_PROVIDER/
+        CLASSIFICATION_PROVIDER=hf_api) - see FATAL_ANALYSIS_ERRORS."""
+        from hf_inference_client import HFQuotaError
+
+        with patch(
+            "services.articles.enrich.analyze_article",
+            side_effect=HFQuotaError("402 - exceeded monthly included credits"),
+        ):
+            with self.assertRaises(HFQuotaError):
+                enrich.enrich_article({"title": "t", "text": "x" * 300})
 
 
 class PersistSourceStatsTests(unittest.TestCase):

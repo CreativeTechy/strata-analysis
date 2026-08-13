@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
+from llm_client import LLMQuotaError
 from services.competitors import competitor_analysis
 
 
@@ -33,6 +34,33 @@ class GenerateFindingTests(unittest.TestCase):
             result = competitor_analysis.generate_findings(1)
         self.assertEqual(result["generated"], 0)
         self.assertIsNotNone(result["error"])
+
+    def test_generate_findings_surfaces_llm_error_instead_of_false_success(self):
+        """A provider failure (e.g. DeepSeek 402 insufficient balance) must not
+        be reported the same way as "no evidence this period" - the caller
+        needs to know the AI call itself failed, not that there was nothing
+        to say."""
+        competitor = {"id": 1, "project_id": 1, "name": "Them"}
+        validation = {
+            "scanned": 5, "linked": 0,
+            "per_competitor": {1: {"valid": 1, "rejected": 0, "stories": 1}},
+            "rejection_reasons": {}, "period_days": 30,
+        }
+        with patch(
+            "services.competitors.business_profile_store.get_profile", return_value={"name": "Us"}
+        ), patch(
+            "services.competitors.competitors_store.list_competitors", return_value=[competitor]
+        ), patch.object(
+            competitor_analysis, "validate_competitor_articles", return_value=validation
+        ), patch.object(
+            competitor_analysis, "generate_finding",
+            side_effect=LLMQuotaError("402 error for url: https://api.deepseek.com/v1/chat/completions - Insufficient Balance"),
+        ):
+            result = competitor_analysis.generate_findings(1)
+
+        self.assertEqual(result["generated"], 0)
+        self.assertIsNotNone(result["error"])
+        self.assertEqual(result["error_code"], "llm_quota_exceeded")
 
 
 if __name__ == "__main__":

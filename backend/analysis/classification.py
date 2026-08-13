@@ -85,15 +85,17 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
         logger.warning("CLASSIFICATION_MODEL is empty; classification will fall back to defaults.")
         return None
     try:
-        from hf_inference_client import HFInferenceError, classify_zero_shot
+        from hf_inference_client import classify_zero_shot
     except Exception:
         logger.exception("hf_inference_client import failed")
         return None
-    try:
-        result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
-    except HFInferenceError:
-        logger.exception("HF Inference API zero-shot classification failed")
-        return None
+    # HFInferenceError (bad token, insufficient quota, rate limit, outage...)
+    # is deliberately NOT caught here - it means the provider call itself
+    # never produced a usable answer, and every other chunk/article would
+    # fail the exact same way. It propagates to enrich.enrich_article(),
+    # which the pipeline treats as fatal - see services/articles/enrich.py
+    # and scraper/pipelines.py.
+    result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
     result_labels = result.get("labels") or []
     result_scores = result.get("scores") or []
     if not result_labels or not result_scores:
