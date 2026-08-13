@@ -70,7 +70,7 @@ export default function DashboardOverview({
     {!selectedProject ? <div className="glass-card admin-empty-state"><strong>No project selected</strong><p className="subtitle">Create a project to begin tracking intelligence.</p></div> : null}
     {error ? <div className="glass-card admin-empty-state"><strong>Couldn’t load project intelligence</strong><p className="subtitle">{error}</p></div> : null}
 
-    {selectedProject && !error && selectedProject.mode !== 'competitor' ? (<>
+    {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
         <MetricCard icon={<FolderKanban size={18} />} label="Total projects" value={Number(totalProjects || 0).toLocaleString()} detail="Across your workspace" />
         <MetricCard icon={<Activity size={18} />} label="Pipeline health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
