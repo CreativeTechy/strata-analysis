@@ -35,6 +35,21 @@ _TITLE_PATTERNS = [
     re.compile(r"google\s*(privacy policy|terms of service)", re.I),
 ]
 
+# Shared with the enrichment cleaner (services/articles/enrich.py) so a tweet
+# URL is recognized the same way in both places - see is_tweet_url below.
+TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
+
+
+def is_tweet_url(url):
+    """True for an individual tweet/post URL (twitter.com or x.com .../status/<id>).
+
+    Tweets are naturally much shorter than articles - a one-line reply or
+    quick take is often under 200 characters - so callers use this to exempt
+    tweets from the article-length quality filter instead of discarding them
+    as if they were stubs.
+    """
+    return bool(TWEET_STATUS_RE.search(url or ""))
+
 
 def is_blocked_domain(url):
     """True for a Google consent/search/accounts domain, however it was reached."""
