@@ -392,7 +392,8 @@ def link_account_as_source(account: dict) -> int | None:
 
     platform = str(account.get("platform") or "news").lower()
     source_type = PLATFORM_SOURCE_TYPE.get(platform, "web")
-    label = f"{competitor['name']} - {platform}"
+    handle = str(account.get("handle") or "").strip()
+    label = handle if platform == "keyword" and handle else f"{competitor['name']} - {platform}"
 
     source = db.fetch_one(
         """

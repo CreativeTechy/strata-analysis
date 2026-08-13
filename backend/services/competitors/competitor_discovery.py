@@ -82,6 +82,11 @@ VALID_PLATFORMS = {"x", "hashtag", "keyword", "blog", "news", "reddit", "web"}
 # the same reason.
 MAX_ACCOUNTS_PER_PLATFORM = {"x": 5, "hashtag": 8, "keyword": 5, "blog": 2, "news": 1, "reddit": 2, "web": 3}
 
+# Always added on top of whatever the model suggests, not counted against
+# MAX_ACCOUNTS_PER_PLATFORM's keyword cap above (that cap exists to bound a
+# verbose model response, not these deterministic, always-wanted phrases).
+AUTO_KEYWORD_SUFFIXES = ("branches", "reviews", "news", "complaints", "promotions")
+
 # Hosts that are never a company's own site, so never a competitor "website".
 NON_COMPANY_HOSTS = {
     "wikipedia.org", "linkedin.com", "crunchbase.com", "glassdoor.com",
@@ -856,6 +861,22 @@ def discover_accounts(
     if dropped_region:
         log(f"{name}: dropped {dropped_region} channel{'' if dropped_region == 1 else 's'} "
             f"scoped to a different region than this study targets.")
+
+    # Guaranteed keyword coverage on top of whatever the model suggested -
+    # see AUTO_KEYWORD_SUFFIXES above.
+    for suffix in AUTO_KEYWORD_SUFFIXES:
+        term = f"{name} {suffix}"
+        url = _derive_term_url("keyword", term)
+        if not url or url.lower() in seen:
+            continue
+        seen.add(url.lower())
+        accounts.append({
+            "platform": "keyword",
+            "url": url,
+            "handle": term,
+            "confidence": 1.0,
+            "validation_status": "valid",
+        })
 
     log(f"{name}: found {len(accounts)} channel{'' if len(accounts) == 1 else 's'}.")
     return accounts
