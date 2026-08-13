@@ -815,20 +815,20 @@ export default function App() {
 
         {selectedProject?.mode === 'competitor' ? (
           <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel="Back to reports" />
-        ) : (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <StatsOverview
-              intelligence={liveReport}
-              scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
-              loading={isLoadingIntelligence}
-              error={intelligenceError}
-              onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
-              project={selectedProject}
-              sources={sources}
-              period={reportPeriod}
-            />
-          </motion.div>
-        )}
+        ) : null}
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <StatsOverview
+            intelligence={liveReport}
+            scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
+            loading={isLoadingIntelligence}
+            error={intelligenceError}
+            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
+            project={selectedProject}
+            sources={sources}
+            period={reportPeriod}
+          />
+        </motion.div>
       </div>
     );
   };
