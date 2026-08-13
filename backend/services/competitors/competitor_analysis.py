@@ -305,25 +305,30 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
         f"EVIDENCE ({len(evidence)} distinct stories):\n{_format_evidence(evidence)}"
     )
 
+    # LLMError (bad key, insufficient balance, rate limit, provider outage...) is
+    # deliberately NOT caught here - it means the call never produced a usable
+    # answer at all, which is a different situation from "no evidence" and must
+    # not be reported as a silent skip. It propagates to generate_findings,
+    # which surfaces it as a real error instead of a false "0 reports" success.
+    raw = chat_completion(
+        messages=[
+            {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=1600,
+        timeout=120,
+        model=config.COMPETITOR_LLM_CHAT_MODEL,
+        api_key=config.COMPETITOR_LLM_API_KEY,
+        base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
+        api_style=config.COMPETITOR_LLM_API_STYLE,
+        reasoning_effort=config.COMPETITOR_LLM_REASONING_EFFORT,
+        api_key_env_name=config.COMPETITOR_LLM_API_KEY_ENV_NAME,
+    )
     try:
-        raw = chat_completion(
-            messages=[
-                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=1600,
-            timeout=120,
-            model=config.COMPETITOR_LLM_CHAT_MODEL,
-            api_key=config.COMPETITOR_LLM_API_KEY,
-            base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
-            api_style=config.COMPETITOR_LLM_API_STYLE,
-            reasoning_effort=config.COMPETITOR_LLM_REASONING_EFFORT,
-            api_key_env_name=config.COMPETITOR_LLM_API_KEY_ENV_NAME,
-        )
         parsed = json.loads(_strip_fences(raw))
-    except (LLMError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  finding generation failed for {competitor.get('name')}: {exc}")
+    except (json.JSONDecodeError, ValueError) as exc:
+        print(f"  finding generation returned unparsable output for {competitor.get('name')}: {exc}")
         return None
 
     if not isinstance(parsed, dict):
@@ -410,8 +415,14 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
 
     generated = 0
     skipped: list[dict] = []
+    llm_errors: list[LLMError] = []
     for competitor in competitors:
-        finding = generate_finding(profile, competitor, period_days)
+        try:
+            finding = generate_finding(profile, competitor, period_days)
+        except LLMError as exc:
+            print(f"  finding generation failed for {competitor.get('name')}: {exc.detail or exc}")
+            llm_errors.append(exc)
+            continue
         if finding:
             generated += 1
             db.execute(
@@ -427,11 +438,29 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
                           if not stats.get("valid") else "Analysis could not be generated.",
             })
 
+    # An LLM/provider failure (bad key, insufficient balance, rate limit,
+    # outage...) is never reported as a plain "0 reports generated" success -
+    # that reads as "nothing needed reporting" when the real story is the AI
+    # provider call itself failed. Surface it as an error even if some
+    # competitors did get findings, so the caller doesn't miss it.
+    error = None
+    error_code = None
+    if llm_errors:
+        first = llm_errors[0]
+        affected = len(llm_errors)
+        error_code = first.code
+        error = (
+            f"{first.user_message} ({affected} of {len(competitors)} "
+            f"competitor{'s' if len(competitors) != 1 else ''} could not be analyzed "
+            f"- provider error: {first.code})"
+        )
+
     return {
         "generated": generated,
         "skipped": skipped,
         "validation": validation,
-        "error": None,
+        "error": error,
+        "error_code": error_code,
     }
 
 

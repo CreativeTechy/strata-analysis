@@ -117,16 +117,18 @@ def _classify_via_local_pipeline(model_name: str, text: str):
 
 def _classify_via_hf_api(model_name: str, text: str):
     try:
-        from hf_inference_client import HFInferenceError, classify_text
+        from hf_inference_client import classify_text
     except Exception:
         logger.exception("hf_inference_client import failed")
         return None
 
-    try:
-        results = classify_text(model_name, text)
-    except HFInferenceError:
-        logger.exception("HF Inference API sentiment classification failed")
-        return None
+    # HFInferenceError (bad token, insufficient quota, rate limit, outage...)
+    # is deliberately NOT caught here - it means the provider call itself
+    # never produced a usable answer, and every other article would fail the
+    # exact same way. It propagates through analysis/sentiment.py's
+    # _safe_classify to enrich.enrich_article(), which the pipeline treats
+    # as fatal - see services/articles/enrich.py and scraper/pipelines.py.
+    results = classify_text(model_name, text)
 
     if not results:
         return None

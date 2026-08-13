@@ -336,7 +336,8 @@ def analyze_documents(project_id: int, user: dict = Depends(require_permission("
     _project_or_404(project_id)
     result = document_analysis.analyze_documents(project_id)
     if result.get("error"):
-        raise HTTPException(status_code=400, detail=result["error"])
+        status = 502 if result.get("error_code") else 400
+        raise HTTPException(status_code=status, detail=result["error"])
     return {
         **result,
         "findings": competitor_analysis.list_findings(project_id),
@@ -665,7 +666,8 @@ def analyze(project_id: int, payload: dict = None, user: dict = Depends(require_
 
     result = competitor_analysis.generate_findings(project_id, period_days=period_days)
     if result.get("error"):
-        raise HTTPException(status_code=400, detail=result["error"])
+        status = 502 if result.get("error_code") else 400
+        raise HTTPException(status_code=status, detail=result["error"])
     return {
         **result,
         "findings": competitor_analysis.list_findings(project_id),

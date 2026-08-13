@@ -111,16 +111,19 @@ def _build_correction_messages(messages: list, bad_response: str, errors: list) 
 
 
 def _run_generation(messages: list) -> str | None:
-    try:
-        return llm_client.chat_completion(
-            messages=messages,
-            temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,
-            max_tokens=config.STRUCTURED_EXTRACTION_MAX_NEW_TOKENS,
-            json_mode=True,
-        )
-    except llm_client.LLMError:
-        logger.exception("Structured extraction generation failed")
-        return None
+    # LLMError (bad key, insufficient balance, rate limit, provider
+    # outage...) is deliberately NOT caught here - it means the provider call
+    # itself never produced a usable answer, which is a different situation
+    # from "the model answered but the JSON didn't validate" and must not be
+    # reported as an ordinary per-article extraction failure. It propagates
+    # all the way to enrich.enrich_article(), which the pipeline treats as
+    # fatal - see services/articles/enrich.py and scraper/pipelines.py.
+    return llm_client.chat_completion(
+        messages=messages,
+        temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,
+        max_tokens=config.STRUCTURED_EXTRACTION_MAX_NEW_TOKENS,
+        json_mode=True,
+    )
 
 
 def _parse_and_validate(raw: str):

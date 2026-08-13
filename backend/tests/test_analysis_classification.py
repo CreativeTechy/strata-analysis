@@ -110,13 +110,18 @@ class ClassificationStageHfApiTests(unittest.TestCase):
         self.assertEqual(result["label"], "general_article")
         self.assertTrue(result["low_confidence"])
 
-    def test_api_error_falls_back_to_defaults(self):
+    def test_api_error_propagates_instead_of_falling_back(self):
+        """An HF Inference API failure (bad token, quota, rate limit,
+        outage...) means every remaining chunk/article would fail the same
+        way - it must propagate instead of quietly downgrading to
+        general_article/low_confidence, so the pipeline can treat it as
+        fatal and stop (see services/articles/enrich.py's
+        FATAL_ANALYSIS_ERRORS)."""
         from hf_inference_client import HFInferenceError
 
         with patch("hf_inference_client.classify_zero_shot", side_effect=HFInferenceError("boom")):
-            result = classification.classify_category("text")
-        self.assertEqual(result["label"], "general_article")
-        self.assertTrue(result["low_confidence"])
+            with self.assertRaises(HFInferenceError):
+                classification.classify_category("text")
 
     def test_no_model_configured_falls_back_to_defaults(self):
         config.CLASSIFICATION_MODEL = ""

@@ -119,11 +119,17 @@ class ClassifySentimentHfApiTests(unittest.TestCase):
         with patch("hf_inference_client.classify_text", return_value=[]):
             self.assertIsNone(sc.classify_sentiment("I love this"))
 
-    def test_api_error_returns_none_instead_of_raising(self):
+    def test_api_error_propagates_instead_of_returning_none(self):
+        """An HF Inference API failure (bad token, quota, rate limit,
+        outage...) means every remaining article would fail the same way -
+        it must propagate instead of quietly downgrading to "no result", so
+        the pipeline can treat it as fatal and stop (see
+        services/articles/enrich.py's FATAL_ANALYSIS_ERRORS)."""
         from hf_inference_client import HFInferenceError
 
         with patch("hf_inference_client.classify_text", side_effect=HFInferenceError("boom")):
-            self.assertIsNone(sc.classify_sentiment("I love this"))
+            with self.assertRaises(HFInferenceError):
+                sc.classify_sentiment("I love this")
 
     def test_unrecognized_label_returns_none(self):
         with patch("hf_inference_client.classify_text", return_value=[{"label": "surprise", "score": 0.9}]):

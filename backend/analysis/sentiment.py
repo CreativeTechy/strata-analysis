@@ -13,6 +13,7 @@ from collections import defaultdict
 
 import config
 from analysis.article_prep import chunk_text as _chunk_text
+from hf_inference_client import HFInferenceError
 from sentiment_classifier import classify_sentiment
 
 _ALLOWED_LABELS = {"positive", "negative", "neutral"}
@@ -59,6 +60,8 @@ def classify_article_sentiment(text: str) -> dict:
 def _safe_classify(text: str):
     try:
         return classify_sentiment(text)
+    except HFInferenceError:
+        raise
     except Exception:
         return None
 

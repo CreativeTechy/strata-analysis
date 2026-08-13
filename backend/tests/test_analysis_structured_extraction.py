@@ -127,22 +127,28 @@ class RunGenerationTests(unittest.TestCase):
             json_mode=True,
         )
 
-    def test_provider_error_is_caught_and_returns_none(self):
+    def test_provider_error_propagates_instead_of_returning_none(self):
+        """A provider-level failure (bad key, insufficient balance, rate
+        limit...) is not the same situation as "the model answered but the
+        JSON didn't validate" - every other article would fail identically,
+        so this must propagate as a real exception instead of being folded
+        into a per-article "model_unavailable" result. The pipeline
+        (services/articles/enrich.py, scraper/pipelines.py) treats it as
+        fatal and stops rather than grinding through doomed calls."""
         with patch(
             "analysis.structured_extraction.llm_client.chat_completion",
             side_effect=llm_client.LLMConfigError("no key configured"),
         ):
-            result = se._run_generation([{"role": "user", "content": "hi"}])
-        self.assertIsNone(result)
+            with self.assertRaises(llm_client.LLMConfigError):
+                se._run_generation([{"role": "user", "content": "hi"}])
 
-    def test_provider_error_surfaces_as_model_unavailable_end_to_end(self):
+    def test_provider_error_propagates_end_to_end(self):
         with patch(
             "analysis.structured_extraction.llm_client.chat_completion",
             side_effect=llm_client.LLMRateLimitError("rate limited"),
         ):
-            result = se.extract_structured_data("title", "body")
-        self.assertTrue(result.failed)
-        self.assertEqual(result.reason, "model_unavailable")
+            with self.assertRaises(llm_client.LLMRateLimitError):
+                se.extract_structured_data("title", "body")
 
 
 if __name__ == "__main__":

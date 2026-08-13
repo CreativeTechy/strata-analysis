@@ -2014,6 +2014,70 @@ h1, h2, h3 {
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+/* Message/error are free-length text (a full sentence, or a raw provider
+   error) - each gets its own full-width block instead of sharing a grid
+   cell with short fixed-size values like Status/Current stage, so a long
+   value can't stretch or misalign that grid (see PipelineRunDetailPage). */
+.run-detail-message-box,
+.run-detail-error-box {
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-top: 12px;
+}
+
+.run-detail-message-box + .run-detail-error-box {
+  margin-top: 10px;
+}
+
+.run-detail-message-box {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.run-detail-error-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.run-detail-box-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.run-detail-message-box .run-detail-box-label {
+  color: var(--text-light);
+}
+
+.run-detail-error-box .run-detail-box-label {
+  color: #991b1b;
+}
+
+.run-detail-message-text {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-dark);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.run-detail-error-text {
+  margin: 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #991b1b;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .run-detail-section-title {
   font-size: 0.95rem;
   font-weight: 700;

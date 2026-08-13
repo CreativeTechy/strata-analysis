@@ -280,35 +280,39 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             ))}
           </div>
 
-          <div className="glass-card run-detail-summary-grid" style={{ marginBottom: 18 }}>
-            <SummaryField label="Project">{projectName}</SummaryField>
-            <SummaryField label="Status">
-              <StatusBadge status={run.status} />
-            </SummaryField>
-            <SummaryField label="Current stage">{prettyStage(run.stage)}</SummaryField>
-            <SummaryField label="Started at">{formatDateTime(run.started_at)}</SummaryField>
-            <SummaryField label="Finished at">{formatDateTime(run.finished_at)}</SummaryField>
-            <SummaryField label="Total duration">
-              {total.text}
-              {total.inProgress ? ' (in progress)' : ''}
-            </SummaryField>
-            <SummaryField label="Message">{run.message || '—'}</SummaryField>
-            {run.error ? (
-              <SummaryField label="Error">
-                <pre
-                  style={{
-                    margin: 0,
-                    fontFamily: 'inherit',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    maxHeight: 240,
-                    overflowY: 'auto',
-                  }}
-                >
-                  {run.error}
-                </pre>
+          <div className="glass-card" style={{ marginBottom: 18 }}>
+            <div className="run-detail-summary-grid">
+              <SummaryField label="Project">{projectName}</SummaryField>
+              <SummaryField label="Status">
+                <StatusBadge status={run.status} />
               </SummaryField>
+              <SummaryField label="Current stage">{prettyStage(run.stage)}</SummaryField>
+              <SummaryField label="Started at">{formatDateTime(run.started_at)}</SummaryField>
+              <SummaryField label="Finished at">{formatDateTime(run.finished_at)}</SummaryField>
+              <SummaryField label="Total duration">
+                {total.text}
+                {total.inProgress ? ' (in progress)' : ''}
+              </SummaryField>
+            </div>
+
+            {/* Message/error text can run long (a full sentence, or a
+                provider error's raw detail) - kept in their own full-width
+                containers below the small-field grid instead of as cells in
+                it, so one long value can't stretch or misalign the rest. */}
+            {run.message ? (
+              <div className="run-detail-message-box">
+                <div className="run-detail-box-label">Message</div>
+                <div className="run-detail-message-text">{run.message}</div>
+              </div>
+            ) : null}
+
+            {run.error ? (
+              <div className="run-detail-error-box">
+                <div className="run-detail-box-label">
+                  <AlertTriangle size={13} /> Error
+                </div>
+                <pre className="run-detail-error-text">{run.error}</pre>
+              </div>
             ) : null}
           </div>
 

@@ -53,6 +53,11 @@ class LLMRateLimitError(LLMError):
     user_message = "The assistant is busy right now. Please wait a moment and try again."
 
 
+class LLMQuotaError(LLMError):
+    code = "llm_quota_exceeded"
+    user_message = "The AI provider account is out of credit or has hit its usage quota. Top up billing for the configured provider and try again."
+
+
 class LLMTimeoutError(LLMError):
     code = "llm_timeout"
     user_message = "The assistant took too long to respond. Please try again."
@@ -196,6 +201,8 @@ def _raise_for_status(resp):
     status = resp.status_code
     if status in (401, 403):
         raise LLMAuthError(detail)
+    if status == 402:
+        raise LLMQuotaError(detail)
     if status == 429:
         raise LLMRateLimitError(detail)
     if status in (400, 422):

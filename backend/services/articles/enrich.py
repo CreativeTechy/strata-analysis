@@ -17,6 +17,8 @@ from analysis.aggregation import build_topic_insight, compute_overall_tone
 from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_models
 from content_guard import is_blocked_article, is_tweet_url
 from embeddings import build_article_embedding_text, get_embedding
+from hf_inference_client import HFInferenceError
+from llm_client import LLMError
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
 from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics
@@ -29,6 +31,15 @@ PIPELINE_WORKDIR = os.environ.get("PIPELINE_WORKDIR", "").strip()
 INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
+
+# Raised by any AI provider call used during analysis - the chat LLM
+# (structured extraction) or Hugging Face's hosted Inference API
+# (sentiment/classification, when SENTIMENT_CLASSIFIER_PROVIDER/
+# CLASSIFICATION_PROVIDER=hf_api). enrich_article() re-raises these instead
+# of swallowing them into DEFAULT_ENRICHMENT - see its docstring - and
+# scraper/pipelines.py imports this same tuple so both provider types stop
+# the pipeline the same way.
+FATAL_ANALYSIS_ERRORS = (LLMError, HFInferenceError)
 
 # Used only when enrich_article()'s own exception guard trips - i.e. the
 # analysis pipeline crashed somewhere no stage's own error handling caught.
@@ -328,13 +339,25 @@ def enrich_article(article, project_context=""):
     extraction failure comes back as neutral content plus a real
     analysis_status="failed"/analysis_error, not None. This only returns
     None if something escapes every stage's own error handling (a bug, not
-    an expected failure mode); the caller falls back to DEFAULT_ENRICHMENT."""
+    an expected failure mode); the caller falls back to DEFAULT_ENRICHMENT.
+
+    A FATAL_ANALYSIS_ERRORS exception (the chat LLM's LLMError, or Hugging
+    Face's HFInferenceError when SENTIMENT_CLASSIFIER_PROVIDER/
+    CLASSIFICATION_PROVIDER=hf_api) is the one thing NOT swallowed into that
+    None/fallback path - it means an AI provider call itself failed (bad
+    key, insufficient balance/quota, rate limit, outage...), not that this
+    one article's content was hard to analyze. Every other article would
+    fail the exact same way, so it's re-raised for the caller to treat as
+    fatal and stop the pipeline instead of silently saving hundreds of
+    neutral "failed" placeholders as if the run succeeded."""
     title = article.get("title", "")
     try:
         result = analyze_article(article, project_context=project_context)
         if result.get("analysis_status") != "success":
             print(f"  Enrichment issue for '{title[:50]}': {result.get('analysis_error')}")
         return result
+    except FATAL_ANALYSIS_ERRORS:
+        raise
     except Exception as e:
         print(f"  Enrichment error for '{title[:50]}': {e}")
         return None
@@ -475,7 +498,25 @@ def main():
             continue
 
         print(f"[{idx + 1}/{len(articles)}] Enriching: {title}")
-        enrichment = enrich_article(article, project_context=project_context)
+        try:
+            enrichment = enrich_article(article, project_context=project_context)
+        except FATAL_ANALYSIS_ERRORS as e:
+            print(f"\nFATAL: AI provider call failed ({e.code}): {e.user_message}")
+            print(f"Stopping - {idx}/{len(articles)} articles were enriched before the failure.")
+            write_output(enriched)
+            write_pipeline_stats(stats)
+            _set_run_timestamps(enrich_finished_at=datetime.now(timezone.utc).isoformat())
+            _persist_source_stats(
+                scraped_by_source, removed_by_source, date_filtered_by_source,
+                skipped_existing_by_source, kept_by_source, enriched_by_source, {},
+            )
+            _set_run_timestamps(
+                status="failed",
+                stage="error",
+                message=f"Pipeline stopped: {e.user_message}",
+                error=f"{e.user_message} ({e.code})",
+            )
+            raise SystemExit(1) from e
         if enrichment is None:
             enrichment = dict(DEFAULT_ENRICHMENT)
         if enrichment.get("analysis_status") == "success":

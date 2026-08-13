@@ -280,18 +280,36 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
             # StreamingEnrichPipeline respectively) - read the current row
             # back rather than a stats file no longer written anywhere.
             final_run = get_pipeline_run(run_id) or {}
-            _finish_run(
-                run_id,
-                project_id,
-                status="success",
-                stage="done",
-                message=completion_message,
-                articles_scraped=int(final_run.get("articles_scraped") or 0),
-                articles_cleaned=int(final_run.get("articles_cleaned") or 0),
-                articles_saved=int(final_run.get("articles_saved") or 0),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-            )
-            print("Pipeline complete!")
+            if final_run.get("status") == "failed":
+                # StreamingEnrichPipeline hit a fatal AI provider error (bad
+                # key, insufficient balance, rate limit, outage...) and
+                # force-stopped the crawl process itself - the subprocess can
+                # still exit 0 doing that, so the exit code alone isn't
+                # trustworthy here. Keep the specific error it already
+                # recorded instead of reporting a false "success".
+                print(f"Pipeline stopped early: {final_run.get('error')}")
+                _finish_run(
+                    run_id,
+                    project_id,
+                    status="failed",
+                    stage=final_run.get("stage") or "error",
+                    message=final_run.get("message") or "Pipeline stopped due to an AI provider error.",
+                    error=final_run.get("error"),
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+            else:
+                _finish_run(
+                    run_id,
+                    project_id,
+                    status="success",
+                    stage="done",
+                    message=completion_message,
+                    articles_scraped=int(final_run.get("articles_scraped") or 0),
+                    articles_cleaned=int(final_run.get("articles_cleaned") or 0),
+                    articles_saved=int(final_run.get("articles_saved") or 0),
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+                print("Pipeline complete!")
         except PipelineCancelled:
             _finish_run(
                 run_id,
@@ -322,13 +340,25 @@ def run_scraper_pipeline(run_id: str, project_id: int | None = None):
                         f"note={entry.get('note')}"
                     )
             print(f"Pipeline failed: cmd={e.cmd} returncode={e.returncode}")
+            # StreamingEnrichPipeline force-stops the crawl process (os._exit)
+            # on a fatal AI provider error, which lands here as a non-zero
+            # exit - but it already wrote the specific, user-facing cause to
+            # this run before exiting. Prefer that over the generic
+            # "non-zero exit status" text this exception carries.
+            final_run = get_pipeline_run(run_id) or {}
+            if final_run.get("status") == "failed" and final_run.get("error"):
+                message = final_run.get("message") or "Pipeline failed."
+                error = final_run.get("error")
+            else:
+                message = "Pipeline failed."
+                error = str(e)
             _finish_run(
                 run_id,
                 project_id,
                 status="failed",
                 stage="error",
-                message="Pipeline failed.",
-                error=str(e),
+                message=message,
+                error=error,
                 finished_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as e:

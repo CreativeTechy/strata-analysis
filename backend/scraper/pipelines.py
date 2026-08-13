@@ -32,6 +32,7 @@ Google News link decoding, GDELT) are unaffected by this and still block
 the reactor directly, same as before.
 """
 
+import os
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from threading import Lock
@@ -75,6 +76,13 @@ class StreamingEnrichPipeline:
         # in-memory counters/seen_urls need protecting from concurrent
         # read-modify-write races.
         self.lock = Lock()
+        # Set once an AI provider call (chat LLM or Hugging Face Inference
+        # API) fails at the provider level (bad key, insufficient balance/
+        # quota, rate limit, outage...) - every remaining article would fail
+        # the exact same way, so this both guards against writing the fatal
+        # pipeline_runs error more than once and short-circuits any items
+        # still in flight.
+        self.fatal_error = None
         self.project = enrich._load_project()
         self.project_context = enrich._load_project_context()
         self.seen_urls = set()
@@ -92,11 +100,17 @@ class StreamingEnrichPipeline:
         self.enriched_articles = []
 
     def process_item(self, item, spider):
-        return deferToThreadPool(self.reactor, self.thread_pool, self._process_item, dict(item))
+        return deferToThreadPool(self.reactor, self.thread_pool, self._process_item, dict(item), spider)
 
-    def _process_item(self, article):
+    def _process_item(self, article, spider):
         """Runs on a worker thread (see process_item) - up to
         config.ENRICH_CONCURRENCY of these run at once."""
+        if self.fatal_error is not None:
+            # A previous article already tripped a fatal provider error and
+            # asked the process to stop - don't burn another doomed API call
+            # on this one while the process is on its way down.
+            return article
+
         source = enrich._source_key(article)
 
         with self.lock:
@@ -132,7 +146,11 @@ class StreamingEnrichPipeline:
         if reused is not None:
             enrichment = dict(reused)
         else:
-            enrichment = enrich.enrich_article(article, project_context=self.project_context)
+            try:
+                enrichment = enrich.enrich_article(article, project_context=self.project_context)
+            except enrich.FATAL_ANALYSIS_ERRORS as exc:
+                self._stop_for_fatal_llm_error(exc, spider)
+                return article
             if enrichment is None:
                 enrichment = dict(enrich.DEFAULT_ENRICHMENT)
             if not enrichment.get("embedding_json"):
@@ -158,6 +176,38 @@ class StreamingEnrichPipeline:
 
         self._push_progress()
         return enriched_article
+
+    def _stop_for_fatal_llm_error(self, exc, spider):
+        """An AI provider call that fails during analysis - the chat LLM's
+        structured extraction, or Hugging Face's hosted Inference API for
+        sentiment/classification (see enrich.FATAL_ANALYSIS_ERRORS) - means
+        every remaining article would fail the exact same way. Grinding
+        through the rest of the crawl would just be hundreds of doomed
+        calls, each silently saved as a neutral "failed" placeholder, ending
+        in a pipeline_runs row that reports success. Record the real cause
+        once, then kill this crawl process outright rather than letting it
+        limp to a false "done".
+
+        Runs on a worker thread; os._exit() (unlike sys.exit()) terminates
+        the whole process regardless of which thread calls it, so it can't
+        be dodged by Scrapy's reactor/engine staying up on the main thread.
+        """
+        with self.lock:
+            if self.fatal_error is not None:
+                return
+            self.fatal_error = exc
+
+        detail = f"{exc.user_message} ({exc.code})"
+        spider.logger.error("Fatal AI provider error - stopping pipeline: %s", exc.detail or exc)
+        update_pipeline_run(
+            enrich.PIPELINE_RUN_ID,
+            status="failed",
+            stage="error",
+            message="Pipeline stopped: the AI provider call failed.",
+            error=detail,
+        )
+        self._push_progress()
+        os._exit(1)
 
     def _push_progress(self):
         # Snapshot under the lock (cheap - copies of small dicts/Counters),
