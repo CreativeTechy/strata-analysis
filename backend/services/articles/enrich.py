@@ -17,8 +17,8 @@ from analysis.aggregation import build_topic_insight, compute_overall_tone
 from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_models
 from content_guard import is_blocked_article, is_tweet_url
 from embeddings import build_article_embedding_text, get_embedding
-from hf_inference_client import HFInferenceError
-from llm_client import LLMError
+from hf_inference_client import HFAuthError, HFConfigError, HFInferenceError, HFQuotaError
+from llm_client import LLMAuthError, LLMConfigError, LLMError, LLMQuotaError
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
 from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics
@@ -32,14 +32,23 @@ INPUT_FILE = Path(os.environ.get("PIPELINE_RAW_FILE", "articles.json"))
 OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.json"))
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
-# Raised by any AI provider call used during analysis - the chat LLM
-# (structured extraction) or Hugging Face's hosted Inference API
-# (sentiment/classification, when SENTIMENT_CLASSIFIER_PROVIDER/
-# CLASSIFICATION_PROVIDER=hf_api). enrich_article() re-raises these instead
-# of swallowing them into DEFAULT_ENRICHMENT - see its docstring - and
-# scraper/pipelines.py imports this same tuple so both provider types stop
-# the pipeline the same way.
-FATAL_ANALYSIS_ERRORS = (LLMError, HFInferenceError)
+# Only the AI provider failures that mean the provider is unusable outright
+# - missing/invalid credentials, or the account being out of credit/quota -
+# stop the whole pipeline: every remaining article would fail the exact same
+# way, so grinding through the rest of the run would just be doomed calls.
+# Everything else an AI provider call can raise (rate limit, timeout, an
+# outage, a bad request, or a response with no usable content - see
+# llm_client.LLMInvalidResponseError/HFInferenceError's other subclasses) is
+# a one-off failure of *this* article's call, not proof the provider itself
+# is broken, so it is NOT included here - enrich_article() lets it fall
+# through to its own except Exception guard below and reports that single
+# article as failed (DEFAULT_ENRICHMENT / analysis_status="failed") while
+# the rest of the run keeps going. scraper/pipelines.py imports this same
+# tuple so both provider types stop the pipeline the same way.
+FATAL_ANALYSIS_ERRORS = (
+    LLMConfigError, LLMAuthError, LLMQuotaError,
+    HFConfigError, HFAuthError, HFQuotaError,
+)
 
 # Used only when enrich_article()'s own exception guard trips - i.e. the
 # analysis pipeline crashed somewhere no stage's own error handling caught.
@@ -337,19 +346,17 @@ def enrich_article(article, project_context=""):
     """Run the modular analysis pipeline (analysis/orchestrator.py) for one
     article. analyze_article() always returns a dict - even a structured
     extraction failure comes back as neutral content plus a real
-    analysis_status="failed"/analysis_error, not None. This only returns
-    None if something escapes every stage's own error handling (a bug, not
-    an expected failure mode); the caller falls back to DEFAULT_ENRICHMENT.
+    analysis_status="failed"/analysis_error, not None.
 
-    A FATAL_ANALYSIS_ERRORS exception (the chat LLM's LLMError, or Hugging
-    Face's HFInferenceError when SENTIMENT_CLASSIFIER_PROVIDER/
-    CLASSIFICATION_PROVIDER=hf_api) is the one thing NOT swallowed into that
-    None/fallback path - it means an AI provider call itself failed (bad
-    key, insufficient balance/quota, rate limit, outage...), not that this
-    one article's content was hard to analyze. Every other article would
-    fail the exact same way, so it's re-raised for the caller to treat as
-    fatal and stop the pipeline instead of silently saving hundreds of
-    neutral "failed" placeholders as if the run succeeded."""
+    A FATAL_ANALYSIS_ERRORS exception (missing/invalid provider credentials,
+    or the account being out of credit/quota - see that tuple's own comment)
+    is re-raised for the caller to treat as fatal and stop the pipeline: the
+    provider itself is unusable, so every other article would fail the exact
+    same way. Anything else - a transient rate limit/timeout/outage, a bad
+    request, or a response with no usable content - falls through to the
+    except Exception guard below and returns None instead, so the caller
+    records just this one article as failed (DEFAULT_ENRICHMENT) and moves
+    on to the next one."""
     title = article.get("title", "")
     try:
         result = analyze_article(article, project_context=project_context)
