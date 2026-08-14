@@ -91,10 +91,12 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
         return None
     # HFInferenceError (bad token, insufficient quota, rate limit, outage...)
     # is deliberately NOT caught here - it means the provider call itself
-    # never produced a usable answer, and every other chunk/article would
-    # fail the exact same way. It propagates to enrich.enrich_article(),
-    # which the pipeline treats as fatal - see services/articles/enrich.py
-    # and scraper/pipelines.py.
+    # never produced a usable answer. It propagates to
+    # enrich.enrich_article(); only the unrecoverable subset (bad/missing
+    # credentials, out of credit/quota - see enrich.FATAL_ANALYSIS_ERRORS)
+    # stops the whole pipeline there. Anything else (rate limit, timeout,
+    # outage) just fails this one chunk/article - see
+    # services/articles/enrich.py and scraper/pipelines.py.
     result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
     result_labels = result.get("labels") or []
     result_scores = result.get("scores") or []

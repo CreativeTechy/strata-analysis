@@ -116,8 +116,12 @@ def _run_generation(messages: list) -> str | None:
     # itself never produced a usable answer, which is a different situation
     # from "the model answered but the JSON didn't validate" and must not be
     # reported as an ordinary per-article extraction failure. It propagates
-    # all the way to enrich.enrich_article(), which the pipeline treats as
-    # fatal - see services/articles/enrich.py and scraper/pipelines.py.
+    # all the way to enrich.enrich_article(); only the unrecoverable subset
+    # (bad/missing credentials, out of credit/quota - see
+    # enrich.FATAL_ANALYSIS_ERRORS) stops the whole pipeline there. Anything
+    # else (rate limit, timeout, outage, empty/invalid response) just fails
+    # this one article - see services/articles/enrich.py and
+    # scraper/pipelines.py.
     return llm_client.chat_completion(
         messages=messages,
         temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,
