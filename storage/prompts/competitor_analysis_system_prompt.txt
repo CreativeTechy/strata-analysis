@@ -13,6 +13,11 @@ Rules:
   "monitor the situation", no "consider evaluating".
 - If the evidence is too thin to support a conclusion, say that in whats_up and
   return few or no actions rather than padding.
+- "confidence_reason" must explain the score you gave, in terms of the evidence
+  you were handed: how many independent sources it rests on, whether they state
+  the move or only imply it, how recent they are, whether they are the
+  competitor's own announcements or third-party reporting. One sentence. Never
+  restate the number ("confidence is low") — give the reason for it.
 
 Return ONLY this JSON, no markdown:
 {
@@ -24,5 +29,6 @@ Return ONLY this JSON, no markdown:
   "actions": [
     {"action": "", "rationale": "", "effort": "low|medium|high", "urgency": "now|this_quarter|watch"}
   ],
-  "confidence": 0.0
+  "confidence": 0.0,
+  "confidence_reason": "one sentence on what the score rests on"
 }

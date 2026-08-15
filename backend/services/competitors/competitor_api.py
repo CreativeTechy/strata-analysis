@@ -14,7 +14,6 @@ account lookups are added up, well past any gateway timeout.
 
 from __future__ import annotations
 
-import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
@@ -30,8 +29,7 @@ from services.projects.projects_store import REPEAT_WEEKDAYS
 from psycopg.types.json import Jsonb
 import db
 from services.auth.auth import require_permission
-from services.pipeline.pipeline import run_scraper_pipeline
-from services.pipeline.pipeline_runs import create_pipeline_run, get_active_run_for_project, get_pipeline_run
+from services.pipeline.pipeline_runs import get_active_run_for_project
 from services.projects.projects_store import delete_project, list_sources_for_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
@@ -606,46 +604,14 @@ def remove_account(account_id: int, user: dict = Depends(require_permission("com
 # --------------------------------------------------------------------------- #
 # Analysis
 # --------------------------------------------------------------------------- #
-def _ensure_articles(project_id: int) -> dict:
-    """Run the shared scrape/enrich pipeline synchronously when a study has no
-    articles yet, so analysis always has evidence to read instead of quietly
-    generating zero findings.
-
-    Reuses the exact machinery behind POST /scrape - same pipeline_runs
-    tracking, same run_scraper_pipeline - rather than a second scraping path.
-    Blocks the request (matching how profile scraping and analysis generation
-    already run synchronously here) so `generate_findings` never runs against
-    an empty project. A run already active for this project is treated as a
-    conflict rather than started twice, so double-clicking "Run analysis"
-    cannot kick off two scrapes.
-    """
-    active = get_active_run_for_project(project_id)
-    if active:
-        raise HTTPException(
-            status_code=409,
-            detail="A scrape is already running for this study. Try again once it finishes.",
-        )
-
-    if not list_sources_for_project(project_id):
-        raise HTTPException(
-            status_code=400,
-            detail="No sources to scrape yet. Confirm at least one competitor channel before running analysis.",
-        )
-
-    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
-    run_id = run["id"] if run else uuid.uuid4().hex
-    run_scraper_pipeline(run_id, project_id)
-
-    finished = get_pipeline_run(run_id)
-    if not finished or finished.get("status") != "success":
-        error = (finished or {}).get("error") or "Scrape and enrichment did not complete."
-        raise HTTPException(status_code=502, detail=f"Could not gather articles before analysis: {error}")
-    return finished
-
-
 @router.post("/studies/{project_id}/analyze")
-def analyze(project_id: int, payload: dict = None, user: dict = Depends(require_permission("competitors.analyze"))):
-    """Validate the scraped evidence, then generate one card per tracked competitor.
+def analyze(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    payload: dict = None,
+    user: dict = Depends(require_permission("competitors.analyze")),
+):
+    """Queue analysis as a background job and return immediately.
 
     `scrape` in the payload is the user's explicit choice from the "Run
     analysis" dialog: True scrapes+enriches first regardless of what's already
@@ -653,26 +619,60 @@ def analyze(project_id: int, payload: dict = None, user: dict = Depends(require_
     exists. Omitting it falls back to the old auto-detect behaviour (scrape
     only when the project has zero articles) for any caller that predates the
     dialog, e.g. a scheduled run.
+
+    One LLM call per competitor - preceded, when scraping, by a full crawl of
+    every source in the study - runs for minutes, which used to be minutes of
+    an open request showing an undifferentiated spinner. The checks that can
+    fail immediately stay here so they still answer with a real status code;
+    everything slow moves into the job, and the UI polls
+    GET .../analyze/{run_id} for live progress.
     """
     _project_or_404(project_id)
     payload = payload or {}
     period_days = max(1, min(int(payload.get("period_days") or competitor_analysis.DEFAULT_PERIOD_DAYS), 365))
     scrape_choice = payload.get("scrape")
-
-    scrape_run = None
     needs_scrape = scrape_choice if isinstance(scrape_choice, bool) else not project_has_articles(project_id)
-    if needs_scrape:
-        scrape_run = _ensure_articles(project_id)
 
-    result = competitor_analysis.generate_findings(project_id, period_days=period_days)
-    if result.get("error"):
-        status = 502 if result.get("error_code") else 400
-        raise HTTPException(status_code=status, detail=result["error"])
-    return {
-        **result,
-        "findings": competitor_analysis.list_findings(project_id),
-        "scrape_run": scrape_run,
-    }
+    if needs_scrape:
+        if get_active_run_for_project(project_id):
+            raise HTTPException(
+                status_code=409,
+                detail="A scrape is already running for this study. Try again once it finishes.",
+            )
+        if not list_sources_for_project(project_id):
+            raise HTTPException(
+                status_code=400,
+                detail="No sources to scrape yet. Confirm at least one competitor channel before running analysis.",
+            )
+
+    # Double-clicking "Run analysis" attaches to the run already in flight
+    # rather than starting a second one against the same competitors.
+    active = competitor_analysis.get_active_analysis_run(project_id)
+    if active:
+        return {"run_id": active["run_id"], "status": active["status"]}
+
+    run_id = competitor_analysis.create_analysis_run(project_id)
+    background_tasks.add_task(
+        competitor_analysis.run_analysis_job, run_id, project_id, period_days, bool(needs_scrape)
+    )
+    return {"run_id": run_id, "status": "queued", "scraping": bool(needs_scrape)}
+
+
+@router.get("/studies/{project_id}/analyze/{run_id}")
+def analyze_status(project_id: int, run_id: str, user: dict = Depends(require_permission("competitors.view"))):
+    """Progress for one analysis job, including its live `logs`.
+
+    Findings are returned on the terminal poll so the workspace can render the
+    new cards without a second round trip, matching what the old synchronous
+    endpoint handed back.
+    """
+    _project_or_404(project_id)
+    run = competitor_analysis.get_analysis_run(run_id)
+    if not run or run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+    if run["status"] in ("success", "failed"):
+        run = {**run, "findings": competitor_analysis.list_findings(project_id)}
+    return {"run": run}
 
 
 @router.get("/studies/{project_id}/findings")

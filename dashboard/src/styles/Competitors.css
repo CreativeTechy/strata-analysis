@@ -741,6 +741,30 @@
   box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
 }
 
+/* Evidence window picker in the "Run analysis" dialog. */
+.cs-run-period {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 10px;
+  margin: 2px 0 14px;
+}
+
+.cs-run-period label {
+  font-size: 0.84rem;
+  font-weight: 560;
+  color: var(--text-dark);
+}
+
+.cs-run-period .cs-select { width: 100%; }
+
+.cs-run-period small {
+  grid-column: 1 / -1;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--text-light);
+}
+
 .cs-source-row {
   display: flex;
   align-items: flex-start;
@@ -870,6 +894,20 @@
 }
 
 .cs-report-meta strong { color: var(--text-dark); font-weight: 620; }
+
+/* Sits directly under the confidence percentage in the meta row and explains
+   what that number rests on. */
+.cs-report-confidence-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0 0;
+  font-size: 0.79rem;
+  line-height: 1.5;
+  color: var(--text-light);
+}
+
+.cs-report-confidence-reason svg { flex-shrink: 0; margin-top: 2px; }
 
 .cs-report-cols {
   display: grid;

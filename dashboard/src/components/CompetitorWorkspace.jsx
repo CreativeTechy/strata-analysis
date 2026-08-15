@@ -20,8 +20,9 @@ import {
 import {
   IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
   avatarGradient, deleteStudy, discoverAccounts, discoverCompetitors, discoverTrackedAccounts,
-  getSchedule, getStudy, initials, listAccounts, listCompetitors, listFindings, pollDiscoveryRun,
-  relativeTime, saveProfile, setCompetitorStatus, setSchedule, syncSources, updateStudy, validateAccount,
+  getSchedule, getStudy, initials, listAccounts, listCompetitors, listFindings, pollAnalysisRun,
+  pollDiscoveryRun, relativeTime, saveProfile, setCompetitorStatus, setSchedule, syncSources,
+  updateStudy, validateAccount,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
 import { useAuth } from '../auth/useAuth.js';
@@ -42,6 +43,19 @@ const IMPACT_FILTERS = [
   { key: 'high', label: 'High' },
   { key: 'medium', label: 'Medium' },
   { key: 'low', label: 'Low' },
+];
+
+// How far back analysis looks for evidence. The backend accepts 1-365 and
+// stamps the chosen window on every card as period_start/period_end.
+// 30 stays the default: a card answers "what changed", and over a longer
+// window a move from six months ago sits beside one from last week with
+// nothing to tell them apart. Longer windows are for competitors that are
+// simply covered rarely.
+const ANALYSIS_PERIODS = [
+  { days: 30, label: 'Last 30 days' },
+  { days: 90, label: 'Last 90 days' },
+  { days: 180, label: 'Last 6 months' },
+  { days: 365, label: 'Last 12 months' },
 ];
 
 const VIEW_MODES = [
@@ -394,6 +408,7 @@ export default function CompetitorWorkspace() {
   const [analyzing, setAnalyzing] = useState(false);
   const [runMode, setRunMode] = useState(null); // 'scrape' | 'direct' - which choice is currently running
   const [showRunChoice, setShowRunChoice] = useState(false);
+  const [periodDays, setPeriodDays] = useState(ANALYSIS_PERIODS[0].days);
   const [notice, setNotice] = useState(null);
   const [impact, setImpact] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -425,6 +440,7 @@ export default function CompetitorWorkspace() {
   const [discoveryNotice, setDiscoveryNotice] = useState(null);
   const [discoveringChannels, setDiscoveringChannels] = useState(false);
   const [discoveryLogs, setDiscoveryLogs] = useState([]);
+  const [analysisLogs, setAnalysisLogs] = useState([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState({ name: '', description: '', status: 'active' });
@@ -531,19 +547,28 @@ export default function CompetitorWorkspace() {
     setAnalyzing(true);
     setError('');
     setNotice(null);
+    setAnalysisLogs([]);
     try {
       await syncSources(studyId);
-      const result = await analyze(studyId, { period_days: 30, scrape: scrapeFirst });
-      setFindings(result.findings || []);
-      const validation = result.validation || {};
-      const reasons = validation.rejection_reasons || {};
+      // Queued, not awaited: a scrape plus one LLM call per competitor runs for
+      // minutes. Poll for progress so the log renders live instead of leaving
+      // the user on a spinner with no idea what stage it reached.
+      const queued = await analyze(studyId, { period_days: periodDays, scrape: scrapeFirst });
+      const run = await pollAnalysisRun(studyId, queued.run_id, (r) => setAnalysisLogs(r.logs || []));
+      if (run.status === 'failed') throw new Error(run.error || 'Analysis failed.');
+
+      setFindings(run.findings || []);
+      const validation = run.validation || {};
       setNotice({
-        generated: result.generated,
+        generated: run.generated,
         scanned: validation.scanned || 0,
-        skipped: result.skipped || [],
-        reasons,
-        scrapedFirst: Boolean(result.scrape_run),
-        scrapeRun: result.scrape_run || null,
+        // From the run, not the picker: reports the window actually analyzed,
+        // which stays right even if the selector is changed afterwards.
+        periodDays: validation.period_days || null,
+        skipped: run.skipped || [],
+        reasons: validation.rejection_reasons || {},
+        scrapedFirst: Boolean(run.scrape_run),
+        scrapeRun: run.scrape_run || null,
       });
       clearFindingFilters();
     } catch (caught) {
@@ -943,6 +968,10 @@ export default function CompetitorWorkspace() {
         <DiscoveryLog logs={discoveryLogs} active={discoveringCompetitors || discoveringChannels} />
       ) : null}
 
+      {analyzing || analysisLogs.length ? (
+        <DiscoveryLog logs={analysisLogs} active={analyzing} />
+      ) : null}
+
       {error ? (
         <div className="cs-alert cs-alert-error">
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
@@ -988,7 +1017,8 @@ export default function CompetitorWorkspace() {
               </>
             ) : null}
             Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
-            {notice.scanned} scanned article{notice.scanned === 1 ? '' : 's'}.
+            {notice.scanned} scanned article{notice.scanned === 1 ? '' : 's'}
+            {notice.periodDays ? ` in the last ${notice.periodDays} days` : ''}.
             {Object.keys(notice.reasons).length ? (
               <>
                 {' '}Filtered out:{' '}
@@ -999,8 +1029,8 @@ export default function CompetitorWorkspace() {
               </>
             ) : null}
             {notice.skipped.length ? (
-              <> {notice.skipped.length} competitor{notice.skipped.length === 1 ? '' : 's'} had no
-                usable evidence this period.</>
+              <> {notice.skipped.length} competitor{notice.skipped.length === 1 ? '' : 's'} skipped —{' '}
+                {notice.skipped.map((item) => `${item.name}: ${item.reason}`).join(' ')}</>
             ) : null}
           </span>
         </div>
@@ -1309,6 +1339,21 @@ export default function CompetitorWorkspace() {
               Scrape this study&rsquo;s sources for fresh articles first, or analyse the evidence already on file?
               {' '}{study?.last_run_at ? `Last scraped ${relativeTime(study.last_run_at)}.` : 'This study has never been scraped.'}
             </p>
+
+            <div className="cs-run-period">
+              <label htmlFor="cs-analysis-period">Look back over</label>
+              <select id="cs-analysis-period" className="cs-select" value={periodDays}
+                onChange={(event) => setPeriodDays(Number(event.target.value))}>
+                {ANALYSIS_PERIODS.map((option) => (
+                  <option key={option.days} value={option.days}>{option.label}</option>
+                ))}
+              </select>
+              <small>
+                Evidence outside this window is ignored, and each report says which window it covers.
+                Pages scraped from a competitor&rsquo;s own site are dated by when they were fetched, so
+                a longer window mainly helps with competitors the news covers rarely.
+              </small>
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '4px 0 6px' }}>
               <button type="button" onClick={() => runAnalysis(true)}

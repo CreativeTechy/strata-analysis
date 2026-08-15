@@ -142,7 +142,11 @@ export const validateAccount = (accountId, status, reason = '') =>
 export const deleteAccount = (accountId) => request(`/accounts/${accountId}`, { method: 'DELETE' });
 
 // --- analysis --------------------------------------------------------------
+/** Queues analysis as a background job; returns { run_id, status } immediately.
+ *  Poll pollAnalysisRun() until it reaches a terminal status - a scrape plus one
+ *  LLM call per competitor runs for minutes. */
 export const analyze = (id, body) => request(`/studies/${id}/analyze`, { method: 'POST', body });
+export const getAnalysisStatus = (id, runId) => request(`/studies/${id}/analyze/${runId}`);
 /** Offline studies: names the competitors an offline study's approved
  *  document articles are actually about, tracks them, then runs the same
  *  finding generation `analyze()` triggers for an online study. */
@@ -236,6 +240,19 @@ function sleep(ms) {
 export async function pollDiscoveryRun(studyId, runId, onUpdate) {
   for (;;) {
     const { run } = await getDiscoveryStatus(studyId, runId);
+    if (onUpdate) onUpdate(run);
+    if (run.status === 'success' || run.status === 'failed') return run;
+    await sleep(DISCOVERY_POLL_MS);
+  }
+}
+
+/** Same contract as pollDiscoveryRun, for the analysis job: scrape + one LLM
+ *  call per competitor is minutes of work, so it's queued rather than awaited.
+ *  `onUpdate` fires on every poll so the caller can render `run.logs` live; the
+ *  terminal run carries `findings`, so no refetch is needed after it resolves. */
+export async function pollAnalysisRun(studyId, runId, onUpdate) {
+  for (;;) {
+    const { run } = await getAnalysisStatus(studyId, runId);
     if (onUpdate) onUpdate(run);
     if (run.status === 'success' || run.status === 'failed') return run;
     await sleep(DISCOVERY_POLL_MS);

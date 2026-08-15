@@ -39,16 +39,14 @@ from __future__ import annotations
 
 import json
 import re
-import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import config
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors.countries import COUNTRIES, country_label, validate_countries
+from services.competitors.job_runs import ACTIVE_STATUSES, JobRegistry
 from services.projects.project_discovery import (
     OPINION_QUERY_SITES, _lightweight_fetch, _normalize_url, _search_bing, _search_duckduckgo,
 )
@@ -892,75 +890,29 @@ def discovery_model() -> str:
 # Discovery chains an LLM call, live web corroboration per candidate, and (with
 # with_accounts) a further LLM call per competitor - easily minutes end to end
 # once the model is running slow, well past any gateway timeout. It runs as a
-# FastAPI BackgroundTask instead of inline in the request handler, tracked here
-# in-memory (in-process, not Postgres) since it's a one-shot onboarding step the
-# user watches live, not a durable scheduled job like the scrape pipeline - if
-# the backend restarts mid-run the UI just needs to let the user retry.
-_runs_lock = threading.Lock()
-_runs: dict[str, dict] = {}
+# FastAPI BackgroundTask instead of inline in the request handler, tracked in
+# the shared in-process registry (services/competitors/job_runs.py) that
+# competitor analysis now uses too - see that module for why these runs are not
+# persisted the way the scrape pipeline's are.
+_discovery_runs = JobRegistry("Queued for competitor discovery.")
 
-ACTIVE_DISCOVERY_STATUSES = ("queued", "running")
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+ACTIVE_DISCOVERY_STATUSES = ACTIVE_STATUSES
 
 
 def create_discovery_run(project_id: int) -> str:
-    run_id = uuid.uuid4().hex
-    with _runs_lock:
-        _runs[run_id] = {
-            "run_id": run_id,
-            "project_id": project_id,
-            "status": "queued",
-            "stage": "queued",
-            "message": "Queued for competitor discovery.",
-            "error": None,
-            "discovered": 0,
-            "rejected": [],
-            "logs": [],
-            "created_at": _now_iso(),
-            "updated_at": _now_iso(),
-        }
-    return run_id
+    return _discovery_runs.create(project_id, discovered=0, rejected=[])
 
 
 def get_discovery_run(run_id: str) -> dict | None:
-    with _runs_lock:
-        run = _runs.get(run_id)
-        if not run:
-            return None
-        copy = dict(run)
-        # A plain dict(run) still shares the same `logs` list object with the
-        # live run - copy it too so a response being serialized never reads a
-        # list a worker thread is concurrently appending to.
-        copy["logs"] = list(run.get("logs") or [])
-        return copy
+    return _discovery_runs.get(run_id)
 
 
 def get_active_discovery_run(project_id: int) -> dict | None:
-    with _runs_lock:
-        for run in _runs.values():
-            if run["project_id"] == project_id and run["status"] in ACTIVE_DISCOVERY_STATUSES:
-                return dict(run)
-    return None
+    return _discovery_runs.active_for_project(project_id)
 
 
-def _update_discovery_run(run_id: str, **fields) -> None:
-    with _runs_lock:
-        run = _runs.get(run_id)
-        if run is not None:
-            run.update(fields, updated_at=_now_iso())
-
-
-def _append_log(run_id: str, message: str) -> None:
-    """Append one real-time progress line to a run - safe to call concurrently
-    from worker threads, guarded by the same lock as _update_discovery_run."""
-    with _runs_lock:
-        run = _runs.get(run_id)
-        if run is not None:
-            run.setdefault("logs", []).append({"ts": _now_iso(), "message": message})
-            run["updated_at"] = _now_iso()
+_update_discovery_run = _discovery_runs.update
+_append_log = _discovery_runs.append_log
 
 
 def _discover_accounts_concurrently(

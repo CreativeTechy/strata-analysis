@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Calendar, Check, ChevronRight, ExternalLink, FileText,
-  Filter, Lightbulb, Link2, ShieldCheck, Sparkles, Target, ThumbsDown,
+  Filter, Info, Lightbulb, Link2, ShieldCheck, Sparkles, Target, ThumbsDown,
 } from 'lucide-react';
 import {
   EFFORT_LABELS, IMPACT_LABELS, SIZE_TIER_LABELS, URGENCY_LABELS, avatarGradient,
@@ -155,6 +155,17 @@ export default function CompetitorReportPage() {
             <span>Confidence <strong>{Math.round(Number(finding.confidence) * 100)}%</strong></span>
           ) : null}
         </div>
+
+        {/* A bare percentage doesn't tell you whether to act on it. "Low
+            because every source is the competitor's own press release" and
+            "low because there are only two mentions" call for different
+            responses. Absent on findings generated before the model was
+            asked for it. */}
+        {finding.confidence_reason ? (
+          <p className="cs-report-confidence-reason">
+            <Info size={13} /> {finding.confidence_reason}
+          </p>
+        ) : null}
       </div>
 
       <div className="cs-report-cols">

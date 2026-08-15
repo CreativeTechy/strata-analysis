@@ -8,11 +8,16 @@ only allowed to inform a finding if it survives explicit gates, each of which
 records *why* a row was dropped:
 
   - it passes the existing `content_guard` (no consent interstitials, no search pages)
+  - it is not evergreen site furniture — a Contact Us or Careers page names the
+    company in its own nav on every one, so presence alone can't tell it apart
+    from news about the company
   - it has enough body text to say anything
-  - **the competitor is actually named in it** — this is the gate that matters. A
-    competitor's own domain publishes plenty that is about nobody in particular,
-    and keyword-adjacent articles routinely mention a whole market. Without this,
-    a report attributes the industry's news to one company.
+  - **the competitor is actually named in it, prominently** — this is the gate
+    that matters. A competitor's own domain publishes plenty that is about
+    nobody in particular, and keyword-adjacent articles routinely mention a
+    whole market. Without this, a report attributes the industry's news to one
+    company. Prominence rather than presence, because a company named once in
+    paragraph nine of a twenty-company roundup is not what that piece is about.
   - it is not a near-duplicate of a story already counted, using `story_id` from
     migration 0003, so a press release carried by twenty outlets is one move and
     not twenty
@@ -31,7 +36,9 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from psycopg.types.json import Jsonb
 
@@ -40,6 +47,7 @@ import db
 from content_guard import is_blocked_article
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
+from services.competitors.job_runs import ACTIVE_STATUSES, JobRegistry
 
 PROMPT_VERSION = "competitor-analysis-2026-07-27"
 
@@ -53,6 +61,17 @@ DOCUMENT_URL_PREFIX = "document://"
 MAX_EVIDENCE_PER_CARD = 8
 MAX_TEXT_PER_EVIDENCE = 1800
 DEFAULT_PERIOD_DAYS = 30
+
+# Below this, the competitor is mentioned but the piece is not about them.
+# See _mention_profile for what the tiers mean; 0.35 admits a body-only mention
+# that is either repeated or up front, and drops a lone late one.
+MIN_MENTION_SCORE = 0.35
+
+# One LLM call per competitor, so a study with a dozen of them serialized into a
+# dozen sequential round trips on a request the user is watching. Kept modest
+# rather than unbounded for the same reason ENRICH_CONCURRENCY is: the ceiling
+# is the provider's, and this shares an account with enrichment and Copilot.
+ANALYSIS_CONCURRENCY = 4
 
 IMPACT_LEVELS = {"high", "medium", "low"}
 
@@ -68,8 +87,28 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
+# Nav labels a discovery pass can come back with as a company name. As a
+# plain-text matcher a word like this fires on any article that happens to
+# contain it: the live data had a competitor named "Stories" matching "Fact
+# Check: Photos Show..." at full title prominence, i.e. a fabricated signal
+# carrying a confident score. A name that is only a common word cannot be
+# matched on text alone, so it is not used as an alias at all.
+_GENERIC_ALIASES = {
+    "about", "blog", "brand", "brands", "cart", "collection", "collections",
+    "contact", "event", "events", "gallery", "help", "home", "media", "menu",
+    "menus", "news", "press", "product", "products", "service", "services",
+    "shop", "stories", "story", "support", "team", "work",
+}
+
+
 def _aliases(competitor: dict) -> list[str]:
-    """Names to look for in article text: the company name, and its bare domain."""
+    """Names to look for in article text: the company name, and its bare domain.
+
+    Aliases that are just a common word are dropped — see _GENERIC_ALIASES. A
+    competitor left with none of them matches nothing, which is the intended
+    outcome: no card at all beats a card built from every article containing
+    the word "news".
+    """
     names = []
     name = str(competitor.get("name") or "").strip()
     if name:
@@ -84,7 +123,7 @@ def _aliases(competitor: dict) -> list[str]:
         label = domain.split(".")[0]
         if len(label) >= 3 and label.casefold() not in {n.casefold() for n in names}:
             names.append(label)
-    return names
+    return [name for name in names if name.casefold() not in _GENERIC_ALIASES]
 
 
 def _mentions(text: str, aliases: list[str]) -> str | None:
@@ -98,6 +137,60 @@ def _mentions(text: str, aliases: list[str]) -> str | None:
         if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", haystack, re.IGNORECASE):
             return alias
     return None
+
+
+# Evergreen furniture on a company's own site. Every one of these names the
+# company in its nav and footer, so the mention gate passes them on presence
+# alone, and `_effective_date` dates a `web` page by when it was scraped — so a
+# Contact Us page looks freshly published every crawl and never ages out of the
+# window. Left in, they crowd out actual news and the model gets asked what
+# changed while looking at a careers listing and a store locator.
+_BOILERPLATE_PATH_RE = re.compile(
+    r"/(contact|about|about-us|careers?|jobs|work-with-us|team|locations?|stores?|"
+    r"store-locator|find-us|franchise|faq|help|support|terms|privacy|policy|policies|"
+    r"shipping|returns?|refunds?|cart|checkout|account|login|sign-?in|register|"
+    r"wishlist|sitemap)(/|$|\?)",
+    re.I,
+)
+_BOILERPLATE_TITLE_RE = re.compile(
+    r"^\s*(contact|about|careers?|jobs|work with us|our team|locations?|stores?|"
+    r"find us|franchise|faq|frequently asked|terms|privacy|shipping|returns?|"
+    r"my account|shopping cart|checkout|log ?in|sign ?in|register|wishlist)\b",
+    re.I,
+)
+
+
+def _is_boilerplate_page(url: str, title: str) -> bool:
+    path = urlparse(str(url or "")).path
+    return bool(_BOILERPLATE_PATH_RE.search(path) or _BOILERPLATE_TITLE_RE.search(str(title or "")))
+
+
+def _mention_profile(title: str, summary: str, body: str, aliases: list[str]) -> tuple[str | None, float]:
+    """Which alias the article names, and how central it is to the piece.
+
+    Prominence, not presence. A competitor in the headline is what the article
+    is about. A competitor named once, late, in a twenty-company market roundup
+    is not — and handing that to the model as evidence of "what they're doing"
+    is how a card ends up describing a move that never happened.
+
+    The score is stored as `competitor_articles.match_score`, which until now
+    was always a hardcoded 1.0 and therefore carried no information at all.
+    """
+    for field, score in ((title, 1.0), (summary, 0.7)):
+        alias = _mentions(field, aliases)
+        if alias:
+            return alias, score
+
+    alias = _mentions(body, aliases)
+    if not alias:
+        return None, 0.0
+
+    hits = [match.start() for match in re.finditer(
+        rf"(?<!\w){re.escape(alias)}(?!\w)", body, re.IGNORECASE
+    )]
+    # Repeated, or introduced up front: the piece keeps coming back to them.
+    leads = bool(hits) and hits[0] < max(1, len(body)) * 0.25
+    return alias, 0.45 if (len(hits) >= 3 or leads) else 0.2
 
 
 def _effective_date(article: dict) -> datetime | None:
@@ -131,16 +224,20 @@ def _candidate_articles(project_id: int) -> list[dict]:
     )
 
 
-def validate_competitor_articles(project_id: int, competitors: list[dict], period_days: int = DEFAULT_PERIOD_DAYS) -> dict:
+def validate_competitor_articles(project_id: int, competitors: list[dict],
+                                 period_days: int = DEFAULT_PERIOD_DAYS, log=None) -> dict:
     """Attribute articles to competitors, recording accept/reject reasons.
 
     Returns per-competitor counts plus an aggregate rejection breakdown, so the
     workspace can show what was filtered and why instead of a bare total.
     """
+    log = log or (lambda _message: None)
     since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
     articles = _candidate_articles(project_id)
     if since is not None:
         articles = [a for a in articles if (_effective_date(a) or since) >= since]
+    window = f"the last {period_days} days" if period_days else "all time"
+    log(f"Checking {len(articles)} article(s) from {window} against each competitor...")
 
     alias_map = {int(c["id"]): _aliases(c) for c in competitors}
     per_competitor: dict[int, dict] = {
@@ -152,22 +249,31 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
     for article in articles:
         body = str(article.get("text") or "")
         title = str(article.get("title") or "")
-        haystack = f"{title}\n{article.get('summary') or ''}\n{body}"
+        summary = str(article.get("summary") or "")
 
         blocked = is_blocked_article(article.get("url"), title)
+        # Uploaded-document candidates are LLM-split excerpts, not crawled
+        # pages: they have no URL path to read and are short-form by design
+        # (see MIN_DOCUMENT_BODY_CHARS above), so both the site-furniture and
+        # the prominence gates would reject them for being what they are.
         is_document = str(article.get("url") or "").startswith(DOCUMENT_URL_PREFIX)
+        boilerplate = not is_document and _is_boilerplate_page(article.get("url"), title)
         too_short = len(body) < (MIN_DOCUMENT_BODY_CHARS if is_document else MIN_BODY_CHARS)
 
         for competitor_id, aliases in alias_map.items():
-            matched = _mentions(haystack, aliases) if aliases else None
+            matched, score = _mention_profile(title, summary, body, aliases) if aliases else (None, 0.0)
             if matched is None:
                 continue  # not about this competitor at all: not a rejection, just unrelated
 
             reason = None
             if blocked:
                 reason = "blocked_page"
+            elif boilerplate:
+                reason = "boilerplate_page"
             elif too_short:
                 reason = "body_too_short"
+            elif score < MIN_MENTION_SCORE and not is_document:
+                reason = "passing_mention"
             else:
                 story_id = article.get("story_id")
                 if story_id is not None and story_id in per_competitor[competitor_id]["stories"]:
@@ -176,16 +282,33 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
             if reason:
                 per_competitor[competitor_id]["rejected"] += 1
                 rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
-                rows.append((competitor_id, int(article["id"]), matched, None, "rejected", reason))
+                rows.append((competitor_id, int(article["id"]), matched, score, "rejected", reason))
                 continue
 
             if article.get("story_id") is not None:
                 per_competitor[competitor_id]["stories"].add(article["story_id"])
             per_competitor[competitor_id]["valid"] += 1
-            rows.append((competitor_id, int(article["id"]), f"mentions:{matched}", 1.0, "valid", None))
+            rows.append((competitor_id, int(article["id"]), f"mentions:{matched}", score, "valid", None))
 
-    if rows:
-        with db.transaction() as cur:
+    # Everything this run did *not* visit has to go, or the table stops
+    # describing the period the card claims. Only in-window articles are
+    # scanned above, and nothing here ever deleted, so a row written by an
+    # earlier run against a longer window survived untouched and kept counting:
+    # `_counts_for` has no date bound, so article_count grew monotonically for
+    # the life of the study, and a 30-day card could report the numbers - and
+    # serve the evidence - of a 365-day one. Rejections are pruned on the same
+    # rule, so the audit trail stays consistent with the counts rather than
+    # explaining filtering the card never did.
+    with db.transaction() as cur:
+        cur.execute(
+            """
+            delete from competitor_articles
+             where competitor_id = any(%s)
+               and not (article_id = any(%s))
+            """,
+            (list(alias_map.keys()), [int(article["id"]) for article in articles]),
+        )
+        if rows:
             cur.executemany(
                 """
                 insert into competitor_articles
@@ -200,6 +323,18 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
                 """,
                 rows,
             )
+
+    kept = sum(stats["valid"] for stats in per_competitor.values())
+    log(f"Kept {kept} article(s) as evidence.")
+    if rejection_reasons:
+        log("Filtered out: " + ", ".join(
+            f"{count} {reason.replace('_', ' ')}"
+            for reason, count in sorted(rejection_reasons.items(), key=lambda item: -item[1])
+        ) + ".")
+    for competitor in competitors:
+        stats = per_competitor[int(competitor["id"])]
+        if not stats["valid"]:
+            log(f"{competitor.get('name')}: nothing usable found.")
 
     return {
         "scanned": len(articles),
@@ -218,20 +353,34 @@ def validate_competitor_articles(project_id: int, competitors: list[dict], perio
 
 
 def _evidence_for(competitor_id: int, limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
-    """Validated evidence for one competitor, newest first, one row per story."""
+    """Validated evidence for one competitor, newest first, one row per story.
+
+    Two orderings, and they have to be separate. `distinct on` forces its own
+    expression to lead the `order by`, so the inner query can only rank rows
+    *within* a story group - that is what picks the newest member of each. The
+    result set then comes back ordered by story id, which is an identity
+    sequence (migration 0003), i.e. oldest group first. Taking the top `limit`
+    of that would hand the model the stalest stories it has and ask it what
+    changed. The outer query re-sorts the deduplicated rows by date so the
+    limit actually means "most recent".
+    """
     return db.fetch_all(
         """
-        select distinct on (coalesce(a.story_id, -a.id))
-               a.id, a.url, a.source, a.title, a.summary, a.text,
-               a.published_at, a.created_at, a.story_id, ca.match_reason
-        from competitor_articles ca
-        join articles a on a.id = ca.article_id
-        where ca.competitor_id = %s and ca.validation_status = 'valid'
-        order by coalesce(a.story_id, -a.id),
-                 coalesce(a.published_at, a.created_at) desc
+        select * from (
+            select distinct on (coalesce(a.story_id, -a.id))
+                   a.id, a.url, a.source, a.title, a.summary, a.text,
+                   a.published_at, a.created_at, a.story_id, ca.match_reason
+            from competitor_articles ca
+            join articles a on a.id = ca.article_id
+            where ca.competitor_id = %s and ca.validation_status = 'valid'
+            order by coalesce(a.story_id, -a.id),
+                     coalesce(a.published_at, a.created_at) desc
+        ) newest_per_story
+        order by coalesce(published_at, created_at) desc
+        limit %s
         """,
-        (int(competitor_id),),
-    )[:limit]
+        (int(competitor_id), int(limit)),
+    )
 
 
 def _counts_for(competitor_id: int) -> dict:
@@ -318,6 +467,11 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
         temperature=0.2,
         max_tokens=1600,
         timeout=120,
+        # The card is parsed as JSON below and dropped entirely when that
+        # fails, which the user sees as the indistinguishable "Analysis could
+        # not be generated". Asking the provider to enforce the shape is free -
+        # both api_styles support it (see llm_client._build_body).
+        json_mode=True,
         model=config.COMPETITOR_LLM_CHAT_MODEL,
         api_key=config.COMPETITOR_LLM_API_KEY,
         base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
@@ -348,6 +502,11 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     except (TypeError, ValueError):
         confidence = 0.5
 
+    # Left null rather than defaulted to a placeholder: a card whose model
+    # didn't explain its score should show no explanation, not a fabricated
+    # one. Pre-migration findings read the same way.
+    confidence_reason = str(parsed.get("confidence_reason") or "").strip()[:500] or None
+
     signals = [str(s).strip().lower() for s in (parsed.get("signals") or []) if str(s).strip()][:8]
 
     evidence_payload = [
@@ -368,14 +527,15 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
         insert into competitor_findings (
             project_id, competitor_id, period_start, period_end, headline,
             whats_up, impact, impact_level, actions, signals, evidence,
-            confidence, article_count, story_count, validation_status,
-            analysis_model, prompt_version, generated_at
+            confidence, confidence_reason, article_count, story_count,
+            validation_status, analysis_model, prompt_version, generated_at
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning id, project_id, competitor_id, period_start, period_end, headline,
                   whats_up, impact, impact_level, actions, signals, evidence,
-                  confidence, article_count, story_count, validation_status,
-                  validation_notes, analysis_model, prompt_version, generated_at
+                  confidence, confidence_reason, article_count, story_count,
+                  validation_status, validation_notes, analysis_model,
+                  prompt_version, generated_at
         """,
         (
             int(competitor["project_id"]),
@@ -390,6 +550,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             Jsonb(signals),
             Jsonb(evidence_payload),
             confidence,
+            confidence_reason,
             counts["articles"],
             counts["stories"],
             "pending",
@@ -400,10 +561,19 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     )
 
 
-def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -> dict:
-    """Validate evidence then produce one card per tracked competitor."""
+def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, log=None) -> dict:
+    """Validate evidence then produce one card per tracked competitor.
+
+    `log` receives one human-readable progress line per step. It exists because
+    this runs as a background job the user watches (see run_analysis_job) and
+    the interesting part - which competitor is being analyzed, what evidence
+    survived, what came back - is otherwise invisible until the whole thing
+    finishes. Defaults to a no-op so the CLI/seed path can call this unchanged.
+    """
     from services.competitors.business_profile_store import get_profile
     from services.competitors.competitors_store import list_competitors
+
+    log = log or (lambda _message: None)
 
     profile = get_profile(project_id)
     competitors = list_competitors(project_id, status="tracked")
@@ -411,17 +581,47 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
         return {"generated": 0, "skipped": 0, "validation": None,
                 "error": "No tracked competitors. Track at least one to analyze."}
 
-    validation = validate_competitor_articles(project_id, competitors, period_days)
+    log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.")
+    validation = validate_competitor_articles(project_id, competitors, period_days, log=log)
 
     generated = 0
     skipped: list[dict] = []
     llm_errors: list[LLMError] = []
-    for competitor in competitors:
+
+    def _analyze(competitor: dict) -> tuple[dict, dict | None, LLMError | None]:
+        """One competitor's card. Returns the error rather than raising it so a
+        single provider failure doesn't cancel the rest of the pool."""
+        name = competitor.get("name")
+        stats = validation["per_competitor"].get(int(competitor["id"]), {})
+        stories = stats.get("stories") or 0
+        # Validation already reported the ones with nothing to read; claiming to
+        # write a report from zero stories would just be noise contradicting it.
+        if stories:
+            log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...")
         try:
             finding = generate_finding(profile, competitor, period_days)
         except LLMError as exc:
-            print(f"  finding generation failed for {competitor.get('name')}: {exc.detail or exc}")
-            llm_errors.append(exc)
+            log(f"{name}: failed - {exc.user_message}")
+            return competitor, None, exc
+        if finding:
+            log(f"{name}: {finding.get('impact_level')} impact - {finding.get('headline')}")
+        return competitor, finding, None
+
+    # Independent LLM calls that were being awaited one at a time on a request
+    # the user is sitting in front of. `map` keeps the results in competitor
+    # order, so `skipped` stays deterministic. DB writes are left to the main
+    # thread below; the reads inside generate_finding each open their own
+    # connection (db.connect), which is why this is safe to thread at all.
+    # Progress lines are appended from the worker threads, hence the lock in
+    # JobRegistry.append_log - they interleave, which is the point: the user
+    # sees several competitors in flight rather than a stalled single line.
+    with ThreadPoolExecutor(max_workers=min(ANALYSIS_CONCURRENCY, len(competitors))) as pool:
+        results = list(pool.map(_analyze, competitors))
+
+    for competitor, finding, error in results:
+        if error is not None:
+            print(f"  finding generation failed for {competitor.get('name')}: {error.detail or error}")
+            llm_errors.append(error)
             continue
         if finding:
             generated += 1
@@ -431,11 +631,20 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
             )
         else:
             stats = validation["per_competitor"].get(int(competitor["id"]), {})
+            if not _aliases(competitor):
+                # Distinguishable from "nothing was published": nothing could
+                # have been matched in the first place, and the fix is to give
+                # the competitor a real name/domain, not to widen the period.
+                reason = "Name is too generic to identify in article text. Add a website or a more specific name."
+            elif not stats.get("valid"):
+                reason = "No validated evidence in this period."
+            else:
+                reason = "Analysis could not be generated."
+            log(f"{competitor['name']}: skipped - {reason}")
             skipped.append({
                 "competitor_id": competitor["id"],
                 "name": competitor["name"],
-                "reason": "No validated evidence in this period."
-                          if not stats.get("valid") else "Analysis could not be generated.",
+                "reason": reason,
             })
 
     # An LLM/provider failure (bad key, insufficient balance, rate limit,
@@ -455,6 +664,9 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
             f"- provider error: {first.code})"
         )
 
+    log(f"Done. Generated {generated} report{'' if generated == 1 else 's'}"
+        + (f", skipped {len(skipped)}." if skipped else "."))
+
     return {
         "generated": generated,
         "skipped": skipped,
@@ -465,13 +677,101 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS) -
 
 
 # --------------------------------------------------------------------------- #
+# Background job
+# --------------------------------------------------------------------------- #
+# Analysis is one LLM call per tracked competitor, optionally preceded by a full
+# scrape+enrich of every source in the study. That is minutes, not seconds, and
+# it was being awaited inline in the POST handler - the user stared at a spinner
+# with no idea whether it was scraping, which competitor it was on, or whether
+# it had hung. It now runs the same way discovery does: queued as a FastAPI
+# BackgroundTask against the shared registry, streaming progress lines the UI
+# polls for.
+_analysis_runs = JobRegistry("Queued for analysis.")
+
+ACTIVE_ANALYSIS_STATUSES = ACTIVE_STATUSES
+
+
+def create_analysis_run(project_id: int) -> str:
+    return _analysis_runs.create(project_id, generated=0, skipped=[], validation=None, scrape_run=None)
+
+
+def get_analysis_run(run_id: str) -> dict | None:
+    return _analysis_runs.get(run_id)
+
+
+def get_active_analysis_run(project_id: int) -> dict | None:
+    return _analysis_runs.active_for_project(project_id)
+
+
+def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_first: bool) -> None:
+    """Scrape (optionally), validate, and write one card per competitor.
+
+    Every failure path ends as a `failed` run carrying a readable message
+    rather than an exception nobody sees: this executes after the response has
+    already been sent, so raising here would only reach the server log.
+    """
+    log = _analysis_runs.logger(run_id)
+    _analysis_runs.update(run_id, status="running", stage="scraping" if scrape_first else "analyzing",
+                          message="Gathering articles." if scrape_first else "Analyzing competitors.")
+    try:
+        scrape_run = None
+        if scrape_first:
+            # Deferred, and scoped to the branch that needs it: services.pipeline
+            # pulls in the whole scraper, which analysis has no reason to load
+            # when it is running against evidence that is already stored.
+            import uuid as _uuid
+
+            from services.pipeline.pipeline import run_scraper_pipeline
+            from services.pipeline.pipeline_runs import create_pipeline_run, get_pipeline_run
+
+            log("Scraping this study's sources for new articles...")
+            queued = create_pipeline_run(status="queued", stage="queued",
+                                         message="Queued for execution.", project_id=project_id)
+            scrape_id = queued["id"] if queued else _uuid.uuid4().hex
+            run_scraper_pipeline(scrape_id, project_id)
+            scrape_run = get_pipeline_run(scrape_id)
+            if not scrape_run or scrape_run.get("status") != "success":
+                raise RuntimeError(
+                    "Could not gather articles before analysis: "
+                    + ((scrape_run or {}).get("error") or "scrape and enrichment did not complete.")
+                )
+            log(f"Scrape finished: {scrape_run.get('articles_scraped') or 0} article(s) gathered.")
+            _analysis_runs.update(run_id, scrape_run=scrape_run, stage="analyzing",
+                                  message="Analyzing competitors.")
+
+        result = generate_findings(project_id, period_days=period_days, log=log)
+
+        # A provider failure is a failed run, not a run that generated zero
+        # reports - same distinction generate_findings itself draws.
+        if result.get("error"):
+            _analysis_runs.update(
+                run_id, status="failed", stage="error", error=result["error"],
+                error_code=result.get("error_code"), message=result["error"],
+                generated=result.get("generated") or 0, skipped=result.get("skipped") or [],
+                validation=result.get("validation"), scrape_run=scrape_run,
+            )
+            return
+
+        _analysis_runs.update(
+            run_id, status="success", stage="done",
+            message=f"Generated {result['generated']} report(s).",
+            generated=result["generated"], skipped=result["skipped"],
+            validation=result["validation"], scrape_run=scrape_run,
+        )
+    except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
+        log(f"Analysis failed: {exc}")
+        _analysis_runs.update(run_id, status="failed", stage="error",
+                              error=str(exc), message=str(exc))
+
+
+# --------------------------------------------------------------------------- #
 # Reads
 # --------------------------------------------------------------------------- #
 FINDING_COLUMNS = """
     id, project_id, competitor_id, period_start, period_end, headline,
     whats_up, impact, impact_level, actions, signals, evidence, confidence,
-    article_count, story_count, validation_status, validation_notes,
-    analysis_model, prompt_version, generated_at
+    confidence_reason, article_count, story_count, validation_status,
+    validation_notes, analysis_model, prompt_version, generated_at
 """
 
 _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 2 end"
