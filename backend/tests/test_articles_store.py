@@ -232,5 +232,109 @@ class ContentHashTests(unittest.TestCase):
         self.assertIsNone(store._content_hash("   \n  "))
 
 
+class BulkPagingTests(unittest.TestCase):
+    """MAX_LIMIT caps what a single API response may return. Readers that walk
+    the whole result set page through _fetch_articles, so if they ask for a
+    page bigger than that cap they get a short page back and read it as "no
+    more rows" - silently truncating at MAX_LIMIT. A 900-article project
+    exported 100 articles because of exactly that."""
+
+    def _fake_db(self, total, columns=("id", "url", "title")):
+        rows_all = [{column: f"{column}-{i}" for column in columns} for i in range(total)]
+
+        def fetch_all(sql, params=()):
+            if "information_schema" in sql:
+                # Let the export's column list fall back to ARTICLE_MUTABLE_FIELDS.
+                return []
+            limit, offset = params[-2], params[-1]
+            return rows_all[offset:offset + limit]
+
+        return fetch_all
+
+    def _patched(self, total):
+        return [
+            patch("services.articles.articles_store.config.DATABASE_URL", "postgresql://x"),
+            patch("services.articles.articles_store.db.fetch_all", side_effect=self._fake_db(total)),
+            patch("services.articles.articles_store.db.fetch_one", return_value={"total": total}),
+        ]
+
+    def _run(self, total, call):
+        patchers = self._patched(total)
+        for patcher in patchers:
+            patcher.start()
+        try:
+            return call()
+        finally:
+            for patcher in patchers:
+                patcher.stop()
+
+    def test_export_returns_every_matching_article_not_just_the_first_page(self):
+        rows = self._run(900, lambda: list(articles_store.export_articles()))
+        self.assertEqual(len(rows), 900)
+
+    def test_export_of_a_partial_page_still_terminates(self):
+        rows = self._run(37, lambda: list(articles_store.export_articles()))
+        self.assertEqual(len(rows), 37)
+
+    def test_export_pages_are_contiguous_with_no_repeats_or_gaps(self):
+        rows = self._run(900, lambda: list(articles_store.export_articles()))
+        self.assertEqual([row["id"] for row in rows], [f"id-{i}" for i in range(900)])
+
+    def test_export_streams_rather_than_building_the_whole_result_set(self):
+        """The point of the generator: a caller that stops early must not have
+        paid for every remaining page, and nothing may be read before the first
+        row is asked for."""
+        queries = []
+        rows_all = [{"id": f"id-{i}", "url": f"url-{i}"} for i in range(2000)]
+
+        def fetch_all(sql, params=()):
+            if "information_schema" in sql:
+                return []
+            queries.append(params[-1])
+            limit, offset = params[-2], params[-1]
+            return rows_all[offset:offset + limit]
+
+        patchers = [
+            patch("services.articles.articles_store.config.DATABASE_URL", "postgresql://x"),
+            patch("services.articles.articles_store.db.fetch_all", side_effect=fetch_all),
+            patch("services.articles.articles_store.db.fetch_one", return_value={"total": 2000}),
+        ]
+        for patcher in patchers:
+            patcher.start()
+        try:
+            stream = articles_store.export_articles()
+            self.assertEqual(queries, [])  # nothing read until iteration starts
+
+            first_page = [next(stream) for _ in range(articles_store.BULK_PAGE_SIZE)]
+            self.assertEqual(len(first_page), articles_store.BULK_PAGE_SIZE)
+            self.assertEqual(len(queries), 1)  # and only the first page was read
+
+            stream.close()
+        finally:
+            for patcher in patchers:
+                patcher.stop()
+
+    def test_search_scan_reaches_its_own_limit_not_the_api_page_cap(self):
+        rows = self._run(900, lambda: articles_store._fetch_all_articles(limit=articles_store.SEARCH_SCAN_LIMIT))
+        self.assertEqual(len(rows), 900)
+
+    def test_search_scan_still_stops_at_search_scan_limit(self):
+        rows = self._run(2500, lambda: articles_store._fetch_all_articles(limit=articles_store.SEARCH_SCAN_LIMIT))
+        self.assertEqual(len(rows), articles_store.SEARCH_SCAN_LIMIT)
+
+    def test_stats_read_every_article_up_to_its_cap(self):
+        rows = self._run(900, lambda: articles_store._fetch_rows_for_stats(limit=1000))
+        self.assertEqual(len(rows), 900)
+
+    def test_stats_still_honour_their_total_cap(self):
+        rows = self._run(2500, lambda: articles_store._fetch_rows_for_stats(limit=1000))
+        self.assertEqual(len(rows), 1000)
+
+    def test_the_paginated_api_page_is_still_capped_at_max_limit(self):
+        result = self._run(900, lambda: articles_store.list_articles(limit=5000))
+        self.assertEqual(len(result["articles"]), articles_store.MAX_LIMIT)
+        self.assertEqual(result["limit"], articles_store.MAX_LIMIT)
+
+
 if __name__ == "__main__":
     unittest.main()

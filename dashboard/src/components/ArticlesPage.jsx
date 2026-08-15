@@ -23,6 +23,81 @@ const VIEW_MODES = [
   { value: 'list', label: 'List', icon: List },
 ];
 
+// How often to poll a running import for its counters. Matches the cadence the
+// competitor workspace polls its discovery/analysis jobs at.
+const IMPORT_POLL_MS = 900;
+
+/** Live view of one import job: how far through the file it is, how fast it is
+ *  going, and what it could not read. `run` is whatever the last poll returned,
+ *  so this renders the same whether the job is queued, running or finished. */
+function ImportProgressBanner({ run, onDismiss }) {
+  const done = run.status === 'success' || run.status === 'failed';
+  const total = run.total_lines || 0;
+  const processed = run.processed || 0;
+  const percent = total ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const rate = run.rate_per_second || 0;
+  const logs = run.logs || [];
+
+  return (
+    <div className={`glass-card articles-import-banner ${run.status === 'failed' ? 'is-failed' : ''}`}>
+      {run.status === 'failed' ? <AlertTriangle size={18} /> : <Info size={18} />}
+      <div className="articles-import-banner-body">
+        <div className="articles-import-headline">
+          <strong>{run.message || 'Importing...'}</strong>
+          {!done && rate > 0 ? <span className="articles-import-rate">{Math.round(rate).toLocaleString()} articles/s</span> : null}
+        </div>
+
+        {!done ? (
+          <div
+            className="articles-import-progress"
+            role="progressbar"
+            aria-valuenow={total ? percent : undefined}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Import progress"
+          >
+            {/* Without a line count there is no honest percentage, so show an
+                indeterminate bar rather than a made-up one. */}
+            <div
+              className={`articles-import-progress-fill ${total ? '' : 'is-indeterminate'}`}
+              style={total ? { width: `${percent}%` } : undefined}
+            />
+          </div>
+        ) : null}
+
+        <div className="articles-import-counts">
+          <span>{(run.saved || 0).toLocaleString()} saved</span>
+          {total ? <span>of ~{total.toLocaleString()} lines</span> : null}
+          {run.skipped ? <span>{run.skipped.toLocaleString()} skipped</span> : null}
+          {done && run.elapsed_seconds ? <span>in {run.elapsed_seconds}s</span> : null}
+        </div>
+
+        {done && run.status === 'success' ? (
+          <p className="articles-import-note">Articles matching an existing URL were updated in place.</p>
+        ) : null}
+
+        {run.errors?.length ? (
+          <ul className="articles-import-errors">
+            {run.errors.slice(0, 5).map((item) => (
+              <li key={item.line}>
+                Line {item.line}: {item.error}
+              </li>
+            ))}
+            {run.errors.length > 5 ? <li>and {run.errors.length - 5} more...</li> : null}
+          </ul>
+        ) : null}
+
+        {!done && logs.length ? <p className="articles-import-log">{logs[logs.length - 1].message}</p> : null}
+      </div>
+      {done ? (
+        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
+          <X size={16} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function prettyLabel(value) {
   return String(value || '')
     .replace(/_/g, ' ')
@@ -115,7 +190,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [deletingAll, setDeletingAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
+  const [importRun, setImportRun] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
@@ -371,7 +446,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setImporting(true);
     setError('');
-    setImportResult(null);
+    setImportRun(null);
     try {
       const body = new FormData();
       body.append('file', file);
@@ -380,11 +455,36 @@ export default function ArticlesPage({ project = null, projectId = null, project
       if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
 
       const res = await fetch('/api/articles/import', { method: 'POST', body });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        throw new Error(data?.detail || data?.error || `Failed to import articles (${res.status})`);
+      const queued = await res.json().catch(() => ({}));
+      if (!res.ok || queued?.error) {
+        throw new Error(queued?.detail || queued?.error || `Failed to import articles (${res.status})`);
       }
-      setImportResult(data);
+
+      // The import runs as a backend job - an upsert per article, each also
+      // writing its project link, story group and idea clusters - so poll it
+      // to completion, rendering its counters and throughput as they arrive.
+      let lastSaved = 0;
+      for (;;) {
+        const statusRes = await fetch(`/api/articles/import/${queued.run_id}`);
+        const payload = await statusRes.json().catch(() => ({}));
+        if (!statusRes.ok || payload?.error) {
+          throw new Error(payload?.detail || payload?.error || `Lost track of the import (${statusRes.status})`);
+        }
+        const run = payload.run || {};
+        setImportRun(run);
+        // Refresh the list as rows land, not only at the end, so a long import
+        // visibly fills the page instead of sitting empty until it finishes.
+        if ((run.saved || 0) > lastSaved) {
+          lastSaved = run.saved || 0;
+          setReloadToken((value) => value + 1);
+        }
+        if (run.status === 'success' || run.status === 'failed') {
+          if (run.status === 'failed') setError(run.error || run.message || 'Import failed.');
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
+      }
+
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -764,32 +864,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
           </div>
         ) : null}
 
-        {importResult ? (
-          <div className="glass-card articles-import-banner">
-            <Info size={18} />
-            <div className="articles-import-banner-body">
-              <span>
-                Imported {importResult.saved} of {importResult.received} article
-                {importResult.received === 1 ? '' : 's'}
-                {importResult.skipped ? `, skipped ${importResult.skipped} bad line${importResult.skipped === 1 ? '' : 's'}` : ''}
-                . Articles matching an existing URL were updated in place.
-              </span>
-              {importResult.errors?.length ? (
-                <ul className="articles-import-errors">
-                  {importResult.errors.slice(0, 5).map((item) => (
-                    <li key={item.line}>
-                      Line {item.line}: {item.error}
-                    </li>
-                  ))}
-                  {importResult.errors.length > 5 ? <li>and {importResult.errors.length - 5} more...</li> : null}
-                </ul>
-              ) : null}
-            </div>
-            <button type="button" className="articles-import-banner-close" onClick={() => setImportResult(null)} aria-label="Dismiss import summary">
-              <X size={16} />
-            </button>
-          </div>
-        ) : null}
+        {importRun ? <ImportProgressBanner run={importRun} onDismiss={() => setImportRun(null)} /> : null}
 
         {isInitialLoading ? (
           viewMode === 'list' ? (

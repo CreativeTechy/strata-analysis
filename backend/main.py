@@ -10,9 +10,10 @@ This API triggers the jobs and exposes configured sources to the dashboard.
 
 import asyncio
 import contextlib
-import io
 import json
 import logging
+import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,11 @@ from services.articles.articles_store import (
     list_articles,
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
+)
+from services.articles.import_jobs import (
+    create_import_run,
+    get_import_run,
+    run_import_job,
 )
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
@@ -679,18 +685,20 @@ def export_articles_jsonl(
     scraped_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
-    rows = export_articles(
-        search=search,
-        sentiment=sentiment,
-        category=category,
-        project_id=project_id,
-        source_url=source_url,
-        sort=sort,
-        scraped_from=scraped_from,
-        scraped_to=scraped_to,
-    )
-
     def line_stream():
+        # export_articles() is a generator, so rows are read a page at a time
+        # as the response is written - no project's worth of articles (each
+        # carrying its full text and embedding) is ever held in memory at once.
+        rows = export_articles(
+            search=search,
+            sentiment=sentiment,
+            category=category,
+            project_id=project_id,
+            source_url=source_url,
+            sort=sort,
+            scraped_from=scraped_from,
+            scraped_to=scraped_to,
+        )
         for row in rows:
             yield json.dumps(row, ensure_ascii=False, default=str) + "\n"
 
@@ -703,106 +711,86 @@ def export_articles_jsonl(
 
 
 MAX_IMPORT_BYTES = 256 * 1024 * 1024
-IMPORT_BATCH_SIZE = 200
-MAX_IMPORT_ERRORS_REPORTED = 50
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 @app.post("/api/articles/import")
-def import_articles_jsonl(
+async def import_articles_jsonl(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     project_id: int | None = Form(None),
     user: dict = Depends(require_permission("articles.import")),
 ):
-    """Restore a JSONL export produced by GET /api/articles/export.
+    """Queue a JSONL export produced by GET /api/articles/export for import.
 
-    Rows are upserted on `url` through the same save_articles() the pipeline's
-    saver stage uses, so an imported article gets the identical project link,
-    story grouping and idea-cluster treatment a scraped one does. Only
-    ARTICLE_MUTABLE_FIELDS keys are read off each line - the export's `id` and
-    `created_at` are dropped rather than carried across databases.
+    Restoring a project means an upsert per article, each of which also writes
+    its project link, story group and idea clusters - minutes of work for a
+    real export, well past any gateway timeout. So the request only spools the
+    upload to disk and returns a run id; the work happens in
+    import_jobs.run_import_job and the UI polls GET .../import/{run_id} for
+    live counts and throughput. Same queued/poll shape as competitor discovery.
 
-    Defined `def` (not `async def`) so FastAPI runs it in the threadpool: both
-    the file read and save_articles() block.
+    Only what can be judged from the bytes themselves is rejected here, so an
+    oversized or plainly wrong file still fails fast with a real status code.
     """
-    from services.articles.store import ARTICLE_MUTABLE_FIELDS, save_articles
-
     if project_id is not None:
         _ensure_project_visible(project_id, user)
 
-    size = getattr(file, "size", None)
-    if size is not None and size > MAX_IMPORT_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File is larger than the {MAX_IMPORT_BYTES // (1024 * 1024)}MB import limit. Split it and import in parts.",
-        )
+    handle, path = tempfile.mkstemp(prefix="articles-import-", suffix=".jsonl")
+    total_bytes = 0
+    total_lines = 0
+    leading = b""
+    last_byte = b""
 
-    allowed = set(ARTICLE_MUTABLE_FIELDS)
-    errors: list[dict] = []
-    saved_by_source: dict[str, int] = {}
-    batch: list[dict] = []
-    received = 0
-    saved = 0
-    skipped = 0
+    try:
+        with os.fdopen(handle, "wb") as spool:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_IMPORT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File is larger than the {MAX_IMPORT_BYTES // (1024 * 1024)}MB import limit. "
+                            "Split it and import in parts."
+                        ),
+                    )
+                if len(leading) < 64:
+                    leading += chunk[: 64 - len(leading)]
+                # Counting newlines as they stream past costs nothing and gives
+                # the job a record-count estimate for its percentage and ETA.
+                total_lines += chunk.count(b"\n")
+                last_byte = chunk[-1:]
+                spool.write(chunk)
+        if total_bytes and last_byte != b"\n":
+            total_lines += 1
 
-    def note_error(line_number: int, message: str) -> None:
-        nonlocal skipped
-        skipped += 1
-        if len(errors) < MAX_IMPORT_ERRORS_REPORTED:
-            errors.append({"line": line_number, "error": message})
-
-    def flush() -> None:
-        nonlocal saved, batch
-        if not batch:
-            return
-        count, by_source = save_articles(batch, project_id=project_id)
-        saved += count
-        for key, value in (by_source or {}).items():
-            saved_by_source[key] = saved_by_source.get(key, 0) + int(value)
-        batch = []
-
-    stream = io.TextIOWrapper(file.file, encoding="utf-8", errors="replace")
-    for lineno, raw in enumerate(stream, start=1):
-        line = raw.strip()
-        if not line:
-            continue
-        if lineno == 1 and line.startswith("["):
+        if not total_bytes:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+        if leading.lstrip()[:1] == b"[":
             raise HTTPException(
                 status_code=400,
                 detail="Expected JSON Lines (one article object per line), not a JSON array.",
             )
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as exc:
-            note_error(lineno, f"Invalid JSON: {exc.msg}")
-            continue
-        if not isinstance(entry, dict):
-            note_error(lineno, "Expected a JSON object.")
-            continue
-        url = str(entry.get("url") or "").strip()
-        if not url:
-            note_error(lineno, "Missing url.")
-            continue
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.remove(path)
+        raise
 
-        row = {key: value for key, value in entry.items() if key in allowed}
-        row["url"] = url
-        received += 1
-        batch.append(row)
-        if len(batch) >= IMPORT_BATCH_SIZE:
-            flush()
-    flush()
+    run_id = create_import_run(project_id=project_id, filename=file.filename or "", total_lines=total_lines)
+    background_tasks.add_task(run_import_job, run_id, path, project_id)
+    return {"run_id": run_id, "status": "queued", "total_lines": total_lines, "project_id": project_id}
 
-    if received == 0:
-        detail = errors[0]["error"] if errors else "No articles found in the file."
-        raise HTTPException(status_code=400, detail=f"Nothing to import. {detail}")
 
-    return {
-        "received": received,
-        "saved": saved,
-        "skipped": skipped,
-        "by_source": saved_by_source,
-        "errors": errors,
-        "project_id": project_id,
-    }
+@app.get("/api/articles/import/{run_id}")
+def import_articles_status(run_id: str, user: dict = Depends(require_permission("articles.import"))):
+    """Progress for one import job: counters, throughput and its live logs."""
+    run = get_import_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Import run not found.")
+    return {"run": run}
 
 
 # --- Analysis pipeline: on-demand (re)analysis, status, ideas -------------

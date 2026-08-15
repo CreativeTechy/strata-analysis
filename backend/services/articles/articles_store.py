@@ -73,6 +73,13 @@ SORTABLE_COLUMNS = {
 }
 
 MAX_LIMIT = 100
+# Page size for internal readers that walk the whole result set (export,
+# search scan, stats). Distinct from MAX_LIMIT, which caps what one *API*
+# response may return and must not silently cap a bulk read: a loop that asks
+# _fetch_articles for more than its ceiling gets a short page back and reads
+# that as "no more rows", stopping at MAX_LIMIT. Bulk callers therefore pass
+# max_limit=BULK_PAGE_SIZE so the page they ask for is the page they get.
+BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
 SEARCH_SCAN_LIMIT = 1000
@@ -181,12 +188,12 @@ def _group_overall_tone(article_tone_counts, writer_tone_counts):
     return "neutral"
 
 
-def _normalize_limit(value, default=DEFAULT_LIMIT):
+def _normalize_limit(value, default=DEFAULT_LIMIT, max_limit=MAX_LIMIT):
     try:
         limit = int(value)
     except Exception:
         limit = default
-    return max(1, min(limit, MAX_LIMIT))
+    return max(1, min(limit, max_limit))
 
 
 def _normalize_offset(value):
@@ -286,12 +293,12 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
     field, direction = _normalize_sort(order)
-    limit = _normalize_limit(limit)
+    limit = _normalize_limit(limit, max_limit=max_limit)
     offset = _normalize_offset(offset)
     where_sql, params = _where_parts(
         search=search,
@@ -335,13 +342,14 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
         return []
 
     rows = []
-    page_size = 200
+    page_size = BULK_PAGE_SIZE
     offset = 0
     limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
 
     while len(rows) < limit:
+        want = min(page_size, limit - len(rows))
         batch, _ = _fetch_articles(
-            limit=min(page_size, limit - len(rows)),
+            limit=want,
             offset=offset,
             search=search,
             sentiment=sentiment,
@@ -354,25 +362,33 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             source_url=source_url,
             scraped_from=scraped_from,
             scraped_to=scraped_to,
+            max_limit=page_size,
         )
         if not batch:
             break
         rows.extend(batch)
-        if len(batch) < page_size:
+        # A page shorter than the one asked for is the end of the result set -
+        # compare against `want`, not page_size, since the final page is
+        # deliberately trimmed to the remaining budget.
+        if len(batch) < want:
             break
-        offset += page_size
+        offset += len(batch)
 
     return rows[:limit]
 
 
-def _attach_project_similarity_scores(rows, project_id):
-    if project_id is None or not rows:
-        return rows
+def _project_similarity_scores(project_id):
+    """{article_id: score} for one project, or {} when there is nothing to
+    attach. Split out so a streaming reader can look them up once up front
+    instead of per page."""
+    if project_id is None:
+        return {}
+    return list_article_similarity_scores_for_project(project_id) or {}
 
-    scores = list_article_similarity_scores_for_project(project_id)
+
+def _apply_similarity_scores(rows, scores):
     if not scores:
         return rows
-
     for row in rows:
         try:
             article_id = int(row.get("id"))
@@ -381,6 +397,12 @@ def _attach_project_similarity_scores(rows, project_id):
         if article_id in scores:
             row["project_similarity_score"] = scores[article_id]
     return rows
+
+
+def _attach_project_similarity_scores(rows, project_id):
+    if project_id is None or not rows:
+        return rows
+    return _apply_similarity_scores(rows, _project_similarity_scores(project_id))
 
 
 def _search_query_embedding(search: str):
@@ -503,12 +525,14 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
         return []
 
     rows = []
-    page_size = max(1, min(int(limit or 1000), 200))
+    total_cap = max(1, int(limit or 1000))
+    page_size = min(total_cap, BULK_PAGE_SIZE)
     offset = 0
 
-    while True:
+    while len(rows) < total_cap:
+        want = min(page_size, total_cap - len(rows))
         batch, _ = _fetch_articles(
-            limit=page_size,
+            limit=want,
             offset=offset,
             search=search,
             category=category,
@@ -517,15 +541,16 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             select="url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary",
             date_from=date_from,
             date_to=date_to,
+            max_limit=page_size,
         )
         if not batch:
             break
         rows.extend(batch)
-        if len(batch) < page_size:
+        if len(batch) < want:
             break
-        offset += page_size
+        offset += len(batch)
 
-    return rows
+    return rows[:total_cap]
 
 
 def _list_top_items(values, limit=6):
@@ -858,11 +883,24 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
 
 
 def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, scraped_from=None, scraped_to=None):
-    """Full rows for the JSONL export - see _export_select() for why this reads
-    a wider column list than the paginated list_articles() does."""
+    """Yield full article rows for the JSONL export, one page at a time.
+
+    A generator rather than a list: the export carries `text` and
+    `embedding_json` for every row (see _export_select() for why it reads a
+    wider column list than list_articles() does), so materializing a whole
+    project's worth before the response starts is what would put a ceiling on
+    how large a project can be exported. Streaming holds one page at a time and
+    lets the client start receiving immediately.
+
+    Callers that genuinely need them all at once can still wrap it in list().
+    The similarity scores are looked up once here rather than per page.
+    """
     select = _export_select()
+    scores = _project_similarity_scores(project_id)
     search_text = _normalize_text(search)
     if search_text:
+        # The semantic path ranks a bounded scan (SEARCH_SCAN_LIMIT) as a whole,
+        # so this page is already materialized - stream it out as one chunk.
         rows, _ = _search_results(
             search=search_text,
             sentiment=sentiment,
@@ -873,10 +911,10 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             scraped_to=scraped_to,
             select=select,
         )
-        return _attach_project_similarity_scores(rows, project_id)
+        yield from _apply_similarity_scores(rows, scores)
+        return
 
-    rows = []
-    page_size = 200
+    page_size = BULK_PAGE_SIZE
     offset = 0
     field, direction = _normalize_sort(sort)
 
@@ -893,15 +931,14 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             source_url=source_url,
             scraped_from=scraped_from,
             scraped_to=scraped_to,
+            max_limit=page_size,
         )
         if not batch:
-            break
-        rows.extend(batch)
+            return
+        yield from _apply_similarity_scores(batch, scores)
         if len(batch) < page_size:
-            break
-        offset += page_size
-
-    return _attach_project_similarity_scores(rows, project_id)
+            return
+        offset += len(batch)
 
 
 def _count_articles(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None):
