@@ -62,6 +62,22 @@ def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     return {
         "studies": db.fetch_all(
             """
+            with latest_findings as (
+                -- One row per competitor's *current* card, not per generation
+                -- event: generate_finding() always inserts (never updates), so
+                -- re-running analysis on the same competitor leaves its older
+                -- findings in place as history rather than superseding them in
+                -- place. Counting competitor_findings directly counted every
+                -- one of those, so the number grew on every re-run even with
+                -- the competitor set unchanged, and didn't match the study's
+                -- own findings grid - which shows one card per competitor, the
+                -- newest, excluding rejected ones.
+                select distinct on (competitor_id)
+                       project_id, competitor_id, impact_level, generated_at
+                from competitor_findings
+                where validation_status != 'rejected'
+                order by competitor_id, generated_at desc
+            )
             select p.id, p.name, p.status, p.mode, p.created_at, p.updated_at,
                    p.repeat_enabled, p.next_run_at, p.last_run_at, p.last_run_status,
                    bp.name as business_name, bp.website as business_website,
@@ -83,7 +99,7 @@ def list_studies(user: dict = Depends(require_permission("competitors.view"))):
                 select project_id, count(*) as total,
                        count(*) filter (where impact_level = 'high') as high,
                        max(generated_at) as latest_generated_at
-                from competitor_findings group by project_id
+                from latest_findings group by project_id
             ) f on f.project_id = p.id
             where p.mode = 'competitor'
             order by p.created_at desc

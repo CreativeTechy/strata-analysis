@@ -140,5 +140,51 @@ class AnalyzeRouteTests(unittest.TestCase):
         self.assertIn("No sources", response.json()["error"])
 
 
+class ListStudiesFindingCountTests(unittest.TestCase):
+    """GET /studies' finding_count must count the same thing the study's own
+    findings grid shows - one card per competitor, the newest, excluding
+    rejected ones - not every row competitor_findings has ever accumulated.
+
+    generate_finding() always INSERTs, never UPDATEs, so re-running analysis
+    on an unchanged competitor set used to grow this number forever."""
+
+    @classmethod
+    def setUpClass(cls):
+        main.app.dependency_overrides[auth.get_current_user] = _fake_get_current_user
+        cls._patchers = [
+            patch("services.auth.auth._enforce_csrf"),
+            patch("services.auth.permissions_store.user_permission_keys",
+                  return_value={"competitors.view"}),
+            patch("services.auth.permissions_store.user_is_full_access", return_value=True),
+        ]
+        for patcher in cls._patchers:
+            patcher.start()
+        cls.client = TestClient(main.app)
+
+    @classmethod
+    def tearDownClass(cls):
+        main.app.dependency_overrides.clear()
+        for patcher in cls._patchers:
+            patcher.stop()
+
+    def test_counts_distinct_competitors_not_total_generation_events(self):
+        """3 competitors, one re-analyzed twice more: 5 rows in the table, but
+        the study only ever shows 3 cards."""
+        from services.competitors import competitor_api
+
+        rows = [
+            {"id": 3, "name": "Study"},
+        ]
+        with patch("services.competitors.competitor_api.db.fetch_all", return_value=rows) as fetch_all:
+            self.client.get("/api/competitor/studies")
+
+        sql = fetch_all.call_args[0][0]
+        # The rewritten query must dedupe per competitor and drop rejected
+        # cards before counting - both are what made "3" the right number.
+        self.assertIn("distinct on (competitor_id)", sql)
+        self.assertIn("validation_status != 'rejected'", sql)
+        self.assertNotIn("from competitor_findings group by project_id", sql)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1114,10 +1114,10 @@ export default function CompetitorOnboarding() {
               <div className="cs-mode-card-icon"><FileText size={20} /></div>
               <div className="cs-mode-card-title">Offline — Upload documents</div>
               <p className="cs-mode-card-desc">
-                Upload PDFs, images, Word, Excel or CSV files you already have. They're saved to the
-                study right away; reading them into competitors and findings is coming soon.
+                Upload PDFs, images, Word, Excel or CSV files you already have. Strata reads them into
+                articles you review and approve, names the competitors they're about, and runs the
+                same analysis an online study would.
               </p>
-              <span className="cs-pill cs-pill-signal" style={{ marginTop: 10 }}>Extraction coming soon</span>
             </button>
           </div>
 

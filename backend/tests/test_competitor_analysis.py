@@ -239,39 +239,59 @@ class EvidenceSelectionTests(unittest.TestCase):
             "created_at": datetime.now(timezone.utc) - timedelta(days=age_days),
         }
 
+    # Fixtures are sized from the constants, not hardcoded: the card width and
+    # its shares are tuning knobs, and a test that pins them to yesterday's
+    # numbers starts failing for the wrong reason the moment they move.
+    LIMIT = property(lambda self: competitor_analysis.MAX_EVIDENCE_PER_CARD)
+
+    def _own(self, count, host="cafeyounes.com"):
+        return [self._row(i, host, 1.0, 0, f"Branded Mug {i}") for i in range(1, count + 1)]
+
+    def _press(self, count, score=0.45, age=5):
+        """One row per outlet, so the per-domain cap never limits these."""
+        return [self._row(100 + i, f"outlet{i}.com", score, age) for i in range(count)]
+
+    def _catalog(self, count):
+        """Own-site rows that live under a /products/ path."""
+        return [
+            {**self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}"),
+             "url": f"https://cafeyounes.com/products/mug-{i}"}
+            for i in range(1, count + 1)
+        ]
+
     def test_prominence_beats_marginally_fresher_passing_mentions(self):
-        """Pure date ordering let eight recent 0.2s bury a headline match from
-        two days earlier."""
+        """Pure date ordering let a wall of recent 0.2s bury a headline match
+        from a couple of days earlier."""
         headline = self._row(1, "news.example.com", 1.0, 3, "Cafe Younes opens roastery")
-        passing = [self._row(10 + i, f"blog{i}.example.com", 0.2, 1) for i in range(8)]
+        passing = [self._row(10 + i, f"blog{i}.example.com", 0.2, 1)
+                   for i in range(self.LIMIT + 4)]
         picked = competitor_analysis._select_evidence([*passing, headline], self.COMPETITOR)
         self.assertIn(1, [row["id"] for row in picked])
 
     def test_own_site_is_held_to_its_reservation_when_press_can_fill(self):
-        """A dozen near-identical product pages on the competitor's own shop
-        must not crowd out coverage that exists."""
-        own = [self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}") for i in range(1, 13)]
-        press = [self._row(100 + i, f"outlet{i}.com", 0.45, 5) for i in range(6)]
+        """Near-identical product pages on the competitor's own shop must not
+        crowd out coverage that exists."""
+        own = self._own(self.LIMIT)
+        press = self._press(self.LIMIT - competitor_analysis.OWN_SITE_SLOTS)
         picked = competitor_analysis._select_evidence([*own, *press], self.COMPETITOR)
 
         self.assertEqual(len([r for r in picked if r["_own_site"]]),
                          competitor_analysis.OWN_SITE_SLOTS)
         self.assertEqual(len([r for r in picked if not r["_own_site"]]),
-                         competitor_analysis.MAX_EVIDENCE_PER_CARD
-                         - competitor_analysis.OWN_SITE_SLOTS)
+                         self.LIMIT - competitor_analysis.OWN_SITE_SLOTS)
 
     def test_press_coverage_is_never_crowded_out(self):
         """When there is less coverage than the reservation, every piece of it
         still survives - the own-site rows only take what is left over."""
-        own = [self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}") for i in range(1, 13)]
-        press = [self._row(100 + i, f"outlet{i}.com", 0.45, 5) for i in range(3)]
+        own = self._own(self.LIMIT)
+        press = self._press(2)
         picked = competitor_analysis._select_evidence([*own, *press], self.COMPETITOR)
 
-        self.assertEqual(len([r for r in picked if not r["_own_site"]]), 3)
-        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+        self.assertEqual(len([r for r in picked if not r["_own_site"]]), 2)
+        self.assertEqual(len(picked), self.LIMIT)
 
     def test_one_outlet_cannot_dominate_third_party_slots(self):
-        flood = [self._row(i, "loud.example.com", 1.0, 0) for i in range(1, 9)]
+        flood = [self._row(i, "loud.example.com", 1.0, 0) for i in range(1, self.LIMIT + 1)]
         others = [self._row(50 + i, f"quiet{i}.com", 0.45, 2) for i in range(3)]
         picked = competitor_analysis._select_evidence([*flood, *others], self.COMPETITOR)
 
@@ -283,9 +303,8 @@ class EvidenceSelectionTests(unittest.TestCase):
     def test_unused_reservation_is_given_back(self):
         """A competitor with no press coverage should still get a full card
         from its own site rather than three rows and empty space."""
-        own = [self._row(i, "cafeyounes.com", 1.0, 0) for i in range(1, 13)]
-        picked = competitor_analysis._select_evidence(own, self.COMPETITOR)
-        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+        picked = competitor_analysis._select_evidence(self._own(self.LIMIT + 4), self.COMPETITOR)
+        self.assertEqual(len(picked), self.LIMIT)
 
     def test_subdomains_of_the_competitor_count_as_its_own_site(self):
         picked = competitor_analysis._select_evidence(
@@ -295,12 +314,8 @@ class EvidenceSelectionTests(unittest.TestCase):
     def test_product_pages_rank_below_real_announcements(self):
         """A shop's catalog is inexhaustible and every entry names the company
         in its own title, so on prominence alone it takes every own-site slot.
-        Café Younes filled 7 of 8 with mugs and posters."""
-        catalog = [
-            {**self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}"),
-             "url": f"https://cafeyounes.com/products/mug-{i}"}
-            for i in range(1, 9)
-        ]
+        Café Younes filled 7 of 8 slots with mugs and posters."""
+        catalog = self._catalog(self.LIMIT)
         announcement = {**self._row(99, "cafeyounes.com", 1.0, 2, "Third Beirut roastery opens"),
                         "url": "https://cafeyounes.com/blog/third-roastery"}
         picked = competitor_analysis._select_evidence([*catalog, announcement], self.COMPETITOR)
@@ -314,13 +329,8 @@ class EvidenceSelectionTests(unittest.TestCase):
     def test_product_pages_are_kept_when_they_are_all_there_is(self):
         """Ranked down, never filtered - what a competitor sells is still real
         competitive information."""
-        catalog = [
-            {**self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}"),
-             "url": f"https://cafeyounes.com/products/mug-{i}"}
-            for i in range(1, 9)
-        ]
-        picked = competitor_analysis._select_evidence(catalog, self.COMPETITOR)
-        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+        picked = competitor_analysis._select_evidence(self._catalog(self.LIMIT + 2), self.COMPETITOR)
+        self.assertEqual(len(picked), self.LIMIT)
 
     def test_explicit_aliases_bypass_the_generic_word_guard(self):
         """"Stories" is dropped as an automatic matcher, but a human listing it

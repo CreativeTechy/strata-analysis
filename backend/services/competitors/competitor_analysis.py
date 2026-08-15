@@ -59,7 +59,13 @@ MIN_BODY_CHARS = 400
 # for being short-form, which is what it's supposed to be.
 MIN_DOCUMENT_BODY_CHARS = 80
 DOCUMENT_URL_PREFIX = "document://"
-MAX_EVIDENCE_PER_CARD = 8
+# Roughly 16 * MAX_TEXT_PER_EVIDENCE of prompt, so evidence costs about 7k
+# tokens per competitor per run - double what 8 cost. The cap binds only where
+# a competitor is covered often (a large company, or a long window); where
+# coverage is thin the card simply uses what exists and the extra ceiling costs
+# nothing. The three constants below are shares of this number and must move
+# with it, or widening quietly rebalances the card.
+MAX_EVIDENCE_PER_CARD = 16
 MAX_TEXT_PER_EVIDENCE = 1800
 DEFAULT_PERIOD_DAYS = 30
 
@@ -68,19 +74,39 @@ DEFAULT_PERIOD_DAYS = 30
 # are different kinds of evidence, and on pure recency the first can crowd out
 # the second entirely - a shop that adds ten product pages in a week fills
 # every slot. Reserving a share means each card sees both, and an unused
-# reservation is given back rather than wasted.
-OWN_SITE_SLOTS = 3
+# reservation is given back rather than wasted. Kept at the same ~37% share it
+# had at 8 slots: held flat while the total doubled, own-site coverage would
+# have quietly fallen to under a fifth of the card.
+OWN_SITE_SLOTS = 6
 
-# Ceiling on how many slots one outlet can take, so a card is not eight
-# rewrites of the same publisher's angle. Own-site rows are exempt: they are
+# Ceiling on how many slots one outlet can take, so a card is not the same
+# publisher's angle rewritten a dozen times. Own-site rows are exempt: they are
 # all one domain by definition, and OWN_SITE_SLOTS already bounds them.
-MAX_EVIDENCE_PER_DOMAIN = 3
+# Deliberately not doubled with the total - at 6 a single outlet could take
+# most of the ten third-party slots, which is the concentration this exists to
+# prevent - but not left at 3 either, which would have made it a far tighter
+# constraint than it was and underfill cards in markets with few outlets.
+MAX_EVIDENCE_PER_DOMAIN = 4
 
 # Recency is weighed against prominence rather than overriding it: at one
 # half-life old, a headline mention still outranks a fresh passing one. Without
 # this the ordering was pure date, and match_score - which validation computes
 # for exactly this purpose - went unused.
 RECENCY_HALF_LIFE_DAYS = 21
+
+# Output budget for one card, sized from what the normalizers below actually
+# allow rather than guessed. Six actions of 400 + 500 characters is ~1.4k
+# tokens on its own; with whats_up, impact, confidence_reason and the headline
+# a maximal card is ~2k tokens of *visible* output - so the previous 1600 could
+# not fit one even before the evidence budget doubled, and a reasoning model
+# spends part of this allowance before writing anything at all (a live run
+# returned an empty response at 1600 and a truncated one at 3200).
+#
+# Generous on purpose: max_tokens is a ceiling, not a charge - unused budget
+# costs nothing, while an exhausted one costs the whole card. A response cut
+# off by the limit is chopped mid-JSON and therefore unusable, so the card is
+# dropped entirely and the run reports a provider error.
+ANALYSIS_MAX_TOKENS = 8000
 
 # Bound on rows pulled before ranking. Far above a normal period's validated
 # set; it exists so an all-time run on a large study can't load everything.
@@ -496,7 +522,7 @@ def _evidence_rank(row: dict, now: datetime) -> float:
 
 
 def _select_evidence(candidates: list[dict], competitor: dict,
-                     limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
+                     limit: int | None = None) -> list[dict]:
     """Choose the rows the model actually reads.
 
     Ranked by prominence-and-recency rather than date alone, with the
@@ -505,6 +531,11 @@ def _select_evidence(candidates: list[dict], competitor: dict,
     because "one bucket lends its unused slots to the other" is not something
     a single query expresses readably.
     """
+    # Resolved here rather than as a default argument: a default binds the
+    # constant's value at import, so the card width could not be overridden per
+    # call or adjusted at runtime, and a test that set it was silently ignored.
+    limit = MAX_EVIDENCE_PER_CARD if limit is None else limit
+
     now = datetime.now(timezone.utc)
     own_hosts = _competitor_hosts(competitor)
     for row in candidates:
@@ -553,7 +584,7 @@ def _select_evidence(candidates: list[dict], competitor: dict,
     return picked
 
 
-def _evidence_for(competitor: dict, limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
+def _evidence_for(competitor: dict, limit: int | None = None) -> list[dict]:
     return _select_evidence(_evidence_candidates(int(competitor["id"])), competitor, limit)
 
 
@@ -643,7 +674,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
-        max_tokens=1600,
+        max_tokens=ANALYSIS_MAX_TOKENS,
         timeout=120,
         # The card is parsed as JSON below and dropped entirely when that
         # fails, which the user sees as the indistinguishable "Analysis could
