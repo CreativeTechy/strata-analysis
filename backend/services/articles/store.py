@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from functools import lru_cache
+import hashlib
 import json
 
 import config
@@ -26,7 +27,7 @@ ARTICLE_COLUMNS = (
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
-    "analysis_attempt_count", "reprocess_requested_at",
+    "analysis_attempt_count", "reprocess_requested_at", "content_hash",
 )
 
 LEGACY_ARTICLE_COLUMNS = (
@@ -88,6 +89,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "analysis_finished_at",
     "analysis_attempt_count",
     "reprocess_requested_at",
+    "content_hash",
 )
 ARTICLE_JSON_FIELDS = {
     "insight_json",
@@ -132,6 +134,20 @@ def _jsonb_param(value):
 def _null_if_blank(value):
     text = str(value).strip() if value is not None else ""
     return text or None
+
+
+def _content_hash(text):
+    """Fingerprint of an article body, used to tell a re-scrape that changed
+    something from one that returned the same page again.
+
+    Whitespace is collapsed first so that markup reflowed between crawls - a
+    different line-wrap, an extra blank line - is not reported as the
+    competitor having done something.
+    """
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _article_params(article):
@@ -285,6 +301,8 @@ def _article_row(article):
         elif field == "embedding_dimensions":
             embedding_json = row.get("embedding_json")
             value = len(embedding_json) if isinstance(embedding_json, list) else None
+        elif field == "content_hash":
+            value = _content_hash(row.get("text"))
         params.append(value)
     return fields, tuple(params)
 
@@ -296,6 +314,21 @@ def _upsert_article_row(article):
     columns_sql = ", ".join(fields)
     values_sql = ", ".join(["%s"] * len(fields))
     returning_sql = _article_returning_sql()
+
+    updates = [f"{field} = excluded.{field}" for field in fields if field != "url"]
+    # Advanced only when the body actually differs, which is what makes
+    # "this page changed" distinguishable from "we crawled this page again".
+    # Every SET expression is evaluated against the pre-update row, so
+    # `articles.content_hash` here is the previously stored fingerprint even
+    # though the same statement is also overwriting it. New rows get their
+    # value from the column default (migration 0017), not from this clause.
+    if "content_hash" in fields and "content_changed_at" in _article_columns():
+        updates.append(
+            "content_changed_at = case"
+            " when articles.content_hash is distinct from excluded.content_hash then now()"
+            " else articles.content_changed_at end"
+        )
+
     return db.fetch_one(
         """
         insert into articles ({columns})
@@ -306,7 +339,7 @@ def _upsert_article_row(article):
         """.format(
             columns=columns_sql,
             values=values_sql,
-            updates=", ".join(f"{field} = excluded.{field}" for field in fields if field != "url"),
+            updates=", ".join(updates),
             returning=returning_sql,
         ),
         params,

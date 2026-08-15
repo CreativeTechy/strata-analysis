@@ -200,5 +200,37 @@ class GetArticleAnalysisTests(unittest.TestCase):
                     self.assertIsNone(articles_store.get_article_analysis(1))
 
 
+class ContentHashTests(unittest.TestCase):
+    """The fingerprint behind content_changed_at (migration 0017): it decides
+    whether a re-scrape counts as the competitor having done something."""
+
+    def test_reflowed_whitespace_is_not_a_change(self):
+        """Markup re-wrapped between crawls must not read as news."""
+        from services.articles import store
+
+        self.assertEqual(
+            store._content_hash("Cafe Younes opens a third roastery"),
+            store._content_hash("Cafe   Younes\n\nopens a\tthird roastery\n"),
+        )
+
+    def test_a_real_edit_changes_the_hash(self):
+        from services.articles import store
+
+        self.assertNotEqual(
+            store._content_hash("Espresso blend 250,000 LBP"),
+            store._content_hash("Espresso blend 290,000 LBP"),
+        )
+
+    def test_empty_body_has_no_hash(self):
+        """None rather than the hash of the empty string, so a page that failed
+        to extract does not compare equal to every other failed extraction and
+        freeze their change timestamps."""
+        from services.articles import store
+
+        self.assertIsNone(store._content_hash(""))
+        self.assertIsNone(store._content_hash(None))
+        self.assertIsNone(store._content_hash("   \n  "))
+
+
 if __name__ == "__main__":
     unittest.main()

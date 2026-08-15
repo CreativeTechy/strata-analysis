@@ -320,7 +320,7 @@ def seed() -> int:
         template = FINDINGS.get(competitor["name"])
         if not template:
             continue
-        evidence = competitor_analysis._evidence_for(int(competitor["id"]))
+        evidence = competitor_analysis._evidence_for(competitor)
         counts = competitor_analysis._counts_for(int(competitor["id"]))
         db.execute(
             """

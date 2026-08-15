@@ -18,6 +18,10 @@ Rules:
   the move or only imply it, how recent they are, whether they are the
   competitor's own announcements or third-party reporting. One sentence. Never
   restate the number ("confidence is low") — give the reason for it.
+- Evidence marked "(the competitor's own site)" is the company describing
+  itself. It is good for what they sell and what they claim, and it is not
+  corroboration — a conclusion resting only on those is lower confidence than
+  one carried by independent reporting, and should say so.
 
 Return ONLY this JSON, no markdown:
 {

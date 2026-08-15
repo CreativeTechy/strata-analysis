@@ -190,6 +190,166 @@ class ValidateCompetitorArticlesTests(unittest.TestCase):
         self.assertEqual(result["per_competitor"][3]["valid"], 0)
 
 
+class EffectiveDateTests(unittest.TestCase):
+    """Which timestamp decides whether an article is inside the period."""
+
+    def _row(self, source_url, **dates):
+        return {"source_url": source_url, "source": source_url, **dates}
+
+    def test_web_pages_are_dated_by_when_their_body_last_changed(self):
+        """Re-scraping upserts on url and leaves created_at at first-seen, so
+        dating a competitor's own page that way meant a price change or a new
+        location could never re-enter the evidence window."""
+        first_seen = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        changed = datetime(2026, 8, 14, tzinfo=timezone.utc)
+        row = self._row("https://cafeyounes.com", created_at=first_seen,
+                        content_changed_at=changed)
+        self.assertEqual(competitor_analysis._effective_date(row), changed)
+
+    def test_web_pages_never_seen_changing_fall_back_to_first_seen(self):
+        """Rows written before migration 0017 have no change timestamp."""
+        first_seen = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        row = self._row("https://cafeyounes.com", created_at=first_seen, content_changed_at=None)
+        self.assertEqual(competitor_analysis._effective_date(row), first_seen)
+
+    def test_feed_items_still_use_their_real_publish_date(self):
+        """A feed item was published once; a later re-crawl is not news, so the
+        change timestamp must not override it."""
+        published = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        row = self._row("https://news.example.com/feed.xml", published_at=published,
+                        created_at=datetime(2026, 8, 10, tzinfo=timezone.utc),
+                        content_changed_at=datetime(2026, 8, 14, tzinfo=timezone.utc))
+        self.assertEqual(competitor_analysis._effective_date(row), published)
+
+
+class EvidenceSelectionTests(unittest.TestCase):
+    """Which rows reach the model. Selection used to be date-only, so the
+    match_score validation computes went unused and a competitor's own product
+    pages could take every slot."""
+
+    COMPETITOR = {"id": 1, "name": "Cafe Younes", "domain": "cafeyounes.com",
+                  "website": "https://cafeyounes.com"}
+
+    def _row(self, row_id, host, score, age_days, title="t"):
+        return {
+            "id": row_id, "url": f"https://{host}/a{row_id}", "source": host,
+            "source_url": f"https://{host}", "title": title, "summary": "s", "text": "b",
+            "match_score": score, "story_id": row_id,
+            "published_at": datetime.now(timezone.utc) - timedelta(days=age_days),
+            "created_at": datetime.now(timezone.utc) - timedelta(days=age_days),
+        }
+
+    def test_prominence_beats_marginally_fresher_passing_mentions(self):
+        """Pure date ordering let eight recent 0.2s bury a headline match from
+        two days earlier."""
+        headline = self._row(1, "news.example.com", 1.0, 3, "Cafe Younes opens roastery")
+        passing = [self._row(10 + i, f"blog{i}.example.com", 0.2, 1) for i in range(8)]
+        picked = competitor_analysis._select_evidence([*passing, headline], self.COMPETITOR)
+        self.assertIn(1, [row["id"] for row in picked])
+
+    def test_own_site_is_held_to_its_reservation_when_press_can_fill(self):
+        """A dozen near-identical product pages on the competitor's own shop
+        must not crowd out coverage that exists."""
+        own = [self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}") for i in range(1, 13)]
+        press = [self._row(100 + i, f"outlet{i}.com", 0.45, 5) for i in range(6)]
+        picked = competitor_analysis._select_evidence([*own, *press], self.COMPETITOR)
+
+        self.assertEqual(len([r for r in picked if r["_own_site"]]),
+                         competitor_analysis.OWN_SITE_SLOTS)
+        self.assertEqual(len([r for r in picked if not r["_own_site"]]),
+                         competitor_analysis.MAX_EVIDENCE_PER_CARD
+                         - competitor_analysis.OWN_SITE_SLOTS)
+
+    def test_press_coverage_is_never_crowded_out(self):
+        """When there is less coverage than the reservation, every piece of it
+        still survives - the own-site rows only take what is left over."""
+        own = [self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}") for i in range(1, 13)]
+        press = [self._row(100 + i, f"outlet{i}.com", 0.45, 5) for i in range(3)]
+        picked = competitor_analysis._select_evidence([*own, *press], self.COMPETITOR)
+
+        self.assertEqual(len([r for r in picked if not r["_own_site"]]), 3)
+        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+
+    def test_one_outlet_cannot_dominate_third_party_slots(self):
+        flood = [self._row(i, "loud.example.com", 1.0, 0) for i in range(1, 9)]
+        others = [self._row(50 + i, f"quiet{i}.com", 0.45, 2) for i in range(3)]
+        picked = competitor_analysis._select_evidence([*flood, *others], self.COMPETITOR)
+
+        hosts = [row["_host"] for row in picked]
+        self.assertLessEqual(hosts.count("loud.example.com"),
+                             competitor_analysis.MAX_EVIDENCE_PER_DOMAIN)
+        self.assertTrue(any(host.startswith("quiet") for host in hosts))
+
+    def test_unused_reservation_is_given_back(self):
+        """A competitor with no press coverage should still get a full card
+        from its own site rather than three rows and empty space."""
+        own = [self._row(i, "cafeyounes.com", 1.0, 0) for i in range(1, 13)]
+        picked = competitor_analysis._select_evidence(own, self.COMPETITOR)
+        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+
+    def test_subdomains_of_the_competitor_count_as_its_own_site(self):
+        picked = competitor_analysis._select_evidence(
+            [self._row(1, "shop.cafeyounes.com", 1.0, 0)], self.COMPETITOR)
+        self.assertTrue(picked[0]["_own_site"])
+
+    def test_product_pages_rank_below_real_announcements(self):
+        """A shop's catalog is inexhaustible and every entry names the company
+        in its own title, so on prominence alone it takes every own-site slot.
+        Café Younes filled 7 of 8 with mugs and posters."""
+        catalog = [
+            {**self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}"),
+             "url": f"https://cafeyounes.com/products/mug-{i}"}
+            for i in range(1, 9)
+        ]
+        announcement = {**self._row(99, "cafeyounes.com", 1.0, 2, "Third Beirut roastery opens"),
+                        "url": "https://cafeyounes.com/blog/third-roastery"}
+        picked = competitor_analysis._select_evidence([*catalog, announcement], self.COMPETITOR)
+
+        self.assertIn(99, [row["id"] for row in picked])
+        self.assertGreater(
+            competitor_analysis._evidence_rank(announcement, datetime.now(timezone.utc)),
+            competitor_analysis._evidence_rank(catalog[0], datetime.now(timezone.utc)),
+        )
+
+    def test_product_pages_are_kept_when_they_are_all_there_is(self):
+        """Ranked down, never filtered - what a competitor sells is still real
+        competitive information."""
+        catalog = [
+            {**self._row(i, "cafeyounes.com", 1.0, 0, f"Branded Mug {i}"),
+             "url": f"https://cafeyounes.com/products/mug-{i}"}
+            for i in range(1, 9)
+        ]
+        picked = competitor_analysis._select_evidence(catalog, self.COMPETITOR)
+        self.assertEqual(len(picked), competitor_analysis.MAX_EVIDENCE_PER_CARD)
+
+    def test_explicit_aliases_bypass_the_generic_word_guard(self):
+        """"Stories" is dropped as an automatic matcher, but a human listing it
+        as an alias is a statement that this string identifies this company."""
+        self.assertEqual(competitor_analysis._aliases({"name": "Stories", "domain": "stories.com"}), [])
+        self.assertEqual(
+            competitor_analysis._aliases(
+                {"name": "Stories", "domain": "stories.com", "aliases": ["& Other Stories"]}),
+            ["& Other Stories"],
+        )
+
+    def test_aliases_extend_rather_than_replace_derived_names(self):
+        resolved = competitor_analysis._aliases({
+            "name": "Café Younes", "domain": "cafeyounes.com",
+            "aliases": ["قهوة يونس", "Younes Bros", "cafeyounes"],
+        })
+        self.assertIn("Café Younes", resolved)
+        self.assertIn("قهوة يونس", resolved)
+        self.assertIn("Younes Bros", resolved)
+        # Already derived from the domain - not duplicated.
+        self.assertEqual(resolved.count("cafeyounes"), 1)
+
+    def test_selection_is_presented_newest_first(self):
+        rows = [self._row(1, "a.com", 1.0, 9), self._row(2, "b.com", 1.0, 1),
+                self._row(3, "c.com", 1.0, 5)]
+        picked = competitor_analysis._select_evidence(rows, self.COMPETITOR)
+        self.assertEqual([row["id"] for row in picked], [2, 3, 1])
+
+
 class AnalysisJobTests(unittest.TestCase):
     """Analysis runs as a background job now, so its terminal state is the only
     thing the user ever sees - every path has to reach one that carries the

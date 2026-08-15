@@ -23,10 +23,40 @@ from services.sources.sources_store import _derive_reddit_url, _derive_telegram_
 
 COMPETITOR_COLUMNS = """
     id, project_id, name, website, domain, description, country,
-    operates_in_countries, size_tier, size_rank, size_signals, relevance_score,
-    status, discovery_source, discovery_query,
+    operates_in_countries, aliases, size_tier, size_rank, size_signals,
+    relevance_score, status, discovery_source, discovery_query,
     last_scraped_at, last_analyzed_at, created_at, updated_at
 """
+
+MAX_ALIASES = 12
+MAX_ALIAS_LENGTH = 80
+
+
+def clean_aliases(value) -> list[str]:
+    """Normalize user-supplied alternate names.
+
+    Accepts a list or a comma-separated string, since the API takes both. Very
+    short strings are dropped: a one- or two-character alias matches so much
+    text that it cannot identify a company, and unlike the derived names these
+    are never re-checked against a generic-word list - an alias here is trusted
+    precisely because a human chose it.
+    """
+    if isinstance(value, str):
+        candidates = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        candidates = value
+    else:
+        return []
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        alias = str(item or "").strip()[:MAX_ALIAS_LENGTH]
+        if len(alias) < 3 or alias.casefold() in seen:
+            continue
+        seen.add(alias.casefold())
+        cleaned.append(alias)
+    return cleaned[:MAX_ALIASES]
 
 ACCOUNT_COLUMNS = """
     id, competitor_id, platform, handle, url, confidence,
@@ -165,6 +195,7 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
         "description": str(values.get("description") or "").strip() or None,
         "country": country,
         "operates_in_countries": Jsonb(validate_countries(values.get("operates_in_countries"))),
+        "aliases": Jsonb(clean_aliases(values.get("aliases"))),
         "size_tier": str(values.get("size_tier") or "unknown").strip().lower(),
         "size_rank": values.get("size_rank"),
         "size_signals": Jsonb(values.get("size_signals") or {}),
@@ -202,6 +233,10 @@ def upsert_competitor(project_id: int, values: dict) -> dict | None:
         # An empty list carries no new "where they compete with us" info.
         "operates_in_countries": "operates_in_countries = case when excluded.operates_in_countries = '[]'::jsonb "
                                  "then competitors.operates_in_countries else excluded.operates_in_countries end",
+        # Same rule: a discovery pass that knows no alternate names must not
+        # wipe the ones a human typed in to make this competitor matchable.
+        "aliases": "aliases = case when excluded.aliases = '[]'::jsonb "
+                   "then competitors.aliases else excluded.aliases end",
     }
     assignments = ", ".join(
         assignments_by_field.get(

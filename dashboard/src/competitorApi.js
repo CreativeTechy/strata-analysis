@@ -128,6 +128,10 @@ export const addCompetitorManual = (id, body) =>
   request(`/studies/${id}/competitors/manual`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>
   request(`/competitors/${competitorId}/status`, { method: 'POST', body: { status } });
+/** Partial update - the backend merges onto the stored row, so a body of just
+ *  { aliases } leaves every other field alone. */
+export const updateCompetitor = (competitorId, body) =>
+  request(`/competitors/${competitorId}`, { method: 'PUT', body });
 export const deleteCompetitor = (competitorId) =>
   request(`/competitors/${competitorId}`, { method: 'DELETE' });
 

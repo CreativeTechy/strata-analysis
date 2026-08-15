@@ -741,6 +741,21 @@
   box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
 }
 
+/* Alternate-name editor inside a competitor's expanded panel. */
+.cs-alias-editor {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid #f1f4f8;
+}
+
+.cs-alias-editor-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 5px 0 4px;
+}
+
+.cs-alias-editor-row .cs-input { flex: 1; min-width: 0; }
+
 /* Evidence window picker in the "Run analysis" dialog. */
 .cs-run-period {
   display: grid;

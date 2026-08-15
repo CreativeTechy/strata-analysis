@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -61,6 +62,29 @@ DOCUMENT_URL_PREFIX = "document://"
 MAX_EVIDENCE_PER_CARD = 8
 MAX_TEXT_PER_EVIDENCE = 1800
 DEFAULT_PERIOD_DAYS = 30
+
+# How many of MAX_EVIDENCE_PER_CARD are held for the competitor's own site.
+# What a company publishes about itself and what the press publishes about it
+# are different kinds of evidence, and on pure recency the first can crowd out
+# the second entirely - a shop that adds ten product pages in a week fills
+# every slot. Reserving a share means each card sees both, and an unused
+# reservation is given back rather than wasted.
+OWN_SITE_SLOTS = 3
+
+# Ceiling on how many slots one outlet can take, so a card is not eight
+# rewrites of the same publisher's angle. Own-site rows are exempt: they are
+# all one domain by definition, and OWN_SITE_SLOTS already bounds them.
+MAX_EVIDENCE_PER_DOMAIN = 3
+
+# Recency is weighed against prominence rather than overriding it: at one
+# half-life old, a headline mention still outranks a fresh passing one. Without
+# this the ordering was pure date, and match_score - which validation computes
+# for exactly this purpose - went unused.
+RECENCY_HALF_LIFE_DAYS = 21
+
+# Bound on rows pulled before ranking. Far above a normal period's validated
+# set; it exists so an all-time run on a large study can't load everything.
+EVIDENCE_CANDIDATE_POOL = 200
 
 # Below this, the competitor is mentioned but the piece is not about them.
 # See _mention_profile for what the tiers mean; 0.35 admits a body-only mention
@@ -102,12 +126,20 @@ _GENERIC_ALIASES = {
 
 
 def _aliases(competitor: dict) -> list[str]:
-    """Names to look for in article text: the company name, and its bare domain.
+    """Names to look for in article text: the company name, its bare domain,
+    and any alternate names recorded on the competitor.
 
-    Aliases that are just a common word are dropped — see _GENERIC_ALIASES. A
-    competitor left with none of them matches nothing, which is the intended
-    outcome: no card at all beats a card built from every article containing
-    the word "news".
+    Derived names that are just a common word are dropped - see
+    _GENERIC_ALIASES. A competitor left with none of them matches nothing,
+    which is the intended outcome: no card at all beats a card built from every
+    article containing the word "news".
+
+    Names from `aliases` are exempt from that filter. They exist because a
+    person stated that this string identifies this company - which is exactly
+    the evidence the generic-word list stands in for when guessing. It is also
+    how a company whose name *is* an ordinary word becomes analyzable again,
+    and how one written differently in another language or script gets matched
+    at all.
     """
     names = []
     name = str(competitor.get("name") or "").strip()
@@ -123,7 +155,16 @@ def _aliases(competitor: dict) -> list[str]:
         label = domain.split(".")[0]
         if len(label) >= 3 and label.casefold() not in {n.casefold() for n in names}:
             names.append(label)
-    return [name for name in names if name.casefold() not in _GENERIC_ALIASES]
+
+    resolved = [name for name in names if name.casefold() not in _GENERIC_ALIASES]
+
+    known = {name.casefold() for name in resolved}
+    for alias in competitor.get("aliases") or []:
+        alias = str(alias or "").strip()
+        if len(alias) >= 3 and alias.casefold() not in known:
+            known.add(alias.casefold())
+            resolved.append(alias)
+    return resolved
 
 
 def _mentions(text: str, aliases: list[str]) -> str | None:
@@ -165,6 +206,24 @@ def _is_boilerplate_page(url: str, title: str) -> bool:
     return bool(_BOILERPLATE_PATH_RE.search(path) or _BOILERPLATE_TITLE_RE.search(str(title or "")))
 
 
+# A single item in a shop. Not rejected - what a competitor sells is real
+# competitive information, and a new product genuinely is a move. But a catalog
+# is inexhaustible and each entry names the company in its own title, so on
+# prominence alone every slot goes to "Branded Mug Green Color" while an
+# announcement further down the list never gets read. Ranked below other
+# evidence rather than filtered out, so the card still sees the shop when the
+# shop is all there is.
+_PRODUCT_PATH_RE = re.compile(
+    r"/(products?|collections?|shop|store|item|catalogue|catalog|sku|p)/[^/]+",
+    re.I,
+)
+PRODUCT_PAGE_RANK_FACTOR = 0.4
+
+
+def _is_product_page(url: str) -> bool:
+    return bool(_PRODUCT_PATH_RE.search(urlparse(str(url or "")).path))
+
+
 def _mention_profile(title: str, summary: str, body: str, aliases: list[str]) -> tuple[str | None, float]:
     """Which alias the article names, and how central it is to the piece.
 
@@ -200,11 +259,19 @@ def _effective_date(article: dict) -> datetime | None:
     publish timestamp. Plain `web` pages (menus, terms, careers...) are usually
     evergreen and don't have one; htmldate's fallback extraction latches onto
     whatever date-shaped text it can find instead (a copyright year, a footer
-    notice), so for those the scrape date is the only trustworthy signal.
+    notice), so for those a crawl-side timestamp is the only trustworthy signal.
+
+    For those pages that timestamp is when the body last *changed*, not when it
+    was first seen. A price rising, a location being added, a product appearing
+    is exactly the move a competitor report exists to catch, and dating by
+    first-seen hid it: re-scraping upserts on url and leaves created_at alone,
+    so a page that changed today still looked as old as its first crawl and
+    stayed outside the window forever. Falls back to created_at for rows
+    written before migration 0017, which have never been observed changing.
     """
     source_type = config._infer_source_type(str(article.get("source_url") or article.get("source") or ""))
     if source_type == "web":
-        return article.get("created_at")
+        return article.get("content_changed_at") or article.get("created_at")
     return article.get("published_at") or article.get("created_at")
 
 
@@ -213,7 +280,8 @@ def _candidate_articles(project_id: int) -> list[dict]:
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
-               a.published_at, a.published_precision, a.created_at, a.story_id,
+               a.published_at, a.published_precision, a.created_at,
+               a.content_changed_at, a.story_id,
                a.sentiment, a.article_category
         from articles a
         join article_projects ap on ap.article_id = a.id
@@ -352,24 +420,24 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     }
 
 
-def _evidence_for(competitor_id: int, limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
-    """Validated evidence for one competitor, newest first, one row per story.
+def _evidence_candidates(competitor_id: int) -> list[dict]:
+    """Every validated row for one competitor, one per story, newest first.
 
     Two orderings, and they have to be separate. `distinct on` forces its own
     expression to lead the `order by`, so the inner query can only rank rows
     *within* a story group - that is what picks the newest member of each. The
     result set then comes back ordered by story id, which is an identity
-    sequence (migration 0003), i.e. oldest group first. Taking the top `limit`
-    of that would hand the model the stalest stories it has and ask it what
-    changed. The outer query re-sorts the deduplicated rows by date so the
-    limit actually means "most recent".
+    sequence (migration 0003), i.e. oldest group first. Taking the top rows of
+    that would hand the model the stalest stories it has and ask it what
+    changed. The outer query re-sorts the deduplicated rows by date.
     """
     return db.fetch_all(
         """
         select * from (
             select distinct on (coalesce(a.story_id, -a.id))
-                   a.id, a.url, a.source, a.title, a.summary, a.text,
-                   a.published_at, a.created_at, a.story_id, ca.match_reason
+                   a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
+                   a.published_at, a.created_at, a.story_id,
+                   ca.match_reason, ca.match_score
             from competitor_articles ca
             join articles a on a.id = ca.article_id
             where ca.competitor_id = %s and ca.validation_status = 'valid'
@@ -379,8 +447,114 @@ def _evidence_for(competitor_id: int, limit: int = MAX_EVIDENCE_PER_CARD) -> lis
         order by coalesce(published_at, created_at) desc
         limit %s
         """,
-        (int(competitor_id), int(limit)),
+        (int(competitor_id), EVIDENCE_CANDIDATE_POOL),
     )
+
+
+def _host_of(*values) -> str:
+    """First parseable hostname among the given values, without `www.`."""
+    for value in values:
+        text = str(value or "").strip().lower()
+        if not text:
+            continue
+        host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
+        if host:
+            return host
+    return ""
+
+
+def _competitor_hosts(competitor: dict) -> set[str]:
+    hosts = {_host_of(competitor.get("domain")), _host_of(competitor.get("website"))}
+    return {host for host in hosts if host}
+
+
+def _aware(value):
+    """DB timestamps are timestamptz, but a row assembled elsewhere may carry a
+    naive datetime - treat those as UTC rather than raising on comparison."""
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _evidence_date(row: dict):
+    return _aware(row.get("published_at")) or _aware(row.get("created_at"))
+
+
+def _evidence_rank(row: dict, now: datetime) -> float:
+    """How much this row deserves one of the card's few slots.
+
+    Prominence decayed by age: a headline mention stays ahead of a fresh
+    passing one for about a half-life, after which recency takes over.
+    """
+    score = float(row.get("match_score") or 0.0)
+    when = _evidence_date(row)
+    age_days = max(0.0, (now - when).total_seconds() / 86400) if when else 365.0
+    rank = score * (0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS))
+    if _is_product_page(row.get("url")):
+        rank *= PRODUCT_PAGE_RANK_FACTOR
+    return rank
+
+
+def _select_evidence(candidates: list[dict], competitor: dict,
+                     limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
+    """Choose the rows the model actually reads.
+
+    Ranked by prominence-and-recency rather than date alone, with the
+    competitor's own site held to a reserved share and no single outlet
+    allowed to dominate the rest. Selection is done here rather than in SQL
+    because "one bucket lends its unused slots to the other" is not something
+    a single query expresses readably.
+    """
+    now = datetime.now(timezone.utc)
+    own_hosts = _competitor_hosts(competitor)
+    for row in candidates:
+        host = _host_of(row.get("url"), row.get("source_url"), row.get("source"))
+        row["_host"] = host
+        row["_own_site"] = any(host == known or host.endswith(f".{known}") for known in own_hosts)
+        row["_rank"] = _evidence_rank(row, now)
+
+    own = sorted((r for r in candidates if r["_own_site"]), key=lambda r: -r["_rank"])
+    third_party = sorted((r for r in candidates if not r["_own_site"]), key=lambda r: -r["_rank"])
+
+    picked: list[dict] = []
+    per_domain: Counter = Counter()
+
+    chosen_ids: set = set()
+
+    def take(pool, budget):
+        taken = 0
+        for row in pool:
+            if taken >= budget or len(picked) >= limit:
+                break
+            if row["id"] in chosen_ids:
+                continue
+            # The cap is a property of the row, not of the pass - applying it
+            # only on the first pass let the backfill hand every leftover slot
+            # straight back to the loudest outlet. Own-site rows are exempt
+            # because they are all one domain and OWN_SITE_SLOTS bounds them.
+            if not row["_own_site"] and per_domain[row["_host"]] >= MAX_EVIDENCE_PER_DOMAIN:
+                continue
+            picked.append(row)
+            chosen_ids.add(row["id"])
+            per_domain[row["_host"]] += 1
+            taken += 1
+
+    take(third_party, limit - OWN_SITE_SLOTS)
+    take(own, OWN_SITE_SLOTS)
+    # Whatever either side left unclaimed goes to the best of the rest, so a
+    # competitor with no press coverage still fills the card from its own site
+    # (and vice versa) instead of handing the model a half-empty prompt. A card
+    # can still come back short of `limit`: running out of distinct outlets is
+    # a better outcome than eight rewrites of one.
+    take(sorted(third_party + own, key=lambda r: -r["_rank"]), limit)
+
+    picked.sort(key=lambda r: _evidence_date(r) or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True)
+    return picked
+
+
+def _evidence_for(competitor: dict, limit: int = MAX_EVIDENCE_PER_CARD) -> list[dict]:
+    return _select_evidence(_evidence_candidates(int(competitor["id"])), competitor, limit)
 
 
 def _counts_for(competitor_id: int) -> dict:
@@ -425,8 +599,12 @@ def _format_evidence(rows: list[dict]) -> str:
         when = row.get("published_at") or row.get("created_at")
         date_label = when.strftime("%Y-%m-%d") if hasattr(when, "strftime") else "undated"
         body = (row.get("summary") or row.get("text") or "")[:MAX_TEXT_PER_EVIDENCE]
+        # Marked because it changes what the row is worth: a company announcing
+        # something on its own site is not corroboration, and the model is
+        # asked to weigh exactly that when it explains its confidence.
+        origin = " (the competitor's own site)" if row.get("_own_site") else ""
         blocks.append(
-            f"[{index}] {date_label} | {row.get('source') or 'unknown source'}\n"
+            f"[{index}] {date_label} | {row.get('source') or 'unknown source'}{origin}\n"
             f"    {row.get('title') or '(untitled)'}\n"
             f"    {body}"
         )
@@ -437,7 +615,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     """Build one analysis card for one competitor, or None when evidence is absent."""
     from services.competitors.business_profile_store import profile_context
 
-    evidence = _evidence_for(int(competitor["id"]))
+    evidence = _evidence_for(competitor)
     if not evidence:
         return None
 
