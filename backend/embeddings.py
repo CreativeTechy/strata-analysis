@@ -107,6 +107,23 @@ def build_project_embedding_text(project: dict) -> str:
     return "\n".join(part for part in parts if part)[:8000]
 
 
+def build_competitor_embedding_text(competitor: dict) -> str:
+    parts = []
+    for value in (
+        competitor.get("name"),
+        competitor.get("description"),
+        competitor.get("website"),
+        competitor.get("domain"),
+    ):
+        text = _clean_text(value)
+        if text:
+            parts.append(text)
+
+    parts.extend(_dedupe_texts(_coerce_list(competitor.get("aliases"))))
+
+    return "\n".join(part for part in parts if part)[:4000]
+
+
 def _normalize_vector(vector):
     if not isinstance(vector, list):
         return []

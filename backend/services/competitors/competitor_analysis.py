@@ -18,6 +18,10 @@ records *why* a row was dropped:
     whole market. Without this, a report attributes the industry's news to one
     company. Prominence rather than presence, because a company named once in
     paragraph nine of a twenty-company roundup is not what that piece is about.
+    When no name appears at all, a semantic fallback (`_semantic_match`)
+    compares the article's existing embedding against the competitor's own
+    (name + aliases + description) — a high-bar cosine floor, since this is
+    the one gate with no literal evidence behind it.
   - it is not a near-duplicate of a story already counted, using `story_id` from
     migration 0003, so a press release carried by twenty outlets is one move and
     not twenty
@@ -46,6 +50,7 @@ from psycopg.types.json import Jsonb
 import config
 import db
 from content_guard import is_blocked_article
+from embeddings import cosine_similarity
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors.job_runs import ACTIVE_STATUSES, JobRegistry
@@ -116,6 +121,19 @@ EVIDENCE_CANDIDATE_POOL = 200
 # See _mention_profile for what the tiers mean; 0.35 admits a body-only mention
 # that is either repeated or up front, and drops a lone late one.
 MIN_MENTION_SCORE = 0.35
+
+# Cosine-similarity floor for the semantic fallback (see _semantic_match
+# below), only ever consulted when no alias was found in the text at all. A
+# literal name is unambiguous evidence; a vector is not, so this only exists to
+# catch what the text gate structurally cannot - a competitor referred to
+# without its name (a rebrand, a translation, "the chain next door") - and is
+# deliberately set high rather than tuned for recall. Both sides are the same
+# normalized sentence-transformer space (config.EMBEDDING_MODEL) already used
+# for article/project attribution, where unrelated passages typically land
+# well below 0.3 and a shared-topic-but-different-company pair still commonly
+# clears 0.5 - 0.6; a stricter floor is the deliberate trade against a report
+# that quietly attributes someone else's coverage to this competitor.
+SEMANTIC_MATCH_THRESHOLD = 0.62
 
 # One LLM call per competitor, so a study with a dozen of them serialized into a
 # dozen sequential round trips on a request the user is watching. Kept modest
@@ -308,7 +326,7 @@ def _candidate_articles(project_id: int) -> list[dict]:
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                a.published_at, a.published_precision, a.created_at,
                a.content_changed_at, a.story_id,
-               a.sentiment, a.article_category
+               a.sentiment, a.article_category, a.embedding_json
         from articles a
         join article_projects ap on ap.article_id = a.id
         where ap.project_id = %s
@@ -316,6 +334,55 @@ def _candidate_articles(project_id: int) -> list[dict]:
         """,
         (int(project_id),),
     )
+
+
+def _competitor_embedding_map(competitors: list[dict]) -> dict[int, list[float]]:
+    """Each competitor's identity vector (name + aliases + description), keyed
+    by id - fetched fresh rather than trusted from the `competitors` list
+    passed in, since callers select via COMPETITOR_COLUMNS, which does not
+    carry embeddings (they're an internal matching detail, not workspace API
+    surface).
+
+    Also backfills on the fly: a competitor saved before this column existed
+    has an empty vector forever unless something re-saves it, so a competitor
+    that otherwise never gets edited would stay permanently unmatchable by
+    this signal. Computed once here and persisted, so only the very first run
+    after this feature shipped pays for it.
+    """
+    from services.competitors.competitors_store import _persist_competitor_embedding
+
+    ids = [int(c["id"]) for c in competitors]
+    if not ids:
+        return {}
+
+    rows = db.fetch_all(
+        "select id, embedding_json from competitors where id = any(%s)",
+        (ids,),
+    )
+    vectors = {int(row["id"]): (row.get("embedding_json") or []) for row in rows}
+
+    by_id = {int(c["id"]): c for c in competitors}
+    for competitor_id, vector in list(vectors.items()):
+        if vector:
+            continue
+        competitor = by_id.get(competitor_id)
+        if competitor is None:
+            continue
+        _persist_competitor_embedding(competitor)
+        refreshed = db.fetch_one(
+            "select embedding_json from competitors where id = %s", (competitor_id,)
+        )
+        vectors[competitor_id] = (refreshed or {}).get("embedding_json") or []
+
+    return {competitor_id: vector for competitor_id, vector in vectors.items() if vector}
+
+
+def _semantic_match(article_vector, competitor_vector) -> float | None:
+    """Cosine similarity if it clears SEMANTIC_MATCH_THRESHOLD, else None."""
+    if not article_vector or not competitor_vector:
+        return None
+    similarity = cosine_similarity(article_vector, competitor_vector)
+    return similarity if similarity >= SEMANTIC_MATCH_THRESHOLD else None
 
 
 def validate_competitor_articles(project_id: int, competitors: list[dict],
@@ -334,6 +401,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     log(f"Checking {len(articles)} article(s) from {window} against each competitor...")
 
     alias_map = {int(c["id"]): _aliases(c) for c in competitors}
+    embedding_map = _competitor_embedding_map(competitors)
     per_competitor: dict[int, dict] = {
         int(c["id"]): {"valid": 0, "rejected": 0, "stories": set()} for c in competitors
     }
@@ -344,6 +412,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
         body = str(article.get("text") or "")
         title = str(article.get("title") or "")
         summary = str(article.get("summary") or "")
+        article_vector = article.get("embedding_json")
 
         blocked = is_blocked_article(article.get("url"), title)
         # Uploaded-document candidates are LLM-split excerpts, not crawled
@@ -356,6 +425,15 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
 
         for competitor_id, aliases in alias_map.items():
             matched, score = _mention_profile(title, summary, body, aliases) if aliases else (None, 0.0)
+            similarity = None
+            if matched is None:
+                # No literal name anywhere in the piece - fall back to whether
+                # it's about the same thing in substance. Only consulted when
+                # the text gate found nothing, so a real name match is never
+                # second-guessed by a vector.
+                similarity = _semantic_match(article_vector, embedding_map.get(competitor_id))
+                if similarity is not None:
+                    matched, score = f"semantic:{similarity:.2f}", similarity
             if matched is None:
                 continue  # not about this competitor at all: not a rejection, just unrelated
 
@@ -366,7 +444,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
                 reason = "boilerplate_page"
             elif too_short:
                 reason = "body_too_short"
-            elif score < MIN_MENTION_SCORE and not is_document:
+            elif score < MIN_MENTION_SCORE and not is_document and similarity is None:
                 reason = "passing_mention"
             else:
                 story_id = article.get("story_id")
@@ -382,7 +460,8 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             if article.get("story_id") is not None:
                 per_competitor[competitor_id]["stories"].add(article["story_id"])
             per_competitor[competitor_id]["valid"] += 1
-            rows.append((competitor_id, int(article["id"]), f"mentions:{matched}", score, "valid", None))
+            match_reason = matched if similarity is not None else f"mentions:{matched}"
+            rows.append((competitor_id, int(article["id"]), match_reason, score, "valid", None))
 
     # Everything this run did *not* visit has to go, or the table stops
     # describing the period the card claims. Only in-window articles are
@@ -840,13 +919,17 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, l
             )
         else:
             stats = validation["per_competitor"].get(int(competitor["id"]), {})
-            if not _aliases(competitor):
-                # Distinguishable from "nothing was published": nothing could
-                # have been matched in the first place, and the fix is to give
-                # the competitor a real name/domain, not to widen the period.
-                reason = "Name is too generic to identify in article text. Add a website or a more specific name."
-            elif not stats.get("valid"):
-                reason = "No validated evidence in this period."
+            if not stats.get("valid"):
+                if not _aliases(competitor):
+                    # Distinguishable from "nothing was published": nothing could
+                    # have been matched by name, and the fix is to give the
+                    # competitor a real name/domain, not to widen the period.
+                    # Checked only once semantic matching has also come up
+                    # empty (stats["valid"] would be nonzero otherwise), since
+                    # that fallback doesn't depend on aliases at all.
+                    reason = "Name is too generic to identify in article text. Add a website or a more specific name."
+                else:
+                    reason = "No validated evidence in this period."
             else:
                 reason = "Analysis could not be generated."
             log(f"{competitor['name']}: skipped - {reason}")
