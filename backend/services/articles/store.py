@@ -222,6 +222,16 @@ def _article_write_fields():
     return [field for field in ARTICLE_MUTABLE_FIELDS if field in columns]
 
 
+def stored_article_fields():
+    """The exact column list `save_articles()` writes on this database.
+
+    Read paths that need to round-trip through the upsert (the JSONL export,
+    which is re-importable) select these: the upsert sets every one of them
+    from `excluded`, so anything it writes but the export omits would come
+    back as NULL on re-import."""
+    return list(_article_write_fields())
+
+
 def _article_returning_sql():
     columns = _article_columns()
     returning = ["id", "source_url"]

@@ -219,6 +219,36 @@
   margin-bottom: 18px;
 }
 
+.articles-page-shell .articles-import-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #1f5f3f;
+  border-left: 4px solid #2fbf71;
+  margin-bottom: 18px;
+}
+
+.articles-page-shell .articles-import-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.articles-page-shell .articles-import-errors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.articles-page-shell .articles-import-banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  padding: 2px;
+  line-height: 0;
+}
+
 /* --- Article card text overflow guards ---
    Long unbroken titles/summaries (URLs, long compound words) should
    wrap inside the card instead of pushing the grid item wider than

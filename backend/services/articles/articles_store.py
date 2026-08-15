@@ -19,6 +19,33 @@ ARTICLES_SELECT = (
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
 )
 
+
+@lru_cache(maxsize=1)
+def _export_select():
+    """The wider column list used by the JSONL export.
+
+    ARTICLES_SELECT is tuned for the dashboard's article cards and omits a lot
+    of what the row actually stores (sentiment_score, the per-stage confidences
+    and model names, published_at/precision, analysis_status, ...). The upsert
+    behind the import endpoint writes *every* mutable column from `excluded`,
+    so exporting the narrow list and re-importing it would null those out.
+    Selecting exactly what the upsert writes keeps export -> import lossless.
+
+    Built from the live table rather than hardcoded so a database that hasn't
+    had every migration applied yet exports the columns it does have instead of
+    failing the whole query on one missing name."""
+    from services.articles.store import stored_article_fields
+
+    fields = ["id", *stored_article_fields(), "created_at"]
+    seen = set()
+    ordered = []
+    for field in fields:
+        if field not in seen:
+            seen.add(field)
+            ordered.append(field)
+    return ",".join(ordered)
+
+
 VALID_TONES = {
     "neutral",
     "positive",
@@ -450,12 +477,12 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None):
+def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None, select=ARTICLES_SELECT):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
         project_id=project_id,
-        select=ARTICLES_SELECT,
+        select=select,
         order=DEFAULT_SORT,
         limit=SEARCH_SCAN_LIMIT,
         date_from=date_from,
@@ -831,6 +858,9 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
 
 
 def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, scraped_from=None, scraped_to=None):
+    """Full rows for the JSONL export - see _export_select() for why this reads
+    a wider column list than the paginated list_articles() does."""
+    select = _export_select()
     search_text = _normalize_text(search)
     if search_text:
         rows, _ = _search_results(
@@ -841,6 +871,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             source_url=source_url,
             scraped_from=scraped_from,
             scraped_to=scraped_to,
+            select=select,
         )
         return _attach_project_similarity_scores(rows, project_id)
 
@@ -858,7 +889,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             category=category,
             project_id=project_id,
             order=f"{field}.{direction}",
-            select=ARTICLES_SELECT,
+            select=select,
             source_url=source_url,
             scraped_from=scraped_from,
             scraped_to=scraped_to,

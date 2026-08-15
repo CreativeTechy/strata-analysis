@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, AlertTriangle, Info, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, Info, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
@@ -114,6 +114,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
@@ -132,8 +134,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
   const searchInputRef = useRef(null);
+  const importInputRef = useRef(null);
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
+  const canImport = hasPermission('articles.import');
   const canReprocess = hasPermission('pipeline.run');
 
   useEffect(() => {
@@ -356,6 +360,37 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setError(err?.message || 'Failed to export articles.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    // Clear the input straight away so re-picking the same file still fires onChange.
+    event.target.value = '';
+    if (!file || importing) return;
+
+    setImporting(true);
+    setError('');
+    setImportResult(null);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      // Imported rows land in the project currently in scope, mirroring what a
+      // scrape for that project would have produced. 'all' imports unlinked.
+      if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
+
+      const res = await fetch('/api/articles/import', { method: 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        throw new Error(data?.detail || data?.error || `Failed to import articles (${res.status})`);
+      }
+      setImportResult(data);
+      setOffset(0);
+      setReloadToken((value) => value + 1);
+    } catch (err) {
+      setError(err?.message || 'Failed to import articles.');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -669,6 +704,30 @@ export default function ArticlesPage({ project = null, projectId = null, project
               <Download size={16} />
               {exporting ? 'Exporting...' : 'Export JSONL'}
             </button>
+            {canImport && (
+              <>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".jsonl,.ndjson,application/x-ndjson"
+                  onChange={handleImportFile}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="btn-secondary"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={loading || importing || deletingAll}
+                  title={
+                    projectFilter === 'all'
+                      ? 'Import a JSONL export. Articles are not linked to a project.'
+                      : 'Import a JSONL export into the project currently in scope.'
+                  }
+                >
+                  <Upload size={16} />
+                  {importing ? 'Importing...' : 'Import JSONL'}
+                </button>
+              </>
+            )}
             <div className="articles-pagination" role="navigation" aria-label="Articles pagination">
               <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
                 <ChevronLeft size={16} /> Previous
@@ -702,6 +761,33 @@ export default function ArticlesPage({ project = null, projectId = null, project
           <div className="glass-card articles-error-banner">
             <AlertTriangle size={18} />
             <span>{error}</span>
+          </div>
+        ) : null}
+
+        {importResult ? (
+          <div className="glass-card articles-import-banner">
+            <Info size={18} />
+            <div className="articles-import-banner-body">
+              <span>
+                Imported {importResult.saved} of {importResult.received} article
+                {importResult.received === 1 ? '' : 's'}
+                {importResult.skipped ? `, skipped ${importResult.skipped} bad line${importResult.skipped === 1 ? '' : 's'}` : ''}
+                . Articles matching an existing URL were updated in place.
+              </span>
+              {importResult.errors?.length ? (
+                <ul className="articles-import-errors">
+                  {importResult.errors.slice(0, 5).map((item) => (
+                    <li key={item.line}>
+                      Line {item.line}: {item.error}
+                    </li>
+                  ))}
+                  {importResult.errors.length > 5 ? <li>and {importResult.errors.length - 5} more...</li> : null}
+                </ul>
+              ) : null}
+            </div>
+            <button type="button" className="articles-import-banner-close" onClick={() => setImportResult(null)} aria-label="Dismiss import summary">
+              <X size={16} />
+            </button>
           </div>
         ) : null}
 

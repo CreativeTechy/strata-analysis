@@ -246,6 +246,7 @@ insert into public.permissions (key, description) values
     ('sources.delete', 'Delete sources'),
     ('articles.view', 'View articles'),
     ('articles.delete', 'Delete all stored articles'),
+    ('articles.import', 'Import articles from a JSONL export'),
     ('pipeline.view', 'View pipeline runs'),
     ('pipeline.run', 'Trigger the scraper pipeline'),
     ('pipeline.stop', 'Stop a running pipeline'),
@@ -273,7 +274,7 @@ from (values
     ('editor', 'sources.view'), ('editor', 'sources.create'), ('editor', 'sources.update'), ('editor', 'sources.delete'),
     ('editor', 'articles.view'), ('editor', 'pipeline.view'),
     ('operator', 'projects.view'), ('operator', 'sources.view'),
-    ('operator', 'articles.view'), ('operator', 'articles.delete'),
+    ('operator', 'articles.view'), ('operator', 'articles.delete'), ('operator', 'articles.import'),
     ('operator', 'pipeline.view'), ('operator', 'pipeline.run'), ('operator', 'pipeline.stop'),
     ('viewer', 'projects.view'), ('viewer', 'sources.view'),
     ('viewer', 'articles.view'), ('viewer', 'pipeline.view')

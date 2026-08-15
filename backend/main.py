@@ -10,13 +10,14 @@ This API triggers the jobs and exposes configured sources to the dashboard.
 
 import asyncio
 import contextlib
+import io
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -699,6 +700,109 @@ def export_articles_jsonl(
         "Content-Type": "application/x-ndjson; charset=utf-8",
     }
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
+
+
+MAX_IMPORT_BYTES = 256 * 1024 * 1024
+IMPORT_BATCH_SIZE = 200
+MAX_IMPORT_ERRORS_REPORTED = 50
+
+
+@app.post("/api/articles/import")
+def import_articles_jsonl(
+    file: UploadFile = File(...),
+    project_id: int | None = Form(None),
+    user: dict = Depends(require_permission("articles.import")),
+):
+    """Restore a JSONL export produced by GET /api/articles/export.
+
+    Rows are upserted on `url` through the same save_articles() the pipeline's
+    saver stage uses, so an imported article gets the identical project link,
+    story grouping and idea-cluster treatment a scraped one does. Only
+    ARTICLE_MUTABLE_FIELDS keys are read off each line - the export's `id` and
+    `created_at` are dropped rather than carried across databases.
+
+    Defined `def` (not `async def`) so FastAPI runs it in the threadpool: both
+    the file read and save_articles() block.
+    """
+    from services.articles.store import ARTICLE_MUTABLE_FIELDS, save_articles
+
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
+
+    size = getattr(file, "size", None)
+    if size is not None and size > MAX_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File is larger than the {MAX_IMPORT_BYTES // (1024 * 1024)}MB import limit. Split it and import in parts.",
+        )
+
+    allowed = set(ARTICLE_MUTABLE_FIELDS)
+    errors: list[dict] = []
+    saved_by_source: dict[str, int] = {}
+    batch: list[dict] = []
+    received = 0
+    saved = 0
+    skipped = 0
+
+    def note_error(line_number: int, message: str) -> None:
+        nonlocal skipped
+        skipped += 1
+        if len(errors) < MAX_IMPORT_ERRORS_REPORTED:
+            errors.append({"line": line_number, "error": message})
+
+    def flush() -> None:
+        nonlocal saved, batch
+        if not batch:
+            return
+        count, by_source = save_articles(batch, project_id=project_id)
+        saved += count
+        for key, value in (by_source or {}).items():
+            saved_by_source[key] = saved_by_source.get(key, 0) + int(value)
+        batch = []
+
+    stream = io.TextIOWrapper(file.file, encoding="utf-8", errors="replace")
+    for lineno, raw in enumerate(stream, start=1):
+        line = raw.strip()
+        if not line:
+            continue
+        if lineno == 1 and line.startswith("["):
+            raise HTTPException(
+                status_code=400,
+                detail="Expected JSON Lines (one article object per line), not a JSON array.",
+            )
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            note_error(lineno, f"Invalid JSON: {exc.msg}")
+            continue
+        if not isinstance(entry, dict):
+            note_error(lineno, "Expected a JSON object.")
+            continue
+        url = str(entry.get("url") or "").strip()
+        if not url:
+            note_error(lineno, "Missing url.")
+            continue
+
+        row = {key: value for key, value in entry.items() if key in allowed}
+        row["url"] = url
+        received += 1
+        batch.append(row)
+        if len(batch) >= IMPORT_BATCH_SIZE:
+            flush()
+    flush()
+
+    if received == 0:
+        detail = errors[0]["error"] if errors else "No articles found in the file."
+        raise HTTPException(status_code=400, detail=f"Nothing to import. {detail}")
+
+    return {
+        "received": received,
+        "saved": saved,
+        "skipped": skipped,
+        "by_source": saved_by_source,
+        "errors": errors,
+        "project_id": project_id,
+    }
 
 
 # --- Analysis pipeline: on-demand (re)analysis, status, ideas -------------
