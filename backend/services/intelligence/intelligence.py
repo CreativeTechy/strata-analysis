@@ -217,10 +217,41 @@ def pipeline_discovery_series(runs: list[dict]) -> list[dict]:
     return points
 
 
-def _fetch_project_rows(project_id: int) -> list[dict]:
+def sentiment_by_run_series(runs: list[dict], counts_by_run: dict) -> list[dict]:
+    """Per-run sentiment breakdown, aligned with pipeline_discovery_series'
+    run ordering - lets the dashboard compare how sentiment mix varies from
+    one pipeline run to the next, not just how many articles each found."""
+    points = []
+    for run in runs:
+        run_id = run.get("id")
+        counts = counts_by_run.get(run_id) or {}
+        values = {key: int(counts.get(key, 0)) for key in VALID_SENTIMENTS}
+        points.append({
+            "run_id": run_id,
+            "completed_at": run.get("finished_at") or run.get("created_at"),
+            "total": sum(values.values()),
+            **values,
+        })
+    return points
+
+
+def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict]:
     if not _database_ready():
         return []
     import db
+    if run_id:
+        return db.fetch_all(
+            """
+            select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
+                   a.sentiment, a.writer_tone, a.article_tone, a.insight_json,
+                   a.published, a.created_at
+            from articles a
+            join article_projects ap on ap.article_id = a.id
+            where ap.project_id = %s and a.pipeline_run_id = %s
+            order by a.created_at asc
+            """,
+            (int(project_id), str(run_id)),
+        )
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
@@ -255,6 +286,29 @@ def _fetch_pipeline_runs(project_id: int) -> list[dict]:
     )
 
 
+def _fetch_sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
+    ids = [run_id for run_id in run_ids if run_id]
+    if not _database_ready() or not ids:
+        return {}
+    import db
+    rows = db.fetch_all(
+        """
+        select a.pipeline_run_id as run_id, a.sentiment, count(*)::int as total
+        from articles a
+        join article_projects ap on ap.article_id = a.id
+        where ap.project_id = %s and a.pipeline_run_id = any(%s)
+        group by a.pipeline_run_id, a.sentiment
+        """,
+        (int(project_id), ids),
+    )
+    counts_by_run = defaultdict(dict)
+    for row in rows:
+        sentiment = str(row.get("sentiment") or "").lower()
+        if sentiment in VALID_SENTIMENTS:
+            counts_by_run[row.get("run_id")][sentiment] = int(row.get("total") or 0)
+    return counts_by_run
+
+
 def _fetch_active_source_count(project_id: int) -> int:
     if not _database_ready():
         return 0
@@ -263,10 +317,14 @@ def _fetch_active_source_count(project_id: int) -> int:
     return int((row or {}).get("total") or 0)
 
 
-def get_project_intelligence(project: dict, period: str = "30d") -> dict:
+def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
     from services.articles.articles_store import _topic_summary
     period = normalize_period(period)
-    rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+    if run_id:
+        rows = _fetch_project_rows(project["id"], run_id=run_id)
+    else:
+        rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+    pipeline_runs = _fetch_pipeline_runs(project["id"])
     counts = Counter(str(row.get("sentiment") or "").lower() for row in rows)
     sentiment = {key: int(counts[key]) for key in ("positive", "negative", "neutral", "mixed")}
 
@@ -292,6 +350,7 @@ def get_project_intelligence(project: dict, period: str = "30d") -> dict:
     return {
         "project_id": project["id"],
         "period": period,
+        "run_id": run_id,
         "total": len(rows),
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
@@ -306,7 +365,10 @@ def get_project_intelligence(project: dict, period: str = "30d") -> dict:
             for platform, values in sorted(platforms.items())
         ],
         "trending_terms": count_configured_terms(rows, project.get("hashtags"), project.get("keywords")),
-        "pipeline_discovery": pipeline_discovery_series(_fetch_pipeline_runs(project["id"])),
+        "pipeline_discovery": pipeline_discovery_series(pipeline_runs),
+        "sentiment_by_pipeline_run": sentiment_by_run_series(
+            pipeline_runs, _fetch_sentiment_counts_by_run(project["id"], [run.get("id") for run in pipeline_runs]),
+        ),
         "insights": _topic_summary(rows),
     }
 
@@ -316,9 +378,13 @@ def get_project_keyword_existence(
     period: str = "30d",
     source_url: str | None = None,
     keyword: str | None = None,
+    run_id: str | None = None,
 ) -> dict:
     period = normalize_period(period)
-    rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+    if run_id:
+        rows = _fetch_project_rows(project["id"], run_id=run_id)
+    else:
+        rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
     configured_keywords = [str(term).strip() for term in (project.get("keywords") or []) if str(term or "").strip()]
 
     normalized_keyword = str(keyword or "").strip()
@@ -335,6 +401,7 @@ def get_project_keyword_existence(
     return {
         "project_id": project["id"],
         "period": period,
+        "run_id": run_id,
         "keywords": configured_keywords,
         "selected_keywords": selected_keywords,
         "all_keywords": all_keywords,

@@ -566,8 +566,12 @@ def remove_project(project_id: int, user: dict = Depends(require_permission("pro
 
 
 @app.get("/api/pipeline-runs")
-def get_pipeline_runs(limit: int = 10, user: dict = Depends(require_permission("pipeline.view"))):
-    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)))}
+def get_pipeline_runs(
+    limit: int = 10,
+    project_id: int | None = None,
+    user: dict = Depends(require_permission("pipeline.view")),
+):
+    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)), project_id=project_id)}
 
 
 @app.get("/api/pipeline-runs/{run_id}")
@@ -649,13 +653,14 @@ def get_articles_stats(
 def get_project_intelligence_view(
     project_id: int,
     period: str = "30d",
+    run_id: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
-    return get_project_intelligence(project, normalize_period(period))
+    return get_project_intelligence(project, normalize_period(period), run_id=run_id)
 
 
 @app.get("/api/projects/{project_id}/keyword-existence")
@@ -664,13 +669,16 @@ def get_project_keyword_existence_view(
     period: str = "30d",
     source_url: str | None = None,
     keyword: str | None = None,
+    run_id: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
-    return get_project_keyword_existence(project, normalize_period(period), source_url=source_url, keyword=keyword)
+    return get_project_keyword_existence(
+        project, normalize_period(period), source_url=source_url, keyword=keyword, run_id=run_id,
+    )
 
 
 @app.get("/api/articles/export")

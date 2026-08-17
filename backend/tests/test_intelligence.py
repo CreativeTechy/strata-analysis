@@ -13,6 +13,7 @@ from services.intelligence.intelligence import (
     keyword_existence_over_time,
     net_sentiment,
     pipeline_discovery_series,
+    sentiment_by_run_series,
 )
 
 
@@ -59,6 +60,20 @@ class IntelligenceHelpersTests(unittest.TestCase):
         self.assertIsNone(values[0]["change_pct"])
         self.assertEqual(values[1]["change_pct"], 100)
         self.assertEqual(values[2]["change_pct"], -50)
+
+    def test_sentiment_by_run_pairs_each_run_with_its_own_counts(self):
+        points = sentiment_by_run_series(
+            [{"id": "a", "finished_at": "2026-07-01T00:00:00Z"}, {"id": "b", "finished_at": "2026-07-02T00:00:00Z"}],
+            {"a": {"positive": 3, "negative": 1}},
+        )
+        self.assertEqual(points[0], {
+            "run_id": "a", "completed_at": "2026-07-01T00:00:00Z", "total": 4,
+            "positive": 3, "negative": 1, "neutral": 0, "mixed": 0,
+        })
+        self.assertEqual(points[1], {
+            "run_id": "b", "completed_at": "2026-07-02T00:00:00Z", "total": 0,
+            "positive": 0, "negative": 0, "neutral": 0, "mixed": 0,
+        })
 
     def test_period_filter_uses_article_date(self):
         now = datetime(2026, 7, 23, tzinfo=timezone.utc)
@@ -117,9 +132,18 @@ class GetProjectIntelligenceTests(unittest.TestCase):
             result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []})
         self.assertEqual(result["project_id"], 1)
         self.assertEqual(result["period"], "30d")
+        self.assertIsNone(result["run_id"])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["active_sources"], 0)
         self.assertIn("insights", result)
+
+    def test_run_id_passes_through_into_the_response(self):
+        """When a specific pipeline run is selected, the response should echo
+        it back so the frontend can confirm which run it's looking at."""
+        with patch.object(intelligence, "_database_ready", return_value=False):
+            result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, run_id="run-123")
+        self.assertEqual(result["run_id"], "run-123")
+        self.assertEqual(result["total"], 0)
 
 
 if __name__ == "__main__":

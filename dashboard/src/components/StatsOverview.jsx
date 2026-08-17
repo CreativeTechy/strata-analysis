@@ -20,7 +20,7 @@ function FeedbackColumn({ title, icon, tone, items }) {
   return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => <li key={item.text || item.idea}>{item.text || item.idea}<strong>{item.count || item.frequency_estimate || 1}</strong></li>)}</ul> : <p>No signals in this category yet.</p>}</article>;
 }
 
-export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, sources = [], period = 'all' }) {
+export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, sources = [], period = 'all', runId = null }) {
   const projectId = project?.id ?? null;
 
   const configuredKeywords = useMemo(
@@ -59,6 +59,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     const params = new URLSearchParams({ period });
     if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
     if (keywordFilter !== 'all') params.set('keyword', keywordFilter);
+    if (runId) params.set('run_id', runId);
     fetch(`/api/projects/${projectId}/keyword-existence?${params.toString()}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Keyword existence request failed: ${res.status}`);
@@ -74,7 +75,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       })
       .finally(() => { if (!cancelled) setKeywordLoading(false); });
     return () => { cancelled = true; };
-  }, [projectId, period, sourceFilter, keywordFilter, configuredKeywords.length]);
+  }, [projectId, period, runId, sourceFilter, keywordFilter, configuredKeywords.length]);
 
   if (loading) return <section className="report-brief glass-card intelligence-loading">Loading the live intelligence brief…</section>;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>Couldn’t load this report</strong><p className="subtitle">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>Try again</button>}</div></section>;

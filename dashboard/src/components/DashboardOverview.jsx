@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import {
-  Activity, CalendarClock, FolderKanban, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
+  Activity, CalendarClock, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
-  CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
@@ -39,9 +39,17 @@ function MetricCard({ icon, label, value, detail, tone = 'blue' }) {
   </article>;
 }
 
+function formatRunLabel(run) {
+  const value = run?.finished_at || run?.created_at;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Run';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
-  loading, error, totalProjects, pipelineHealth, nextScheduledRun,
+  loading, error, pipelineHealth, nextScheduledRun, runs = [], selectedRunId, onRunChange,
 }) {
   const data = intelligence || {};
   const total = Number(data.total || 0);
@@ -49,6 +57,7 @@ export default function DashboardOverview({
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
+  const selectedRun = selectedRunId ? runs.find((run) => run.id === selectedRunId) : null;
 
   return <div className="content-shell intelligence-page">
     <header className="intelligence-header">
@@ -58,10 +67,15 @@ export default function DashboardOverview({
           {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
         </select>
         <div className="source-type-tabs" role="tablist" aria-label="Dashboard date range">
-          {PERIODS.map((item) => <button key={item.key} type="button" role="tab" aria-selected={period === item.key} className={`source-type-tab ${period === item.key ? 'active' : ''}`} onClick={() => onPeriodChange(item.key)}>{item.label}</button>)}
+          {PERIODS.map((item) => <button key={item.key} type="button" role="tab" aria-selected={period === item.key && !selectedRunId} className={`source-type-tab ${period === item.key && !selectedRunId ? 'active' : ''}`} onClick={() => onPeriodChange(item.key)}>{item.label}</button>)}
         </div>
+        {runs.length > 0 ? <div className="source-type-tabs pipeline-run-tabs" role="tablist" aria-label="Filter by pipeline run">
+          {runs.map((run) => <button key={run.id} type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{formatRunLabel(run)}</button>)}
+        </div> : null}
       </div>
     </header>
+
+    {selectedRunId ? <p className="intelligence-run-note">Showing pipeline run from {formatRunLabel(selectedRun)}.</p> : null}
 
     {selectedProject?.mode === 'competitor' ? (
       <CompetitorPulseCard studyId={selectedProject.id} backTo="/dashboard" backLabel="Back to dashboard" />
@@ -72,10 +86,9 @@ export default function DashboardOverview({
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<FolderKanban size={18} />} label="Total projects" value={Number(totalProjects || 0).toLocaleString()} detail="Across your workspace" />
         <MetricCard icon={<Activity size={18} />} label="Pipeline health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
         <MetricCard icon={<CalendarClock size={18} />} label="Next run" value={nextScheduledRun ? formatDate(nextScheduledRun.nextRunAt) : 'Not scheduled'} detail={nextScheduledRun ? 'Selected project' : 'Enable a repeat schedule'} tone="orange" />
-        <MetricCard icon={<Network size={18} />} label="Analyzed articles" value={loading ? '—' : total.toLocaleString()} detail={PERIODS.find((item) => item.key === period)?.label} tone="blue" />
+        <MetricCard icon={<Network size={18} />} label="Analyzed articles" value={loading ? '—' : total.toLocaleString()} detail={selectedRunId ? `Run ${formatRunLabel(selectedRun)}` : PERIODS.find((item) => item.key === period)?.label} tone="blue" />
         <MetricCard icon={<Gauge size={18} />} label="Net sentiment" value={loading ? '—' : `${Number(data.net_sentiment || 0) >= 0 ? '+' : ''}${data.net_sentiment || 0}`} detail="Positive minus negative" tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
         <MetricCard icon={<Rss size={18} />} label="Active sources" value={loading ? '—' : Number(data.active_sources || 0).toLocaleString()} detail="Assigned to this project" tone="blue" />
       </section>
@@ -96,6 +109,13 @@ export default function DashboardOverview({
         <section className="intelligence-bottom-grid">
           <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <span key={`${term.kind}-${term.term}`} className={term.kind}><b>{term.term}</b> <em>{term.mentions}</em></span>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article>
           <article className="glass-card intelligence-card intelligence-pipeline-card"><div className="intelligence-card-heading"><h3>Article discovery by pipeline run</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={formatDate} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} formatter={(value) => [`${value} articles`, 'Discovered']} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a successful pipeline run to compare article discovery.</p>}</article>
+        </section>
+
+        <section className="intelligence-run-sentiment-grid">
+          <article className="glass-card intelligence-card intelligence-run-sentiment-card">
+            <h3>Sentiment variety by pipeline run</h3>
+            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><BarChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={formatDate} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} formatter={(value, name) => [`${value} articles`, name]} /><Legend /><Bar dataKey="positive" name="Positive" stackId="sentiment" fill={SENTIMENT_COLORS.positive} /><Bar dataKey="neutral" name="Neutral" stackId="sentiment" fill={SENTIMENT_COLORS.neutral} /><Bar dataKey="negative" name="Negative" stackId="sentiment" fill={SENTIMENT_COLORS.negative} /><Bar dataKey="mixed" name="Mixed" stackId="sentiment" fill={SENTIMENT_COLORS.mixed} /></BarChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a pipeline run with analyzed articles to compare sentiment across runs.</p>}
+          </article>
         </section>
       </>}
     </>) : null}

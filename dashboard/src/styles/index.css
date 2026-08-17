@@ -1771,6 +1771,12 @@ h1, h2, h3 {
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
+.source-type-tabs.pipeline-run-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .source-type-tab {
   display: inline-flex;
   align-items: center;

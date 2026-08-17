@@ -74,6 +74,14 @@ function timeAgo(dateString) {
   return `${days}d ago`;
 }
 
+function formatRunLabel(run) {
+  const value = run?.finished_at || run?.created_at;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Run';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 function RequireAuth() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -126,6 +134,9 @@ export default function App() {
   const [lastIntelligenceSyncAt, setLastIntelligenceSyncAt] = useState(null);
   const [reportPeriod, setReportPeriod] = useState('all');
   const [dashboardPeriod, setDashboardPeriod] = useState('30d');
+  const [dashboardRunId, setDashboardRunId] = useState(null);
+  const [reportRunId, setReportRunId] = useState(null);
+  const [projectRuns, setProjectRuns] = useState([]);
   const [intelligence, setIntelligence] = useState(null);
   const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false);
   const [intelligenceError, setIntelligenceError] = useState(null);
@@ -246,6 +257,30 @@ export default function App() {
     }
   };
 
+  const loadProjectRuns = async (projectId) => {
+    const scopedProjectId = coerceProjectId(projectId);
+    if (scopedProjectId == null) {
+      setProjectRuns([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pipeline-runs?project_id=${scopedProjectId}&limit=20`);
+      if (!res.ok) {
+        setProjectRuns([]);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const runs = Array.isArray(data?.runs) ? data.runs : [];
+      const completed = runs
+        .filter((run) => run?.finished_at)
+        .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
+        .slice(0, 10);
+      setProjectRuns(completed);
+    } catch {
+      setProjectRuns([]);
+    }
+  };
+
   const refreshProjects = async () => {
     setIsLoadingProjects(true);
     try {
@@ -298,7 +333,7 @@ export default function App() {
     return fallback;
   };
 
-  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod) => {
+  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod, runId = null) => {
     const scopedProjectId = coerceProjectId(projectId);
     if (scopedProjectId == null) {
       setIntelligence(null);
@@ -307,7 +342,9 @@ export default function App() {
     setIsLoadingIntelligence(true);
     setIntelligenceError(null);
     try {
-      const res = await fetch(`/api/projects/${scopedProjectId}/intelligence?period=${encodeURIComponent(period)}`);
+      const params = new URLSearchParams({ period });
+      if (runId) params.set('run_id', runId);
+      const res = await fetch(`/api/projects/${scopedProjectId}/intelligence?${params.toString()}`);
       if (!res.ok) throw new Error(`Intelligence request failed: ${res.status}`);
       setIntelligence(await res.json());
       setLastIntelligenceSyncAt(new Date().toISOString());
@@ -433,8 +470,10 @@ export default function App() {
     }
 
     const period = pathname === '/dashboard' ? dashboardPeriod : reportPeriod;
-    loadIntelligence(selectedProjectId, period);
-  }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod]);
+    const runId = pathname === '/dashboard' ? dashboardRunId : reportRunId;
+    loadIntelligence(selectedProjectId, period, runId);
+    loadProjectRuns(selectedProjectId);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod, dashboardRunId, reportRunId]);
 
   useEffect(() => {
     if (!isAuthenticated || pathname !== '/workflow') return;
@@ -661,11 +700,13 @@ export default function App() {
       selectedProjectId={selectedProjectId}
       onProjectChange={setSelectedProjectId}
       period={dashboardPeriod}
-      onPeriodChange={setDashboardPeriod}
+      onPeriodChange={(key) => { setDashboardPeriod(key); setDashboardRunId(null); }}
+      runs={projectRuns}
+      selectedRunId={dashboardRunId}
+      onRunChange={setDashboardRunId}
       intelligence={intelligence}
       loading={isLoadingIntelligence}
       error={intelligenceError}
-      totalProjects={projects.length}
       pipelineHealth={selectedPipelineHealth}
       nextScheduledRun={selectedProject?.repeat_enabled && selectedProject?.next_run_at
         ? { project: selectedProject, nextRunAt: new Date(selectedProject.next_run_at).getTime() }
@@ -750,7 +791,7 @@ export default function App() {
               <button
                 type="button"
                 className="btn-secondary toolbar-button report-refresh-btn"
-                onClick={() => loadIntelligence(selectedProjectId, reportPeriod)}
+                onClick={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
                 disabled={isLoadingIntelligence || !hasProjects}
                 aria-busy={isLoadingIntelligence}
               >
@@ -767,14 +808,31 @@ export default function App() {
                   key={period.key}
                   type="button"
                   role="tab"
-                  aria-selected={reportPeriod === period.key}
-                  className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
-                  onClick={() => setReportPeriod(period.key)}
+                  aria-selected={reportPeriod === period.key && !reportRunId}
+                  className={`source-type-tab ${reportPeriod === period.key && !reportRunId ? 'active' : ''}`}
+                  onClick={() => { setReportPeriod(period.key); setReportRunId(null); }}
                 >
                   {period.label}
                 </button>
               ))}
             </div>
+
+            {projectRuns.length > 0 ? (
+              <div className="source-type-tabs pipeline-run-tabs" role="tablist" aria-label="Filter by pipeline run">
+                {projectRuns.map((run) => (
+                  <button
+                    key={run.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={reportRunId === run.id}
+                    className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
+                    onClick={() => setReportRunId(run.id)}
+                  >
+                    {formatRunLabel(run)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
           </div>
 
@@ -798,7 +856,9 @@ export default function App() {
               <CalendarClock size={13} aria-hidden="true" />
               <span className="report-chip-label">Range</span>
               <strong>
-                {REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
+                {reportRunId
+                  ? `Run ${formatRunLabel(projectRuns.find((run) => run.id === reportRunId))}`
+                  : REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
               </strong>
             </li>
             <li
@@ -823,10 +883,11 @@ export default function App() {
             scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
             loading={isLoadingIntelligence}
             error={intelligenceError}
-            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod)}
+            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
             project={selectedProject}
             sources={sources}
             period={reportPeriod}
+            runId={reportRunId}
           />
         </motion.div>
       </div>

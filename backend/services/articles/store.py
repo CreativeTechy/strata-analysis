@@ -28,6 +28,7 @@ ARTICLE_COLUMNS = (
     "source_language", "source_language_confidence", "embedding_dimensions",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at", "content_hash",
+    "pipeline_run_id",
 )
 
 LEGACY_ARTICLE_COLUMNS = (
@@ -90,6 +91,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "analysis_attempt_count",
     "reprocess_requested_at",
     "content_hash",
+    "pipeline_run_id",
 )
 ARTICLE_JSON_FIELDS = {
     "insight_json",
@@ -325,7 +327,12 @@ def _upsert_article_row(article):
     values_sql = ", ".join(["%s"] * len(fields))
     returning_sql = _article_returning_sql()
 
-    updates = [f"{field} = excluded.{field}" for field in fields if field != "url"]
+    updates = [f"{field} = excluded.{field}" for field in fields if field not in ("url", "pipeline_run_id")]
+    if "pipeline_run_id" in fields:
+        # A save that doesn't know which run touched this article (reanalyze,
+        # import, competitor doc extraction all omit run_id) must not blank
+        # out the run id a real pipeline run previously recorded.
+        updates.append("pipeline_run_id = coalesce(excluded.pipeline_run_id, articles.pipeline_run_id)")
     # Advanced only when the body actually differs, which is what makes
     # "this page changed" distinguishable from "we crawled this page again".
     # Every SET expression is evaluated against the pre-update row, so
@@ -542,7 +549,7 @@ def _source_key(article):
     return (article.get("source_name") or article.get("source") or "unknown").strip() or "unknown"
 
 
-def save_articles(articles, batch_size=50, project_id=None):
+def save_articles(articles, batch_size=50, project_id=None, run_id=None):
     """Upserts articles and returns (total_saved, saved_count_by_source).
 
     `project_id` additionally links every saved article to that project and
@@ -552,6 +559,12 @@ def save_articles(articles, batch_size=50, project_id=None):
     subprocess sets, exactly as before. Callers running in-process (e.g.
     reanalyze.py, which has no such env var scoped to one request) should
     pass it explicitly instead.
+
+    `run_id` tags every saved article with the pipeline run that produced it
+    (so dashboard/reports stats can be scoped to one run). Same fallback: the
+    scrape subprocess's call sites never pass it, so it resolves from
+    PIPELINE_RUN_ID; callers outside a scrape run leave it None, which
+    `_upsert_article_row` treats as "don't touch the existing value".
     """
     if not config.DATABASE_URL:
         print("Database credentials not set, skipping upload.")
@@ -568,6 +581,11 @@ def save_articles(articles, batch_size=50, project_id=None):
                 project_id = int(raw_project_id)
         except Exception:
             project_id = None
+
+    if run_id is None:
+        from os import environ
+
+        run_id = (environ.get("PIPELINE_RUN_ID") or "").strip() or None
 
     source_project_cache = {}
     linked_articles = defaultdict(set)
@@ -597,6 +615,8 @@ def save_articles(articles, batch_size=50, project_id=None):
         try:
             persisted = []
             for article in source_batch:
+                if run_id:
+                    article["pipeline_run_id"] = run_id
                 row = _upsert_article_row(article)
                 if row:
                     _assign_story_group(article, row)

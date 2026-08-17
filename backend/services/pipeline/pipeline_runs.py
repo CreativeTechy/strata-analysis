@@ -114,20 +114,27 @@ def get_active_run_for_project(project_id):
         return None
 
 
-def list_pipeline_runs(limit=10):
+def list_pipeline_runs(limit=10, project_id=None):
     if not config.DATABASE_URL:
         return []
 
     try:
+        where_sql = ""
+        params = []
+        if project_id is not None:
+            where_sql = "where pr.project_id = %s"
+            params.append(int(project_id))
+        params.append(limit)
         rows = db.fetch_all(
             f"""
             select {RUN_SELECT}
             from pipeline_runs pr
             left join projects p on p.id = pr.project_id
+            {where_sql}
             order by pr.created_at desc
             limit %s
             """,
-            (limit,),
+            tuple(params),
         )
         return [_normalize(row) for row in rows]
     except Exception:
