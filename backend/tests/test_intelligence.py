@@ -53,27 +53,35 @@ class IntelligenceHelpersTests(unittest.TestCase):
 
     def test_pipeline_deltas_cover_first_and_zero_baseline_runs(self):
         values = pipeline_discovery_series([
-            {"id": "a", "articles_scraped": 0},
-            {"id": "b", "articles_scraped": 10},
-            {"id": "c", "articles_scraped": 5},
+            {"id": "a", "sequence_number": 1, "articles_scraped": 0},
+            {"id": "b", "sequence_number": 2, "articles_scraped": 10},
+            {"id": "c", "sequence_number": 3, "articles_scraped": 5},
         ])
         self.assertIsNone(values[0]["change_pct"])
         self.assertEqual(values[1]["change_pct"], 100)
         self.assertEqual(values[2]["change_pct"], -50)
+        self.assertEqual([v["sequence_number"] for v in values], [1, 2, 3])
 
     def test_sentiment_by_run_pairs_each_run_with_its_own_counts(self):
         points = sentiment_by_run_series(
-            [{"id": "a", "finished_at": "2026-07-01T00:00:00Z"}, {"id": "b", "finished_at": "2026-07-02T00:00:00Z"}],
+            [
+                {"id": "a", "sequence_number": 1, "finished_at": "2026-07-01T00:00:00Z"},
+                {"id": "b", "sequence_number": 2, "finished_at": "2026-07-02T00:00:00Z"},
+            ],
             {"a": {"positive": 3, "negative": 1}},
         )
         self.assertEqual(points[0], {
-            "run_id": "a", "completed_at": "2026-07-01T00:00:00Z", "total": 4,
+            "run_id": "a", "sequence_number": 1, "completed_at": "2026-07-01T00:00:00Z", "total": 4,
             "positive": 3, "negative": 1, "neutral": 0, "mixed": 0,
         })
         self.assertEqual(points[1], {
-            "run_id": "b", "completed_at": "2026-07-02T00:00:00Z", "total": 0,
+            "run_id": "b", "sequence_number": 2, "completed_at": "2026-07-02T00:00:00Z", "total": 0,
             "positive": 0, "negative": 0, "neutral": 0, "mixed": 0,
         })
+
+    def test_sentiment_by_run_defaults_sequence_number_to_none_when_missing(self):
+        points = sentiment_by_run_series([{"id": "a", "finished_at": "2026-07-01T00:00:00Z"}], {})
+        self.assertIsNone(points[0]["sequence_number"])
 
     def test_period_filter_uses_article_date(self):
         now = datetime(2026, 7, 23, tzinfo=timezone.utc)

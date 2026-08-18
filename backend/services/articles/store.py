@@ -329,10 +329,15 @@ def _upsert_article_row(article):
 
     updates = [f"{field} = excluded.{field}" for field in fields if field not in ("url", "pipeline_run_id")]
     if "pipeline_run_id" in fields:
-        # A save that doesn't know which run touched this article (reanalyze,
-        # import, competitor doc extraction all omit run_id) must not blank
-        # out the run id a real pipeline run previously recorded.
-        updates.append("pipeline_run_id = coalesce(excluded.pipeline_run_id, articles.pipeline_run_id)")
+        # pipeline_run_id records which run *first* saved this article, not
+        # whichever run touched it most recently - every run re-crawls all of
+        # a project's sources, so a later run routinely re-upserts URLs an
+        # earlier run already saved (an RSS feed re-listing the same recent
+        # items, GDELT re-surfacing the same story, etc). Keeping the
+        # existing value here is what makes "articles per run" mean anything;
+        # the incoming value only fills in when there was none yet (a brand
+        # new article, or a legacy pre-tracking row).
+        updates.append("pipeline_run_id = coalesce(articles.pipeline_run_id, excluded.pipeline_run_id)")
     # Advanced only when the body actually differs, which is what makes
     # "this page changed" distinguishable from "we crawled this page again".
     # Every SET expression is evaluated against the pre-update row, so

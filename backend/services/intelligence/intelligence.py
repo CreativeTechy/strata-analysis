@@ -209,6 +209,7 @@ def pipeline_discovery_series(runs: list[dict]) -> list[dict]:
             change = round(((discovered - previous) / previous) * 100)
         points.append({
             "run_id": run.get("id"),
+            "sequence_number": run.get("sequence_number"),
             "completed_at": run.get("finished_at") or run.get("created_at"),
             "articles_discovered": discovered,
             "change_pct": change,
@@ -228,6 +229,7 @@ def sentiment_by_run_series(runs: list[dict], counts_by_run: dict) -> list[dict]
         values = {key: int(counts.get(key, 0)) for key in VALID_SENTIMENTS}
         points.append({
             "run_id": run_id,
+            "sequence_number": run.get("sequence_number"),
             "completed_at": run.get("finished_at") or run.get("created_at"),
             "total": sum(values.values()),
             **values,
@@ -270,13 +272,22 @@ def _fetch_pipeline_runs(project_id: int) -> list[dict]:
     if not _database_ready():
         return []
     import db
+    # sequence_number is numbered over every scrape run for this project
+    # (any status), matching list_pipeline_runs() - not just the successful,
+    # finished ones selected below - so "Pipeline #N" means the same run
+    # whether it's read off a chart here or off the run-picker tabs.
     return db.fetch_all(
         """
-        select id, finished_at, created_at, articles_scraped
+        select id, finished_at, created_at, articles_scraped, sequence_number
         from (
-            select id, finished_at, created_at, articles_scraped
-            from pipeline_runs
-            where project_id = %s and pipeline = 'scrape' and status = 'success' and finished_at is not null
+            select id, finished_at, created_at, articles_scraped, sequence_number
+            from (
+                select id, finished_at, created_at, articles_scraped, status,
+                       row_number() over (order by created_at asc) as sequence_number
+                from pipeline_runs
+                where project_id = %s and pipeline = 'scrape'
+            ) numbered
+            where status = 'success' and finished_at is not null
             order by finished_at desc
             limit 12
         ) latest

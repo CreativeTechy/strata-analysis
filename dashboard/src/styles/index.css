@@ -1771,10 +1771,44 @@ h1, h2, h3 {
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
-.source-type-tabs.pipeline-run-tabs {
+/* A single bordered shell holding a mode toggle ("Date range" vs "Pipeline
+   run") plus only that mode's tab row, so the two filters never compete for
+   attention at once. */
+.filter-tabs-shell {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.filter-mode-toggle {
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.filter-tab-buttons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.filter-tab-buttons.scrollable {
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+.filter-tab-divider {
+  align-self: stretch;
+  width: 1px;
+  background: rgba(15, 23, 42, 0.1);
 }
 
 .source-type-tab {

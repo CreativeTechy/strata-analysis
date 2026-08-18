@@ -43,6 +43,12 @@ def _normalize(row):
         "enrich_finished_at": row.get("enrich_finished_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        # This project's Nth scrape run ever, oldest = 1 - stable regardless
+        # of how the caller filters/limits/sorts the result set, so the
+        # dashboard's "Pipeline #N" labels don't shift as older runs age out
+        # of a capped list. Only populated by list_pipeline_runs(); other
+        # readers of this row shape simply get None here.
+        "sequence_number": row.get("sequence_number"),
     }
 
 
@@ -127,9 +133,14 @@ def list_pipeline_runs(limit=10, project_id=None):
         params.append(limit)
         rows = db.fetch_all(
             f"""
-            select {RUN_SELECT}
+            select {RUN_SELECT}, seq.sequence_number
             from pipeline_runs pr
             left join projects p on p.id = pr.project_id
+            left join (
+                select id, row_number() over (partition by project_id order by created_at asc) as sequence_number
+                from pipeline_runs
+                where pipeline = 'scrape'
+            ) seq on seq.id = pr.id
             {where_sql}
             order by pr.created_at desc
             limit %s

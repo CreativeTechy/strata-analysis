@@ -82,6 +82,21 @@ function formatRunLabel(run) {
     + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+// sequence_number is this project's Nth scrape run ever (oldest = 1),
+// computed server-side so it stays fixed regardless of how many runs are in
+// the currently-fetched list or what order they're shown in. `index` is only
+// a fallback for the rare case a run has no sequence_number (e.g. a
+// non-scrape pipeline row).
+function pipelineRunNumber(run, index) {
+  return run?.sequence_number ?? (index + 1);
+}
+
+// Full label (with date/time) for the tab list, where several runs are
+// shown side by side and the date disambiguates them at a glance.
+function pipelineRunTitle(run, index) {
+  return `Pipeline #${pipelineRunNumber(run, index)}: ${formatRunLabel(run)}`;
+}
+
 function RequireAuth() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -162,6 +177,11 @@ export default function App() {
   });
   const pollIntervalRef = useRef(null);
   const pipelineRunsPollRef = useRef(null);
+  // Which (page, project) pairs have already had their pipeline-run default
+  // applied - so picking a period tab (which clears the run selection) isn't
+  // immediately overridden back to "the latest run" on the next fetch.
+  const dashboardRunDefaultedRef = useRef(new Set());
+  const reportRunDefaultedRef = useRef(new Set());
 
   const selectedProject = useMemo(
     () => projects.find((project) => Number(project.id) === Number(selectedProjectId)) || null,
@@ -257,7 +277,7 @@ export default function App() {
     }
   };
 
-  const loadProjectRuns = async (projectId) => {
+  const loadProjectRuns = async (projectId, page = null) => {
     const scopedProjectId = coerceProjectId(projectId);
     if (scopedProjectId == null) {
       setProjectRuns([]);
@@ -276,6 +296,18 @@ export default function App() {
         .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
         .slice(0, 10);
       setProjectRuns(completed);
+
+      // Default to the latest run the first time this project is viewed on
+      // this page - after that, respect whatever the user picks (including
+      // switching back to a period tab).
+      if (page && completed.length > 0) {
+        const defaultedRef = page === 'dashboard' ? dashboardRunDefaultedRef : reportRunDefaultedRef;
+        if (!defaultedRef.current.has(scopedProjectId)) {
+          defaultedRef.current.add(scopedProjectId);
+          if (page === 'dashboard') setDashboardRunId(completed[0].id);
+          else setReportRunId(completed[0].id);
+        }
+      }
     } catch {
       setProjectRuns([]);
     }
@@ -472,8 +504,16 @@ export default function App() {
     const period = pathname === '/dashboard' ? dashboardPeriod : reportPeriod;
     const runId = pathname === '/dashboard' ? dashboardRunId : reportRunId;
     loadIntelligence(selectedProjectId, period, runId);
-    loadProjectRuns(selectedProjectId);
   }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod, dashboardRunId, reportRunId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname) || selectedProjectId == null) return;
+    // Deliberately keyed only on project/page, not on period or run
+    // selection - otherwise picking a period tab (which clears the run
+    // selection) would immediately re-trigger the "default to latest run"
+    // logic inside loadProjectRuns and undo the user's choice.
+    loadProjectRuns(selectedProjectId, pathname === '/dashboard' ? 'dashboard' : 'reports');
+  }, [isAuthenticated, pathname, selectedProjectId]);
 
   useEffect(() => {
     if (!isAuthenticated || pathname !== '/workflow') return;
@@ -802,38 +842,64 @@ export default function App() {
           </div>
 
           <div className="report-filter-row">
-            <div className="source-type-tabs" role="tablist" aria-label="Report date range">
-              {REPORT_PERIODS.map((period) => (
+            <div className="filter-tabs-shell">
+              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter type">
                 <button
-                  key={period.key}
                   type="button"
                   role="tab"
-                  aria-selected={reportPeriod === period.key && !reportRunId}
-                  className={`source-type-tab ${reportPeriod === period.key && !reportRunId ? 'active' : ''}`}
-                  onClick={() => { setReportPeriod(period.key); setReportRunId(null); }}
+                  aria-selected={!reportRunId}
+                  className={`source-type-tab ${!reportRunId ? 'active' : ''}`}
+                  onClick={() => setReportRunId(null)}
                 >
-                  {period.label}
+                  Date range
                 </button>
-              ))}
-            </div>
-
-            {projectRuns.length > 0 ? (
-              <div className="source-type-tabs pipeline-run-tabs" role="tablist" aria-label="Filter by pipeline run">
-                {projectRuns.map((run) => (
+                {projectRuns.length > 0 ? (
                   <button
-                    key={run.id}
                     type="button"
                     role="tab"
-                    aria-selected={reportRunId === run.id}
-                    className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
-                    onClick={() => setReportRunId(run.id)}
+                    aria-selected={!!reportRunId}
+                    className={`source-type-tab ${reportRunId ? 'active' : ''}`}
+                    onClick={() => setReportRunId(reportRunId || projectRuns[0].id)}
                   >
-                    {formatRunLabel(run)}
+                    Pipeline run
                   </button>
-                ))}
+                ) : null}
               </div>
-            ) : null}
 
+              <div className="filter-tab-divider" aria-hidden="true" />
+
+              {reportRunId ? (
+                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+                  {projectRuns.map((run, index) => (
+                    <button
+                      key={run.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={reportRunId === run.id}
+                      className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
+                      onClick={() => setReportRunId(run.id)}
+                    >
+                      {pipelineRunTitle(run, index)}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="filter-tab-buttons" role="tablist" aria-label="Report date range">
+                  {REPORT_PERIODS.map((period) => (
+                    <button
+                      key={period.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={reportPeriod === period.key}
+                      className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
+                      onClick={() => setReportPeriod(period.key)}
+                    >
+                      {period.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <ul className="report-summary-chips" aria-label="Report summary">
@@ -857,7 +923,10 @@ export default function App() {
               <span className="report-chip-label">Range</span>
               <strong>
                 {reportRunId
-                  ? `Run ${formatRunLabel(projectRuns.find((run) => run.id === reportRunId))}`
+                  ? pipelineRunTitle(
+                      projectRuns.find((run) => run.id === reportRunId),
+                      projectRuns.findIndex((run) => run.id === reportRunId),
+                    )
                   : REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
               </strong>
             </li>

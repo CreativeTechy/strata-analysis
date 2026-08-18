@@ -194,13 +194,15 @@ class ArticleRowFieldHandlingTests(unittest.TestCase):
 
 class UpsertArticleRowConflictClauseTests(unittest.TestCase):
     """_upsert_article_row()'s on-conflict clause must not blindly overwrite
-    pipeline_run_id from `excluded.*` like every other field - a save that
-    doesn't know which run touched this article (reanalyze, import,
-    competitor doc extraction all omit run_id) must not blank out a value a
-    real pipeline run previously recorded. Mirrors the existing
+    pipeline_run_id from `excluded.*` like every other field. It records which
+    run *first* saved this article - every run re-crawls all of a project's
+    sources, so a later run routinely re-upserts URLs an earlier run already
+    saved, and must not steal that article's run attribution. It also must
+    not blank the field out for saves that don't know a run id at all
+    (reanalyze, import, competitor doc extraction). Mirrors the existing
     content_changed_at conditional-update coverage style in this file."""
 
-    def test_pipeline_run_id_is_coalesced_not_overwritten(self):
+    def test_pipeline_run_id_keeps_the_first_saved_value(self):
         captured = {}
 
         def _fake_fetch_one(sql, params):
@@ -214,7 +216,7 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
                     store._upsert_article_row(article)
 
         self.assertIn(
-            "pipeline_run_id = coalesce(excluded.pipeline_run_id, articles.pipeline_run_id)",
+            "pipeline_run_id = coalesce(articles.pipeline_run_id, excluded.pipeline_run_id)",
             captured["sql"],
         )
         self.assertNotIn("pipeline_run_id = excluded.pipeline_run_id", captured["sql"])
