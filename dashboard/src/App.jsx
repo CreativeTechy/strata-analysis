@@ -299,13 +299,21 @@ export default function App() {
 
       // Default to the latest run the first time this project is viewed on
       // this page - after that, respect whatever the user picks (including
-      // switching back to a period tab).
-      if (page && completed.length > 0) {
+      // switching back to a period tab). A project with zero completed runs
+      // has nothing to show in any recent window (Reports already starts at
+      // 'all' - see reportPeriod's initial state above), so the Dashboard's
+      // usual 'Last 30 days' default is switched to 'All time' instead of
+      // implying a narrower time window would ever surface something.
+      if (page) {
         const defaultedRef = page === 'dashboard' ? dashboardRunDefaultedRef : reportRunDefaultedRef;
         if (!defaultedRef.current.has(scopedProjectId)) {
           defaultedRef.current.add(scopedProjectId);
-          if (page === 'dashboard') setDashboardRunId(completed[0].id);
-          else setReportRunId(completed[0].id);
+          if (completed.length > 0) {
+            if (page === 'dashboard') setDashboardRunId(completed[0].id);
+            else setReportRunId(completed[0].id);
+          } else if (page === 'dashboard') {
+            setDashboardPeriod('all');
+          }
         }
       }
     } catch {
@@ -490,6 +498,24 @@ export default function App() {
       }
     }
   }, [workflowSelectedProjectIds]);
+
+  // A selected pipeline run belongs to exactly one project - carrying it over
+  // to a newly-selected project would silently scope the intelligence fetch
+  // to a run_id/project_id pair that can never match (see
+  // intelligence.py's _fetch_project_rows, which ANDs both), showing an
+  // empty "pipeline run" tab strip instead of the period tabs below it.
+  // Clearing the one-shot "already defaulted" markers too means switching
+  // back into a project always re-applies its correct default (latest run,
+  // or 'All time' for a project with none - see loadProjectRuns below)
+  // rather than carrying over whatever was picked for a *different* project.
+  useEffect(() => {
+    if (selectedProjectId != null) {
+      dashboardRunDefaultedRef.current.delete(selectedProjectId);
+      reportRunDefaultedRef.current.delete(selectedProjectId);
+    }
+    setDashboardRunId(null);
+    setReportRunId(null);
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname)) return;
