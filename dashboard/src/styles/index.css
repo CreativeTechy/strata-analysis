@@ -1811,6 +1811,21 @@ h1, h2, h3 {
   background: rgba(15, 23, 42, 0.1);
 }
 
+/* Wraps each pipeline-run tab together with the small arrow before it, so
+   the row reads as a timeline of runs rather than an unordered list. */
+.filter-tab-run-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.filter-tab-arrow {
+  flex: 0 0 auto;
+  color: var(--text-light);
+  opacity: 0.5;
+}
+
 .source-type-tab {
   display: inline-flex;
   align-items: center;

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import {
-  Activity, CalendarClock, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
+  Activity, CalendarClock, ChevronRight, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -96,7 +96,7 @@ export default function DashboardOverview({
           <div className="filter-tab-divider" aria-hidden="true" />
           {selectedRunId ? (
             <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
-              {runs.map((run, index) => <button key={run.id} type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button>)}
+              {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button></span>)}
             </div>
           ) : (
             <div className="filter-tab-buttons" role="tablist" aria-label="Dashboard date range">

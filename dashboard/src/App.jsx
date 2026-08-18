@@ -26,7 +26,7 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw, FolderKanban, CalendarClock, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
+import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const SENTIMENT_COLORS = {
@@ -871,16 +871,18 @@ export default function App() {
               {reportRunId ? (
                 <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
                   {projectRuns.map((run, index) => (
-                    <button
-                      key={run.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={reportRunId === run.id}
-                      className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
-                      onClick={() => setReportRunId(run.id)}
-                    >
-                      {pipelineRunTitle(run, index)}
-                    </button>
+                    <span key={run.id} className="filter-tab-run-item">
+                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={reportRunId === run.id}
+                        className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
+                        onClick={() => setReportRunId(run.id)}
+                      >
+                        {pipelineRunTitle(run, index)}
+                      </button>
+                    </span>
                   ))}
                 </div>
               ) : (
