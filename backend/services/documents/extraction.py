@@ -1,4 +1,10 @@
-"""Extracts text out of uploaded competitor documents, one chunk at a time.
+"""Extracts text out of an uploaded document, one chunk at a time.
+
+Shared by both the competitor-study and opinion-monitor offline document
+pipelines (see services/competitors/competitor_documents_store.py and
+services/projects/project_documents_store.py) - format parsing has no
+domain-specific concept in it, only the tables/prompts each caller feeds the
+extracted text into differ.
 
 A chunk is a page (PDF), a sheet (xlsx/xls), or the whole file (docx, csv,
 images, and anything unsupported) - whichever unit the format already comes
