@@ -238,6 +238,15 @@
   border-left-color: #ff4757;
 }
 
+.articles-page-shell .articles-import-batch-label {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.65;
+}
+
 .articles-page-shell .articles-import-headline {
   display: flex;
   align-items: baseline;

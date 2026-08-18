@@ -26,6 +26,7 @@ import config
 import migrate
 from prompt_loader import load_prompt
 from services.competitors import competitor_api
+from services.projects import project_documents_api
 from services.auth import permissions_store
 from services.auth import sessions_store
 from services.auth import users_store
@@ -113,6 +114,8 @@ app.add_middleware(
 # The competitor study is a separate experience from sentiment/opinions, so its
 # routes live in their own module rather than growing this one.
 app.include_router(competitor_api.router)
+# Offline (document-upload) opinion-monitor projects - same reasoning as above.
+app.include_router(project_documents_api.router)
 
 
 @app.exception_handler(HTTPException)

@@ -1,12 +1,18 @@
-"""Uploaded documents for offline competitor studies, and their extracted text.
+"""Uploaded documents for offline opinion-monitor projects, and their
+extracted text.
 
 Files live under the same `storage/` volume the rest of the backend already
 uses for durable, container-local files (see pipeline.py, prompt_loader.py),
-keyed by project so a study's documents are easy to find and to delete
+keyed by project so a project's documents are easy to find and to delete
 alongside it. Extraction itself (the per-chunk text/OCR split) is
 services.documents.extraction.iter_chunks() - this module only orchestrates:
 save the file, run extraction chunk by chunk as a background task, persist
 each chunk plus a rolled-up summary on the document row.
+
+Deliberately a separate table (and separate storage subfolder) from
+services/competitors/competitor_documents_store.py rather than a shared one -
+same shape, but keeping the two domains' documents apart means a change to
+one pipeline can't accidentally affect the other's rows.
 
 `extracted_text` (the join of every chunk, in order) is deliberately left out
 of DOCUMENT_COLUMNS (used by list/get/upload/delete) - it can run to tens of
@@ -17,7 +23,7 @@ failed - always populated when any chunk failed, even if others succeeded, so
 a partial failure is never silently hidden behind a success pill.
 
 Once extraction produces usable text, process_document also kicks off
-competitor_document_articles.generate_candidates() in the same background
+project_document_articles.generate_candidates() in the same background
 task - `articles_status` (pending -> generating -> ready/failed, or 'skipped'
 when extraction itself failed) is that step's own progress signal, tracked the
 same way status/extraction_error track extraction.
@@ -30,14 +36,14 @@ import uuid
 from pathlib import Path
 
 import db
-from services.competitors import competitor_document_articles
-from services.documents import extraction as competitor_document_extraction
+from services.documents import extraction as document_extraction
+from services.projects import project_document_articles
 
-# services/competitors/competitor_documents_store.py -> services/competitors ->
+# services/projects/project_documents_store.py -> services/projects ->
 # services -> backend/. Mirrors pipeline.py's STORAGE_DIR convention.
 BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_DIR = BASE_DIR.parent / "storage"
-DOCUMENTS_DIR = STORAGE_DIR / "competitor_documents"
+DOCUMENTS_DIR = STORAGE_DIR / "project_documents"
 
 # pdf, images, word, excel, csv - the formats the offline wizard step offers.
 ALLOWED_EXTENSIONS = {
@@ -83,7 +89,7 @@ def save_document(project_id: int, *, filename: str, content: bytes, mime_type: 
     storage_path = str(disk_path.relative_to(STORAGE_DIR))
     record = db.fetch_one(
         f"""
-        insert into competitor_documents (project_id, original_filename, storage_path, mime_type, size_bytes)
+        insert into project_documents (project_id, original_filename, storage_path, mime_type, size_bytes)
         values (%s, %s, %s, %s, %s)
         returning {DOCUMENT_COLUMNS}
         """,
@@ -107,23 +113,23 @@ def process_document(document_id: int) -> None:
     disk_path = STORAGE_DIR / document["storage_path"]
     filename = document["original_filename"]
 
-    total = competitor_document_extraction.total_chunks(disk_path, filename)
+    total = document_extraction.total_chunks(disk_path, filename)
     db.execute(
-        "update competitor_documents set status = 'processing', total_chunks = %s, processed_chunks = 0 where id = %s",
+        "update project_documents set status = 'processing', total_chunks = %s, processed_chunks = 0 where id = %s",
         (total, int(document_id)),
     )
     # Reprocessing (there's no UI path to trigger this today, but process_document
     # is safe to call again) must not collide with the unique (document_id, chunk_index).
-    db.execute("delete from competitor_document_chunks where document_id = %s", (int(document_id),))
+    db.execute("delete from project_document_chunks where document_id = %s", (int(document_id),))
 
     texts: list[str] = []
     methods: set[str] = set()
     errors: list[str] = []
     processed = 0
-    for chunk in competitor_document_extraction.iter_chunks(disk_path, filename):
+    for chunk in document_extraction.iter_chunks(disk_path, filename):
         db.execute(
             """
-            insert into competitor_document_chunks (document_id, chunk_index, text, method, error)
+            insert into project_document_chunks (document_id, chunk_index, text, method, error)
             values (%s, %s, %s, %s, %s)
             """,
             (int(document_id), chunk["index"], chunk["text"] or None, chunk["method"], chunk["error"]),
@@ -136,7 +142,7 @@ def process_document(document_id: int) -> None:
 
         processed += 1
         db.execute(
-            "update competitor_documents set processed_chunks = %s where id = %s",
+            "update project_documents set processed_chunks = %s where id = %s",
             (processed, int(document_id)),
         )
 
@@ -149,7 +155,7 @@ def process_document(document_id: int) -> None:
 
     db.execute(
         """
-        update competitor_documents
+        update project_documents
            set extracted_text = %s, extraction_method = %s, extraction_error = %s,
                status = %s, extracted_at = now()
          where id = %s
@@ -160,42 +166,42 @@ def process_document(document_id: int) -> None:
     if status != "processed":
         # Nothing to hand the LLM - a failed extraction has no candidates to skip
         # generating, so this is a terminal state, not "not started yet".
-        db.execute("update competitor_documents set articles_status = 'skipped' where id = %s", (int(document_id),))
+        db.execute("update project_documents set articles_status = 'skipped' where id = %s", (int(document_id),))
         return
 
-    db.execute("update competitor_documents set articles_status = 'generating' where id = %s", (int(document_id),))
+    db.execute("update project_documents set articles_status = 'generating' where id = %s", (int(document_id),))
     try:
-        competitor_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
-        db.execute("update competitor_documents set articles_status = 'ready' where id = %s", (int(document_id),))
+        project_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
+        db.execute("update project_documents set articles_status = 'ready' where id = %s", (int(document_id),))
     except Exception as exc:
         db.execute(
-            "update competitor_documents set articles_status = 'failed', articles_error = %s where id = %s",
+            "update project_documents set articles_status = 'failed', articles_error = %s where id = %s",
             (str(exc), int(document_id)),
         )
 
 
 def get_document_text(document_id: int) -> str | None:
-    row = db.fetch_one("select extracted_text from competitor_documents where id = %s", (int(document_id),))
+    row = db.fetch_one("select extracted_text from project_documents where id = %s", (int(document_id),))
     return row["extracted_text"] if row else None
 
 
 def list_chunks(document_id: int) -> list[dict]:
     return db.fetch_all(
-        f"select {CHUNK_COLUMNS} from competitor_document_chunks where document_id = %s order by chunk_index",
+        f"select {CHUNK_COLUMNS} from project_document_chunks where document_id = %s order by chunk_index",
         (int(document_id),),
     )
 
 
 def list_documents(project_id: int) -> list[dict]:
     return db.fetch_all(
-        f"select {DOCUMENT_COLUMNS} from competitor_documents where project_id = %s order by created_at desc",
+        f"select {DOCUMENT_COLUMNS} from project_documents where project_id = %s order by created_at desc",
         (int(project_id),),
     )
 
 
 def get_document(document_id: int) -> dict | None:
     return db.fetch_one(
-        f"select {DOCUMENT_COLUMNS} from competitor_documents where id = %s",
+        f"select {DOCUMENT_COLUMNS} from project_documents where id = %s",
         (int(document_id),),
     )
 
@@ -204,6 +210,6 @@ def delete_document(document_id: int) -> bool:
     document = get_document(document_id)
     if not document:
         return False
-    db.execute("delete from competitor_documents where id = %s", (int(document_id),))
+    db.execute("delete from project_documents where id = %s", (int(document_id),))
     (STORAGE_DIR / document["storage_path"]).unlink(missing_ok=True)
     return True

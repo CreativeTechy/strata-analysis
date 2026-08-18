@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, Info, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, Info, LayoutGrid, List, FolderKanban, FolderInput, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
@@ -27,6 +27,10 @@ const VIEW_MODES = [
 // competitor workspace polls its discovery/analysis jobs at.
 const IMPORT_POLL_MS = 900;
 
+// Folder pickers hand back every file under the folder regardless of the
+// input's `accept` filter, so JSONL exports have to be picked out client-side.
+const JSONL_NAME_RE = /\.(jsonl|ndjson)$/i;
+
 /** Live view of one import job: how far through the file it is, how fast it is
  *  going, and what it could not read. `run` is whatever the last poll returned,
  *  so this renders the same whether the job is queued, running or finished. */
@@ -42,6 +46,7 @@ function ImportProgressBanner({ run, onDismiss }) {
     <div className={`glass-card articles-import-banner ${run.status === 'failed' ? 'is-failed' : ''}`}>
       {run.status === 'failed' ? <AlertTriangle size={18} /> : <Info size={18} />}
       <div className="articles-import-banner-body">
+        {run._batchLabel ? <p className="articles-import-batch-label">{run._batchLabel}</p> : null}
         <div className="articles-import-headline">
           <strong>{run.message || 'Importing...'}</strong>
           {!done && rate > 0 ? <span className="articles-import-rate">{Math.round(rate).toLocaleString()} articles/s</span> : null}
@@ -210,6 +215,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const hasArticlesRef = useRef(false);
   const searchInputRef = useRef(null);
   const importInputRef = useRef(null);
+  const importFolderInputRef = useRef(null);
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
   const canImport = hasPermission('articles.import');
@@ -438,60 +444,90 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   };
 
+  // Imports one file end to end: queues the backend job, then polls it to
+  // completion, rendering its counters and throughput as they arrive.
+  // `batchLabel` (e.g. "File 2 of 3: foo.jsonl") is stamped onto each polled
+  // run so the banner can show which file of a multi-file selection is active.
+  const importSingleFile = async (file, batchLabel) => {
+    const body = new FormData();
+    body.append('file', file);
+    // Imported rows land in the project currently in scope, mirroring what a
+    // scrape for that project would have produced. 'all' imports unlinked.
+    if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
+
+    const res = await fetch('/api/articles/import', { method: 'POST', body });
+    const queued = await res.json().catch(() => ({}));
+    if (!res.ok || queued?.error) {
+      throw new Error(queued?.detail || queued?.error || `Failed to import articles (${res.status})`);
+    }
+
+    let lastSaved = 0;
+    for (;;) {
+      const statusRes = await fetch(`/api/articles/import/${queued.run_id}`);
+      const payload = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok || payload?.error) {
+        throw new Error(payload?.detail || payload?.error || `Lost track of the import (${statusRes.status})`);
+      }
+      const run = payload.run || {};
+      setImportRun(batchLabel ? { ...run, _batchLabel: batchLabel } : run);
+      // Refresh the list as rows land, not only at the end, so a long import
+      // visibly fills the page instead of sitting empty until it finishes.
+      if ((run.saved || 0) > lastSaved) {
+        lastSaved = run.saved || 0;
+        setReloadToken((value) => value + 1);
+      }
+      if (run.status === 'success' || run.status === 'failed') {
+        if (run.status === 'failed') throw new Error(run.error || run.message || 'Import failed.');
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
+    }
+  };
+
   const handleImportFile = async (event) => {
-    const file = event.target.files?.[0];
-    // Clear the input straight away so re-picking the same file still fires onChange.
+    const picked = Array.from(event.target.files || []);
+    // Clear the input straight away so re-picking the same file(s)/folder still fires onChange.
     event.target.value = '';
-    if (!file || importing) return;
+    if (!picked.length || importing) return;
+
+    // A folder pick hands back every file it contains, so keep only JSONL exports.
+    const files = picked.filter((file) => JSONL_NAME_RE.test(file.webkitRelativePath || file.name));
+    if (!files.length) {
+      setError('No .jsonl/.ndjson files found in the selected folder.');
+      return;
+    }
 
     setImporting(true);
     setError('');
     setImportRun(null);
-    try {
-      const body = new FormData();
-      body.append('file', file);
-      // Imported rows land in the project currently in scope, mirroring what a
-      // scrape for that project would have produced. 'all' imports unlinked.
-      if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
 
-      const res = await fetch('/api/articles/import', { method: 'POST', body });
-      const queued = await res.json().catch(() => ({}));
-      if (!res.ok || queued?.error) {
-        throw new Error(queued?.detail || queued?.error || `Failed to import articles (${res.status})`);
+    // Files are imported one at a time (the backend runs one job per upload)
+    // so failures on one file don't abort the rest of the batch.
+    const failures = [];
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      const displayName = file.webkitRelativePath || file.name;
+      const batchLabel = files.length > 1 ? `File ${i + 1} of ${files.length}: ${displayName}` : null;
+      try {
+        await importSingleFile(file, batchLabel);
+      } catch (err) {
+        failures.push({ name: displayName, error: err?.message || 'Failed to import.' });
       }
-
-      // The import runs as a backend job - an upsert per article, each also
-      // writing its project link, story group and idea clusters - so poll it
-      // to completion, rendering its counters and throughput as they arrive.
-      let lastSaved = 0;
-      for (;;) {
-        const statusRes = await fetch(`/api/articles/import/${queued.run_id}`);
-        const payload = await statusRes.json().catch(() => ({}));
-        if (!statusRes.ok || payload?.error) {
-          throw new Error(payload?.detail || payload?.error || `Lost track of the import (${statusRes.status})`);
-        }
-        const run = payload.run || {};
-        setImportRun(run);
-        // Refresh the list as rows land, not only at the end, so a long import
-        // visibly fills the page instead of sitting empty until it finishes.
-        if ((run.saved || 0) > lastSaved) {
-          lastSaved = run.saved || 0;
-          setReloadToken((value) => value + 1);
-        }
-        if (run.status === 'success' || run.status === 'failed') {
-          if (run.status === 'failed') setError(run.error || run.message || 'Import failed.');
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
-      }
-
-      setOffset(0);
-      setReloadToken((value) => value + 1);
-    } catch (err) {
-      setError(err?.message || 'Failed to import articles.');
-    } finally {
-      setImporting(false);
     }
+
+    if (failures.length) {
+      setError(
+        files.length > 1
+          ? `${failures.length} of ${files.length} file(s) failed to import: ${failures
+              .map((f) => `${f.name} (${f.error})`)
+              .join('; ')}`
+          : failures[0].error
+      );
+    }
+
+    setOffset(0);
+    setReloadToken((value) => value + 1);
+    setImporting(false);
   };
 
   return (
@@ -810,6 +846,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   ref={importInputRef}
                   type="file"
                   accept=".jsonl,.ndjson,application/x-ndjson"
+                  multiple
                   onChange={handleImportFile}
                   style={{ display: 'none' }}
                 />
@@ -819,12 +856,34 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   disabled={loading || importing || deletingAll}
                   title={
                     projectFilter === 'all'
-                      ? 'Import a JSONL export. Articles are not linked to a project.'
-                      : 'Import a JSONL export into the project currently in scope.'
+                      ? 'Import one or more JSONL exports. Articles are not linked to a project.'
+                      : 'Import one or more JSONL exports into the project currently in scope.'
                   }
                 >
                   <Upload size={16} />
                   {importing ? 'Importing...' : 'Import JSONL'}
+                </button>
+                <input
+                  ref={importFolderInputRef}
+                  type="file"
+                  webkitdirectory=""
+                  directory=""
+                  multiple
+                  onChange={handleImportFile}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  className="btn-secondary"
+                  onClick={() => importFolderInputRef.current?.click()}
+                  disabled={loading || importing || deletingAll}
+                  title={
+                    projectFilter === 'all'
+                      ? 'Import every JSONL export in a folder. Articles are not linked to a project.'
+                      : 'Import every JSONL export in a folder into the project currently in scope.'
+                  }
+                >
+                  <FolderInput size={16} />
+                  {importing ? 'Importing...' : 'Import Folder'}
                 </button>
               </>
             )}

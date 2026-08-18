@@ -6,6 +6,17 @@ import { useAuth } from '../auth/useAuth.js';
 import { REPEAT_UNIT_OPTIONS } from '../constants/schedule.js';
 import '../styles/Projects.css';
 import {
+  uploadDocuments as uploadProjectDocuments,
+  deleteDocument as deleteProjectDocument,
+  listDocumentArticles as listProjectDocumentArticles,
+  setDocumentArticleStatus as setProjectDocumentArticleStatus,
+  approveAllDocumentArticles as approveAllProjectDocumentArticles,
+  reanalyzeDocumentArticles as reanalyzeProjectDocumentArticles,
+  pollDocumentExtraction as pollProjectDocumentExtraction,
+  pollArticleCandidates as pollProjectArticleCandidates,
+  pollArticleAnalysis as pollProjectArticleAnalysis,
+} from '../projectDocumentsApi.js';
+import {
   CalendarDays,
   Eye,
   Plus,
@@ -20,6 +31,13 @@ import {
   Sparkles,
   Rss,
   Users,
+  Globe,
+  FileText,
+  Upload,
+  FileCheck,
+  ListChecks,
+  ScanText,
+  AlertTriangle,
 } from 'lucide-react';
 
 const emptyNewSourceDraft = {
@@ -219,6 +237,25 @@ function normalizeDraftForCompare(value) {
     first_run_at: String(value?.first_run_at || ''),
     repeat_weekdays: normalizeTermListForCompare(value?.repeat_weekdays),
   };
+}
+
+function ErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        borderRadius: 14,
+        background: 'rgba(255, 71, 87, 0.08)',
+        border: '1px solid rgba(255, 71, 87, 0.16)',
+        color: '#b42318',
+        fontSize: '0.84rem',
+        lineHeight: 1.5,
+      }}
+    >
+      {message}
+    </div>
+  );
 }
 
 function TermChipsField({ label, placeholder, values, onChange, options = [], disabled, hint }) {
@@ -449,10 +486,19 @@ export default function ProjectsPage({
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
+  const [dataMode, setDataMode] = useState(null); // 'online' | 'offline'
+  // 'dataSource' (online vs offline) and 'basics' always come first, at the
+  // same index regardless of mode, so switching setWizardStep(STEP.basics)
+  // resolves to the same step whichever tail is active. Offline swaps the
+  // rest of the online flow (users/discovery/schedule/sources - none of
+  // which apply to an upload-only project) for its own upload/review/finish
+  // sequence - mirrors CompetitorOnboarding.jsx's getSteps(dataMode).
   const STEP = useMemo(() => {
-    const keys = ['basics', ...(canLinkUsers ? ['users'] : []), 'discovery', 'schedule', 'sources'];
+    const onlineTail = [...(canLinkUsers ? ['users'] : []), 'discovery', 'schedule', 'sources'];
+    const offlineTail = ['upload', 'review', 'finish'];
+    const keys = ['dataSource', 'basics', ...(dataMode === 'offline' ? offlineTail : onlineTail)];
     return Object.fromEntries(keys.map((key, index) => [key, index + 1]));
-  }, [canLinkUsers]);
+  }, [canLinkUsers, dataMode]);
   const pathname = location.pathname;
   const isCreateRoute = pathname.endsWith('/new');
   const isEditRoute = pathname.endsWith('/edit');
@@ -492,6 +538,45 @@ export default function ProjectsPage({
   const [isCreatingSource, setIsCreatingSource] = useState(false);
   const [newSourceError, setNewSourceError] = useState('');
   const [isSyncingSources, setIsSyncingSources] = useState(false);
+
+  // --- Offline (document-upload) pipeline state -----------------------------
+  // The project is created as soon as the user commits to 'offline' and
+  // leaves the basics step (see ensureOfflineProject) - documents need a real
+  // project_id to attach to before the wizard reaches its final step, unlike
+  // the online path where the project is only created in submit() at the end.
+  const [offlineProjectId, setOfflineProjectId] = useState(null);
+  const [isCreatingOfflineProject, setIsCreatingOfflineProject] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [uploadingDocs, setUploadingDocs] = useState(false);
+  const [extractingDocs, setExtractingDocs] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const fileInputRef = useRef(null);
+  const documentsRef = useRef(documents);
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+  const [articleCandidates, setArticleCandidates] = useState([]);
+  const [reviewingArticles, setReviewingArticles] = useState(false);
+  const [decidingCandidate, setDecidingCandidate] = useState({});
+  const [approvingAll, setApprovingAll] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
+
+  const resetOfflinePipelineState = () => {
+    setDataMode(null);
+    setOfflineProjectId(null);
+    setIsCreatingOfflineProject(false);
+    setDocuments([]);
+    setPendingFiles([]);
+    setUploadingDocs(false);
+    setExtractingDocs(false);
+    setDropActive(false);
+    setArticleCandidates([]);
+    setReviewingArticles(false);
+    setDecidingCandidate({});
+    setApprovingAll(false);
+    setReanalyzing(false);
+  };
 
   const clearDiscoveryPhaseTimers = () => {
     discoveryPhaseTimersRef.current.forEach(clearTimeout);
@@ -534,6 +619,36 @@ export default function ProjectsPage({
       keyword: optionsForType('keyword'),
     };
   }, [sources]);
+
+  const documentById = useMemo(() => new Map(documents.map((document) => [document.id, document])), [documents]);
+  const candidatesByDocument = useMemo(() => {
+    const map = new Map();
+    articleCandidates.forEach((candidate) => {
+      if (!map.has(candidate.document_id)) map.set(candidate.document_id, []);
+      map.get(candidate.document_id).push(candidate);
+    });
+    return Array.from(map.entries());
+  }, [articleCandidates]);
+  const pendingCandidateCount = useMemo(
+    () => articleCandidates.filter((candidate) => candidate.status === 'pending').length,
+    [articleCandidates]
+  );
+  const approvedCandidateCount = useMemo(
+    () => articleCandidates.filter((candidate) => candidate.status === 'approved').length,
+    [articleCandidates]
+  );
+  const analyzedCandidateCount = useMemo(
+    () =>
+      articleCandidates.filter((candidate) => candidate.status === 'approved' && candidate.article_analysis_status === 'success')
+        .length,
+    [articleCandidates]
+  );
+  const failedAnalysisCandidateCount = useMemo(
+    () =>
+      articleCandidates.filter((candidate) => candidate.status === 'approved' && candidate.article_analysis_status === 'failed')
+        .length,
+    [articleCandidates]
+  );
 
   // Both the create wizard's Step 4 and the edit form's assign-sources block scope
   // selection/search to whichever source-type tab is active.
@@ -630,6 +745,7 @@ export default function ProjectsPage({
       setNewSourceDraft(emptyNewSourceDraft);
       setNewSourceError('');
       setActiveSourceTab('all');
+      resetOfflinePipelineState();
       return;
     }
 
@@ -677,7 +793,12 @@ export default function ProjectsPage({
       setActiveSourceTab('all');
       setLastDiscovery(null);
       setInitialDraft(draftFromProject);
-      setWizardStep(1);
+      resetOfflinePipelineState();
+      // Editing only ever applies to already-created (online) projects - skip
+      // straight past the data-source picker rather than asking the user to
+      // re-choose a mode that can't actually change after creation.
+      setDataMode('online');
+      setWizardStep(STEP.basics);
       // An existing project already has its metadata filled in manually; default to the
       // "manual" fill mode so all wizard steps unlock immediately instead of forcing the
       // user to pick a fill method before they can see their own data.
@@ -710,7 +831,8 @@ export default function ProjectsPage({
     setNewSourceDraft(emptyNewSourceDraft);
     setNewSourceError('');
     setActiveSourceTab('all');
-  }, [currentProject, isEditRoute, isFormRoute, editingId]);
+    resetOfflinePipelineState();
+  }, [currentProject, isEditRoute, isFormRoute, editingId, STEP.basics]);
 
   const discardChanges = () => {
     setShowCancelModal(false);
@@ -830,6 +952,242 @@ export default function ProjectsPage({
       return mergedIds;
     } finally {
       setIsSyncingSources(false);
+    }
+  };
+
+  // --- Offline (document-upload) pipeline handlers --------------------------
+
+  // Creates the project as soon as the user commits to the offline path and
+  // leaves the basics step - documents need a real project_id to attach to
+  // before the wizard reaches its final step (mirrors CompetitorOnboarding's
+  // ensureStudy()). Idempotent: once offlineProjectId is set, later calls
+  // (e.g. from uploadPendingDocuments) just return it.
+  const ensureOfflineProject = async () => {
+    if (offlineProjectId) return offlineProjectId;
+    if (isCreatingOfflineProject) return null;
+    if (!draft.name.trim()) return null;
+
+    setIsCreatingOfflineProject(true);
+    setMetadataError('');
+    try {
+      const payload = {
+        name: draft.name.trim(),
+        status: draft.status,
+        description: draft.description.trim(),
+        location: draft.location.trim(),
+        location_type: draft.location_type || null,
+        target_audience: draft.target_audience.trim(),
+        usernames: [],
+        hashtags: [],
+        keywords: [],
+        start_date: null,
+        end_date: null,
+        source_ids: [],
+        ...(canLinkUsers ? { user_ids: draft.user_ids } : {}),
+        // An offline project has nothing to scrape, so scheduling never applies.
+        repeat_enabled: false,
+        repeat_interval_value: draft.repeat_interval_value,
+        repeat_interval_unit: draft.repeat_interval_unit,
+        first_run_at: null,
+        repeat_weekdays: [],
+      };
+      const created = await onCreateProject?.(payload);
+      const createdId = Number(created?.project?.id);
+      if (!Number.isFinite(createdId)) {
+        throw new Error('Could not create the project.');
+      }
+      setOfflineProjectId(createdId);
+      return createdId;
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to create the project.');
+      return null;
+    } finally {
+      setIsCreatingOfflineProject(false);
+    }
+  };
+
+  const addPendingFiles = (fileList) => {
+    const incoming = Array.from(fileList || []);
+    if (incoming.length) setPendingFiles((prev) => [...prev, ...incoming]);
+  };
+
+  const removePendingFile = (index) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeDocument = async (documentId) => {
+    try {
+      await deleteProjectDocument(documentId);
+      setDocuments((prev) => prev.filter((document) => document.id !== documentId));
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to remove the document.');
+    }
+  };
+
+  const refreshArticleCandidates = async (projectId) => {
+    const result = await listProjectDocumentArticles(projectId);
+    setArticleCandidates(result.articles || []);
+  };
+
+  // Watches approved-but-not-yet-analyzed candidates until sentiment analysis
+  // finishes for all of them - fire-and-forget, since neither review nor
+  // finish gates on analysis completing (matches CompetitorOnboarding's
+  // "Open workspace" being clickable regardless of analysis state).
+  const watchArticleAnalysis = (projectId) => {
+    pollProjectArticleAnalysis(projectId, setArticleCandidates).catch(() => {});
+  };
+
+  const uploadPendingDocuments = async () => {
+    if (!pendingFiles.length) return;
+    setMetadataError('');
+    setUploadingDocs(true);
+    let id;
+    let uploadedIds;
+    try {
+      id = await ensureOfflineProject();
+      if (!id) throw new Error('Could not create the project.');
+      const result = await uploadProjectDocuments(id, pendingFiles);
+      uploadedIds = (result.documents || []).map((document) => document.id);
+      setPendingFiles([]);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to upload documents.');
+      setUploadingDocs(false);
+      return;
+    }
+    setUploadingDocs(false);
+    if (!uploadedIds.length) return;
+
+    setExtractingDocs(true);
+    try {
+      await pollProjectDocumentExtraction(id, uploadedIds, setDocuments);
+      await pollProjectArticleCandidates(id, uploadedIds, setDocuments);
+      await refreshArticleCandidates(id);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to process the uploaded documents.');
+    } finally {
+      setExtractingDocs(false);
+    }
+  };
+
+  const decideCandidate = async (candidateId, status) => {
+    setDecidingCandidate((prev) => ({ ...prev, [candidateId]: true }));
+    try {
+      const result = await setProjectDocumentArticleStatus(candidateId, status);
+      setArticleCandidates((prev) => prev.map((candidate) => (candidate.id === candidateId ? result.article : candidate)));
+      if (status === 'approved' && offlineProjectId) watchArticleAnalysis(offlineProjectId);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to update the article.');
+    } finally {
+      setDecidingCandidate((prev) => ({ ...prev, [candidateId]: false }));
+    }
+  };
+
+  const approveAllPending = async () => {
+    if (!offlineProjectId) return;
+    setMetadataError('');
+    setApprovingAll(true);
+    try {
+      await approveAllProjectDocumentArticles(offlineProjectId);
+      await refreshArticleCandidates(offlineProjectId);
+      watchArticleAnalysis(offlineProjectId);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to approve the articles.');
+    } finally {
+      setApprovingAll(false);
+    }
+  };
+
+  const rerunFailedAnalysis = async () => {
+    if (!offlineProjectId) return;
+    setMetadataError('');
+    setReanalyzing(true);
+    try {
+      await reanalyzeProjectDocumentArticles(offlineProjectId);
+      await pollProjectArticleAnalysis(offlineProjectId, setArticleCandidates);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to re-run analysis.');
+    } finally {
+      setReanalyzing(false);
+    }
+  };
+
+  // Resumes extraction/splitting polling when the review step is (re)entered
+  // (e.g. the user navigated away mid-poll) and always refreshes the
+  // candidate list once. Reads documentsRef rather than documents so this
+  // only depends on step/mode/project - not on every document-list update,
+  // which would otherwise restart the poll loop repeatedly.
+  useEffect(() => {
+    if (dataMode !== 'offline' || wizardStep !== STEP.review || !offlineProjectId) return;
+    let cancelled = false;
+    const stillPendingIds = (documentsRef.current || [])
+      .filter((document) => document.articles_status === 'pending' || document.articles_status === 'generating')
+      .map((document) => document.id);
+
+    (async () => {
+      if (stillPendingIds.length) {
+        setReviewingArticles(true);
+        try {
+          await pollProjectArticleCandidates(offlineProjectId, stillPendingIds, (docs) => {
+            if (!cancelled) setDocuments(docs);
+          });
+        } finally {
+          if (!cancelled) setReviewingArticles(false);
+        }
+      }
+      if (!cancelled) await refreshArticleCandidates(offlineProjectId);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [wizardStep, dataMode, offlineProjectId, STEP.review]);
+
+  // Refreshes analysis status (and resumes watching it) whenever the review
+  // or finish step is entered - cheap even when nothing is active, since
+  // pollProjectArticleAnalysis returns after a single list call in that case.
+  useEffect(() => {
+    if (dataMode !== 'offline' || !offlineProjectId) return;
+    if (wizardStep !== STEP.review && wizardStep !== STEP.finish) return;
+    let cancelled = false;
+    pollProjectArticleAnalysis(offlineProjectId, (list) => {
+      if (!cancelled) setArticleCandidates(list);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [wizardStep, dataMode, offlineProjectId, STEP.review, STEP.finish]);
+
+  const finishOffline = async () => {
+    if (isSaving || !offlineProjectId) return;
+    setIsSaving(true);
+    setMetadataError('');
+    try {
+      const payload = {
+        name: draft.name.trim(),
+        status: draft.status,
+        description: draft.description.trim(),
+        location: draft.location.trim(),
+        location_type: draft.location_type || null,
+        target_audience: draft.target_audience.trim(),
+        usernames: [],
+        hashtags: [],
+        keywords: [],
+        start_date: null,
+        end_date: null,
+        source_ids: [],
+        ...(canLinkUsers ? { user_ids: draft.user_ids } : {}),
+        repeat_enabled: false,
+        repeat_interval_value: draft.repeat_interval_value,
+        repeat_interval_unit: draft.repeat_interval_unit,
+        first_run_at: null,
+        repeat_weekdays: [],
+      };
+      await onUpdateProject?.(offlineProjectId, payload);
+      navigate(`/projects/${offlineProjectId}`);
+    } catch (error) {
+      setMetadataError(error?.message || 'Failed to finish the project.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -1048,11 +1406,15 @@ export default function ProjectsPage({
       ? discoveredSources.slice(0, discoveryPreviewLimit).map((source) => ({ name: source.name || source.url, url: source.url }))
       : discoveredResolvedUrls.slice(0, discoveryPreviewLimit).map((url) => ({ name: url, url }));
     const stepMeta = {
+      dataSource: { label: 'Data source', detail: 'Online or offline', complete: Boolean(dataMode) },
       basics: { label: 'Project basics', detail: 'Name, location, and description', complete: step1Complete },
       users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
       discovery: { label: 'Discovery details', detail: 'Manual or AI fill', complete: step2Complete },
       schedule: { label: 'Schedule', detail: 'Status and automatic runs', complete: step3Complete },
       sources: { label: 'Sources', detail: isEditRoute ? 'Assign sources, data window, and save' : 'Assign sources, data window, and create', complete: true },
+      upload: { label: 'Upload documents', detail: 'Add the files to analyze', complete: documents.length > 0 },
+      review: { label: 'Review articles', detail: 'Approve what should be analyzed', complete: true },
+      finish: { label: 'Finish', detail: 'Review analysis and open workspace', complete: true },
     };
     const stepOrder = Object.keys(STEP).sort((a, b) => STEP[a] - STEP[b]);
 
@@ -1119,6 +1481,68 @@ export default function ProjectsPage({
             })}
           </div>
 
+          {wizardStep === STEP.dataSource && (
+          <div className="glass-card project-wizard-panel">
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.dataSource}. How should we build this project?</strong>
+              <span className="panel-chip">{dataMode ? dataMode.toUpperCase() : 'Choose one'}</span>
+            </div>
+            <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
+              Choose where the data comes from. You can build this project either way.
+            </p>
+
+            <ErrorBanner message={metadataError} />
+
+            <div className="proj-mode-grid" style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className={`proj-mode-card${dataMode === 'online' ? ' proj-mode-card-selected' : ''}`}
+                onClick={() => setDataMode('online')}
+              >
+                <div className="proj-mode-card-icon">
+                  <Globe size={20} />
+                </div>
+                <div className="proj-mode-card-title">Online — scrape and monitor</div>
+                <p className="proj-mode-card-desc">
+                  Strata discovers X accounts, hashtags, keywords, and other sources for you, then
+                  keeps scraping and analyzing them on a schedule.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                className={`proj-mode-card${dataMode === 'offline' ? ' proj-mode-card-selected' : ''}`}
+                onClick={() => setDataMode('offline')}
+              >
+                <div className="proj-mode-card-icon">
+                  <FileText size={20} />
+                </div>
+                <div className="proj-mode-card-title">Offline — upload documents</div>
+                <p className="proj-mode-card-desc">
+                  Upload PDFs, images, Word, Excel or CSV files you already have. Strata reads them
+                  into articles you review and approve, then runs the same sentiment analysis a
+                  scraped article would get.
+                </p>
+              </button>
+            </div>
+
+            <div className="project-wizard-nav-row" style={{ marginTop: 16 }}>
+              <span style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                You can add sources manually later either way, but the mode itself can't be changed
+                once the project is created.
+              </span>
+              <button
+                type="button"
+                className="btn-primary wizard-btn-continue"
+                onClick={() => setWizardStep(STEP.basics)}
+                disabled={!dataMode}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+          )}
+
           {wizardStep === STEP.basics && (
           <div className="glass-card project-wizard-panel">
             <div className="panel-header-tight" style={{ marginBottom: 12 }}>
@@ -1184,14 +1608,37 @@ export default function ProjectsPage({
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
                   Use a clear working title and a short description. We’ll use these to seed the AI suggestions and source discovery.
                 </span>
-                <button
-                  type="button"
-                  className="btn-primary wizard-btn-continue"
-                  onClick={() => setWizardStep(STEP.users || STEP.discovery)}
-                  disabled={!step1Complete || isSaving}
-                >
-                  Continue
-                </button>
+                <div className="project-wizard-nav-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary wizard-btn-back"
+                    onClick={() => setWizardStep(STEP.dataSource)}
+                    disabled={isSaving || isCreatingOfflineProject}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary wizard-btn-continue"
+                    onClick={async () => {
+                      if (dataMode === 'offline') {
+                        const id = await ensureOfflineProject();
+                        if (id) setWizardStep(STEP.upload);
+                      } else {
+                        setWizardStep(STEP.users || STEP.discovery);
+                      }
+                    }}
+                    disabled={!step1Complete || isSaving || isCreatingOfflineProject}
+                  >
+                    {isCreatingOfflineProject ? (
+                      <>
+                        <RefreshCw size={16} className="spin" /> Creating project...
+                      </>
+                    ) : (
+                      'Continue'
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1273,21 +1720,7 @@ export default function ProjectsPage({
               </div>
             ) : (
               <div style={{ display: 'grid', gap: 12 }}>
-                {metadataError && (
-                  <div
-                    style={{
-                      padding: '12px 14px',
-                      borderRadius: 14,
-                      background: 'rgba(255, 71, 87, 0.08)',
-                      border: '1px solid rgba(255, 71, 87, 0.16)',
-                      color: '#b42318',
-                      fontSize: '0.84rem',
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {metadataError}
-                  </div>
-                )}
+                <ErrorBanner message={metadataError} />
 
                 <div style={{ display: 'grid', gap: 8 }}>
                   <label style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Target audience</label>
@@ -1854,6 +2287,390 @@ export default function ProjectsPage({
                   <X size={18} /> Cancel
                 </button>
               </div>
+            </div>
+          </div>
+          )}
+
+          {dataMode === 'offline' && wizardStep === STEP.upload && (
+          <div className="glass-card project-wizard-panel">
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.upload}. Upload documents</strong>
+              <span className="panel-chip">{documents.length} uploaded</span>
+            </div>
+
+            <ErrorBanner message={metadataError} />
+
+            <div
+              className={`proj-dropzone${dropActive ? ' proj-dropzone-active' : ''}`}
+              style={{ marginTop: 12 }}
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setDropActive(true);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDropActive(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setDropActive(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDropActive(false);
+                addPendingFiles(e.dataTransfer.files);
+              }}
+            >
+              <div className="proj-dropzone-icon">
+                <Upload size={20} />
+              </div>
+              <div className="proj-dropzone-title">Drag files here, or click to browse</div>
+              <div className="proj-dropzone-hint">Multiple files at once are fine</div>
+              <div className="proj-dropzone-types">
+                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG'].map((ext) => (
+                  <span key={ext} className="panel-chip muted">
+                    {ext}
+                  </span>
+                ))}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg"
+                className="proj-sr-only"
+                onChange={(e) => {
+                  addPendingFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+
+            {pendingFiles.length > 0 && (
+              <div className="proj-rows" style={{ marginTop: 14 }}>
+                {pendingFiles.map((file, index) => (
+                  <div key={`${file.name}-${index}`} className="proj-row">
+                    <div className="proj-row-main">
+                      <span className="proj-row-name">{file.name}</span>
+                      <span className="proj-row-desc">{(file.size / 1024).toFixed(0)} KB</span>
+                    </div>
+                    <div className="proj-row-side">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                        onClick={() => removePendingFile(index)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={uploadPendingDocuments}
+                  disabled={uploadingDocs || !draft.name.trim()}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  {uploadingDocs ? (
+                    <>
+                      <RefreshCw size={16} className="spin" /> Uploading...
+                    </>
+                  ) : (
+                    `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`
+                  )}
+                </button>
+              </div>
+            )}
+
+            {documents.length > 0 ? (
+              <div className="proj-rows" style={{ marginTop: 14 }}>
+                {documents.map((document) => {
+                  const active = document.status === 'uploaded' || document.status === 'processing';
+                  return (
+                    <div key={document.id} className="proj-row">
+                      <div className="proj-row-main">
+                        <span className="proj-row-name">{document.original_filename}</span>
+                        {document.extraction_error && (
+                          <span className="proj-row-desc" style={{ color: '#b42318', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <AlertTriangle size={12} /> {document.extraction_error}
+                          </span>
+                        )}
+                      </div>
+                      <div className="proj-row-side">
+                        {active ? (
+                          <span className="panel-chip warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <RefreshCw size={12} className="spin" />
+                            Reading
+                            {document.total_chunks ? ` (${document.processed_chunks || 0}/${document.total_chunks})` : ''}
+                            {extractingDocs ? ' — reading contents...' : ''}
+                          </span>
+                        ) : document.status === 'failed' ? (
+                          <span className="panel-chip">Not extracted</span>
+                        ) : (
+                          <span className="panel-chip success">
+                            {document.extraction_method === 'ocr'
+                              ? 'Extracted (OCR)'
+                              : document.extraction_method === 'mixed'
+                              ? 'Extracted (mixed)'
+                              : 'Extracted'}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                          onClick={() => removeDocument(document.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : pendingFiles.length === 0 ? (
+              <div className="admin-empty-state" style={{ padding: '16px 10px', marginTop: 14 }}>
+                <div className="admin-empty-state-icon">
+                  <Upload size={18} />
+                </div>
+                <strong>No documents yet</strong>
+                <span>Drop files above or click to browse.</span>
+              </div>
+            ) : null}
+
+            <div className="project-wizard-nav-row" style={{ marginTop: 16 }}>
+              <button type="button" className="btn-secondary wizard-btn-back" onClick={() => setWizardStep(STEP.basics)} disabled={uploadingDocs}>
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn-primary wizard-btn-continue"
+                onClick={() => setWizardStep(STEP.review)}
+                disabled={!documents.length || uploadingDocs}
+              >
+                Continue to review articles
+              </button>
+            </div>
+          </div>
+          )}
+
+          {dataMode === 'offline' && wizardStep === STEP.review && (
+          <div className="glass-card project-wizard-panel">
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.review}. Review articles</strong>
+              <span className="panel-chip">
+                {approvedCandidateCount} approved, {pendingCandidateCount} pending
+              </span>
+            </div>
+            <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+              Strata split your documents into individual articles. Approve the ones worth
+              analyzing — approving queues the same sentiment analysis a scraped article gets.
+            </p>
+
+            <ErrorBanner message={metadataError} />
+
+            {reviewingArticles ? (
+              <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                <div className="admin-empty-state-icon">
+                  <RefreshCw size={18} className="spin" />
+                </div>
+                <strong>Reading your documents into articles...</strong>
+              </div>
+            ) : articleCandidates.length === 0 ? (
+              <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
+                <div className="admin-empty-state-icon">
+                  <FileCheck size={18} />
+                </div>
+                <strong>No articles yet</strong>
+                <span>
+                  {documents.some((document) => document.articles_status === 'failed')
+                    ? 'Splitting failed for at least one document — try re-uploading it.'
+                    : 'Go back and upload a document to get started.'}
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="project-wizard-nav-row" style={{ marginBottom: 12 }}>
+                  <span style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                    {approvedCandidateCount} approved, {pendingCandidateCount} pending review
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={approveAllPending}
+                    disabled={approvingAll || !pendingCandidateCount}
+                  >
+                    {approvingAll ? (
+                      <>
+                        <RefreshCw size={16} className="spin" /> Approving...
+                      </>
+                    ) : (
+                      <>
+                        <ListChecks size={16} /> Approve all{pendingCandidateCount ? ` (${pendingCandidateCount})` : ''}
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {candidatesByDocument.map(([documentId, candidates]) => (
+                  <div key={documentId} style={{ marginBottom: 14 }}>
+                    <div
+                      style={{
+                        fontSize: '0.74rem',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        color: 'var(--text-light)',
+                        marginBottom: 8,
+                      }}
+                    >
+                      {documentById.get(documentId)?.original_filename || 'Document'}
+                    </div>
+                    <div className="proj-rows">
+                      {candidates.map((candidate) => (
+                        <div key={candidate.id} className="proj-row" style={{ alignItems: 'flex-start' }}>
+                          <div className="proj-row-main">
+                            <span className="proj-row-name">{candidate.title}</span>
+                            {candidate.summary && <span className="proj-row-desc">{candidate.summary}</span>}
+                            {candidate.status === 'approved' && (
+                              <span style={{ marginTop: 2 }}>
+                                {candidate.article_analysis_status === 'success' ? (
+                                  <span className="panel-chip success">Analyzed</span>
+                                ) : candidate.article_analysis_status === 'failed' ? (
+                                  <span className="panel-chip">Analysis failed</span>
+                                ) : (
+                                  <span className="panel-chip warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                    <RefreshCw size={11} className="spin" /> Analyzing...
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                          <div className="proj-row-side">
+                            {candidate.status === 'approved' ? (
+                              <span className="panel-chip success">Approved</span>
+                            ) : candidate.status === 'rejected' ? (
+                              <span className="panel-chip">Rejected</span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                                  onClick={() => decideCandidate(candidate.id, 'rejected')}
+                                  disabled={Boolean(decidingCandidate[candidate.id])}
+                                >
+                                  Reject
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+                                  onClick={() => decideCandidate(candidate.id, 'approved')}
+                                  disabled={Boolean(decidingCandidate[candidate.id])}
+                                >
+                                  {decidingCandidate[candidate.id] ? <RefreshCw size={13} className="spin" /> : 'Approve'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            <div className="project-wizard-nav-row" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary wizard-btn-back"
+                onClick={() => setWizardStep(STEP.upload)}
+                disabled={reviewingArticles}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn-primary wizard-btn-continue"
+                onClick={() => setWizardStep(STEP.finish)}
+                disabled={reviewingArticles}
+              >
+                Continue to finish
+              </button>
+            </div>
+          </div>
+          )}
+
+          {dataMode === 'offline' && wizardStep === STEP.finish && (
+          <div className="glass-card project-wizard-panel">
+            <div className="panel-header-tight" style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: '1rem' }}>Step {STEP.finish}. Finish</strong>
+            </div>
+            <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+              {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
+              {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
+              {analyzedCandidateCount > 0 ? ` ${analyzedCandidateCount} analyzed.` : ''}
+              {failedAnalysisCandidateCount > 0 ? ` ${failedAnalysisCandidateCount} failed to analyze.` : ''}
+            </p>
+
+            <ErrorBanner message={metadataError} />
+
+            {failedAnalysisCandidateCount > 0 && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={rerunFailedAnalysis}
+                disabled={reanalyzing}
+                style={{ marginBottom: 14 }}
+              >
+                {reanalyzing ? (
+                  <>
+                    <RefreshCw size={16} className="spin" /> Re-running...
+                  </>
+                ) : (
+                  <>
+                    <ScanText size={16} /> Re-run analysis
+                  </>
+                )}
+              </button>
+            )}
+
+            <div className="project-wizard-final-actions">
+              <button
+                className="btn-secondary wizard-btn-fixed"
+                type="button"
+                onClick={() => setWizardStep(STEP.review)}
+                disabled={isSaving}
+              >
+                Back
+              </button>
+              <button className="btn-primary wizard-btn-grow" onClick={finishOffline} disabled={isSaving}>
+                {isSaving ? (
+                  <>
+                    <RefreshCw size={18} className="spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check size={18} /> Open workspace
+                  </>
+                )}
+              </button>
+              <button className="btn-secondary wizard-btn-fixed" type="button" onClick={handleCancel}>
+                <X size={18} /> Cancel
+              </button>
             </div>
           </div>
           )}
