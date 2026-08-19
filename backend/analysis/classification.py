@@ -63,11 +63,17 @@ def _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_templat
     if classifier is None:
         return None
     try:
+        # See sentiment_classifier.py's matching comment: chunks are sized in
+        # characters (article_prep.chunk_text), which can still overflow the
+        # model's max token length for scripts that tokenize more densely
+        # than English (CJK, Thai, Arabic...) - truncation=True is the
+        # backstop.
         result = classifier(
             chunk,
             candidate_labels,
             hypothesis_template=hypothesis_template,
             multi_label=False,
+            tokenizer_kwargs={"truncation": True},
         )
     except Exception:
         logger.exception("Zero-shot classification inference failed")

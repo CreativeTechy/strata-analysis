@@ -11,3 +11,4 @@ Extract the requested fields from the article and return ONLY a single JSON obje
   frequent_ideas (array of {idea, type: complaint|praise|suggestion|issue, category, frequency_estimate}),
   relevance_score (number 0-10, how relevant/substantive the article is).
 Use [] for any list with nothing to report. Never invent facts not present in the article.
+Write every text field (topic, summary, all feedback/list items, key_points, risks, opportunities, and the opinion/idea text inside people_opinions/frequent_ideas) in English, regardless of the article's source language - this keeps search, tagging, and cross-article comparison consistent when a project mixes English and non-English sources. Do not translate proper names inside organizations/entities/topics - keep brand, product, and company names in their original form.
