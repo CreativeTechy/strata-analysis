@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowUpRight, CircleMinus, Heart, Radio, Tag, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, CircleMinus, Radio, Tag, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import '../styles/IntelligenceDashboard.css';
@@ -188,10 +188,6 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
 
     <Section number="05" title="Categorized feedback">
       <div className="report-feedback-grid"><FeedbackColumn title="Positive drivers" icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} /><FeedbackColumn title="Negative drivers" icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} /><FeedbackColumn title="Neutral / mixed" icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} /></div>
-    </Section>
-
-    <Section number="06" title="Most talked-about ideas">
-      <div className="report-idea-list">{(insights.frequent_ideas || []).slice(0, 8).map((idea) => <article key={idea.idea} className={idea.type || 'issue'}><span>{idea.type === 'praise' ? <Heart size={16} /> : <ArrowUpRight size={16} />}</span><div><strong>{idea.idea}</strong><small>{idea.category || idea.type || 'Theme'}</small></div><b>{idea.frequency_estimate || 1}</b></article>)}{!(insights.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas have been detected yet.</p>}</div>
     </Section>
   </section>;
 }

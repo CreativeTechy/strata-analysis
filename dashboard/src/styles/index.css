@@ -1826,6 +1826,15 @@ h1, h2, h3 {
   opacity: 0.5;
 }
 
+/* Swapped in for the tab row once there are more than a few pipeline runs,
+   so the list scales without turning into an endless horizontal scroll. */
+.filter-run-select {
+  min-width: 220px;
+  max-width: 100%;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+}
+
 .source-type-tab {
   display: inline-flex;
   align-items: center;

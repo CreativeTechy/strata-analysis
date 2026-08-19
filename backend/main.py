@@ -574,7 +574,7 @@ def get_pipeline_runs(
     project_id: int | None = None,
     user: dict = Depends(require_permission("pipeline.view")),
 ):
-    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 25)), project_id=project_id)}
+    return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 500)), project_id=project_id)}
 
 
 @app.get("/api/pipeline-runs/{run_id}")

@@ -95,9 +95,15 @@ export default function DashboardOverview({
           </div>
           <div className="filter-tab-divider" aria-hidden="true" />
           {selectedRunId ? (
-            <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
-              {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button></span>)}
-            </div>
+            runs.length > 3 ? (
+              <select className="filter-select filter-run-select" value={selectedRunId} onChange={(event) => onRunChange?.(event.target.value)} aria-label="Filter by pipeline run">
+                {runs.map((run, index) => <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>)}
+              </select>
+            ) : (
+              <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+                {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button></span>)}
+              </div>
+            )
           ) : (
             <div className="filter-tab-buttons" role="tablist" aria-label="Dashboard date range">
               {PERIODS.map((item) => <button key={item.key} type="button" role="tab" aria-selected={period === item.key} className={`source-type-tab ${period === item.key ? 'active' : ''}`} onClick={() => onPeriodChange(item.key)}>{item.label}</button>)}

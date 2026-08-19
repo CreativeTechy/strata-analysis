@@ -284,7 +284,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`/api/pipeline-runs?project_id=${scopedProjectId}&limit=20`);
+      const res = await fetch(`/api/pipeline-runs?project_id=${scopedProjectId}&limit=500`);
       if (!res.ok) {
         setProjectRuns([]);
         return;
@@ -293,8 +293,7 @@ export default function App() {
       const runs = Array.isArray(data?.runs) ? data.runs : [];
       const completed = runs
         .filter((run) => run?.finished_at)
-        .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
-        .slice(0, 10);
+        .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime());
       setProjectRuns(completed);
 
       // Default to the latest run the first time this project is viewed on
@@ -895,22 +894,35 @@ export default function App() {
               <div className="filter-tab-divider" aria-hidden="true" />
 
               {reportRunId ? (
-                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
-                  {projectRuns.map((run, index) => (
-                    <span key={run.id} className="filter-tab-run-item">
-                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={reportRunId === run.id}
-                        className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
-                        onClick={() => setReportRunId(run.id)}
-                      >
-                        {pipelineRunTitle(run, index)}
-                      </button>
-                    </span>
-                  ))}
-                </div>
+                projectRuns.length > 3 ? (
+                  <select
+                    className="filter-select filter-run-select"
+                    value={reportRunId}
+                    onChange={(event) => setReportRunId(event.target.value)}
+                    aria-label="Filter by pipeline run"
+                  >
+                    {projectRuns.map((run, index) => (
+                      <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+                    {projectRuns.map((run, index) => (
+                      <span key={run.id} className="filter-tab-run-item">
+                        {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={reportRunId === run.id}
+                          className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
+                          onClick={() => setReportRunId(run.id)}
+                        >
+                          {pipelineRunTitle(run, index)}
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )
               ) : (
                 <div className="filter-tab-buttons" role="tablist" aria-label="Report date range">
                   {REPORT_PERIODS.map((period) => (
