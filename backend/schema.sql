@@ -598,6 +598,16 @@ alter table public.idea_clusters
     add constraint idea_clusters_unique_key
     unique (project_id, normalized_idea, type, category);
 
+-- Lets a new idea that doesn't exact-match an existing cluster still attach
+-- to it via cosine similarity instead of spawning a near-duplicate cluster -
+-- see store.py's _replace_idea_clusters_for_article(). Same pattern as
+-- articles/projects/competitors' embedding columns.
+alter table public.idea_clusters
+    add column if not exists embedding_json jsonb default '[]'::jsonb,
+    add column if not exists embedding_model text,
+    add column if not exists embedding_source text,
+    add column if not exists embedded_at timestamptz;
+
 -- Which articles contributed to a cluster; frequency_estimate is recomputed
 -- from this table's row count for the cluster on every write (see store.py),
 -- so reprocessing an article can never double-count it.

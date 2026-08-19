@@ -246,7 +246,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
             """
             select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                    a.sentiment, a.writer_tone, a.article_tone, a.insight_json,
-                   a.published, a.created_at
+                   a.published, a.created_at, a.pipeline_run_id, a.source_language
             from articles a
             join article_projects ap on ap.article_id = a.id
             where ap.project_id = %s and a.pipeline_run_id = %s
@@ -258,7 +258,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                a.sentiment, a.writer_tone, a.article_tone, a.insight_json,
-               a.published, a.created_at
+               a.published, a.created_at, a.pipeline_run_id, a.source_language
         from articles a
         join article_projects ap on ap.article_id = a.id
         where ap.project_id = %s

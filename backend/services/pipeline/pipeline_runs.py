@@ -46,8 +46,9 @@ def _normalize(row):
         # This project's Nth scrape run ever, oldest = 1 - stable regardless
         # of how the caller filters/limits/sorts the result set, so the
         # dashboard's "Pipeline #N" labels don't shift as older runs age out
-        # of a capped list. Only populated by list_pipeline_runs(); other
-        # readers of this row shape simply get None here.
+        # of a capped list. Populated by list_pipeline_runs() and
+        # get_pipeline_run(); a non-scrape pipeline row (e.g.
+        # competitor-analysis) has no sequence_number and gets None here.
         "sequence_number": row.get("sequence_number"),
     }
 
@@ -76,7 +77,18 @@ def _normalize_source_stat(row):
 
 def _fetch_by_id(run_id):
     row = db.fetch_one(
-        f"select {RUN_SELECT} from pipeline_runs pr left join projects p on p.id = pr.project_id where pr.id = %s limit 1",
+        f"""
+        select {RUN_SELECT}, seq.sequence_number
+        from pipeline_runs pr
+        left join projects p on p.id = pr.project_id
+        left join (
+            select id, row_number() over (partition by project_id order by created_at asc) as sequence_number
+            from pipeline_runs
+            where pipeline = 'scrape'
+        ) seq on seq.id = pr.id
+        where pr.id = %s
+        limit 1
+        """,
         (run_id,),
     )
     return _normalize(row) if row else None

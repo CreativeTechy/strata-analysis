@@ -16,8 +16,37 @@ function Section({ number, title, children }) {
   return <section className="report-brief-section"><header><span>{number}</span><h3>{title}</h3></header>{children}</section>;
 }
 
-function FeedbackColumn({ title, icon, tone, items }) {
-  return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => <li key={item.text || item.idea}>{item.text || item.idea}<strong>{item.count || item.frequency_estimate || 1}</strong></li>)}</ul> : <p>No signals in this category yet.</p>}</article>;
+// A topic's `sources` come back from the API as {id, url, title,
+// pipeline_run_id, published} - snake_case straight off the DB row - so they
+// need mapping to camelCase before landing in router state for TopicDetailPage.
+function mapTopicSources(sources) {
+  return (Array.isArray(sources) ? sources : []).map((source) => ({
+    id: source.id,
+    url: source.url,
+    title: source.title,
+    pipelineRunId: source.pipeline_run_id,
+    published: source.published,
+  }));
+}
+
+function FeedbackColumn({ title, icon, tone, items, projectId }) {
+  return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => {
+    const label = item.text || item.idea;
+    const count = item.count || item.frequency_estimate || 1;
+    if (!projectId || !item.sources?.length) {
+      return <li key={label}>{label}<strong>{count}</strong></li>;
+    }
+    return <li key={label}>
+      <Link
+        className="feedback-topic-link"
+        to={`/projects/${projectId}/topics`}
+        state={{ idea: label, type: item.type, category: item.category, frequencyEstimate: item.frequency_estimate || item.count, sources: mapTopicSources(item.sources), backTo: '/reports', backLabel: 'Back to Reports' }}
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, width: '100%', color: 'inherit', textDecoration: 'none' }}
+      >
+        {label}<strong>{count}</strong>
+      </Link>
+    </li>;
+  })}</ul> : <p>No signals in this category yet.</p>}</article>;
 }
 
 export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, sources = [], period = 'all', runId = null }) {
@@ -187,7 +216,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     </Section>
 
     <Section number="05" title="Categorized feedback">
-      <div className="report-feedback-grid"><FeedbackColumn title="Positive drivers" icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} /><FeedbackColumn title="Negative drivers" icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} /><FeedbackColumn title="Neutral / mixed" icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} /></div>
+      <div className="report-feedback-grid"><FeedbackColumn title="Positive drivers" icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} projectId={projectId} /><FeedbackColumn title="Negative drivers" icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} projectId={projectId} /><FeedbackColumn title="Neutral / mixed" icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} projectId={projectId} /></div>
     </Section>
   </section>;
 }
