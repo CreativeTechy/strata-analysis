@@ -23,3 +23,14 @@
     padding: 16px;
   }
 }
+
+/* Frequent-ideas rows navigate to the topic detail page on click - signal
+   that with the same hover affordance used for other clickable topic rows
+   (see .intelligence-idea-clickable / .feedback-topic-link). */
+.admin-item-card-clickable {
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.admin-item-card-clickable:hover {
+  background: rgba(37, 99, 235, 0.06);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.1);
+}

@@ -7,10 +7,8 @@ import {
   ArrowLeft,
   BarChart3,
   CalendarDays,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
   Hash,
   Lightbulb,
   Link2,
@@ -90,8 +88,8 @@ export default function ProjectDetailPage({
   const [ideaClustersLoading, setIdeaClustersLoading] = useState(false);
   const [ideaClustersError, setIdeaClustersError] = useState('');
   const [ideaOffset, setIdeaOffset] = useState(0);
-  const [expandedClusterId, setExpandedClusterId] = useState(null);
-  const [clusterArticles, setClusterArticles] = useState({});
+  const [openingClusterId, setOpeningClusterId] = useState(null);
+  const [clusterOpenErrors, setClusterOpenErrors] = useState({});
 
   const project = useMemo(
     () => projects.find((item) => Number(item.id) === Number(params.projectId)) || null,
@@ -105,8 +103,8 @@ export default function ProjectDetailPage({
     setSourcesPage(1);
     setActiveSourceTab('all');
     setIdeaOffset(0);
-    setExpandedClusterId(null);
-    setClusterArticles({});
+    setOpeningClusterId(null);
+    setClusterOpenErrors({});
   }
 
   useEffect(() => {
@@ -164,32 +162,42 @@ export default function ProjectDetailPage({
     return () => controller.abort();
   }, [project?.id, ideaOffset]);
 
-  const toggleClusterExpanded = async (clusterId) => {
-    if (expandedClusterId === clusterId) {
-      setExpandedClusterId(null);
-      return;
-    }
-    setExpandedClusterId(clusterId);
-    if (clusterArticles[clusterId]) return;
-    setClusterArticles((current) => ({ ...current, [clusterId]: { articles: [], total: 0, loading: true, error: '' } }));
+  // A cluster's persisted frequency can span far more articles than fit in
+  // this page's list - fetch a large-but-bounded page of its representative
+  // articles up front, then hand them to TopicDetailPage via router state so
+  // its chart/attribution can be built from real data without a second fetch.
+  const openClusterTopic = async (cluster) => {
+    setOpeningClusterId(cluster.id);
+    setClusterOpenErrors((current) => ({ ...current, [cluster.id]: '' }));
     try {
-      const res = await fetch(`/api/projects/${project.id}/idea-clusters/${clusterId}/articles?limit=5`);
+      const res = await fetch(`/api/projects/${project.id}/idea-clusters/${cluster.id}/articles?limit=200`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load articles (${res.status})`);
-      setClusterArticles((current) => ({
-        ...current,
-        [clusterId]: {
-          articles: Array.isArray(data?.articles) ? data.articles : [],
-          total: Number(data?.total) || 0,
-          loading: false,
-          error: '',
+      const clusterSources = (Array.isArray(data?.articles) ? data.articles : []).map((article) => ({
+        id: article.id,
+        url: article.url,
+        title: article.title,
+        pipelineRunId: article.pipeline_run_id,
+        published: article.published,
+        source: article.source,
+        summary: article.summary,
+        sentiment: article.sentiment,
+      }));
+      navigate(`/projects/${project.id}/topics`, {
+        state: {
+          idea: cluster.idea,
+          type: cluster.type,
+          category: cluster.category,
+          frequencyEstimate: cluster.frequency_estimate,
+          sources: clusterSources,
+          backTo: '/dashboard',
+          backLabel: 'Back to Dashboard',
         },
-      }));
+      });
     } catch (err) {
-      setClusterArticles((current) => ({
-        ...current,
-        [clusterId]: { articles: [], total: 0, loading: false, error: err?.message || 'Failed to load representative articles.' },
-      }));
+      setClusterOpenErrors((current) => ({ ...current, [cluster.id]: err?.message || 'Failed to load articles for this idea.' }));
+    } finally {
+      setOpeningClusterId(null);
     }
   };
 
@@ -675,13 +683,14 @@ export default function ProjectDetailPage({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {ideaClusters.clusters.map((cluster) => {
-              const expanded = expandedClusterId === cluster.id;
-              const detail = clusterArticles[cluster.id];
+              const isOpening = openingClusterId === cluster.id;
+              const openError = clusterOpenErrors[cluster.id];
               return (
-                <div key={cluster.id} className="admin-item-card" style={{ margin: 0 }}>
+                <div key={cluster.id} className="admin-item-card admin-item-card-clickable" style={{ margin: 0 }}>
                   <button
                     type="button"
-                    onClick={() => toggleClusterExpanded(cluster.id)}
+                    onClick={() => openClusterTopic(cluster)}
+                    disabled={isOpening}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -691,14 +700,14 @@ export default function ProjectDetailPage({
                       background: 'none',
                       border: 'none',
                       padding: 0,
-                      cursor: 'pointer',
+                      cursor: isOpening ? 'wait' : 'pointer',
                       textAlign: 'left',
                       font: 'inherit',
                       color: 'inherit',
                     }}
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                      {expanded ? <ChevronDown size={16} style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
+                      {isOpening ? <Loader2 size={16} className="spin" style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
                       <strong style={{ fontSize: '0.92rem' }}>{cluster.idea}</strong>
                       <span className="admin-tag muted">{cluster.type || 'issue'}</span>
                     </span>
@@ -706,40 +715,9 @@ export default function ProjectDetailPage({
                       {Number(cluster.frequency_estimate || 0).toLocaleString()} articles
                     </span>
                   </button>
-
-                  {expanded && (
-                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-                      {detail?.loading ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.82rem' }}>
-                          <Loader2 size={14} className="spin" /> Loading source articles...
-                        </div>
-                      ) : detail?.error ? (
-                        <span style={{ color: '#b42318', fontSize: '0.82rem' }}>{detail.error}</span>
-                      ) : detail?.articles?.length ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {detail.articles.map((article) => (
-                            <a
-                              key={article.id}
-                              href={article.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.84rem', color: 'inherit', textDecoration: 'none' }}
-                            >
-                              <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                {article.title || article.url} <ExternalLink size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
-                              </span>
-                              <span style={{ color: 'var(--text-light)', flexShrink: 0 }}>{article.source || 'Unknown source'}</span>
-                            </a>
-                          ))}
-                          {detail.total > detail.articles.length && (
-                            <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>+ {detail.total - detail.articles.length} more</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>No representative articles found.</span>
-                      )}
-                    </div>
-                  )}
+                  {openError ? (
+                    <span style={{ display: 'block', marginTop: 8, color: '#b42318', fontSize: '0.82rem' }}>{openError}</span>
+                  ) : null}
                 </div>
               );
             })}

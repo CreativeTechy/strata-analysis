@@ -6,6 +6,7 @@ import DashboardOverview from './components/DashboardOverview';
 import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
+import TopicDetailPage from './components/TopicDetailPage';
 import IntelligencePage from './components/IntelligencePage';
 import CompetitorStudiesPage from './components/CompetitorStudiesPage';
 import CompetitorOnboarding from './components/CompetitorOnboarding';
@@ -1134,6 +1135,7 @@ export default function App() {
               />
             )}
           />
+          <Route path="/projects/:projectId/topics" element={<TopicDetailPage />} />
           <Route path="/workflow" element={renderWorkflowRoute()} />
           <Route
             path="/intelligence"

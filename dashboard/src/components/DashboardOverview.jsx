@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity, CalendarClock, ChevronRight, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
@@ -15,6 +16,19 @@ const PERIODS = [
   { key: 'all', label: 'All time' },
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
+// Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
+// same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
+const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+
+function languageLabel(code) {
+  if (!code || code === 'unknown') return 'Unknown';
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code);
+    return name ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
+  } catch {
+    return code.toUpperCase();
+  }
+}
 
 function percent(value, total) {
   return total ? Math.round((Number(value || 0) / total) * 100) : 0;
@@ -37,6 +51,38 @@ function MetricCard({ icon, label, value, detail, tone = 'blue' }) {
     <span className="intelligence-metric-icon">{icon}</span>
     <div><span className="intelligence-metric-label">{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>
   </article>;
+}
+
+// A topic's `sources` come back from the API as {id, url, title,
+// pipeline_run_id, published} - snake_case straight off the DB row - so they
+// need mapping to camelCase before landing in router state for TopicDetailPage.
+function mapTopicSources(sources) {
+  return (Array.isArray(sources) ? sources : []).map((source) => ({
+    id: source.id,
+    url: source.url,
+    title: source.title,
+    pipelineRunId: source.pipeline_run_id,
+    published: source.published,
+  }));
+}
+
+function IdeaRow({ idea, maxFrequency, projectId }) {
+  const body = <>
+    <div><strong>{idea.idea}</strong><span>{idea.type || 'issue'}</span></div>
+    <strong>{Number(idea.frequency_estimate || 0).toLocaleString()}</strong>
+    <div className="intelligence-track"><span style={{ width: `${Math.max(8, percent(idea.frequency_estimate, maxFrequency))}%` }} /></div>
+  </>;
+  if (projectId && idea.sources?.length) {
+    return <Link
+      className={`intelligence-idea intelligence-idea-clickable ${idea.type || 'issue'}`}
+      style={{ textDecoration: 'none', color: 'inherit' }}
+      to={`/projects/${projectId}/topics`}
+      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), backTo: '/dashboard', backLabel: 'Back to Dashboard' }}
+    >
+      {body}
+    </Link>;
+  }
+  return <div className={`intelligence-idea ${idea.type || 'issue'}`}>{body}</div>;
 }
 
 function formatRunLabel(run) {
@@ -78,6 +124,7 @@ export default function DashboardOverview({
   const sentimentData = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(data[name] || 0) }));
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
+  const languageData = data.insights?.language_breakdown || [];
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -143,9 +190,40 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card intelligence-radar-card"><h3>Emotional signature</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => value.charAt(0).toUpperCase() + value.slice(1)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>Derived from the emotional tone of analyzed articles.</p></article>
         </section>
 
+        <section className="intelligence-language-grid">
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Language distribution</h3>
+            {languageData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={languageData} dataKey="count" nameKey="language" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">
+                        {languageData.map((entry, index) => <Cell key={entry.language} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, languageLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <strong>{languageData.length}</strong>
+                  <span>{languageData.length === 1 ? 'language' : 'languages'}</span>
+                </div>
+                <div className="intelligence-legend">
+                  {languageData.map((entry, index) => (
+                    <div key={entry.language}>
+                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
+                      <label>{languageLabel(entry.language)}</label>
+                      <strong>{percent(entry.count, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No detected language on analyzed articles yet.</p>}
+          </article>
+        </section>
+
         <section className="intelligence-middle-grid">
           <article className="glass-card intelligence-card"><h3>Where it’s being said</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong>{item.platform}</strong><small>{item.total.toLocaleString()} articles</small></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><strong className={item.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{item.net_sentiment >= 0 ? '+' : ''}{item.net_sentiment}</strong></div>)}</div></article>
-          <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <div className={`intelligence-idea ${idea.type || 'issue'}`} key={idea.idea}><div><strong>{idea.idea}</strong><span>{idea.type || 'issue'}</span></div><strong>{Number(idea.frequency_estimate || 0).toLocaleString()}</strong><div className="intelligence-track"><span style={{ width: `${Math.max(8, percent(idea.frequency_estimate, Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)))}%` }} /></div></div>)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
+          <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
 

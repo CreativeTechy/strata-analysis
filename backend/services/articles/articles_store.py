@@ -16,7 +16,8 @@ ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
     "sentiment,relevance_score,category,article_category,writer_tone,article_tone,insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
-    "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at"
+    "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
+    "source_language,source_language_confidence"
 )
 
 
@@ -538,7 +539,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary",
+            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,
@@ -563,10 +564,16 @@ def _list_top_items(values, limit=6):
             text = _normalize_text(value.get("text") or value.get("idea") or value.get("opinion") or value.get("feedback"))
             source_url = _normalize_text(value.get("url"))
             source_title = _normalize_text(value.get("title"))
+            source_id = value.get("id")
+            source_pipeline_run_id = value.get("pipeline_run_id")
+            source_published = value.get("published")
         else:
             text = _normalize_text(value)
             source_url = ""
             source_title = ""
+            source_id = None
+            source_pipeline_run_id = None
+            source_published = None
         if not text:
             continue
         key = text.lower()
@@ -575,7 +582,13 @@ def _list_top_items(values, limit=6):
             display[key] = text
         if source_url or source_title:
             sources.setdefault(key, [])
-            source_entry = {"url": source_url, "title": source_title or source_url}
+            source_entry = {
+                "id": source_id,
+                "url": source_url,
+                "title": source_title or source_url,
+                "pipeline_run_id": source_pipeline_run_id,
+                "published": source_published,
+            }
             if source_entry not in sources[key]:
                 sources[key].append(source_entry)
     for key, count in counts.most_common(limit):
@@ -672,6 +685,14 @@ def _article_category_counts(rows):
     return [{"category": category, "count": count} for category, count in counts.most_common()]
 
 
+def _source_language_counts(rows):
+    counts = Counter()
+    for row in rows:
+        language = str(row.get("source_language") or "").strip().lower() or "unknown"
+        counts[language] += 1
+    return [{"language": language, "count": count} for language, count in counts.most_common()]
+
+
 def _overall_sentiment(rows):
     counts = Counter()
     for row in rows:
@@ -720,8 +741,11 @@ def _topic_summary(rows):
 
     for row in rows:
         row_source = {
+            "id": row.get("id"),
             "url": _normalize_text(row.get("url")),
             "title": _normalize_text(row.get("title")),
+            "pipeline_run_id": row.get("pipeline_run_id"),
+            "published": row.get("published"),
         }
         insight = row.get("insight_json") if isinstance(row.get("insight_json"), dict) else {}
         for text in _normalize_feedback_list(insight.get("positive_feedback")):
@@ -770,8 +794,11 @@ def _topic_summary(rows):
         if item.get("url") or item.get("title"):
             idea_sources.setdefault(key, [])
             source_entry = {
+                "id": item.get("id"),
                 "url": _normalize_text(item.get("url")),
                 "title": _normalize_text(item.get("title")) or _normalize_text(item.get("url")),
+                "pipeline_run_id": item.get("pipeline_run_id"),
+                "published": item.get("published"),
             }
             if source_entry not in idea_sources[key]:
                 idea_sources[key].append(source_entry)
@@ -812,6 +839,7 @@ def _topic_summary(rows):
         "summary": summary,
         "topic": topics[0] if topics else "",
         "article_category_breakdown": _article_category_counts(rows),
+        "language_breakdown": _source_language_counts(rows),
         "overall_sentiment": _overall_sentiment(rows),
         "overall_mood": _overall_mood_from_counts(article_tone_counts),
         "overall_tone": _group_overall_tone(article_tone_counts, writer_tone_counts),
@@ -1040,7 +1068,7 @@ def list_articles_for_idea_cluster(cluster_id, project_id, limit=10, offset=0):
     can't be browsed by guessing its id). Returns None - distinct from the
     empty page shape - when the cluster doesn't exist or isn't in that
     project, so the caller can 404 instead of showing an empty result."""
-    limit = _normalize_limit(limit, default=10)
+    limit = _normalize_limit(limit, default=10, max_limit=500)
     offset = _normalize_offset(offset)
     if not config.DATABASE_URL:
         return None
@@ -1053,7 +1081,7 @@ def list_articles_for_idea_cluster(cluster_id, project_id, limit=10, offset=0):
             return None
         rows = db.fetch_all(
             """
-            select a.id, a.url, a.title, a.source, a.published, a.summary, a.sentiment
+            select a.id, a.url, a.title, a.source, a.published, a.summary, a.sentiment, a.pipeline_run_id
             from articles a
             join idea_cluster_articles ica on ica.article_id = a.id
             where ica.idea_cluster_id = %s

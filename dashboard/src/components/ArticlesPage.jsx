@@ -998,6 +998,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
                               <span className="badge category">
                                 {prettyLabel(article.article_category || article.category || 'general_article')}
                               </span>
+                              {article.source_language ? (
+                                <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
+                                  Language: {article.source_language.toUpperCase()}
+                                </span>
+                              ) : null}
                               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
                                 Writer: {prettyLabel(article.writer_tone || 'neutral')}
                               </span>
@@ -1089,6 +1094,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
                           <span className="badge category">
                             {prettyLabel(article.article_category || article.category || 'general_article')}
                           </span>
+                          {article.source_language ? (
+                            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
+                              Language: {article.source_language.toUpperCase()}
+                            </span>
+                          ) : null}
                           <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
                             Writer: {prettyLabel(article.writer_tone || 'neutral')}
                           </span>
