@@ -68,6 +68,26 @@ class LLMUnavailableError(LLMError):
     user_message = "The assistant service is temporarily unavailable. Please try again shortly."
 
 
+class LLMConnectionError(LLMError):
+    code = "llm_connection_error"
+    user_message = (
+        "Couldn't reach the configured LLM endpoint at all (connection failed). "
+        "Check that the service is running and reachable, and that "
+        "LLM_CHAT_BASE_URL/OLLAMA_CHAT_BASE_URL points at the right host - this "
+        "is also what happens when a tunnel (e.g. ngrok) in front of it has gone offline."
+    )
+
+
+class LLMEndpointNotFoundError(LLMError):
+    code = "llm_endpoint_not_found"
+    user_message = (
+        "The configured LLM endpoint returned 404 Not Found. Every call uses the "
+        "same URL, so this means the endpoint itself is wrong or gone - not a "
+        "problem with one article. Check LLM_CHAT_BASE_URL/OLLAMA_CHAT_BASE_URL, "
+        "and that a tunnel in front of it (e.g. ngrok) hasn't gone offline."
+    )
+
+
 class LLMBadRequestError(LLMError):
     code = "llm_bad_request"
     user_message = "That request couldn't be processed. Try rephrasing your question."
@@ -203,6 +223,8 @@ def _raise_for_status(resp):
         raise LLMAuthError(detail)
     if status == 402:
         raise LLMQuotaError(detail)
+    if status == 404:
+        raise LLMEndpointNotFoundError(detail)
     if status == 429:
         raise LLMRateLimitError(detail)
     if status in (400, 422):
@@ -226,7 +248,7 @@ def _post(url, body, timeout, *, api_key):
     except requests.Timeout as exc:
         raise LLMTimeoutError(str(exc)) from exc
     except requests.ConnectionError as exc:
-        raise LLMUnavailableError(str(exc)) from exc
+        raise LLMConnectionError(str(exc)) from exc
     except requests.RequestException as exc:
         raise LLMUnavailableError(str(exc)) from exc
 

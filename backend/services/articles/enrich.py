@@ -18,7 +18,10 @@ from analysis.orchestrator import PIPELINE_VERSION, analyze_article, describe_mo
 from content_guard import is_blocked_article, is_tweet_url
 from embeddings import build_article_embedding_text, get_embedding
 from hf_inference_client import HFAuthError, HFConfigError, HFInferenceError, HFQuotaError
-from llm_client import LLMAuthError, LLMConfigError, LLMError, LLMQuotaError
+from llm_client import (
+    LLMAuthError, LLMConfigError, LLMConnectionError, LLMEndpointNotFoundError,
+    LLMError, LLMQuotaError,
+)
 from services.projects.projects_store import get_project
 from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_source_stats
 from services.pipeline.source_diagnostics import build_fetch_note, load_source_diagnostics
@@ -33,11 +36,15 @@ OUTPUT_FILE = Path(os.environ.get("PIPELINE_ENRICHED_FILE", "enriched_articles.j
 PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.environ.get("PIPELINE_STATS_FILE") else None
 
 # Only the AI provider failures that mean the provider is unusable outright
-# - missing/invalid credentials, or the account being out of credit/quota -
-# stop the whole pipeline: every remaining article would fail the exact same
-# way, so grinding through the rest of the run would just be doomed calls.
-# Everything else an AI provider call can raise (rate limit, timeout, an
-# outage, a bad request, or a response with no usable content - see
+# - missing/invalid credentials, the account being out of credit/quota, or
+# the endpoint being flat-out unreachable (DNS/connection failure, or a 404 -
+# every call here uses the same URL, so a 404 is never article-specific, it
+# means the configured base URL/tunnel itself is wrong or offline, e.g. an
+# expired ngrok tunnel in front of a local Ollama) - stop the whole pipeline:
+# every remaining article would fail the exact same way, so grinding through
+# the rest of the run would just be doomed calls. Everything else an AI
+# provider call can raise (rate limit, timeout, a reachable server's own 5xx,
+# a bad request, or a response with no usable content - see
 # llm_client.LLMInvalidResponseError/HFInferenceError's other subclasses) is
 # a one-off failure of *this* article's call, not proof the provider itself
 # is broken, so it is NOT included here - enrich_article() lets it fall
@@ -46,7 +53,7 @@ PIPELINE_STATS_FILE = Path(os.environ.get("PIPELINE_STATS_FILE", "")) if os.envi
 # the rest of the run keeps going. scraper/pipelines.py imports this same
 # tuple so both provider types stop the pipeline the same way.
 FATAL_ANALYSIS_ERRORS = (
-    LLMConfigError, LLMAuthError, LLMQuotaError,
+    LLMConfigError, LLMAuthError, LLMQuotaError, LLMConnectionError, LLMEndpointNotFoundError,
     HFConfigError, HFAuthError, HFQuotaError,
 )
 
@@ -370,6 +377,52 @@ def enrich_article(article, project_context=""):
         return None
 
 
+def _summarize_language_diagnostics(enriched):
+    """Break down enrichment health by detected source_language, so a
+    multilingual project's degraded-but-not-crashed paths (low-confidence
+    sentiment/tone/category, undetected language, failed extraction) are
+    visible per language instead of hidden inside one aggregate success
+    count. Read from fields analyze_article() already stores on each
+    article - no extra model calls, no schema change."""
+    by_language = defaultdict(lambda: {
+        "count": 0,
+        "extraction_failed": 0,
+        "sentiment_low_confidence": 0,
+        "category_low_confidence": 0,
+        "writer_tone_low_confidence": 0,
+        "article_tone_low_confidence": 0,
+    })
+    for article in enriched:
+        bucket = by_language[article.get("source_language") or "unknown"]
+        bucket["count"] += 1
+        if article.get("analysis_status") != "success":
+            bucket["extraction_failed"] += 1
+        if article.get("sentiment_low_confidence"):
+            bucket["sentiment_low_confidence"] += 1
+        if (article.get("category_confidence") or 0.0) < config.CLASSIFICATION_CONFIDENCE_THRESHOLD:
+            bucket["category_low_confidence"] += 1
+        if (article.get("writer_tone_confidence") or 0.0) < config.CLASSIFICATION_CONFIDENCE_THRESHOLD:
+            bucket["writer_tone_low_confidence"] += 1
+        if (article.get("article_tone_confidence") or 0.0) < config.CLASSIFICATION_CONFIDENCE_THRESHOLD:
+            bucket["article_tone_low_confidence"] += 1
+    return dict(by_language)
+
+
+def _print_language_diagnostics(language_diagnostics):
+    if not language_diagnostics:
+        return
+    print("\nEnrichment health by detected source language:")
+    for lang, bucket in sorted(language_diagnostics.items(), key=lambda item: item[0]):
+        print(
+            f"  [{lang}] {bucket['count']} articles - "
+            f"extraction_failed={bucket['extraction_failed']} "
+            f"sentiment_low_conf={bucket['sentiment_low_confidence']} "
+            f"category_low_conf={bucket['category_low_confidence']} "
+            f"writer_tone_low_conf={bucket['writer_tone_low_confidence']} "
+            f"article_tone_low_conf={bucket['article_tone_low_confidence']}"
+        )
+
+
 def write_output(articles):
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -556,6 +609,10 @@ def main():
     stats["articles_enriched"] = len(enriched)
     print(f"\nEnriched {len(enriched)} articles successfully.")
     print(f"Topic insight summary: {topic_insight.get('summary', '')[:120]}")
+
+    language_diagnostics = _summarize_language_diagnostics(enriched)
+    stats["language_diagnostics"] = language_diagnostics
+    _print_language_diagnostics(language_diagnostics)
 
     push_run_progress(
         stats,

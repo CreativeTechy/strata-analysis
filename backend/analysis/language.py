@@ -61,7 +61,10 @@ def detect_language(text: str) -> dict:
         return {"language": None, "score": 0.0, "low_confidence": True}
 
     try:
-        result = classifier(text[:1000])[0]
+        # See sentiment_classifier.py's matching comment: the text[:1000]
+        # character slice can still overflow the model's max token length for
+        # densely-tokenizing scripts - truncation=True is the backstop.
+        result = classifier(text[:1000], tokenizer_kwargs={"truncation": True})[0]
     except Exception:
         logger.exception("Language detection inference failed")
         return {"language": None, "score": 0.0, "low_confidence": True}

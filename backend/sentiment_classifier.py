@@ -107,7 +107,13 @@ def _classify_via_local_pipeline(model_name: str, text: str):
         return None
 
     try:
-        result = classifier(text)[0]
+        # Character-sliced input (see classify_sentiment's text[:512]) can
+        # still overflow the model's max token length for scripts where the
+        # tokenizer needs more tokens per character than English does (CJK,
+        # Thai, Arabic...) - truncation=True is the backstop so that
+        # overflow degrades to a truncated-but-valid input instead of a
+        # tokenizer/model error.
+        result = classifier(text, tokenizer_kwargs={"truncation": True})[0]
     except Exception:
         logger.exception("Sentiment classifier inference failed")
         return None

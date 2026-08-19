@@ -25,12 +25,6 @@ services:
       context: ./backend
     env_file:
       - ./backend/.env
-    environment:
-      # Only takes effect when backend/.env sets LLM_PROVIDER=ollama - points
-      # at the containerized `ollama` service below instead of .env's
-      # localhost default, which would resolve to the backend container
-      # itself on the Docker network, not the ollama one.
-      - OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions
     depends_on:
       - db
     expose:
@@ -44,7 +38,14 @@ services:
 
   # Fully-offline local LLM, opt-in via `docker compose --profile ollama up`.
   # Not started by a plain `docker compose up`, so deployments using
-  # OpenAI/DeepSeek pay no cost for it.
+  # OpenAI/DeepSeek pay no cost for it. To actually route the backend here,
+  # set OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions in
+  # backend/.env - "ollama" is this service's name, resolvable from the
+  # backend container over the Docker network, but not from backend/.env's
+  # own localhost default (which would resolve to the backend container
+  # itself). Point OLLAMA_CHAT_BASE_URL at a remote tunnel (e.g. ngrok in
+  # front of Ollama running on Google Colab) instead to test against that
+  # without touching this file.
   ollama:
     image: ollama/ollama:latest
     volumes:
