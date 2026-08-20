@@ -143,6 +143,7 @@ def normalize_people_opinions(value) -> list:
                     "gender": labels.DEFAULT_GENDER,
                     "age_range": labels.DEFAULT_AGE_RANGE,
                     "region": labels.DEFAULT_REGION,
+                    "segment": labels.DEFAULT_SEGMENT,
                 })
             continue
         opinion = as_text(item.get("opinion"))
@@ -155,16 +156,17 @@ def normalize_people_opinions(value) -> list:
             "gender": normalize_gender(item.get("gender")),
             "age_range": normalize_age_range(item.get("age_range")),
             "region": normalize_region(item.get("region")),
+            "segment": as_text(item.get("segment")) or labels.DEFAULT_SEGMENT,
         })
     deduped = []
     seen = set()
     for item in opinions:
-        # Includes gender/age_range/region so two different quoted people who
-        # happen to share the same short opinion/sentiment/category aren't
-        # collapsed into one row and lose a demographic.
+        # Includes gender/age_range/region/segment so two different quoted
+        # people who happen to share the same short opinion/sentiment/category
+        # aren't collapsed into one row and lose a demographic.
         key = (
             item["opinion"].lower(), item["sentiment"], item["category"].lower(),
-            item["gender"], item["age_range"], item["region"].lower(),
+            item["gender"], item["age_range"], item["region"].lower(), item["segment"].lower(),
         )
         if key in seen:
             continue

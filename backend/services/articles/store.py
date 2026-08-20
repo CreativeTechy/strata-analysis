@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from functools import lru_cache
 import hashlib
 import json
@@ -440,6 +440,7 @@ def _replace_article_children(article_id, article):
         _bulk_insert("article_feedback_items", ("article_id", "feedback_type", "text"), feedback_rows)
 
         opinion_rows = []
+        segment_votes = Counter()
         for item in article.get("people_opinions") or []:
             if not isinstance(item, dict):
                 continue
@@ -451,12 +452,26 @@ def _replace_article_children(article_id, article):
             gender = str(item.get("gender") or "unknown").strip().lower() or "unknown"
             age_range = str(item.get("age_range") or "unknown").strip().lower() or "unknown"
             region = str(item.get("region") or "unknown").strip() or "unknown"
-            opinion_rows.append((article_id, opinion, sentiment, category, gender, age_range, region))
+            segment_raw = str(item.get("segment") or "unknown").strip() or "unknown"
+            segment = _resolve_segment_label(segment_raw)
+            if segment != "unknown":
+                segment_votes[segment] += 1
+            opinion_rows.append(
+                (article_id, opinion, sentiment, category, gender, age_range, region, segment_raw, segment)
+            )
         _bulk_insert(
             "article_people_opinions",
-            ("article_id", "opinion", "sentiment", "category", "gender", "age_range", "region"),
+            (
+                "article_id", "opinion", "sentiment", "category", "gender", "age_range", "region",
+                "segment_raw", "segment",
+            ),
             opinion_rows,
         )
+        if segment_votes:
+            db.execute(
+                "update articles set segment = %s where id = %s",
+                (segment_votes.most_common(1)[0][0], article_id),
+            )
 
         tag_rows = []
         for tag_type, field in (("organization", "organizations"), ("entity", "entities"), ("topic", "topics")):
@@ -476,6 +491,92 @@ def _replace_article_children(article_id, article):
 # (project attribution 0.78 below, competitor matching 0.62, search 0.28).
 # Tune by editing this constant; not empirically validated yet.
 IDEA_SIMILARITY_THRESHOLD = 0.86
+
+# Same idea, applied to segment_taxonomy (see _resolve_segment_label): a new
+# raw segment phrase attaches to an existing canonical label at or above this
+# score. Segment phrases are short (2-4 words) so a slightly lower bar than
+# IDEA_SIMILARITY_THRESHOLD is used - short phrases tend to score lower on
+# cosine similarity than full sentences even when they mean the same thing.
+# Conservative starting point, not empirically validated yet.
+SEGMENT_SIMILARITY_THRESHOLD = 0.80
+
+
+def _resolve_segment_label(raw_text):
+    """Maps a freeform per-person life-situation/occupation phrase (see
+    structured_extraction.py's people_opinions.segment) onto a shared
+    vocabulary so "jobless"/"laid off"/"unemployed" land in the same
+    dashboard bucket instead of each spawning its own tiny slice.
+
+    Exact normalized-text match against segment_taxonomy first; cosine
+    similarity against every other canonical label as a fallback - the same
+    embedding-based attach-or-create pattern as _resolve_idea_cluster_id, but
+    global instead of project-scoped, since a life-situation label isn't
+    specific to one project's competitive space the way an idea is."""
+    text = (raw_text or "").strip()
+    if not text or text.lower() == "unknown":
+        return "unknown"
+    if not _table_exists("segment_taxonomy"):
+        return text
+
+    existing = db.fetch_one(
+        "select canonical_label from segment_taxonomy where lower(canonical_label) = lower(%s)",
+        (text,),
+    )
+    if existing:
+        db.execute(
+            "update segment_taxonomy set last_seen_at = now() where canonical_label = %s",
+            (existing["canonical_label"],),
+        )
+        return existing["canonical_label"]
+
+    embedding = get_embedding(text)
+    if embedding.get("embedding_json"):
+        candidates = db.fetch_all("select canonical_label, embedding_json from segment_taxonomy")
+        best_label, best_score = None, 0.0
+        for candidate in candidates or []:
+            candidate_embedding = candidate.get("embedding_json") or []
+            if not candidate_embedding:
+                continue
+            score = cosine_similarity(embedding["embedding_json"], candidate_embedding)
+            if score > best_score:
+                best_score, best_label = score, candidate["canonical_label"]
+
+        if best_label is not None and best_score >= SEGMENT_SIMILARITY_THRESHOLD:
+            db.execute(
+                "update segment_taxonomy set last_seen_at = now() where canonical_label = %s",
+                (best_label,),
+            )
+            return best_label
+
+        db.execute(
+            """
+            insert into segment_taxonomy (
+                canonical_label, embedding_json, embedding_model, embedding_source, embedded_at
+            )
+            values (%s, %s, %s, %s, %s)
+            on conflict (canonical_label) do update set last_seen_at = now()
+            """,
+            (
+                text,
+                _jsonb_param(embedding["embedding_json"]),
+                embedding["embedding_model"],
+                embedding["embedding_source"],
+                embedding["embedded_at"],
+            ),
+        )
+        return text
+
+    # Embeddings unavailable (model not installed/failed to load) - fall back
+    # to an exact-match-only insert, identical to pre-embedding behavior.
+    db.execute(
+        """
+        insert into segment_taxonomy (canonical_label)
+        values (%s)
+        on conflict (canonical_label) do update set last_seen_at = now()
+        """,
+        (text,),
+    )
+    return text
 
 
 def _touch_idea_cluster(cluster_id):

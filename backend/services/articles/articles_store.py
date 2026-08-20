@@ -14,7 +14,7 @@ from services.projects.projects_store import list_article_ids_for_project, list_
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
-    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,"
+    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,"
     "insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
@@ -540,7 +540,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,insight_json,summary,published,pipeline_run_id,source_language",
+            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,
@@ -877,6 +877,7 @@ def _topic_summary(rows):
         "region_breakdown": _demographic_sentiment_breakdown(rows, "region"),
         "gender_breakdown": _demographic_sentiment_breakdown(rows, "gender"),
         "age_range_breakdown": _demographic_sentiment_breakdown(rows, "age_range"),
+        "segment_breakdown": _demographic_sentiment_breakdown(rows, "segment"),
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
         "nice_to_have_features": request_items,

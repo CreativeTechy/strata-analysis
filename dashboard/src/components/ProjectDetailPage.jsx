@@ -663,6 +663,13 @@ export default function ProjectDetailPage({
               </div>
               <DemographicSentimentChart title="Sentiment by age range" data={articleStats?.insights?.age_range_breakdown} />
             </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Segment</strong>
+              </div>
+              <DemographicSentimentChart title="Sentiment by segment" data={articleStats?.insights?.segment_breakdown} />
+            </div>
           </>
         )}
       </motion.div>

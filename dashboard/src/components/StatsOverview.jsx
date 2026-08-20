@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CalendarRange, CircleMinus, Globe2, Radio, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
+import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, Globe2, Radio, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicSentimentChart from './DemographicSentimentChart';
@@ -275,6 +275,10 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
         <div className="report-demographics-block">
           <h4><CalendarRange size={16} />Age range</h4>
           <DemographicSentimentChart title="Sentiment by age range" data={insights.age_range_breakdown} />
+        </div>
+        <div className="report-demographics-block">
+          <h4><Briefcase size={16} />Segment</h4>
+          <DemographicSentimentChart title="Sentiment by segment" data={insights.segment_breakdown} />
         </div>
       </div>
     </Section>
