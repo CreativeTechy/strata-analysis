@@ -29,7 +29,7 @@ from services.projects.projects_store import REPEAT_WEEKDAYS
 from psycopg.types.json import Jsonb
 import db
 from services.auth.auth import require_permission
-from services.pipeline.pipeline_runs import get_active_run_for_project
+from services.pipeline.pipeline_runs import get_active_run_for_project, get_pipeline_run
 from services.projects.projects_store import delete_project, list_sources_for_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
@@ -636,6 +636,13 @@ def analyze(
     only when the project has zero articles) for any caller that predates the
     dialog, e.g. a scheduled run.
 
+    `pipeline_run_id`, when given, scopes evidence to one already-completed
+    scrape run instead of the `period_days` date window - the "Pipeline run"
+    tab in the dialog, matching the same choice Reports offers. It always
+    implies skipping a fresh scrape: the point of picking a specific past run
+    is to look at exactly what it gathered, and a new scrape wouldn't add
+    anything to that run's articles.
+
     One LLM call per competitor - preceded, when scraping, by a full crawl of
     every source in the study - runs for minutes, which used to be minutes of
     an open request showing an undifferentiated spinner. The checks that can
@@ -646,8 +653,17 @@ def analyze(
     _project_or_404(project_id)
     payload = payload or {}
     period_days = max(1, min(int(payload.get("period_days") or competitor_analysis.DEFAULT_PERIOD_DAYS), 365))
+    pipeline_run_id = payload.get("pipeline_run_id") or None
+    if pipeline_run_id is not None:
+        run = get_pipeline_run(pipeline_run_id)
+        if not run or int(run.get("project_id") or 0) != int(project_id):
+            raise HTTPException(status_code=404, detail="Pipeline run not found for this study.")
     scrape_choice = payload.get("scrape")
-    needs_scrape = scrape_choice if isinstance(scrape_choice, bool) else not project_has_articles(project_id)
+    needs_scrape = (
+        False if pipeline_run_id
+        else scrape_choice if isinstance(scrape_choice, bool)
+        else not project_has_articles(project_id)
+    )
 
     if needs_scrape:
         if get_active_run_for_project(project_id):
@@ -669,7 +685,8 @@ def analyze(
 
     run_id = competitor_analysis.create_analysis_run(project_id)
     background_tasks.add_task(
-        competitor_analysis.run_analysis_job, run_id, project_id, period_days, bool(needs_scrape)
+        competitor_analysis.run_analysis_job, run_id, project_id, period_days,
+        bool(needs_scrape), pipeline_run_id,
     )
     return {"run_id": run_id, "status": "queued", "scraping": bool(needs_scrape)}
 

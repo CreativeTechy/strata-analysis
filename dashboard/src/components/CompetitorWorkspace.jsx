@@ -10,7 +10,7 @@
  * keyboard-reachable, since the whole surface is the click target.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight,
@@ -106,6 +106,22 @@ const ANALYSIS_PERIODS = [
   { days: 180, label: 'Last 6 months' },
   { days: 365, label: 'Last 12 months' },
 ];
+
+// Same run-labeling convention as Dashboard/Reports (DashboardOverview.jsx,
+// App.jsx's renderReportsView) - "Pipeline #N: <date>" - so a run means the
+// same thing wherever it's picked from.
+function formatPipelineRunLabel(run) {
+  const value = run?.finished_at || run?.created_at;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Run';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+function pipelineRunTitle(run, index) {
+  const number = run?.sequence_number ?? (index + 1);
+  return `Pipeline #${number}: ${formatPipelineRunLabel(run)}`;
+}
 
 const VIEW_MODES = [
   { value: 'card', label: 'Cards', icon: LayoutGrid },
@@ -458,6 +474,9 @@ export default function CompetitorWorkspace() {
   const [runMode, setRunMode] = useState(null); // 'scrape' | 'direct' - which choice is currently running
   const [showRunChoice, setShowRunChoice] = useState(false);
   const [periodDays, setPeriodDays] = useState(ANALYSIS_PERIODS[0].days);
+  const [pipelineRuns, setPipelineRuns] = useState([]);
+  const [pipelineRunId, setPipelineRunId] = useState(null);
+  const pipelineRunDefaultedRef = useRef(new Set());
   const [notice, setNotice] = useState(null);
   const [impact, setImpact] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -535,6 +554,40 @@ export default function CompetitorWorkspace() {
     };
   }, [studyId]);
 
+  // A study is a project, so it has the same pipeline_runs rows any project's
+  // scrapes write - fetched here so "Run analysis" can offer analyzing one
+  // specific past run instead of only a date window, same choice Dashboard/
+  // Reports give over `articles.pipeline_run_id`. Defaults to the latest
+  // completed run the first time this study is opened (tracked per study id
+  // so it doesn't fight a choice the user already made); after that, only an
+  // explicit pick changes it.
+  useEffect(() => {
+    if (!studyId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pipeline-runs?project_id=${studyId}&limit=500`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const runs = Array.isArray(data?.runs) ? data.runs : [];
+        const completed = runs
+          .filter((run) => run?.finished_at)
+          .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime());
+        if (cancelled) return;
+        setPipelineRuns(completed);
+        if (!pipelineRunDefaultedRef.current.has(studyId)) {
+          pipelineRunDefaultedRef.current.add(studyId);
+          if (completed.length > 0) setPipelineRunId(completed[0].id);
+        }
+      } catch {
+        if (!cancelled) setPipelineRuns([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId]);
+
   // Debounce the free-text search the same way ArticlesPage does, so every
   // keystroke doesn't fire its own request.
   useEffect(() => {
@@ -591,8 +644,12 @@ export default function CompetitorWorkspace() {
   const likelyNeedsScrape = !study?.last_run_at;
 
   const runAnalysis = async (scrapeFirst) => {
+    // Picking a specific past run means "analyze exactly what it gathered" -
+    // a fresh scrape would just be a different, not-yet-selected run.
+    const runFilter = pipelineRunId;
+    const willScrapeFirst = scrapeFirst && !runFilter;
     setShowRunChoice(false);
-    setRunMode(scrapeFirst ? 'scrape' : 'direct');
+    setRunMode(willScrapeFirst ? 'scrape' : 'direct');
     setAnalyzing(true);
     setError('');
     setNotice(null);
@@ -602,7 +659,11 @@ export default function CompetitorWorkspace() {
       // Queued, not awaited: a scrape plus one LLM call per competitor runs for
       // minutes. Poll for progress so the log renders live instead of leaving
       // the user on a spinner with no idea what stage it reached.
-      const queued = await analyze(studyId, { period_days: periodDays, scrape: scrapeFirst });
+      const queued = await analyze(studyId, {
+        period_days: periodDays,
+        pipeline_run_id: runFilter || undefined,
+        scrape: willScrapeFirst,
+      });
       const run = await pollAnalysisRun(studyId, queued.run_id, (r) => setAnalysisLogs(r.logs || []));
       if (run.status === 'failed') throw new Error(run.error || 'Analysis failed.');
 
@@ -614,6 +675,7 @@ export default function CompetitorWorkspace() {
         // From the run, not the picker: reports the window actually analyzed,
         // which stays right even if the selector is changed afterwards.
         periodDays: validation.period_days || null,
+        pipelineRunId: validation.pipeline_run_id || null,
         skipped: run.skipped || [],
         reasons: validation.rejection_reasons || {},
         scrapedFirst: Boolean(run.scrape_run),
@@ -1077,7 +1139,9 @@ export default function CompetitorWorkspace() {
             ) : null}
             Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
             {notice.scanned} scanned article{notice.scanned === 1 ? '' : 's'}
-            {notice.periodDays ? ` in the last ${notice.periodDays} days` : ''}.
+            {notice.pipelineRunId
+              ? ' from the selected pipeline run'
+              : notice.periodDays ? ` in the last ${notice.periodDays} days` : ''}.
             {Object.keys(notice.reasons).length ? (
               <>
                 {' '}Filtered out:{' '}
@@ -1404,36 +1468,96 @@ export default function CompetitorWorkspace() {
               {' '}{study?.last_run_at ? `Last scraped ${relativeTime(study.last_run_at)}.` : 'This study has never been scraped.'}
             </p>
 
-            <div className="cs-run-period">
-              <label htmlFor="cs-analysis-period">Look back over</label>
-              <select id="cs-analysis-period" className="cs-select" value={periodDays}
-                onChange={(event) => setPeriodDays(Number(event.target.value))}>
-                {ANALYSIS_PERIODS.map((option) => (
-                  <option key={option.days} value={option.days}>{option.label}</option>
-                ))}
-              </select>
+            <div className="cs-run-period" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="filter-tabs-shell" style={{ margin: 0 }}>
+                <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Evidence source">
+                  <button type="button" role="tab" aria-selected={!pipelineRunId}
+                    className={`source-type-tab ${!pipelineRunId ? 'active' : ''}`}
+                    onClick={() => setPipelineRunId(null)}>
+                    Date range
+                  </button>
+                  {pipelineRuns.length > 0 ? (
+                    <button type="button" role="tab" aria-selected={!!pipelineRunId}
+                      className={`source-type-tab ${pipelineRunId ? 'active' : ''}`}
+                      onClick={() => setPipelineRunId(pipelineRunId || pipelineRuns[0].id)}>
+                      Pipeline run
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {pipelineRunId ? (
+                pipelineRuns.length > 3 ? (
+                  <select className="cs-select filter-run-select" value={pipelineRunId}
+                    onChange={(event) => setPipelineRunId(event.target.value)}
+                    aria-label="Pipeline run to analyze">
+                    {pipelineRuns.map((run, index) => (
+                      <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Pipeline run to analyze">
+                    {pipelineRuns.map((run, index) => (
+                      <span key={run.id} className="filter-tab-run-item">
+                        {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                        <button type="button" role="tab" aria-selected={pipelineRunId === run.id}
+                          className={`source-type-tab ${pipelineRunId === run.id ? 'active' : ''}`}
+                          onClick={() => setPipelineRunId(run.id)}>
+                          {pipelineRunTitle(run, index)}
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <label htmlFor="cs-analysis-period">Look back over</label>
+                  <select id="cs-analysis-period" className="cs-select" style={{ flex: 1 }} value={periodDays}
+                    onChange={(event) => setPeriodDays(Number(event.target.value))}>
+                    {ANALYSIS_PERIODS.map((option) => (
+                      <option key={option.days} value={option.days}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <small>
-                Evidence outside this window is ignored, and each report says which window it covers.
-                Pages scraped from a competitor&rsquo;s own site are dated by when they were fetched, so
-                a longer window mainly helps with competitors the news covers rarely.
+                {pipelineRunId
+                  ? 'Only the articles that specific pipeline run gathered are used as evidence - no new scrape runs.'
+                  : (<>
+                      Evidence outside this window is ignored, and each report says which window it covers.
+                      Pages scraped from a competitor&rsquo;s own site are dated by when they were fetched, so
+                      a longer window mainly helps with competitors the news covers rarely.
+                    </>)}
               </small>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '4px 0 6px' }}>
-              <button type="button" onClick={() => runAnalysis(true)}
-                className={`cs-btn${likelyNeedsScrape ? ' cs-btn-primary' : ''}`}
-                style={{ justifyContent: 'flex-start', width: '100%' }}>
-                <RefreshCw size={15} />
-                <span style={{ textAlign: 'left', flex: 1 }}>Scrape &amp; analyze</span>
-                {likelyNeedsScrape ? <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span> : null}
-              </button>
-              <button type="button" onClick={() => runAnalysis(false)}
-                className={`cs-btn${likelyNeedsScrape ? '' : ' cs-btn-primary'}`}
-                style={{ justifyContent: 'flex-start', width: '100%' }}>
-                <Sparkles size={15} />
-                <span style={{ textAlign: 'left', flex: 1 }}>Analyze existing articles</span>
-                {likelyNeedsScrape ? null : <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span>}
-              </button>
+              {pipelineRunId ? (
+                <button type="button" onClick={() => runAnalysis(false)}
+                  className="cs-btn cs-btn-primary"
+                  style={{ justifyContent: 'flex-start', width: '100%' }}>
+                  <Sparkles size={15} />
+                  <span style={{ textAlign: 'left', flex: 1 }}>Analyze this pipeline run</span>
+                </button>
+              ) : (
+                <>
+                  <button type="button" onClick={() => runAnalysis(true)}
+                    className={`cs-btn${likelyNeedsScrape ? ' cs-btn-primary' : ''}`}
+                    style={{ justifyContent: 'flex-start', width: '100%' }}>
+                    <RefreshCw size={15} />
+                    <span style={{ textAlign: 'left', flex: 1 }}>Scrape &amp; analyze</span>
+                    {likelyNeedsScrape ? <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span> : null}
+                  </button>
+                  <button type="button" onClick={() => runAnalysis(false)}
+                    className={`cs-btn${likelyNeedsScrape ? '' : ' cs-btn-primary'}`}
+                    style={{ justifyContent: 'flex-start', width: '100%' }}>
+                    <Sparkles size={15} />
+                    <span style={{ textAlign: 'left', flex: 1 }}>Analyze existing articles</span>
+                    {likelyNeedsScrape ? null : <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span>}
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="confirm-modal-actions">
