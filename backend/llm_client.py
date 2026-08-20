@@ -314,7 +314,7 @@ def _max_tokens_key(api_style):
     return "max_tokens" if api_style == "chat_completions" else "max_output_tokens"
 
 
-def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=60, json_mode=False,
+def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, timeout=None, json_mode=False,
                      api_key=None, base_url=None, api_style=None, reasoning_effort=None, api_key_env_name=None):
     """Send a chat request to the active provider and return its text reply.
 
@@ -333,6 +333,7 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
     api_key = config.LLM_API_KEY if api_key is None else api_key
     base_url = ((config.LLM_CHAT_BASE_URL if base_url is None else base_url) or "").strip()
     api_style = config.LLM_API_STYLE if api_style is None else api_style
+    timeout = config.LLM_REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
     reasoning_effort = config.LLM_REASONING_EFFORT if reasoning_effort is None else reasoning_effort
     api_key_env_name = config.LLM_API_KEY_ENV_NAME if api_key_env_name is None else api_key_env_name
 
