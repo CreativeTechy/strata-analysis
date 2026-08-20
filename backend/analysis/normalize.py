@@ -10,10 +10,14 @@ from __future__ import annotations
 import re
 
 from analysis import labels
+from services.competitors.countries import COUNTRIES
 
 VALID_CATEGORIES = set(labels.VALID_CATEGORIES)
 VALID_TONES = set(labels.VALID_TONES)
 VALID_SENTIMENTS = {"positive", "negative", "mixed", "neutral"}
+VALID_GENDERS = set(labels.VALID_GENDERS)
+VALID_AGE_RANGES = set(labels.VALID_AGE_RANGES)
+_COUNTRY_NAMES_BY_LOWER = {name.lower(): name for name in COUNTRIES.values()}
 
 
 def as_text(value) -> str:
@@ -74,6 +78,37 @@ def normalize_sentiment(value) -> str:
     return "neutral"
 
 
+def normalize_gender(value) -> str:
+    gender = as_text(value).lower()
+    return gender if gender in VALID_GENDERS else labels.DEFAULT_GENDER
+
+
+def normalize_age_range(value) -> str:
+    age_range = as_text(value).lower().replace(" ", "")
+    return age_range if age_range in VALID_AGE_RANGES else labels.DEFAULT_AGE_RANGE
+
+
+def normalize_region(value) -> str:
+    """Best-effort canonicalization: a known country name/code matches to its
+    canonical form (see services/competitors/countries.py, already used the
+    same way for competitor target countries); anything else is passed
+    through as trimmed free text (city, "Middle East", ...) rather than
+    forced into the closed country list, since a quoted person's region
+    isn't always a country. Blank stays "unknown"."""
+    text = as_text(value)
+    if not text:
+        return labels.DEFAULT_REGION
+    lowered = text.lower()
+    if lowered == labels.DEFAULT_REGION:
+        return labels.DEFAULT_REGION
+    if lowered in _COUNTRY_NAMES_BY_LOWER:
+        return _COUNTRY_NAMES_BY_LOWER[lowered]
+    upper = text.upper()
+    if upper in COUNTRIES:
+        return COUNTRIES[upper]
+    return text
+
+
 def normalize_feedback_list(value) -> list:
     return as_list(value)
 
@@ -101,7 +136,14 @@ def normalize_people_opinions(value) -> list:
         if not isinstance(item, dict):
             text = as_text(item)
             if text:
-                opinions.append({"opinion": text, "sentiment": "neutral", "category": ""})
+                opinions.append({
+                    "opinion": text,
+                    "sentiment": "neutral",
+                    "category": "",
+                    "gender": labels.DEFAULT_GENDER,
+                    "age_range": labels.DEFAULT_AGE_RANGE,
+                    "region": labels.DEFAULT_REGION,
+                })
             continue
         opinion = as_text(item.get("opinion"))
         if not opinion:
@@ -110,11 +152,20 @@ def normalize_people_opinions(value) -> list:
             "opinion": opinion,
             "sentiment": normalize_sentiment(item.get("sentiment")),
             "category": as_text(item.get("category")),
+            "gender": normalize_gender(item.get("gender")),
+            "age_range": normalize_age_range(item.get("age_range")),
+            "region": normalize_region(item.get("region")),
         })
     deduped = []
     seen = set()
     for item in opinions:
-        key = (item["opinion"].lower(), item["sentiment"], item["category"].lower())
+        # Includes gender/age_range/region so two different quoted people who
+        # happen to share the same short opinion/sentiment/category aren't
+        # collapsed into one row and lose a demographic.
+        key = (
+            item["opinion"].lower(), item["sentiment"], item["category"].lower(),
+            item["gender"], item["age_range"], item["region"].lower(),
+        )
         if key in seen:
             continue
         seen.add(key)

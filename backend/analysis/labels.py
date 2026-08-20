@@ -47,3 +47,17 @@ VALID_TONES = (
 
 DEFAULT_CATEGORY = "general_article"
 DEFAULT_TONE = "neutral"
+
+# Demographics of the people quoted/mentioned in an article (see
+# analysis/structured_extraction.py's people_opinions extraction and
+# analysis/aggregation.py's compute_dominant_demographics rollup) - closed
+# vocab for gender/age_range so dashboard breakdowns group cleanly; region
+# stays free text (see normalize.normalize_region) since it's canonicalized
+# against a country list but not restricted to one.
+VALID_GENDERS = ("male", "female", "unknown")
+DEFAULT_GENDER = "unknown"
+
+VALID_AGE_RANGES = ("under_18", "18-24", "25-34", "35-44", "45-54", "55-64", "65_plus", "unknown")
+DEFAULT_AGE_RANGE = "unknown"
+
+DEFAULT_REGION = "unknown"

@@ -19,7 +19,8 @@ ARTICLE_COLUMNS = (
     "url", "source", "source_url", "title", "author", "published",
     "published_at", "published_precision", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
-    "article_category", "writer_tone", "article_tone", "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
+    "article_category", "writer_tone", "article_tone", "region", "gender", "age_range",
+    "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
     "sentiment_score", "sentiment_low_confidence", "sentiment_model",
@@ -56,6 +57,9 @@ ARTICLE_MUTABLE_FIELDS = (
     "article_category",
     "writer_tone",
     "article_tone",
+    "region",
+    "gender",
+    "age_range",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",
@@ -444,8 +448,15 @@ def _replace_article_children(article_id, article):
                 continue
             sentiment = str(item.get("sentiment") or "neutral").strip().lower() or "neutral"
             category = str(item.get("category") or "").strip()
-            opinion_rows.append((article_id, opinion, sentiment, category))
-        _bulk_insert("article_people_opinions", ("article_id", "opinion", "sentiment", "category"), opinion_rows)
+            gender = str(item.get("gender") or "unknown").strip().lower() or "unknown"
+            age_range = str(item.get("age_range") or "unknown").strip().lower() or "unknown"
+            region = str(item.get("region") or "unknown").strip() or "unknown"
+            opinion_rows.append((article_id, opinion, sentiment, category, gender, age_range, region))
+        _bulk_insert(
+            "article_people_opinions",
+            ("article_id", "opinion", "sentiment", "category", "gender", "age_range", "region"),
+            opinion_rows,
+        )
 
         tag_rows = []
         for tag_type, field in (("organization", "organizations"), ("entity", "entities"), ("topic", "topics")):

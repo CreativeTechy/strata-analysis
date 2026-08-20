@@ -67,6 +67,14 @@ function prettyLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function demographicTagLabel(item) {
+  const pctParts = [];
+  if (item.positive_pct) pctParts.push(`${item.positive_pct}% positive`);
+  if (item.negative_pct) pctParts.push(`${item.negative_pct}% negative`);
+  const pct = pctParts.length ? ` · ${pctParts.join(', ')}` : '';
+  return `${prettyLabel(item.value)} (n=${item.total}${pct})`;
+}
+
 export default function ProjectDetailPage({
   projects = [],
   sources = [],
@@ -635,6 +643,51 @@ export default function ProjectDetailPage({
                 {(articleStats?.insights?.article_tone_breakdown || []).length ? (
                   articleStats.insights.article_tone_breakdown.map((item) => (
                     <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({item.count})</span>
+                  ))
+                ) : (
+                  <span className="admin-tag muted">No data yet</span>
+                )}
+              </div>
+            </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Region</strong>
+              </div>
+              <div className="admin-item-chips">
+                {(articleStats?.insights?.region_breakdown || []).length ? (
+                  articleStats.insights.region_breakdown.map((item) => (
+                    <span key={item.value} className="admin-tag muted">{demographicTagLabel(item)}</span>
+                  ))
+                ) : (
+                  <span className="admin-tag muted">No data yet</span>
+                )}
+              </div>
+            </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Gender</strong>
+              </div>
+              <div className="admin-item-chips">
+                {(articleStats?.insights?.gender_breakdown || []).length ? (
+                  articleStats.insights.gender_breakdown.map((item) => (
+                    <span key={item.value} className="admin-tag muted">{demographicTagLabel(item)}</span>
+                  ))
+                ) : (
+                  <span className="admin-tag muted">No data yet</span>
+                )}
+              </div>
+            </div>
+
+            <div className="admin-item-card" style={{ margin: 0 }}>
+              <div className="panel-header-tight" style={{ marginBottom: 10 }}>
+                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Age Range</strong>
+              </div>
+              <div className="admin-item-chips">
+                {(articleStats?.insights?.age_range_breakdown || []).length ? (
+                  articleStats.insights.age_range_breakdown.map((item) => (
+                    <span key={item.value} className="admin-tag muted">{demographicTagLabel(item)}</span>
                   ))
                 ) : (
                   <span className="admin-tag muted">No data yet</span>
