@@ -177,6 +177,16 @@ COMPETITOR_LLM_API_STYLE = _competitor_provider["api_style"]
 COMPETITOR_LLM_API_KEY_ENV_NAME = _competitor_provider["api_key_env"]
 COMPETITOR_LLM_REASONING_EFFORT = _competitor_values["reasoning_effort"]
 
+# How long a single chat_completion() HTTP call waits for a response before
+# giving up (see llm_client.py's own default). Raise this for a slow remote
+# backend (e.g. a Colab-hosted Ollama instance behind an ngrok tunnel) where
+# a real response can legitimately take longer than 60s, especially under
+# ENRICH_CONCURRENCY > 1 competing for the same GPU.
+try:
+    LLM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "60"))
+except ValueError:
+    LLM_REQUEST_TIMEOUT_SECONDS = 60
+
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 ).strip()
