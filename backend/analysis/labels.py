@@ -61,3 +61,11 @@ VALID_AGE_RANGES = ("under_18", "18-24", "25-34", "35-44", "45-54", "55-64", "65
 DEFAULT_AGE_RANGE = "unknown"
 
 DEFAULT_REGION = "unknown"
+
+# Open-vocab life-situation/occupation label (e.g. "unemployed", "small
+# business owner") - no closed VALID_SEGMENTS list, same reasoning as region.
+# Unlike region there's no fixed list to canonicalize against, so raw text
+# is stored as-is here; embedding-similarity canonicalization into a shared
+# vocabulary happens downstream at save time (see services/articles/store.py's
+# _resolve_segment_label), not in this pure-normalization layer.
+DEFAULT_SEGMENT = "unknown"

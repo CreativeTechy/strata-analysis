@@ -16,6 +16,10 @@ const PERIODS = [
   { key: 'all', label: 'All time' },
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
+// Fixed semantic colors for the binary verified/unverified split - unlike
+// region/gender/segment this is never an open-ended category set, so it
+// doesn't cycle through LANGUAGE_COLORS.
+const VERIFIED_COLORS = { verified: '#16a34a', unverified: '#94a3b8' };
 // Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
 // same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
 const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
@@ -36,6 +40,24 @@ function distributionLabel(value) {
   return String(value || 'unknown')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// segment is open-ended (unlike region/gender/age_range's handful of values),
+// so the legend/pie is capped to the top `limit` buckets (already sorted
+// desc by the backend) with the long tail folded into one "other" bucket,
+// rather than letting the chart grow unbounded as the taxonomy grows.
+function capBreakdown(entries, limit = 7) {
+  if (entries.length <= limit) return entries;
+  const rest = entries.slice(limit);
+  const other = rest.reduce((acc, entry) => ({
+    value: 'other',
+    total: acc.total + Number(entry.total || 0),
+    positive: acc.positive + Number(entry.positive || 0),
+    negative: acc.negative + Number(entry.negative || 0),
+    neutral: acc.neutral + Number(entry.neutral || 0),
+    mixed: acc.mixed + Number(entry.mixed || 0),
+  }), { value: 'other', total: 0, positive: 0, negative: 0, neutral: 0, mixed: 0 });
+  return [...entries.slice(0, limit), other];
 }
 
 function percent(value, total) {
@@ -136,6 +158,8 @@ export default function DashboardOverview({
   const regionData = (data.insights?.region_breakdown || []).filter((entry) => entry.total > 0);
   const genderData = (data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0);
   const ageRangeData = (data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0);
+  const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
+  const verifiedData = (data.insights?.verified_breakdown || []).filter((entry) => entry.total > 0);
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -308,6 +332,60 @@ export default function DashboardOverview({
                 </div>
               </div>
             ) : <p className="intelligence-empty">No age range detected on analyzed articles yet.</p>}
+          </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Segment distribution</h3>
+            {segmentData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {segmentData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {segmentData.map((entry, index) => (
+                    <div key={entry.value}>
+                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
+                      <label>{distributionLabel(entry.value)}</label>
+                      <strong>{percent(entry.total, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No life-situation/occupation segment detected on analyzed articles yet.</p>}
+          </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Source verification</h3>
+            {verifiedData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={verifiedData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {verifiedData.map((entry) => <Cell key={entry.value} fill={VERIFIED_COLORS[entry.value]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {verifiedData.map((entry) => (
+                    <div key={entry.value}>
+                      <span style={{ background: VERIFIED_COLORS[entry.value] }} />
+                      <label>{distributionLabel(entry.value)}</label>
+                      <strong>{percent(entry.total, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No analyzed articles yet.</p>}
           </article>
         </section>
 
