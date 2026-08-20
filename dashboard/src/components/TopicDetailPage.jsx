@@ -11,8 +11,6 @@ import {
   Workflow,
   FileText,
 } from 'lucide-react';
-import ConfirmModal from './ConfirmModal';
-
 const TYPE_COLORS = { praise: '#16a34a', complaint: '#e11d48', issue: '#e11d48', suggestion: '#f59e0b' };
 const ARTICLE_DISPLAY_CAP = 200;
 
@@ -122,34 +120,34 @@ export default function TopicDetailPage() {
   );
   const displayedSources = sortedSources.slice(0, ARTICLE_DISPLAY_CAP);
 
-  const [selectedArticleId, setSelectedArticleId] = useState(null);
-  const [articleDetail, setArticleDetail] = useState(null);
-  const [articleDetailLoading, setArticleDetailLoading] = useState(false);
-  const [articleDetailError, setArticleDetailError] = useState('');
+  // Every displayed article's full analysis (summary/sentiment), fetched up
+  // front and shown inline - no click/modal needed to read it.
+  const [articleDetails, setArticleDetails] = useState({});
+  const displayedArticleIds = useMemo(
+    () => displayedSources.map((source) => source.id).filter((id) => id != null),
+    [displayedSources]
+  );
 
   useEffect(() => {
-    if (selectedArticleId == null) return undefined;
-    const controller = new AbortController();
-    async function loadArticleDetail() {
-      setArticleDetail(null);
-      setArticleDetailError('');
-      setArticleDetailLoading(true);
-      try {
-        const res = await fetch(`/api/articles/${selectedArticleId}/analysis`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load article (${res.status})`);
-        setArticleDetail(data?.analysis || null);
-      } catch (err) {
-        if (err?.name !== 'AbortError') setArticleDetailError(err?.message || 'Failed to load article.');
-      } finally {
-        setArticleDetailLoading(false);
-      }
-    }
-    loadArticleDetail();
-    return () => controller.abort();
-  }, [selectedArticleId]);
-
-  const closeArticleModal = () => setSelectedArticleId(null);
+    if (!displayedArticleIds.length) return undefined;
+    let cancelled = false;
+    displayedArticleIds.forEach((id) => {
+      setArticleDetails((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), loading: true } }));
+      fetch(`/api/articles/${id}/analysis`)
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load article (${res.status})`);
+          if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: data?.analysis || null, loading: false, error: '' } }));
+        })
+        .catch((err) => {
+          if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: null, loading: false, error: err?.message || 'Failed to load article.' } }));
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedArticleIds.join(',')]);
 
   const totalMentions = sources.length || Number(state?.frequencyEstimate || 0);
   const firstSeen = sortedSources.length ? sourceDate(sortedSources[sortedSources.length - 1]) : null;
@@ -315,39 +313,55 @@ export default function TopicDetailPage() {
         {displayedSources.length === 0 ? (
           <div className="run-detail-fallback">No representative articles found.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {displayedSources.map((source) => (
-              <button
-                key={source.id ?? source.url}
-                type="button"
-                onClick={() => setSelectedArticleId(source.id)}
-                disabled={source.id == null}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  width: '100%',
-                  gap: 10,
-                  fontSize: '0.84rem',
-                  color: 'inherit',
-                  textAlign: 'left',
-                  font: 'inherit',
-                  border: 'none',
-                  cursor: source.id == null ? 'default' : 'pointer',
-                  padding: '8px 10px',
-                  borderRadius: 10,
-                  background: 'rgba(0,0,0,0.02)',
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  {source.title || source.url} <FileText size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexShrink: 0 }}>
-                  {source.source ? <span>{source.source}</span> : null}
-                  {source.sentiment ? <span className="admin-tag muted">{source.sentiment}</span> : null}
-                  <span>{formatDate(sourceDate(source))}</span>
-                </span>
-              </button>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {displayedSources.map((source) => {
+              const detail = source.id != null ? articleDetails[source.id] : null;
+              const sentiment = detail?.data?.sentiment || source.sentiment;
+              const url = detail?.data?.url || source.url;
+              return (
+                <div
+                  key={source.id ?? source.url}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    background: 'rgba(0,0,0,0.02)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.84rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontWeight: 600 }}>
+                      {source.title || source.url} <FileText size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexShrink: 0 }}>
+                      {source.source ? <span>{source.source}</span> : null}
+                      {sentiment ? <span className="admin-tag muted">{sentiment}</span> : null}
+                      <span>{formatDate(sourceDate(source))}</span>
+                    </span>
+                  </div>
+                  {detail?.loading ? (
+                    <p className="subtitle" style={{ margin: 0 }}>Loading summary…</p>
+                  ) : detail?.error ? (
+                    <p style={{ margin: 0, color: '#b42318', fontSize: '0.82rem' }}>{detail.error}</p>
+                  ) : detail?.data?.summary ? (
+                    <p style={{ margin: 0, lineHeight: 1.5, fontSize: '0.84rem' }}>{detail.data.summary}</p>
+                  ) : (
+                    <p className="subtitle" style={{ margin: 0 }}>No summary available for this article.</p>
+                  )}
+                  {url ? (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', fontSize: '0.8rem', color: 'var(--primary-color)', textDecoration: 'none' }}
+                    >
+                      View original article <ExternalLink size={12} />
+                    </a>
+                  ) : null}
+                </div>
+              );
+            })}
             {sources.length > displayedSources.length ? (
               <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
                 Showing {displayedSources.length.toLocaleString()} of {sources.length.toLocaleString()} articles.
@@ -356,43 +370,6 @@ export default function TopicDetailPage() {
           </div>
         )}
       </div>
-
-      <ConfirmModal
-        open={selectedArticleId != null}
-        title={articleDetail?.title || 'Article'}
-        hideCancel
-        confirmLabel="Close"
-        onClose={closeArticleModal}
-        onConfirm={closeArticleModal}
-      >
-        {articleDetailLoading ? (
-          <p className="subtitle">Loading article…</p>
-        ) : articleDetailError ? (
-          <p style={{ color: '#b42318' }}>{articleDetailError}</p>
-        ) : articleDetail ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-light)' }}>
-              {articleDetail.source ? <span>{articleDetail.source}</span> : null}
-              {articleDetail.published ? <span>{formatDate(articleDetail.published)}</span> : null}
-              {articleDetail.sentiment ? <span className="admin-tag muted">{articleDetail.sentiment}</span> : null}
-            </div>
-            {articleDetail.summary ? (
-              <p style={{ margin: 0, lineHeight: 1.5 }}>{articleDetail.summary}</p>
-            ) : (
-              <p className="subtitle">No summary available for this article.</p>
-            )}
-            <a
-              href={articleDetail.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-primary"
-              style={{ textDecoration: 'none', alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              View original article <ExternalLink size={14} />
-            </a>
-          </div>
-        ) : null}
-      </ConfirmModal>
     </div>
   );
 }
