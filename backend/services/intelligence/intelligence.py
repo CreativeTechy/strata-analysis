@@ -81,6 +81,9 @@ def filter_rows_for_period(rows: list[dict], period: str, now: datetime | None =
     return [row for row in rows if (date := article_date(row)) is not None and date >= start]
 
 
+PLATFORM_CATEGORIES = ("Web", "X", "Reddit", "Telegram")
+
+
 def classify_platform(row: dict) -> str:
     values = [row.get("url"), row.get("source_url"), row.get("source")]
     for value in values:
@@ -245,7 +248,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         return db.fetch_all(
             """
             select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
-                   a.sentiment, a.writer_tone, a.article_tone, a.insight_json,
+                   a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.insight_json,
                    a.published, a.created_at, a.pipeline_run_id, a.source_language
             from articles a
             join article_projects ap on ap.article_id = a.id
@@ -257,7 +260,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
-               a.sentiment, a.writer_tone, a.article_tone, a.insight_json,
+               a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.insight_json,
                a.published, a.created_at, a.pipeline_run_id, a.source_language
         from articles a
         join article_projects ap on ap.article_id = a.id
@@ -351,6 +354,8 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
             bucket[value] += 1
 
     platforms = defaultdict(lambda: Counter())
+    for category in PLATFORM_CATEGORIES:
+        platforms[category]  # seed so every known platform lists even with zero articles
     for row in rows:
         bucket = platforms[classify_platform(row)]
         bucket["total"] += 1

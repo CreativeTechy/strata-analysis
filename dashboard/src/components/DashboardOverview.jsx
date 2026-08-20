@@ -30,6 +30,14 @@ function languageLabel(code) {
   }
 }
 
+// Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
+// - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
+function distributionLabel(value) {
+  return String(value || 'unknown')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function percent(value, total) {
   return total ? Math.round((Number(value || 0) / total) * 100) : 0;
 }
@@ -125,6 +133,9 @@ export default function DashboardOverview({
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
   const languageData = data.insights?.language_breakdown || [];
+  const regionData = (data.insights?.region_breakdown || []).filter((entry) => entry.total > 0);
+  const genderData = (data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0);
+  const ageRangeData = (data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0);
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -198,14 +209,12 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={languageData} dataKey="count" nameKey="language" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">
+                      <Pie data={languageData} dataKey="count" nameKey="language" outerRadius="92%" paddingAngle={3} stroke="none">
                         {languageData.map((entry, index) => <Cell key={entry.language} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [`${value} articles`, languageLabel(name)]} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <strong>{languageData.length}</strong>
-                  <span>{languageData.length === 1 ? 'language' : 'languages'}</span>
                 </div>
                 <div className="intelligence-legend">
                   {languageData.map((entry, index) => (
@@ -219,10 +228,91 @@ export default function DashboardOverview({
               </div>
             ) : <p className="intelligence-empty">No detected language on analyzed articles yet.</p>}
           </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Region distribution</h3>
+            {regionData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {regionData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {regionData.map((entry, index) => (
+                    <div key={entry.value}>
+                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
+                      <label>{distributionLabel(entry.value)}</label>
+                      <strong>{percent(entry.total, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No region detected on analyzed articles yet.</p>}
+          </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Gender distribution</h3>
+            {genderData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {genderData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {genderData.map((entry, index) => (
+                    <div key={entry.value}>
+                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
+                      <label>{distributionLabel(entry.value)}</label>
+                      <strong>{percent(entry.total, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No gender detected on analyzed articles yet.</p>}
+          </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Age range distribution</h3>
+            {ageRangeData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {ageRangeData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {ageRangeData.map((entry, index) => (
+                    <div key={entry.value}>
+                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
+                      <label>{distributionLabel(entry.value)}</label>
+                      <strong>{percent(entry.total, total)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No age range detected on analyzed articles yet.</p>}
+          </article>
         </section>
 
         <section className="intelligence-middle-grid">
-          <article className="glass-card intelligence-card"><h3>Where it’s being said</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong>{item.platform}</strong><small>{item.total.toLocaleString()} articles</small></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><strong className={item.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{item.net_sentiment >= 0 ? '+' : ''}{item.net_sentiment}</strong></div>)}</div></article>
+          <article className="glass-card intelligence-card"><h3>Where it’s being said</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong>{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{item.total.toLocaleString()}</strong><small>{item.total === 1 ? 'article' : 'articles'}</small></div></div>)}</div></article>
           <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
