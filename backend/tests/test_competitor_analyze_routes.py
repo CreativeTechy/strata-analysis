@@ -55,7 +55,7 @@ class AnalyzeRouteTests(unittest.TestCase):
         findings = [{"id": 1, "headline": "Opens third roastery", "confidence": 0.8,
                      "confidence_reason": "Three independent outlets carried it."}]
 
-        def fake_job(run_id, project_id, period_days, scrape_first):
+        def fake_job(run_id, project_id, period_days, scrape_first, pipeline_run_id=None):
             log = competitor_analysis._analysis_runs.logger(run_id)
             log("Checking 23 article(s) from the last 30 days against each competitor...")
             log("Cafe Younes: high impact - Opens third roastery")

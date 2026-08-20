@@ -319,20 +319,27 @@ def _effective_date(article: dict) -> datetime | None:
     return article.get("published_at") or article.get("created_at")
 
 
-def _candidate_articles(project_id: int) -> list[dict]:
-    """Project articles that could plausibly concern a competitor."""
+def _candidate_articles(project_id: int, pipeline_run_id: str | None = None) -> list[dict]:
+    """Project articles that could plausibly concern a competitor.
+
+    Scoped to one pipeline run when given, instead of every article ever
+    linked to the project - the "Pipeline run" choice in the run-analysis
+    dialog, mirroring the same filter Reports offers over `articles.pipeline_run_id`.
+    """
+    clause = "and a.pipeline_run_id = %s" if pipeline_run_id else ""
+    params = (int(project_id), str(pipeline_run_id)) if pipeline_run_id else (int(project_id),)
     return db.fetch_all(
-        """
+        f"""
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                a.published_at, a.published_precision, a.created_at,
                a.content_changed_at, a.story_id,
                a.sentiment, a.article_category, a.embedding_json
         from articles a
         join article_projects ap on ap.article_id = a.id
-        where ap.project_id = %s
+        where ap.project_id = %s {clause}
         order by a.created_at desc
         """,
-        (int(project_id),),
+        params,
     )
 
 
@@ -386,18 +393,28 @@ def _semantic_match(article_vector, competitor_vector) -> float | None:
 
 
 def validate_competitor_articles(project_id: int, competitors: list[dict],
-                                 period_days: int = DEFAULT_PERIOD_DAYS, log=None) -> dict:
+                                 period_days: int = DEFAULT_PERIOD_DAYS,
+                                 pipeline_run_id: str | None = None, log=None) -> dict:
     """Attribute articles to competitors, recording accept/reject reasons.
 
     Returns per-competitor counts plus an aggregate rejection breakdown, so the
     workspace can show what was filtered and why instead of a bare total.
+
+    `pipeline_run_id` scopes evidence to one scrape run instead of a date
+    window - when given, `period_days` is ignored entirely rather than
+    applied on top, since a run's articles are already a fixed, bounded set.
     """
     log = log or (lambda _message: None)
-    since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
-    articles = _candidate_articles(project_id)
-    if since is not None:
-        articles = [a for a in articles if (_effective_date(a) or since) >= since]
-    window = f"the last {period_days} days" if period_days else "all time"
+    articles = _candidate_articles(project_id, pipeline_run_id)
+    since = None
+    if not pipeline_run_id:
+        since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
+        if since is not None:
+            articles = [a for a in articles if (_effective_date(a) or since) >= since]
+    if pipeline_run_id:
+        window = "the selected pipeline run"
+    else:
+        window = f"the last {period_days} days" if period_days else "all time"
     log(f"Checking {len(articles)} article(s) from {window} against each competitor...")
 
     alias_map = {int(c["id"]): _aliases(c) for c in competitors}
@@ -521,7 +538,8 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             for competitor_id, stats in per_competitor.items()
         },
         "rejection_reasons": rejection_reasons,
-        "period_days": period_days,
+        "period_days": None if pipeline_run_id else period_days,
+        "pipeline_run_id": pipeline_run_id,
     }
 
 
@@ -721,8 +739,15 @@ def _format_evidence(rows: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def generate_finding(business_profile: dict, competitor: dict, period_days: int = DEFAULT_PERIOD_DAYS) -> dict | None:
-    """Build one analysis card for one competitor, or None when evidence is absent."""
+def generate_finding(business_profile: dict, competitor: dict, period_days: int = DEFAULT_PERIOD_DAYS,
+                     period_start: datetime | None = None, period_end: datetime | None = None) -> dict | None:
+    """Build one analysis card for one competitor, or None when evidence is absent.
+
+    `period_start`/`period_end`, when given, override the `period_days`-derived
+    window stamped on the card - used when evidence was scoped to one pipeline
+    run instead, so the card reports that run's actual start/finish rather than
+    an arbitrary day count that was never applied.
+    """
     from services.competitors.business_profile_store import profile_context
 
     evidence = _evidence_for(competitor)
@@ -731,7 +756,10 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
 
     counts = _counts_for(int(competitor["id"]))
     now = datetime.now(timezone.utc)
-    period_start = now - timedelta(days=period_days) if period_days else None
+    if period_end is None:
+        period_end = now
+    if period_start is None:
+        period_start = now - timedelta(days=period_days) if period_days else None
 
     user_prompt = (
         f"OUR BUSINESS:\n{profile_context(business_profile) or '(no profile on file)'}\n\n"
@@ -829,7 +857,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             int(competitor["project_id"]),
             int(competitor["id"]),
             period_start,
-            now,
+            period_end,
             str(parsed.get("headline") or f"{competitor.get('name')} activity").strip()[:200],
             whats_up,
             impact,
@@ -849,7 +877,8 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     )
 
 
-def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, log=None) -> dict:
+def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
+                      pipeline_run_id: str | None = None, log=None) -> dict:
     """Validate evidence then produce one card per tracked competitor.
 
     `log` receives one human-readable progress line per step. It exists because
@@ -857,6 +886,11 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, l
     the interesting part - which competitor is being analyzed, what evidence
     survived, what came back - is otherwise invisible until the whole thing
     finishes. Defaults to a no-op so the CLI/seed path can call this unchanged.
+
+    `pipeline_run_id` scopes evidence to one scrape run - see
+    validate_competitor_articles. Each card then stamps that run's actual
+    start/finish as its period instead of a `period_days`-derived window that
+    was never applied.
     """
     from services.competitors.business_profile_store import get_profile
     from services.competitors.competitors_store import list_competitors
@@ -870,7 +904,17 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, l
                 "error": "No tracked competitors. Track at least one to analyze."}
 
     log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.")
-    validation = validate_competitor_articles(project_id, competitors, period_days, log=log)
+    validation = validate_competitor_articles(project_id, competitors, period_days,
+                                              pipeline_run_id, log=log)
+
+    period_start = period_end = None
+    if pipeline_run_id:
+        from services.pipeline.pipeline_runs import get_pipeline_run
+
+        run = get_pipeline_run(pipeline_run_id)
+        if run:
+            period_start = run.get("started_at")
+            period_end = run.get("finished_at") or run.get("started_at")
 
     generated = 0
     skipped: list[dict] = []
@@ -887,7 +931,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS, l
         if stories:
             log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...")
         try:
-            finding = generate_finding(profile, competitor, period_days)
+            finding = generate_finding(profile, competitor, period_days, period_start, period_end)
         except LLMError as exc:
             log(f"{name}: failed - {exc.user_message}")
             return competitor, None, exc
@@ -995,7 +1039,8 @@ def get_active_analysis_run(project_id: int) -> dict | None:
     return _analysis_runs.active_for_project(project_id)
 
 
-def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_first: bool) -> None:
+def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_first: bool,
+                     pipeline_run_id: str | None = None) -> None:
     """Scrape (optionally), validate, and write one card per competitor.
 
     Every failure path ends as a `failed` run carrying a readable message
@@ -1031,7 +1076,8 @@ def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_firs
             _analysis_runs.update(run_id, scrape_run=scrape_run, stage="analyzing",
                                   message="Analyzing competitors.")
 
-        result = generate_findings(project_id, period_days=period_days, log=log)
+        result = generate_findings(project_id, period_days=period_days,
+                                   pipeline_run_id=pipeline_run_id, log=log)
 
         # A provider failure is a failed run, not a run that generated zero
         # reports - same distinction generate_findings itself draws.
