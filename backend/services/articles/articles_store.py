@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from functools import lru_cache
 import re
@@ -14,7 +14,8 @@ from services.projects.projects_store import list_article_ids_for_project, list_
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
-    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,insight_json,analysis_model,"
+    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,"
+    "insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
     "source_language,source_language_confidence"
@@ -539,7 +540,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,insight_json,summary,published,pipeline_run_id,source_language",
+            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,
@@ -723,6 +724,34 @@ def _overall_mood_from_counts(article_tone_counts):
     return article_tone_counts.most_common(1)[0][0] if article_tone_counts else "neutral"
 
 
+def _demographic_sentiment_breakdown(rows, field):
+    """Sentiment crosstab for one demographic dimension (region/gender/
+    age_range) - each bucket's positive_pct/negative_pct is exactly the
+    "50% of X are positive" stat these columns exist for. Reads the article's
+    own rolled-up column (see analysis/aggregation.py's
+    compute_dominant_demographics), not the per-opinion values."""
+    buckets = defaultdict(Counter)
+    for row in rows:
+        value = _normalize_text(row.get(field)) or "unknown"
+        buckets[value][_normalize_sentiment(row.get("sentiment"))] += 1
+
+    breakdown = []
+    for value, counts in buckets.items():
+        total = sum(counts.values())
+        breakdown.append({
+            "value": value,
+            "total": total,
+            "positive": counts.get("positive", 0),
+            "negative": counts.get("negative", 0),
+            "neutral": counts.get("neutral", 0),
+            "mixed": counts.get("mixed", 0),
+            "positive_pct": round(counts.get("positive", 0) / total * 100, 1) if total else 0.0,
+            "negative_pct": round(counts.get("negative", 0) / total * 100, 1) if total else 0.0,
+        })
+    breakdown.sort(key=lambda item: -item["total"])
+    return breakdown
+
+
 def _topic_summary(rows):
     positive_feedback = []
     negative_feedback = []
@@ -845,6 +874,9 @@ def _topic_summary(rows):
         "overall_tone": _group_overall_tone(article_tone_counts, writer_tone_counts),
         "writer_tone_breakdown": [{"tone": tone, "count": count} for tone, count in writer_tone_counts.most_common()],
         "article_tone_breakdown": [{"tone": tone, "count": count} for tone, count in article_tone_counts.most_common()],
+        "region_breakdown": _demographic_sentiment_breakdown(rows, "region"),
+        "gender_breakdown": _demographic_sentiment_breakdown(rows, "gender"),
+        "age_range_breakdown": _demographic_sentiment_breakdown(rows, "age_range"),
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
         "nice_to_have_features": request_items,

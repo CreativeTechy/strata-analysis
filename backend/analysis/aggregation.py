@@ -32,6 +32,38 @@ def compute_overall_tone(article_tone, writer_tone) -> str:
     return "mixed"
 
 
+def compute_dominant_demographics(people_opinions) -> dict:
+    """Deterministic per-article region/gender/age_range, majority-voted
+    across the article's own people_opinions (never guessed by the AI itself
+    - see structured_extraction.py's prompt). "unknown" votes are ignored so
+    one clearly-signaled person outweighs several with no signal; a
+    dimension with no non-unknown votes at all stays "unknown"."""
+    region_counts = Counter()
+    gender_counts = Counter()
+    age_range_counts = Counter()
+    for item in people_opinions or []:
+        if not isinstance(item, dict):
+            continue
+        region = normalize.as_text(item.get("region"))
+        if region and region.lower() != normalize.labels.DEFAULT_REGION:
+            region_counts[region] += 1
+        gender = normalize.as_text(item.get("gender"))
+        if gender and gender != normalize.labels.DEFAULT_GENDER:
+            gender_counts[gender] += 1
+        age_range = normalize.as_text(item.get("age_range"))
+        if age_range and age_range != normalize.labels.DEFAULT_AGE_RANGE:
+            age_range_counts[age_range] += 1
+
+    def _top(counts, default):
+        return counts.most_common(1)[0][0] if counts else default
+
+    return {
+        "region": _top(region_counts, normalize.labels.DEFAULT_REGION),
+        "gender": _top(gender_counts, normalize.labels.DEFAULT_GENDER),
+        "age_range": _top(age_range_counts, normalize.labels.DEFAULT_AGE_RANGE),
+    }
+
+
 def _group_overall_tone(article_tone_counts, writer_tone_counts) -> str:
     """Deterministic overall_tone for a collection of articles (project rollup).
 

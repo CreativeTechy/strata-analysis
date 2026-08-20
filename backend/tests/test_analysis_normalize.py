@@ -81,7 +81,23 @@ class PeopleOpinionsTests(unittest.TestCase):
 
     def test_non_dict_items_default_to_neutral(self):
         result = normalize.normalize_people_opinions(["just a plain string"])
-        self.assertEqual(result, [{"opinion": "just a plain string", "sentiment": "neutral", "category": ""}])
+        self.assertEqual(result, [{
+            "opinion": "just a plain string", "sentiment": "neutral", "category": "",
+            "gender": "unknown", "age_range": "unknown", "region": "unknown",
+        }])
+
+    def test_demographics_are_normalized_and_default_to_unknown(self):
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Loves the range", "sentiment": "positive", "category": "performance",
+             "gender": "Female", "age_range": "25-34", "region": "lebanon"},
+            {"opinion": "Slow charging", "sentiment": "negative", "category": "charging"},
+        ])
+        self.assertEqual(result[0]["gender"], "female")
+        self.assertEqual(result[0]["age_range"], "25-34")
+        self.assertEqual(result[0]["region"], "Lebanon")
+        self.assertEqual(result[1]["gender"], "unknown")
+        self.assertEqual(result[1]["age_range"], "unknown")
+        self.assertEqual(result[1]["region"], "unknown")
 
     def test_non_list_input_returns_empty(self):
         self.assertEqual(normalize.normalize_people_opinions("not a list"), [])

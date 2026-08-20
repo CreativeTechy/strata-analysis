@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 import config
 from analysis import article_prep, classification, entity_extraction, language, structured_extraction
-from analysis.aggregation import compute_overall_tone
+from analysis.aggregation import compute_dominant_demographics, compute_overall_tone
 from analysis.sentiment import classify_article_sentiment
 from embeddings import build_article_embedding_text, get_embedding
 
@@ -133,6 +133,7 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
     writer_tone = writer_tone_result["label"]
     article_tone = article_tone_result["label"]
     overall_tone = compute_overall_tone(article_tone, writer_tone)
+    dominant_demographics = compute_dominant_demographics(extracted.get("people_opinions"))
 
     insight_json = {
         "topic": extracted.get("topic", ""),
@@ -141,6 +142,9 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
         "writer_tone": writer_tone,
         "article_tone": article_tone,
         "overall_tone": overall_tone,
+        "region": dominant_demographics["region"],
+        "gender": dominant_demographics["gender"],
+        "age_range": dominant_demographics["age_range"],
         "summary": extracted.get("summary", ""),
         "positive_feedback": extracted.get("positive_feedback", []),
         "negative_feedback": extracted.get("negative_feedback", []),

@@ -7,9 +7,10 @@ Extract the requested fields from the article and return ONLY a single JSON obje
   maintenance_reliability_feedback, technology_feedback, safety_feedback,
   key_points, risks, opportunities (arrays of short strings),
   organizations, entities (arrays of short strings naming organizations, products, or models mentioned), topics (array of short topic tags),
-  people_opinions (array of {opinion, sentiment: positive|negative|mixed|neutral, category}),
+  people_opinions (array of {opinion, sentiment: positive|negative|mixed|neutral, category, gender: male|female|unknown, age_range: under_18|18-24|25-34|35-44|45-54|55-64|65_plus|unknown, region: a country or well-known place name, or unknown}),
   frequent_ideas (array of {idea, type: complaint|praise|suggestion|issue, category, frequency_estimate}),
   relevance_score (number 0-10, how relevant/substantive the article is).
+For each person in people_opinions, only set gender/age_range/region when the article gives a clear, explicit signal about that specific person - they state their own age, a pronoun or title tied to them indicates gender, or a quote/dateline/byline ties them to a place. Never infer demographics from a name alone, and never stereotype by role, profession, or nationality. Default each field to "unknown" whenever the article does not say.
 Each frequent_ideas.idea must be a full, specific, meaningful statement of the actual point being made - a complete thought of roughly 8-20 words - never a generic one-or-two-word label. For example, write "Customers say the mobile app repeatedly logs them out after the latest update" instead of just "App bugs" or "Login issues". This idea text is shown to readers on its own, out of context, so it must stand alone and be understandable without re-reading the article.
 Use [] for any list with nothing to report. Never invent facts not present in the article.
 Write every text field (topic, summary, all feedback/list items, key_points, risks, opportunities, and the opinion/idea text inside people_opinions/frequent_ideas) in English, regardless of the article's source language - this keeps search, tagging, and cross-article comparison consistent when a project mixes English and non-English sources. Do not translate proper names inside organizations/entities/topics - keep brand, product, and company names in their original form.
