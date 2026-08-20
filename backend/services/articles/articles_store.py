@@ -14,7 +14,7 @@ from services.projects.projects_store import list_article_ids_for_project, list_
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
-    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,"
+    "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,"
     "insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
@@ -540,7 +540,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,insight_json,summary,published,pipeline_run_id,source_language",
+            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,
@@ -752,6 +752,19 @@ def _demographic_sentiment_breakdown(rows, field):
     return breakdown
 
 
+def _verified_breakdown(rows):
+    """Verified/unverified article counts for the dashboard's trusted-source
+    pie chart - see trusted_sources.py. A plain count, not a sentiment
+    crosstab like _demographic_sentiment_breakdown, since `verified` is a
+    boolean rather than a text bucket value."""
+    verified_count = sum(1 for row in rows if row.get("verified"))
+    total = len(rows)
+    return [
+        {"value": "verified", "total": verified_count},
+        {"value": "unverified", "total": total - verified_count},
+    ]
+
+
 def _topic_summary(rows):
     positive_feedback = []
     negative_feedback = []
@@ -878,6 +891,7 @@ def _topic_summary(rows):
         "gender_breakdown": _demographic_sentiment_breakdown(rows, "gender"),
         "age_range_breakdown": _demographic_sentiment_breakdown(rows, "age_range"),
         "segment_breakdown": _demographic_sentiment_breakdown(rows, "segment"),
+        "verified_breakdown": _verified_breakdown(rows),
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
         "nice_to_have_features": request_items,

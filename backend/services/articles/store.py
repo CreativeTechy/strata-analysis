@@ -14,12 +14,13 @@ from embeddings import cosine_similarity, get_embedding
 from services.projects.projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
+from trusted_sources import is_trusted_domain
 
 ARTICLE_COLUMNS = (
     "url", "source", "source_url", "title", "author", "published",
     "published_at", "published_precision", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
-    "article_category", "writer_tone", "article_tone", "region", "gender", "age_range",
+    "article_category", "writer_tone", "article_tone", "region", "gender", "age_range", "verified",
     "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
@@ -60,6 +61,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "region",
     "gender",
     "age_range",
+    "verified",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",
@@ -319,6 +321,12 @@ def _article_row(article):
             value = len(embedding_json) if isinstance(embedding_json, list) else None
         elif field == "content_hash":
             value = _content_hash(row.get("text"))
+        elif field == "verified":
+            # Computed from the article's own resolved publisher URL, not
+            # trusted from the caller - so a stale/absent "verified" key on
+            # `article` (e.g. a cached enrichment written before this field
+            # existed) can never silently mark something verified.
+            value = is_trusted_domain(row.get("source_url") or row.get("url"))
         params.append(value)
     return fields, tuple(params)
 
