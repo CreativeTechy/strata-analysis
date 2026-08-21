@@ -483,6 +483,12 @@ export default function CompetitorWorkspace() {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // Filters the reports list by which pipeline run generated the evidence -
+  // separate from pipelineRunId above, which picks what a *new* analysis run
+  // should use. Not defaulted to the latest run: unlike starting a fresh
+  // analysis, opening the reports list should show everything already on
+  // file until the user asks to narrow it.
+  const [findingsRunId, setFindingsRunId] = useState(null);
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
     try {
@@ -606,8 +612,12 @@ export default function CompetitorWorkspace() {
         const result = await listFindings(studyId, {
           impact: impact || undefined,
           search: search || undefined,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
+          // Mutually exclusive on the server too: a specific run already
+          // names a fixed set of evidence, so a date box layered on top
+          // would just silently narrow it further.
+          date_from: findingsRunId ? undefined : (dateFrom || undefined),
+          date_to: findingsRunId ? undefined : (dateTo || undefined),
+          pipeline_run_id: findingsRunId || undefined,
         });
         if (!cancelled) setFindings(result.findings || []);
       } catch (caught) {
@@ -619,9 +629,9 @@ export default function CompetitorWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [studyId, impact, search, dateFrom, dateTo]);
+  }, [studyId, impact, search, dateFrom, dateTo, findingsRunId]);
 
-  const hasFindingFilters = Boolean(impact || search || dateFrom || dateTo);
+  const hasFindingFilters = Boolean(impact || search || dateFrom || dateTo || findingsRunId);
 
   const clearFindingFilters = () => {
     setImpact('');
@@ -629,6 +639,7 @@ export default function CompetitorWorkspace() {
     setSearch('');
     setDateFrom('');
     setDateTo('');
+    setFindingsRunId(null);
   };
 
   const changeViewMode = (mode) => {
@@ -1371,13 +1382,55 @@ export default function CompetitorWorkspace() {
               ))}
             </select>
 
-            <div className="cs-date-range">
-              <input type="date" className="cs-input" value={dateFrom}
-                onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
-              <span>to</span>
-              <input type="date" className="cs-input" value={dateTo}
-                onChange={(event) => setDateTo(event.target.value)} aria-label="To date" />
+            <div className="filter-tabs-shell" style={{ margin: 0 }}>
+              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter reports by">
+                <button type="button" role="tab" aria-selected={!findingsRunId}
+                  className={`source-type-tab ${!findingsRunId ? 'active' : ''}`}
+                  onClick={() => setFindingsRunId(null)}>
+                  Date range
+                </button>
+                {pipelineRuns.length > 0 ? (
+                  <button type="button" role="tab" aria-selected={!!findingsRunId}
+                    className={`source-type-tab ${findingsRunId ? 'active' : ''}`}
+                    onClick={() => setFindingsRunId(findingsRunId || pipelineRuns[0].id)}>
+                    Pipeline run
+                  </button>
+                ) : null}
+              </div>
             </div>
+
+            {findingsRunId ? (
+              pipelineRuns.length > 3 ? (
+                <select className="cs-select filter-run-select" value={findingsRunId}
+                  onChange={(event) => setFindingsRunId(event.target.value)}
+                  aria-label="Filter by pipeline run">
+                  {pipelineRuns.map((run, index) => (
+                    <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+                  {pipelineRuns.map((run, index) => (
+                    <span key={run.id} className="filter-tab-run-item">
+                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                      <button type="button" role="tab" aria-selected={findingsRunId === run.id}
+                        className={`source-type-tab ${findingsRunId === run.id ? 'active' : ''}`}
+                        onClick={() => setFindingsRunId(run.id)}>
+                        {pipelineRunTitle(run, index)}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="cs-date-range">
+                <input type="date" className="cs-input" value={dateFrom}
+                  onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
+                <span>to</span>
+                <input type="date" className="cs-input" value={dateTo}
+                  onChange={(event) => setDateTo(event.target.value)} aria-label="To date" />
+              </div>
+            )}
 
             {hasFindingFilters ? (
               <button type="button" className="cs-btn cs-btn-sm" onClick={clearFindingFilters}>
@@ -1487,28 +1540,13 @@ export default function CompetitorWorkspace() {
               </div>
 
               {pipelineRunId ? (
-                pipelineRuns.length > 3 ? (
-                  <select className="cs-select filter-run-select" value={pipelineRunId}
-                    onChange={(event) => setPipelineRunId(event.target.value)}
-                    aria-label="Pipeline run to analyze">
-                    {pipelineRuns.map((run, index) => (
-                      <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Pipeline run to analyze">
-                    {pipelineRuns.map((run, index) => (
-                      <span key={run.id} className="filter-tab-run-item">
-                        {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
-                        <button type="button" role="tab" aria-selected={pipelineRunId === run.id}
-                          className={`source-type-tab ${pipelineRunId === run.id ? 'active' : ''}`}
-                          onClick={() => setPipelineRunId(run.id)}>
-                          {pipelineRunTitle(run, index)}
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )
+                <select className="cs-select filter-run-select" value={pipelineRunId}
+                  onChange={(event) => setPipelineRunId(event.target.value)}
+                  aria-label="Pipeline run to analyze">
+                  {pipelineRuns.map((run, index) => (
+                    <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
+                  ))}
+                </select>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <label htmlFor="cs-analysis-period">Look back over</label>

@@ -712,12 +712,13 @@ def analyze_status(project_id: int, run_id: str, user: dict = Depends(require_pe
 def list_findings(project_id: int, impact: str | None = None, competitor_id: int | None = None,
                   history: bool = False, search: str | None = None,
                   date_from: str | None = None, date_to: str | None = None,
+                  pipeline_run_id: str | None = None,
                   user: dict = Depends(require_permission("competitors.view"))):
     _project_or_404(project_id)
     return {
         "findings": competitor_analysis.list_findings(
             project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
-            search=search, date_from=date_from, date_to=date_to,
+            search=search, date_from=date_from, date_to=date_to, pipeline_run_id=pipeline_run_id,
         )
     }
 

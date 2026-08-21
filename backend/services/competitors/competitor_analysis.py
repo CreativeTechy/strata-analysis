@@ -740,13 +740,15 @@ def _format_evidence(rows: list[dict]) -> str:
 
 
 def generate_finding(business_profile: dict, competitor: dict, period_days: int = DEFAULT_PERIOD_DAYS,
-                     period_start: datetime | None = None, period_end: datetime | None = None) -> dict | None:
+                     period_start: datetime | None = None, period_end: datetime | None = None,
+                     pipeline_run_id: str | None = None) -> dict | None:
     """Build one analysis card for one competitor, or None when evidence is absent.
 
     `period_start`/`period_end`, when given, override the `period_days`-derived
     window stamped on the card - used when evidence was scoped to one pipeline
     run instead, so the card reports that run's actual start/finish rather than
-    an arbitrary day count that was never applied.
+    an arbitrary day count that was never applied. `pipeline_run_id` is stamped
+    alongside so the reports list can later filter to "cards from this run".
     """
     from services.competitors.business_profile_store import profile_context
 
@@ -844,14 +846,15 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             project_id, competitor_id, period_start, period_end, headline,
             whats_up, impact, impact_level, actions, signals, evidence,
             confidence, confidence_reason, article_count, story_count,
-            validation_status, analysis_model, prompt_version, generated_at
+            validation_status, analysis_model, prompt_version, generated_at,
+            pipeline_run_id
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning id, project_id, competitor_id, period_start, period_end, headline,
                   whats_up, impact, impact_level, actions, signals, evidence,
                   confidence, confidence_reason, article_count, story_count,
                   validation_status, validation_notes, analysis_model,
-                  prompt_version, generated_at
+                  prompt_version, generated_at, pipeline_run_id
         """,
         (
             int(competitor["project_id"]),
@@ -873,6 +876,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             config.COMPETITOR_LLM_CHAT_MODEL,
             PROMPT_VERSION,
             now,
+            pipeline_run_id,
         ),
     )
 
@@ -931,7 +935,8 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
         if stories:
             log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...")
         try:
-            finding = generate_finding(profile, competitor, period_days, period_start, period_end)
+            finding = generate_finding(profile, competitor, period_days, period_start, period_end,
+                                       pipeline_run_id)
         except LLMError as exc:
             log(f"{name}: failed - {exc.user_message}")
             return competitor, None, exc
@@ -1109,7 +1114,8 @@ FINDING_COLUMNS = """
     id, project_id, competitor_id, period_start, period_end, headline,
     whats_up, impact, impact_level, actions, signals, evidence, confidence,
     confidence_reason, article_count, story_count, validation_status,
-    validation_notes, analysis_model, prompt_version, generated_at
+    validation_notes, analysis_model, prompt_version, generated_at,
+    pipeline_run_id
 """
 
 _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 2 end"
@@ -1118,11 +1124,16 @@ _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 
 def list_findings(project_id: int, competitor_id: int | None = None,
                   impact_level: str | None = None, latest_only: bool = True,
                   search: str | None = None, date_from: str | None = None,
-                  date_to: str | None = None) -> list[dict]:
+                  date_to: str | None = None, pipeline_run_id: str | None = None) -> list[dict]:
     """Findings for the workspace, highest impact and most recent first.
 
     `latest_only` keeps one card per competitor — the newest — so the card grid
     shows the current picture rather than every historical run.
+
+    `pipeline_run_id`, when given, restricts to findings whose evidence was
+    scoped to that one scrape run (see generate_findings) - a finding
+    generated over a `period_days` date window instead simply has none and is
+    excluded, the same as a date-range filter would exclude it.
     """
     clauses = ["f.project_id = %s"]
     params: list = [int(project_id)]
@@ -1137,12 +1148,16 @@ def list_findings(project_id: int, competitor_id: int | None = None,
         clauses.append("(f.headline ilike %s or f.whats_up ilike %s or c.name ilike %s)")
         like = f"%{search}%"
         params.extend([like, like, like])
-    if date_from:
-        clauses.append("f.generated_at >= %s")
-        params.append(date_from)
-    if date_to:
-        clauses.append("f.generated_at < (%s::date + interval '1 day')")
-        params.append(date_to)
+    if pipeline_run_id:
+        clauses.append("f.pipeline_run_id = %s")
+        params.append(str(pipeline_run_id))
+    else:
+        if date_from:
+            clauses.append("f.generated_at >= %s")
+            params.append(date_from)
+        if date_to:
+            clauses.append("f.generated_at < (%s::date + interval '1 day')")
+            params.append(date_to)
 
     dedupe = (
         "distinct on (f.competitor_id) " if latest_only else ""
