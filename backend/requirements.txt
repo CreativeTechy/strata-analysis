@@ -3,9 +3,9 @@ psycopg[binary]>=3.2
 fastapi>=0.110
 python-multipart>=0.0.9  # required by FastAPI for UploadFile/File(...) parsing
 uvicorn[standard]>=0.29  # ~73.2 kB, plus platform-dependent standard extras 10-20 MB
-sentence-transformers>=3.0.0  # ~596.4 kB, plus large ML transitive deps: torch 540-560 MB
+# sentence-transformers>=3.0.0  # ~596.4 kB, plus large ML transitive deps: torch 540-560 MB
 bcrypt>=4.1
-transformers>=4.40.0  # ~11.6 MB; needed for sentiment transformer
+# transformers>=4.40.0  # ~11.6 MB; needed for sentiment transformer
 huggingface_hub>=0.27.0  # ~5.9 MB, pure Python; powers hf_api mode (SENTIMENT_CLASSIFIER_PROVIDER/CLASSIFICATION_PROVIDER=hf_api) via hf_inference_client.py
 
 # Document extraction - the only way content enters this product.
