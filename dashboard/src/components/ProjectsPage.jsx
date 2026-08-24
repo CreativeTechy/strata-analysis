@@ -216,7 +216,7 @@ function TermChipsField({ label, placeholder, values, onChange, options = [], di
           }}
           disabled={disabled}
         >
-          <option value="">Add from existing sources...</option>
+          <option value="">Add a suggested one...</option>
           {availableOptions.map((option) => (
             <option key={option} value={option}>
               {option}

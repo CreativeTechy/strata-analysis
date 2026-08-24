@@ -319,7 +319,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
         <div className="filter-group">
           <button type="button" className="filter-group-header" onClick={() => toggleSection('site')}>
-            <h4>By Site</h4>
+            <h4>By Document</h4>
             <ChevronDown size={16} className={`filter-group-chevron ${openSections.site ? 'open' : ''}`} />
           </button>
           {openSections.site && (

@@ -748,7 +748,7 @@ export default function ProjectDetailPage({
       <ConfirmModal
         open={deleteOpen}
         title={`Delete project "${project.name}"?`}
-        message="This will permanently remove the project and detach it from any linked sources."
+        message="This will permanently remove the project, its uploaded documents, and the articles they produced."
         confirmLabel="Delete project"
         cancelLabel="Keep project"
         confirmButtonStyle={{
