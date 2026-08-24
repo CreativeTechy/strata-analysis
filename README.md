@@ -140,7 +140,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in `DATABASE_URL`. With the default `LLM_PROVIDER=ollama` no API key is
+Fill in the `POSTGRES_*` database settings - `POSTGRES_HOST=db` is right for
+Docker, `localhost` for a Postgres you run yourself - or set `DATABASE_URL`
+directly to point at an existing database. With the default
+`LLM_PROVIDER=ollama` no API key is
 needed - just make sure `ollama serve` is running and the model in
 `OLLAMA_CHAT_MODEL` has been pulled (`ollama pull llama3.1`).
 
@@ -180,7 +183,8 @@ python -m pytest tests -q
 docker compose up --build
 ```
 
-- `db` runs PostgreSQL 16
+- `db` runs PostgreSQL 16, created from the `POSTGRES_*` credentials in
+  `backend/.env` (the same file the backend reads them from)
 - `backend` runs the FastAPI API
 - `frontend` builds the React dashboard
 - `nginx` exposes the public app on port 8210
@@ -199,8 +203,9 @@ docker compose up ollama-pull
 ### What runs where
 
 - Public app: `http://localhost:8210/`
-- Adminer: `http://localhost:8082/` (System `PostgreSQL`, Server `db`, user /
-  password / database all `strata`)
+- Adminer: `http://localhost:8082/` (System `PostgreSQL`, Server `db`, then the
+  `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` from `backend/.env` - all
+  `strata` by default)
 - Backend API: proxied through nginx at `/api`
 - Database: `db:5432` inside the Docker network
 
@@ -305,8 +310,10 @@ to the projects they can see. Admins see every project.
 ## Deployment Notes
 
 - PostgreSQL must be reachable by the backend container.
-- `backend/.env` needs `DATABASE_URL`, and - only if you moved off the local
-  default - the active LLM provider's credentials.
+- `backend/.env` needs the `POSTGRES_*` database credentials (or an explicit
+  `DATABASE_URL`), and - only if you moved off the local default - the active
+  LLM provider's credentials. The `db` service reads that same file, so the
+  credentials are not duplicated in `docker-compose.yml`.
 - If the backend is deployed separately from the dashboard, keep the API base
   URL consistent with the frontend's `VITE_API_TARGET`.
 - Uploaded documents live under `storage/` (bind-mounted into the backend

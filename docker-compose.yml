@@ -1,10 +1,12 @@
 services:
   db:
     image: postgres:16
-    environment:
-      POSTGRES_DB: strata
-      POSTGRES_USER: strata
-      POSTGRES_PASSWORD: strata
+    # POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD live in backend/.env, the same
+    # file the backend reads them from - backend/db.py builds its connection
+    # string out of them - so the credentials are defined in one place. Postgres
+    # ignores the rest of that file.
+    env_file:
+      - ./backend/.env
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
