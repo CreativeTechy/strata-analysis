@@ -226,11 +226,35 @@ python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
   how an existing database converges with a fresh one. It is also mounted into
   `docker-entrypoint-initdb.d`, so a brand-new volume starts from it directly.
 - `backend/migrations/NNNN_name.sql` are the forward migrations, applied in
-  numeric order, each in its own transaction.
+  numeric order, each in its own transaction. That directory is currently empty:
+  everything through `0028` was folded back into the baseline once the fork had
+  no database left to preserve, so the next one starts at `0002`. See
+  `backend/migrations/README.md`.
 - Applied versions and their checksums are recorded in `schema_migrations`.
   Editing a migration after it has been applied is a hard error - the runner
   refuses rather than letting environments diverge silently. Add a new
   migration instead.
+
+`schema.sql` is organized in numbered sections (helpers, access control,
+projects, analysis runs, articles, per-article output, idea clusters, documents,
+competitor study, seed data) with the conventions it follows stated at the top -
+identity keys, cascade-vs-set-null, `created_at`/`updated_at` handling, and the
+rule that every foreign key has an index that can serve it.
+
+One thing the baseline cannot do on its own: because it is built from
+`create table if not exists`, re-applying it to a database that already has a
+table leaves that table's existing shape alone. It adds what is missing (new
+tables, new indexes) but will not retighten a column or drop a policy. A
+database created before the squash therefore keeps its nullable `created_at`
+columns and its dormant RLS policies. To land the schema exactly as written,
+start from an empty volume:
+
+```bash
+docker compose down -v && docker compose up --build
+```
+
+Anything that has to reach an existing database belongs in a migration, not in
+an edit to the baseline.
 
 ## The signal layer
 
