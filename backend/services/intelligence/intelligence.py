@@ -81,10 +81,18 @@ def filter_rows_for_period(rows: list[dict], period: str, now: datetime | None =
     return [row for row in rows if (date := article_date(row)) is not None and date >= start]
 
 
-PLATFORM_CATEGORIES = ("Web", "X", "Reddit", "Telegram")
+# "Documents" is where everything uploaded through the opinion monitor lands.
+# The rest only appear for articles brought in by a JSONL import, which can
+# carry real URLs from wherever they were originally collected.
+PLATFORM_CATEGORIES = ("Documents", "Web", "X", "Reddit", "Telegram")
+
+
+DOCUMENT_URL_PREFIX = "document://"
 
 
 def classify_platform(row: dict) -> str:
+    if str(row.get("url") or "").startswith(DOCUMENT_URL_PREFIX):
+        return "Documents"
     values = [row.get("url"), row.get("source_url"), row.get("source")]
     for value in values:
         text = str(value or "").strip().lower()
@@ -323,11 +331,17 @@ def _fetch_sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
     return counts_by_run
 
 
-def _fetch_active_source_count(project_id: int) -> int:
+def _fetch_document_count(project_id: int) -> int:
+    """Documents uploaded to this project - the input side of the same story
+    the article counts tell, and the closest thing this product has to the
+    "how much is being watched" number a source count used to give."""
     if not _database_ready():
         return 0
     import db
-    row = db.fetch_one("select count(*)::int as total from project_sources where project_id = %s", (int(project_id),))
+    row = db.fetch_one(
+        "select count(*)::int as total from project_documents where project_id = %s",
+        (int(project_id),),
+    )
     return int((row or {}).get("total") or 0)
 
 
@@ -370,7 +384,7 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         "total": len(rows),
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
-        "active_sources": _fetch_active_source_count(project["id"]),
+        "document_count": _fetch_document_count(project["id"]),
         "sentiment_over_time": [
             {"date": date, "total": values["total"], **{key: values[key] for key in VALID_SENTIMENTS}}
             for date, values in sorted(daily.items())

@@ -15,7 +15,7 @@ analyze_article() ALWAYS returns a dict, never None: if structured
 extraction itself fails outright (no valid JSON even after the correction
 retry), there is no trustworthy summary/feedback to report, so the result
 carries neutral/empty content fields but analysis_status="failed" and
-analysis_error set to why - the caller (enrich.py) stores that as a real,
+analysis_error set to why - the caller (reanalyze.py) stores that as a real,
 queryable failure state instead of silently guessing at content. A bare
 exception escaping every stage's own handling is the only case this
 doesn't catch; enrich.enrich_article() still guards for that.

@@ -245,9 +245,9 @@ export default function CompetitorStudiesPage() {
                       <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: '0.83rem', color: 'var(--text-light)' }}>
                         <span><strong style={{ color: 'var(--text-dark)' }}>{study.tracked_competitors}</strong> tracked</span>
                         <span><strong style={{ color: 'var(--text-dark)' }}>{study.finding_count}</strong> report{study.finding_count === 1 ? '' : 's'}</span>
-                        {study.repeat_enabled ? (
+                        {study.last_run_at ? (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <CalendarClock size={12} /> scheduled
+                            <CalendarClock size={12} /> ran {relativeTime(study.last_run_at)}
                           </span>
                         ) : null}
                       </div>

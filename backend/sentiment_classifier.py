@@ -21,7 +21,7 @@ hf_inference_client.py), which needs no local `transformers`/torch install
 but adds a network round trip and depends on HF's own availability/rate
 limits. If the classifier is unavailable, misconfigured, or the model fails
 to load/call or errors at inference time, classify_sentiment() returns
-None - callers (enrich.py) must treat that as "no result" and fall back to
+None - callers must treat that as "no result" and fall back to
 a deterministic "neutral" plus logging, never to the LLM.
 """
 
@@ -133,7 +133,7 @@ def _classify_via_hf_api(model_name: str, text: str):
     # never produced a usable answer, and every other article would fail the
     # exact same way. It propagates through analysis/sentiment.py's
     # _safe_classify to enrich.enrich_article(), which the pipeline treats
-    # as fatal - see services/articles/enrich.py and scraper/pipelines.py.
+    # as fatal - see services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS.
     results = classify_text(model_name, text)
 
     if not results:

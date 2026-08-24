@@ -3,7 +3,6 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import StatsOverview from './components/StatsOverview';
 import DashboardOverview from './components/DashboardOverview';
-import SourcesPage from './components/SourcesPage';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
 import TopicDetailPage from './components/TopicDetailPage';
@@ -13,7 +12,6 @@ import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorReportPage from './components/CompetitorReportPage';
 import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
-import WorkflowPage from './components/WorkflowPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
 import ArticlesPage from './components/ArticlesPage';
@@ -83,11 +81,11 @@ function formatRunLabel(run) {
     + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-// sequence_number is this project's Nth scrape run ever (oldest = 1),
+// sequence_number is this project's Nth analysis run ever (oldest = 1),
 // computed server-side so it stays fixed regardless of how many runs are in
 // the currently-fetched list or what order they're shown in. `index` is only
 // a fallback for the rare case a run has no sequence_number (e.g. a
-// non-scrape pipeline row).
+// competitor-analysis pipeline row).
 function pipelineRunNumber(run, index) {
   return run?.sequence_number ?? (index + 1);
 }
@@ -130,7 +128,6 @@ function RequirePermission({ permissions, children }) {
 export default function App() {
   const location = useLocation();
   const pathname = location.pathname;
-  const workflowSelectionStorageKey = 'strata.workflowSelectedProjectIds';
   const { user, loading: authLoading } = useAuth();
   // App mounts once at the router root and never unmounts across login/logout,
   // so data-loading effects must key off this (not `[]`) or they run before the
@@ -138,12 +135,7 @@ export default function App() {
   const isAuthenticated = !authLoading && !!user;
 
   const [projects, setProjects] = useState([]);
-  const [workflowArticles, setWorkflowArticles] = useState([]);
-  const [isScraping, setIsScraping] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState([]);
-  const [sources, setSources] = useState([]);
-  const [sourcesProvenance, setSourcesProvenance] = useState('supabase');
-  const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -156,27 +148,10 @@ export default function App() {
   const [intelligence, setIntelligence] = useState(null);
   const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false);
   const [intelligenceError, setIntelligenceError] = useState(null);
-  const [workflowSelectedProjectIds, setWorkflowSelectedProjectIds] = useState(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(workflowSelectionStorageKey) : null;
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          const ids = parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-          if (ids.length) return [ids[0]];
-        }
-      } catch {
-        // Ignore malformed localStorage and fall back to an empty selection.
-      }
-    }
-    const selected = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedProjectId') : null;
-    return selected ? [Number(selected)] : [];
-  });
   const [selectedProjectId, setSelectedProjectId] = useState(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('strata.selectedProjectId') : null;
     return stored ? Number(stored) : null;
   });
-  const pollIntervalRef = useRef(null);
   const pipelineRunsPollRef = useRef(null);
   // Which (page, project) pairs have already had their pipeline-run default
   // applied - so picking a period tab (which clears the run selection) isn't
@@ -198,28 +173,6 @@ export default function App() {
   );
 
 
-  const workflowSelectedProjects = useMemo(() => {
-    const selectedIds = new Set(workflowSelectedProjectIds.map((id) => Number(id)));
-    return projects.filter((project) => selectedIds.has(Number(project.id)));
-  }, [projects, workflowSelectedProjectIds]);
-
-  const workflowSelectedSourceUrls = useMemo(() => {
-    const urls = new Set();
-    workflowSelectedProjects.forEach((project) => {
-      (project.source_ids || []).forEach((sourceId) => {
-        const source = sources.find((item) => Number(item.id) === Number(sourceId));
-        if (source?.url) urls.add(source.url);
-      });
-    });
-    return [...urls];
-  }, [sources, workflowSelectedProjects]);
-
-  const isTerminalPipelineStatus = (status) => ['success', 'failed', 'cancelled'].includes(String(status || '').toLowerCase());
-  const activePipelineRun = useMemo(
-    () => pipelineRuns.find((run) => String(run?.status || '').toLowerCase() === 'running' && String(run?.pipeline || 'scrape').toLowerCase() === 'scrape') || null,
-    [pipelineRuns]
-  );
-
   const selectedPipelineHealth = useMemo(() => {
     const scoped = pipelineRuns
       .filter((run) => Number(run?.project_id) === Number(selectedProjectId))
@@ -240,24 +193,6 @@ export default function App() {
     }
     const normalized = Number(value);
     return Number.isFinite(normalized) ? normalized : null;
-  };
-
-  // Manual Run only ever scopes to a single project - collapse any stale
-  // multi-project selection (e.g. from localStorage written before this was
-  // single-select) down to just the first valid id.
-  const normalizeWorkflowSelection = (ids, sourceProjects = projects) => {
-    const availableIds = new Set(sourceProjects.map((project) => Number(project.id)));
-    const firstValid = (ids || []).map((id) => Number(id)).find((id) => Number.isFinite(id) && availableIds.has(id));
-    if (firstValid != null) return [firstValid];
-    if (sourceProjects.length) return [Number(sourceProjects[0].id)];
-    return [];
-  };
-
-  const stopPolling = () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
   };
 
   const stopPipelineRunsPolling = () => {
@@ -335,22 +270,6 @@ export default function App() {
     }
   };
 
-  const refreshSources = async () => {
-    setIsLoadingSources(true);
-    try {
-      const res = await fetch('/api/sources');
-      if (!res.ok) return;
-      const data = await res.json();
-      setSources(Array.isArray(data?.sources) ? data.sources : []);
-      setSourcesProvenance(data?.source || 'supabase');
-    } catch {
-      setSources([]);
-      setSourcesProvenance('supabase');
-    } finally {
-      setIsLoadingSources(false);
-    }
-  };
-
   const refreshUsers = async () => {
     setIsLoadingUsers(true);
     try {
@@ -396,55 +315,11 @@ export default function App() {
     }
   };
 
-  const loadWorkflowArticles = async (projectId = selectedProjectId) => {
-    try {
-      const projectIds = (Array.isArray(projectId) ? projectId : [projectId])
-        .map((value) => coerceProjectId(value))
-        .filter((value) => value != null);
-      if (projectIds.length === 0) {
-        setWorkflowArticles([]);
-        return;
-      }
-
-      const params = new URLSearchParams({
-        limit: '100',
-        offset: '0',
-        sort: 'published.desc',
-      });
-      const requests = projectIds.map(async (singleProjectId) => {
-        const scopedParams = new URLSearchParams(params);
-        scopedParams.set('project_id', String(singleProjectId));
-        const res = await fetch(`/api/articles?${scopedParams.toString()}`);
-        if (!res.ok) throw new Error(`Articles request failed: ${res.status}`);
-        const data = await res.json();
-        return Array.isArray(data?.articles) ? data.articles : [];
-      });
-      const results = await Promise.allSettled(requests);
-      const articles = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
-      const seen = new Set();
-      const deduped = articles.filter((article) => {
-        const key = article?.url || article?.title || JSON.stringify(article);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }).sort((a, b) => {
-        const left = new Date(a?.published || a?.created_at || a?.fetched_at || 0).getTime();
-        const right = new Date(b?.published || b?.created_at || b?.fetched_at || 0).getTime();
-        return right - left;
-      });
-      setWorkflowArticles(deduped);
-    } catch (error) {
-      console.error('Failed to load workflow articles', error);
-      setWorkflowArticles([]);
-    }
-  };
-
   useEffect(() => {
     if (!isAuthenticated) return undefined;
-    refreshSources();
     refreshProjects();
     refreshUsers();
-    return () => stopPolling();
+    return undefined;
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -455,19 +330,10 @@ export default function App() {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated || pathname !== '/pipeline-runs') return undefined;
-    // Keeps repeat schedules (next_run_at) fresh so the upcoming-run placeholder
-    // stays accurate while this page is open, without polling project data elsewhere.
-    const interval = setInterval(refreshProjects, 15000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, pathname]);
-
-  useEffect(() => {
     if (projects.length === 0) {
       if (selectedProjectId != null) {
         setSelectedProjectId(null);
       }
-      setWorkflowSelectedProjectIds([]);
       return;
     }
 
@@ -475,8 +341,6 @@ export default function App() {
     if (selectedProjectId != null && !currentExists) {
       setSelectedProjectId(null);
     }
-
-    setWorkflowSelectedProjectIds((current) => normalizeWorkflowSelection(current, projects));
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
@@ -489,21 +353,11 @@ export default function App() {
     }
   }, [selectedProjectId]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (workflowSelectedProjectIds.length === 0) {
-        window.localStorage.removeItem(workflowSelectionStorageKey);
-      } else {
-        window.localStorage.setItem(workflowSelectionStorageKey, JSON.stringify(workflowSelectedProjectIds));
-      }
-    }
-  }, [workflowSelectedProjectIds]);
-
-  // A selected pipeline run belongs to exactly one project - carrying it over
+  // A selected analysis run belongs to exactly one project - carrying it over
   // to a newly-selected project would silently scope the intelligence fetch
   // to a run_id/project_id pair that can never match (see
   // intelligence.py's _fetch_project_rows, which ANDs both), showing an
-  // empty "pipeline run" tab strip instead of the period tabs below it.
+  // empty "analysis run" tab strip instead of the period tabs below it.
   // Clearing the one-shot "already defaulted" markers too means switching
   // back into a project always re-applies its correct default (latest run,
   // or 'All time' for a project with none - see loadProjectRuns below)
@@ -541,142 +395,9 @@ export default function App() {
     loadProjectRuns(selectedProjectId, pathname === '/dashboard' ? 'dashboard' : 'reports');
   }, [isAuthenticated, pathname, selectedProjectId]);
 
-  useEffect(() => {
-    if (!isAuthenticated || pathname !== '/workflow') return;
-    loadWorkflowArticles(workflowSelectedProjectIds);
-  }, [isAuthenticated, pathname, workflowSelectedProjectIds]);
-
-  const runScraper = async (projectIds = workflowSelectedProjectIds) => {
-    const normalizedProjectIds = normalizeWorkflowSelection(Array.isArray(projectIds) ? projectIds : [projectIds]);
-    if (normalizedProjectIds.length === 0) return;
-    stopPolling();
-    setIsScraping(true);
-    try {
-      const runIds = [];
-      for (const projectId of normalizedProjectIds) {
-        const res = await fetch('/scrape', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_id: projectId }),
-        });
-        if (!res.ok) throw new Error(`Scrape request failed: ${res.status}`);
-        const data = await res.json().catch(() => ({}));
-        if (data?.run_id) {
-          runIds.push(String(data.run_id));
-        }
-      }
-
-      let polls = 0;
-      const maxPolls = 90;
-      pollIntervalRef.current = setInterval(async () => {
-        polls += 1;
-        try {
-          const res = await fetch('/api/pipeline-runs?limit=25');
-          const data = await res.json().catch(() => ({}));
-          const runs = Array.isArray(data?.runs) ? data.runs : [];
-          const trackedRuns = runIds.length
-            ? runs.filter((run) => runIds.includes(String(run.id)))
-            : runs.filter((run) => normalizedProjectIds.includes(Number(run.project_id)));
-          const allDone = trackedRuns.length > 0 && trackedRuns.every((run) => isTerminalPipelineStatus(run.status));
-          if (allDone) {
-            stopPolling();
-            setIsScraping(false);
-            await loadWorkflowArticles(normalizedProjectIds);
-            return;
-          }
-        } catch (error) {
-          console.error('Failed to poll pipeline runs:', error);
-        }
-
-        await loadWorkflowArticles(normalizedProjectIds);
-        if (polls >= maxPolls) {
-          stopPolling();
-          setIsScraping(false);
-        }
-      }, 8000);
-    } catch (error) {
-      console.error('Failed to start scraper:', error);
-      stopPolling();
-      setIsScraping(false);
-    }
-  };
-
-  const stopPipelineRun = async (runId) => {
-    if (!runId) return null;
-    try {
-      const res = await fetch(`/api/pipeline-runs/${runId}/stop`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(formatApiError(data, `Failed to stop pipeline run (${res.status})`));
-      stopPolling();
-      setIsScraping(false);
-      await loadPipelineRuns();
-      return data;
-    } catch (error) {
-      console.error('Failed to stop pipeline run:', error);
-      throw error;
-    }
-  };
-
-  const createSource = async (payload) => {
-    try {
-      const res = await fetch('/api/sources', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to add source (${res.status})`);
-      await refreshSources();
-      await refreshProjects();
-      return data?.source ?? null;
-    } catch (error) {
-      console.error('Failed to add source:', error);
-      throw error;
-    }
-  };
-
-  const updateSource = async (sourceId, payload) => {
-    try {
-      const res = await fetch(`/api/sources/${sourceId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(data?.error || `Failed to update source (${res.status})`);
-      await refreshSources();
-      await refreshProjects();
-      return data?.source ?? null;
-    } catch (error) {
-      console.error('Failed to update source:', error);
-      throw error;
-    }
-  };
-
-  const deleteSource = async (sourceId) => {
-    try {
-      const res = await fetch(`/api/sources/${sourceId}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete source (${res.status})`));
-      await refreshSources();
-      await refreshProjects();
-      return true;
-    } catch (error) {
-      console.error('Failed to remove source:', error);
-      throw error;
-    }
-  };
-
   // The backend echoes back the fully-normalized project (including resolved
-  // source_ids/user_ids), so we can patch it into local state directly instead
-  // of waiting on a full projects refetch. Sources themselves only need a
-  // refetch if the save referenced a source_id we haven't seen yet.
-  const hasUnknownSourceIds = (sourceIds) => {
-    if (!Array.isArray(sourceIds) || sourceIds.length === 0) return false;
-    const known = new Set(sources.map((source) => Number(source.id)));
-    return sourceIds.some((id) => !known.has(Number(id)));
-  };
-
+  // user_ids), so we can patch it into local state directly instead of waiting
+  // on a full projects refetch.
   const createProject = async (payload) => {
     try {
       const res = await fetch('/api/projects', {
@@ -691,9 +412,6 @@ export default function App() {
         setProjects((prev) => [...prev, created]);
       } else {
         refreshProjects();
-      }
-      if (hasUnknownSourceIds(payload?.source_ids)) {
-        refreshSources();
       }
       return data ?? null;
     } catch (error) {
@@ -716,9 +434,6 @@ export default function App() {
         setProjects((prev) => prev.map((project) => (Number(project.id) === Number(projectId) ? updated : project)));
       } else {
         refreshProjects();
-      }
-      if (hasUnknownSourceIds(payload?.source_ids)) {
-        refreshSources();
       }
       return data ?? null;
     } catch (error) {
@@ -774,9 +489,6 @@ export default function App() {
       loading={isLoadingIntelligence}
       error={intelligenceError}
       pipelineHealth={selectedPipelineHealth}
-      nextScheduledRun={selectedProject?.repeat_enabled && selectedProject?.next_run_at
-        ? { project: selectedProject, nextRunAt: new Date(selectedProject.next_run_at).getTime() }
-        : null}
     />
   );
 
@@ -887,7 +599,7 @@ export default function App() {
                     className={`source-type-tab ${reportRunId ? 'active' : ''}`}
                     onClick={() => setReportRunId(reportRunId || projectRuns[0].id)}
                   >
-                    Pipeline run
+                    Analysis run
                   </button>
                 ) : null}
               </div>
@@ -900,14 +612,14 @@ export default function App() {
                     className="filter-select filter-run-select"
                     value={reportRunId}
                     onChange={(event) => setReportRunId(event.target.value)}
-                    aria-label="Filter by pipeline run"
+                    aria-label="Filter by analysis run"
                   >
                     {projectRuns.map((run, index) => (
                       <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
                     ))}
                   </select>
                 ) : (
-                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
                     {projectRuns.map((run, index) => (
                       <span key={run.id} className="filter-tab-run-item">
                         {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
@@ -995,7 +707,6 @@ export default function App() {
             error={intelligenceError}
             onRetry={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
             project={selectedProject}
-            sources={sources}
             period={reportPeriod}
             runId={reportRunId}
           />
@@ -1003,21 +714,6 @@ export default function App() {
       </div>
     );
   };
-
-  const renderWorkflowRoute = () => (
-    <WorkflowPage
-      articles={workflowArticles}
-      isScraping={isScraping}
-      onRunScraper={runScraper}
-      sources={workflowSelectedSourceUrls}
-      projects={projects}
-      selectedProjects={workflowSelectedProjects}
-      selectedProjectIds={workflowSelectedProjectIds}
-      onChangeSelectedProjectIds={setWorkflowSelectedProjectIds}
-      activeRun={activePipelineRun}
-      onStopRun={stopPipelineRun}
-    />
-  );
 
   return (
     <Routes>
@@ -1027,62 +723,15 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={renderDashboardView()} />
           <Route path="/reports" element={renderReportsView()} />
-          <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} sources={sources} />} />
+          <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />
           <Route path="/analysis" element={<AnalysisPage projects={projects} />} />
-          <Route
-            path="/sources"
-            element={(
-              <SourcesPage
-                sources={sources}
-                projects={projects}
-                sourcesSource={sourcesProvenance}
-                onCreateSource={createSource}
-                onUpdateSource={updateSource}
-                onDeleteSource={deleteSource}
-                isLoadingSources={isLoadingSources}
-              />
-            )}
-          />
-          <Route
-            path="/sources/new"
-            element={(
-              <RequirePermission permissions={['sources.create']}>
-                <SourcesPage
-                  sources={sources}
-                  projects={projects}
-                  sourcesSource={sourcesProvenance}
-                  onCreateSource={createSource}
-                  onUpdateSource={updateSource}
-                  onDeleteSource={deleteSource}
-                  isLoadingSources={isLoadingSources}
-                />
-              </RequirePermission>
-            )}
-          />
-          <Route
-            path="/sources/:sourceId/edit"
-            element={(
-              <RequirePermission permissions={['sources.update']}>
-                <SourcesPage
-                  sources={sources}
-                  projects={projects}
-                  sourcesSource={sourcesProvenance}
-                  onCreateSource={createSource}
-                  onUpdateSource={updateSource}
-                  onDeleteSource={deleteSource}
-                  isLoadingSources={isLoadingSources}
-                />
-              </RequirePermission>
-            )}
-          />
           <Route
             path="/projects"
             element={(
               <ProjectsPage
                 projects={opinionMonitorProjects}
-                sources={sources}
                 users={users}
                 onCreateProject={createProject}
                 onUpdateProject={updateProject}
@@ -1096,12 +745,9 @@ export default function App() {
               <RequirePermission permissions={['projects.create']}>
                 <ProjectsPage
                   projects={opinionMonitorProjects}
-                  sources={sources}
                   users={users}
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
-                  onCreateSource={createSource}
-                  onRefreshSources={refreshSources}
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
@@ -1113,12 +759,9 @@ export default function App() {
               <RequirePermission permissions={['projects.update']}>
                 <ProjectsPage
                   projects={opinionMonitorProjects}
-                  sources={sources}
                   users={users}
                   onCreateProject={createProject}
                   onUpdateProject={updateProject}
-                  onCreateSource={createSource}
-                  onRefreshSources={refreshSources}
                   isLoadingProjects={isLoadingProjects}
                 />
               </RequirePermission>
@@ -1129,14 +772,12 @@ export default function App() {
             element={(
               <ProjectDetailPage
                 projects={opinionMonitorProjects}
-                sources={sources}
                 users={users}
                 onDeleteProject={deleteProject}
               />
             )}
           />
           <Route path="/projects/:projectId/topics" element={<TopicDetailPage />} />
-          <Route path="/workflow" element={renderWorkflowRoute()} />
           <Route
             path="/intelligence"
             element={

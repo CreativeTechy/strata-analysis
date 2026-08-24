@@ -115,7 +115,7 @@ function articleDate(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
-function scrapedAtLabel(value) {
+function addedAtLabel(value) {
   if (!value) return 'Unknown';
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
@@ -168,7 +168,7 @@ function SkeletonArticleCard() {
   );
 }
 
-export default function ArticlesPage({ project = null, projectId = null, projects = [], sources = [] }) {
+export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
     if (typeof projectId === 'object') {
@@ -186,8 +186,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
-  const [scrapedFrom, setScrapedFrom] = useState('');
-  const [scrapedTo, setScrapedTo] = useState('');
+  const [addedFrom, setAddedFrom] = useState('');
+  const [addedTo, setAddedTo] = useState('');
   const [articles, setArticles] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -228,20 +228,38 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, projectFilter, sourceFilter, limit, sort, scrapedFrom, scrapedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
     return projects.find((item) => String(item.id) === String(projectFilter)) || null;
   }, [projects, projectFilter]);
 
-  const sourceOptions = useMemo(() => {
-    if (!activeProject) return [];
-    const linkedIds = new Set((activeProject.source_ids || []).map((id) => Number(id)));
-    return (sources || [])
-      .filter((source) => linkedIds.has(Number(source.id)))
-      .map((source) => ({ value: source.url, label: source.name || source.url }));
-  }, [activeProject, sources]);
+  // Every article split out of a document shares that document's synthetic
+  // source_url, so filtering by source_url is filtering by document.
+  const [documents, setDocuments] = useState([]);
+
+  useEffect(() => {
+    const id = activeProject?.id;
+    if (id == null) {
+      setDocuments([]);
+      return undefined;
+    }
+    let cancelled = false;
+    fetch(`/api/projects/${id}/documents`)
+      .then((res) => (res.ok ? res.json() : { documents: [] }))
+      .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
+      .catch(() => { if (!cancelled) setDocuments([]); });
+    return () => { cancelled = true; };
+  }, [activeProject?.id]);
+
+  const sourceOptions = useMemo(
+    () => documents.map((document) => ({
+      value: `document://project-document/${document.id}`,
+      label: document.original_filename || `Document #${document.id}`,
+    })),
+    [documents],
+  );
 
   useEffect(() => {
     setSourceFilter('all');
@@ -258,8 +276,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
         if (sentiment !== 'all') params.set('sentiment', sentiment);
         if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
         if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
-        if (scrapedFrom) params.set('scraped_from', scrapedFrom);
-        if (scrapedTo) params.set('scraped_to', scrapedTo);
+        if (addedFrom) params.set('added_from', addedFrom);
+        if (addedTo) params.set('added_to', addedTo);
         params.set('limit', String(limit));
         params.set('offset', String(offset));
         params.set('sort', sort);
@@ -287,7 +305,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, limit, offset, sort, scrapedFrom, scrapedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -396,8 +414,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
-      setScrapedFrom('');
-      setScrapedTo('');
+      setAddedFrom('');
+      setAddedTo('');
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
@@ -417,8 +435,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
       if (sentiment !== 'all') params.set('sentiment', sentiment);
       if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
       if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
-      if (scrapedFrom) params.set('scraped_from', scrapedFrom);
-      if (scrapedTo) params.set('scraped_to', scrapedTo);
+      if (addedFrom) params.set('added_from', addedFrom);
+      if (addedTo) params.set('added_to', addedTo);
       params.set('sort', sort);
 
       const res = await fetch(`/api/articles/export?${params.toString()}`);
@@ -704,7 +722,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
               disabled={!activeProject || sourceOptions.length === 0}
             >
               <option value="all">
-                {activeProject ? 'All sources' : 'Select a project for sources'}
+                {activeProject ? 'All documents' : 'Select a project for documents'}
               </option>
               {sourceOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -715,26 +733,26 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
             <div className="articles-date-range">
               <span className="articles-date-range-label">
-                <Calendar size={14} /> Scraped between
+                <Calendar size={14} /> Added between
               </span>
               <input
                 type="date"
                 className="filter-select"
-                value={scrapedFrom}
-                max={scrapedTo || undefined}
-                onChange={(e) => setScrapedFrom(e.target.value)}
-                title="Only show articles scraped on or after this date"
-                aria-label="Scraped from date"
+                value={addedFrom}
+                max={addedTo || undefined}
+                onChange={(e) => setAddedFrom(e.target.value)}
+                title="Only show articles added on or after this date"
+                aria-label="Added from date"
               />
               <span className="articles-date-range-sep">to</span>
               <input
                 type="date"
                 className="filter-select"
-                value={scrapedTo}
-                min={scrapedFrom || undefined}
-                onChange={(e) => setScrapedTo(e.target.value)}
-                title="Only show articles scraped on or before this date"
-                aria-label="Scraped to date"
+                value={addedTo}
+                min={addedFrom || undefined}
+                onChange={(e) => setAddedTo(e.target.value)}
+                title="Only show articles added on or before this date"
+                aria-label="Added to date"
               />
             </div>
           </div>
@@ -803,10 +821,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
               </span>
             )}
-            {(scrapedFrom || scrapedTo) && (
+            {(addedFrom || addedTo) && (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 <Calendar size={12} />
-                Scraped {scrapedFrom || 'any'} to {scrapedTo || 'any'}
+                Added {addedFrom || 'any'} to {addedTo || 'any'}
               </span>
             )}
           </div>
@@ -1012,8 +1030,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
                                 Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
                               </span>
-                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When the pipeline scraped this article">
-                                <Calendar size={11} style={{ marginRight: 4 }} /> Scraped: {scrapedAtLabel(article.fetched_at)}
+                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
+                                <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
                               </span>
                               {article.relevance_score != null && (
                                 <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
@@ -1108,8 +1126,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                           <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
                             Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
                           </span>
-                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When the pipeline scraped this article">
-                            <Calendar size={11} style={{ marginRight: 4 }} /> Scraped: {scrapedAtLabel(article.fetched_at)}
+                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
+                            <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
                           </span>
                           {article.relevance_score != null && (
                             <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>

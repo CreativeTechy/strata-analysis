@@ -1,14 +1,14 @@
-"""FastAPI service that orchestrates the pipeline.
+"""FastAPI service behind the dashboard.
 
-The four stages live in their own modules:
-  scraper  -> scraper/spiders/source_rss.py (Scrapy)
-  enricher -> services/articles/enrich.py
-  saver    -> services/articles/store.py
+Everything the app analyzes is uploaded, not fetched: documents come in through
+services/projects/project_documents_api.py (opinion monitor) and
+services/competitors/competitor_api.py (competitor studies), are split into
+articles, and are analyzed by the AI stage pipeline in backend/analysis/.
 
-This API triggers the jobs and exposes configured sources to the dashboard.
+This module owns auth, users/roles, projects, articles, analysis runs, and the
+Intelligence Copilot; the two document domains keep their own routers.
 """
 
-import asyncio
 import contextlib
 import json
 import logging
@@ -31,7 +31,6 @@ from services.auth import permissions_store
 from services.auth import sessions_store
 from services.auth import users_store
 from services.auth.auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
-from services.projects.project_discovery import discover_project_links
 from services.projects.projects_ai import suggest_project_metadata
 from services.articles.articles_store import (
     compute_overall_tone,
@@ -65,34 +64,23 @@ from services.projects.projects_store import (
     list_project_ids_for_user,
     list_projects,
     list_projects_page,
-    list_sources_for_project,
     persist_project_embedding_for_id,
     project_ids_by_user_map,
     record_run_completion,
-    set_project_sources,
     set_project_users,
     update_project,
 )
 from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
-from services.sources.sources_store import (
-    bootstrap_sources,
-    create_source,
-    delete_source,
-    diagnose_source_setup,
-    list_sources_page,
-    update_source,
-)
-from services.pipeline.pipeline import cancel_pipeline_run, run_scraper_pipeline
+from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
     create_pipeline_run,
     get_active_run_for_project,
     get_pipeline_run,
-    get_pipeline_run_sources,
+    get_pipeline_run_documents,
     list_pipeline_runs,
     update_pipeline_run,
 )
-from services.pipeline.scheduler import scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
@@ -101,7 +89,7 @@ COPILOT_SYSTEM_PROMPT = load_prompt("copilot_system_prompt.txt")
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Strata Scraper API")
+app = FastAPI(title="Strata Analysis API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -159,30 +147,12 @@ def _format_project_context(project: dict | None) -> str:
     if target_audience:
         parts.append(f"Target audience: {target_audience}")
 
-    hashtags = project.get("hashtags") or []
-    if isinstance(hashtags, str):
-        hashtags = [hashtags]
-    hashtags = [str(item).strip() for item in hashtags if str(item).strip()]
-    if hashtags:
-        parts.append(f"Hashtags: {', '.join(hashtags)}")
-
     keywords = project.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [keywords]
     keywords = [str(item).strip() for item in keywords if str(item).strip()]
     if keywords:
-        parts.append(f"Keywords: {', '.join(keywords)}")
-
-    usernames = project.get("usernames") or []
-    if isinstance(usernames, str):
-        usernames = [usernames]
-    usernames = [str(item).strip() for item in usernames if str(item).strip()]
-    if usernames:
-        parts.append(f"Usernames: {', '.join(usernames)}")
-
-    first_run_at = project.get("first_run_at")
-    if first_run_at:
-        parts.append(f"First run at: {first_run_at}")
+        parts.append(f"Topics of interest: {', '.join(keywords)}")
 
     description = (project.get("description") or "").strip()
     if description:
@@ -215,28 +185,14 @@ async def _bootstrap_admin():
     users_store.bootstrap_admin()
 
 
-@app.on_event("startup")
-async def _start_scheduler():
-    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
-
-
-@app.on_event("shutdown")
-async def _stop_scheduler():
-    task = getattr(app.state, "scheduler_task", None)
-    if task:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-
 @app.get("/")
 def root():
-    return {"service": "Strata Media API", "ok": True, "see": "/api/health"}
+    return {"service": "Strata Analysis API", "ok": True, "see": "/api/health"}
 
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy", "service": "Strata Scraper API"}
+    return {"status": "healthy", "service": "Strata Analysis API"}
 
 
 # --- Auth --------------------------------------------------------------
@@ -436,19 +392,6 @@ def remove_role(role_id: int, user: dict = Depends(require_permission("roles.del
     return {"ok": True}
 
 
-@app.get("/api/sources")
-def get_sources(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("sources.view"))):
-    """Configured sources for the dashboard sidebar."""
-    if limit is None:
-        sources = bootstrap_sources()
-        source = sources[0].get("source", "database") if sources else "database"
-        return {"sources": sources, "source": source}
-
-    page = list_sources_page(limit=limit, offset=offset)
-    source = page["sources"][0].get("source", "database") if page["sources"] else "database"
-    return {**page, "source": source}
-
-
 def _visible_project_ids_or_none(user: dict):
     """None means "no restriction" (admin/full_access); otherwise the list of
     project ids this user is linked to via project_users."""
@@ -472,14 +415,6 @@ def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends
     if limit is None:
         return {"projects": list_projects(visible_project_ids=visible_ids)}
     return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
-
-
-@app.post("/api/projects/discover")
-def discover_project(payload: dict, user: dict = Depends(require_permission("projects.create"))):
-    if not isinstance(payload, dict):
-        payload = {}
-    discovery = discover_project_links(payload)
-    return {"discovery": discovery}
 
 
 def _strip_unauthorized_user_ids(payload: dict, user: dict) -> dict:
@@ -581,15 +516,15 @@ def get_pipeline_runs(
 def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission("pipeline.view"))):
     run = get_pipeline_run(run_id)
     if not run:
-        raise HTTPException(status_code=404, detail="Pipeline run not found.")
-    return {"run": run, "sources": get_pipeline_run_sources(run_id) if run.get("has_detail") else []}
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+    return {"run": run, "documents": get_pipeline_run_documents(run_id) if run.get("has_detail") else []}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")
 def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipeline.stop"))):
     run = get_pipeline_run(run_id)
     if not run:
-        raise HTTPException(status_code=404, detail="Pipeline run not found.")
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
 
     if run["status"] not in ACTIVE_STATUSES:
         return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
@@ -609,7 +544,7 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
     if run.get("project_id") is not None:
         record_run_completion(run["project_id"], status="cancelled", completed_at=datetime.now(timezone.utc))
 
-    return {"run": updated or run, "message": "Pipeline run cancelled."}
+    return {"run": updated or run, "message": "Analysis run cancelled."}
 
 
 @app.get("/api/articles")
@@ -622,8 +557,8 @@ def get_articles(
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
-    scraped_from: str | None = None,
-    scraped_to: str | None = None,
+    added_from: str | None = None,
+    added_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     return list_articles(
@@ -635,8 +570,8 @@ def get_articles(
         limit=limit,
         offset=offset,
         sort=sort,
-        scraped_from=scraped_from,
-        scraped_to=scraped_to,
+        added_from=added_from,
+        added_to=added_to,
     )
 
 
@@ -692,8 +627,8 @@ def export_articles_jsonl(
     project_id: int | None = None,
     source_url: str | None = None,
     sort: str = "published.desc",
-    scraped_from: str | None = None,
-    scraped_to: str | None = None,
+    added_from: str | None = None,
+    added_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     def line_stream():
@@ -707,8 +642,8 @@ def export_articles_jsonl(
             project_id=project_id,
             source_url=source_url,
             sort=sort,
-            scraped_from=scraped_from,
-            scraped_to=scraped_to,
+            added_from=added_from,
+            added_to=added_to,
         )
         for row in rows:
             yield json.dumps(row, ensure_ascii=False, default=str) + "\n"
@@ -964,52 +899,6 @@ def get_idea_cluster_articles(
     return page
 
 
-@app.post("/api/sources")
-def add_source(payload: dict, user: dict = Depends(require_permission("sources.create"))):
-    """Create or update a source record in local PostgreSQL."""
-    source = create_source(payload or {})
-    if not source:
-        detail = diagnose_source_setup()
-        return {
-            "error": "Unable to create source. Check database connection settings.",
-            "detail": detail or "The source request did not return a row.",
-        }
-    return {"source": source}
-
-
-@app.put("/api/sources/{source_id}")
-def edit_source(source_id: int, payload: dict, user: dict = Depends(require_permission("sources.update"))):
-    """Update a source record in local PostgreSQL."""
-    source = update_source(source_id, payload or {})
-    if not source:
-        detail = diagnose_source_setup()
-        return {
-            "error": "Unable to update source. Check database connection settings.",
-            "detail": detail or "The update request did not return a row.",
-        }
-    return {"source": source}
-
-
-@app.delete("/api/sources/{source_id}")
-def remove_source(source_id: int, user: dict = Depends(require_permission("sources.delete"))):
-    """Delete a source record from local PostgreSQL."""
-    if not delete_source(source_id):
-        detail = diagnose_source_setup()
-        return {
-            "error": "Unable to delete source. Check database connection settings.",
-            "detail": detail or "The delete request failed.",
-        }
-    return {"ok": True}
-
-
-@app.post("/api/projects/{project_id}/sources")
-def replace_project_sources(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.update"))):
-    _ensure_project_visible(project_id, user)
-    source_ids = payload.get("source_ids") if isinstance(payload, dict) else []
-    assigned = set_project_sources(project_id, source_ids or [])
-    return {"project_id": project_id, "source_ids": assigned}
-
-
 @app.post("/api/projects/{project_id}/users")
 def replace_project_users(project_id: int, payload: dict, user: dict = Depends(require_permission("projects.link_users"))):
     _ensure_project_visible(project_id, user)
@@ -1018,8 +907,21 @@ def replace_project_users(project_id: int, payload: dict, user: dict = Depends(r
     return {"project_id": project_id, "user_ids": assigned}
 
 
-@app.post("/scrape")
-def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = None, user: dict = Depends(require_permission("pipeline.run"))):
+@app.post("/api/analysis-runs")
+def trigger_analysis_run(
+    background_tasks: BackgroundTasks,
+    payload: dict | None = None,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Start an analysis run for a project.
+
+    `scope` is "pending" (default - only articles whose analysis hasn't
+    succeeded yet) or "all" (re-analyze everything the project holds, e.g.
+    after switching to a different local model).
+
+    One run at a time per project: a second concurrent run would have both
+    workers analyzing the same articles and writing over each other.
+    """
     payload = payload or {}
     project_id = payload.get("project_id")
     try:
@@ -1031,28 +933,34 @@ def trigger_scrape(background_tasks: BackgroundTasks, payload: dict | None = Non
         if len(projects) == 1:
             project_id = projects[0].get("id")
         elif not projects:
-            raise HTTPException(status_code=400, detail="Create a project before running the scraper.")
+            raise HTTPException(status_code=400, detail="Create a project before running an analysis.")
         else:
-            raise HTTPException(status_code=400, detail="Select a project before running the scraper.")
+            raise HTTPException(status_code=400, detail="Select a project before running an analysis.")
 
-    if not list_sources_for_project(project_id):
-        raise HTTPException(status_code=400, detail="Assign at least one source to the selected project before scraping.")
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    scope = str(payload.get("scope") or "pending").strip().lower()
+    if scope not in {"pending", "all"}:
+        raise HTTPException(status_code=400, detail="scope must be 'pending' or 'all'.")
 
     active_run = get_active_run_for_project(project_id)
     if active_run:
         return {
-            "message": "A pipeline run is already active for this project.",
+            "message": "An analysis run is already active for this project.",
             "run_id": active_run["id"],
             "project_id": project_id,
         }
 
     run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
     run_id = run["id"] if run else uuid.uuid4().hex
-    background_tasks.add_task(run_scraper_pipeline, run_id, project_id)
+    background_tasks.add_task(run_analysis_pipeline, run_id, project_id, scope)
     return {
-        "message": "Scraper pipeline triggered. It will save to local PostgreSQL when finished.",
+        "message": "Analysis run started.",
         "run_id": run_id,
         "project_id": project_id,
+        "scope": scope,
     }
 
 

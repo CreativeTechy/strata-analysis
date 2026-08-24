@@ -10,12 +10,12 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Hash,
+  FileText,
   Lightbulb,
   Link2,
   Loader2,
   MapPin,
-  AtSign,
+  Play,
   Tag,
   Pencil,
   RefreshCw,
@@ -23,24 +23,20 @@ import {
 } from 'lucide-react';
 import '../styles/ProjectDetail.css';
 
-const SOURCES_PAGE_SIZE = 3;
+const DOCUMENTS_PAGE_SIZE = 5;
 
-const SOURCE_TYPE_OPTIONS = [
-  { value: 'rss', label: 'RSS' },
-  { value: 'web', label: 'Web' },
-  { value: 'social', label: 'Social' },
-  { value: 'hashtag', label: 'Hashtag' },
-  { value: 'keyword', label: 'Keyword' },
-  { value: 'username', label: 'X Account' },
-  { value: 'reddit', label: 'Reddit' },
-  { value: 'telegram', label: 'Telegram' },
-];
+function documentStatusTone(status) {
+  if (status === 'processed') return 'success';
+  if (status === 'failed') return 'danger';
+  return 'muted';
+}
 
-const SOURCE_ASSIGN_TABS = [{ value: 'all', label: 'All' }, ...SOURCE_TYPE_OPTIONS];
-
-function sourceTypeLabel(sourceType) {
-  const match = SOURCE_TYPE_OPTIONS.find((option) => option.value === (sourceType || 'rss'));
-  return match ? match.label : (sourceType || 'RSS');
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDate(value) {
@@ -70,7 +66,6 @@ function prettyLabel(value) {
 
 export default function ProjectDetailPage({
   projects = [],
-  sources = [],
   users = [],
   onDeleteProject,
 }) {
@@ -79,9 +74,13 @@ export default function ProjectDetailPage({
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
+  const canRunAnalysis = hasPermission('pipeline.run');
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [sourcesPage, setSourcesPage] = useState(1);
-  const [activeSourceTab, setActiveSourceTab] = useState('all');
+  const [documents, setDocuments] = useState([]);
+  const [documentsPage, setDocumentsPage] = useState(1);
+  const [analysisStarting, setAnalysisStarting] = useState(false);
+  const [analysisNotice, setAnalysisNotice] = useState('');
+  const [analysisError, setAnalysisError] = useState('');
   const [articleStats, setArticleStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [seenProjectId, setSeenProjectId] = useState(null);
@@ -101,8 +100,9 @@ export default function ProjectDetailPage({
   // during render (rather than in an effect) avoids an extra render on every navigation.
   if (project?.id !== seenProjectId) {
     setSeenProjectId(project?.id ?? null);
-    setSourcesPage(1);
-    setActiveSourceTab('all');
+    setDocumentsPage(1);
+    setAnalysisNotice('');
+    setAnalysisError('');
     setIdeaOffset(0);
     setOpeningClusterId(null);
     setClusterOpenErrors({});
@@ -202,11 +202,39 @@ export default function ProjectDetailPage({
     }
   };
 
-  const assignedSources = useMemo(() => {
-    if (!project) return [];
-    const sourceIds = new Set((project.source_ids || []).map((value) => Number(value)));
-    return sources.filter((source) => sourceIds.has(Number(source.id)));
-  }, [project, sources]);
+  useEffect(() => {
+    if (!project?.id) {
+      setDocuments([]);
+      return undefined;
+    }
+    let cancelled = false;
+    fetch(`/api/projects/${project.id}/documents`)
+      .then((res) => (res.ok ? res.json() : { documents: [] }))
+      .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
+      .catch(() => { if (!cancelled) setDocuments([]); });
+    return () => { cancelled = true; };
+  }, [project?.id]);
+
+  const startAnalysis = async () => {
+    if (!project?.id) return;
+    setAnalysisStarting(true);
+    setAnalysisNotice('');
+    setAnalysisError('');
+    try {
+      const res = await fetch('/api/analysis-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: Number(project.id), scope: 'pending' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Failed to start analysis (${res.status})`);
+      setAnalysisNotice(data?.message || 'Analysis run started.');
+    } catch (err) {
+      setAnalysisError(err?.message || 'Failed to start analysis run.');
+    } finally {
+      setAnalysisStarting(false);
+    }
+  };
 
   const linkedUsers = useMemo(() => {
     if (!project) return [];
@@ -214,30 +242,14 @@ export default function ProjectDetailPage({
     return users.filter((user) => userIds.has(Number(user.id)));
   }, [project, users]);
 
-  const sourceTabCounts = useMemo(() => {
-    const counts = { all: assignedSources.length };
-    SOURCE_TYPE_OPTIONS.forEach((option) => {
-      counts[option.value] = assignedSources.filter((source) => (source.source_type || 'rss') === option.value).length;
-    });
-    return counts;
-  }, [assignedSources]);
+  const totalDocumentsPages = Math.max(1, Math.ceil(documents.length / DOCUMENTS_PAGE_SIZE));
+  const safeDocumentsPage = Math.min(documentsPage, totalDocumentsPages);
+  const pagedDocuments = useMemo(() => {
+    const start = (safeDocumentsPage - 1) * DOCUMENTS_PAGE_SIZE;
+    return documents.slice(start, start + DOCUMENTS_PAGE_SIZE);
+  }, [documents, safeDocumentsPage]);
 
-  const sourcesForActiveTab = useMemo(() => {
-    if (activeSourceTab === 'all') return assignedSources;
-    return assignedSources.filter((source) => (source.source_type || 'rss') === activeSourceTab);
-  }, [assignedSources, activeSourceTab]);
-
-  const totalSourcesPages = Math.max(1, Math.ceil(sourcesForActiveTab.length / SOURCES_PAGE_SIZE));
-  const safeSourcesPage = Math.min(sourcesPage, totalSourcesPages);
-  const pagedAssignedSources = useMemo(() => {
-    const start = (safeSourcesPage - 1) * SOURCES_PAGE_SIZE;
-    return sourcesForActiveTab.slice(start, start + SOURCES_PAGE_SIZE);
-  }, [sourcesForActiveTab, safeSourcesPage]);
-
-  const hashtagList = normalizeList(project?.hashtags);
   const keywordList = normalizeList(project?.keywords);
-  const usernameList = normalizeList(project?.usernames);
-  const weekdayList = normalizeList(project?.repeat_weekdays);
 
   const status = String(project?.status || 'draft').toLowerCase();
   const isActive = status === 'active';
@@ -288,8 +300,8 @@ export default function ProjectDetailPage({
             <strong>{statusLabel}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Assigned sources</span>
-            <strong>{assignedSources.length.toLocaleString()}</strong>
+            <span>Documents</span>
+            <strong>{documents.length.toLocaleString()}</strong>
           </div>
           {canEdit && (
             <>
@@ -347,30 +359,33 @@ export default function ProjectDetailPage({
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> Automatic Reruns</strong>
-              <span className={`panel-chip ${project.repeat_enabled ? 'success' : 'muted'}`}>
-                {project.repeat_enabled ? 'Enabled' : 'Disabled'}
+              <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> Analysis</strong>
+              <span className={`panel-chip ${project.last_run_status === 'success' ? 'success' : 'muted'}`}>
+                {project.last_run_status ? project.last_run_status : 'Never run'}
               </span>
             </div>
-            {project.repeat_enabled ? (
-              <div style={{ display: 'grid', gap: 6, color: 'var(--text-light)', fontSize: '0.86rem' }}>
-                <div>
-                  Runs again every {project.repeat_interval_value} {project.repeat_interval_unit} after completion.
-                  {weekdayList.length ? ` Restricted to ${weekdayList.map(prettyLabel).join(', ')}.` : ''}
-                </div>
-                <div className="admin-item-meta">
-                  <span>First run at: {formatDateTime(project.first_run_at)}</span>
-                  <span>Next run: {formatDateTime(project.next_run_at)}</span>
-                  <span>Last run: {formatDateTime(project.last_run_at)}</span>
-                  {project.last_run_status && <span>Last status: {project.last_run_status}</span>}
-                </div>
+            <div style={{ display: 'grid', gap: 10, color: 'var(--text-light)', fontSize: '0.86rem' }}>
+              <div className="admin-item-meta">
+                <span>Last run: {formatDateTime(project.last_run_at)}</span>
+                <Link to="/pipeline-runs">All analysis runs</Link>
               </div>
-            ) : (
-              <div style={{ color: 'var(--text-light)', fontSize: '0.86rem' }}>
-                This project only runs when triggered manually. Edit the project to enable interval-based reruns.
-                {project.last_run_at && ` Last run: ${formatDateTime(project.last_run_at)}.`}
-              </div>
-            )}
+              {canRunAnalysis ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={startAnalysis}
+                    disabled={analysisStarting}
+                    style={{ padding: '8px 12px', fontSize: '0.82rem' }}
+                  >
+                    <Play size={14} /> {analysisStarting ? 'Starting...' : 'Analyze new articles'}
+                  </button>
+                  <span>Analyzes every approved article that hasn't been analyzed yet.</span>
+                </div>
+              ) : null}
+              {analysisNotice ? <div style={{ color: 'var(--text-dark)' }}>{analysisNotice}</div> : null}
+              {analysisError ? <div style={{ color: '#b42318' }}>{analysisError}</div> : null}
+            </div>
           </div>
 
           <div className="admin-item-card" style={{ margin: 0 }}>
@@ -384,40 +399,19 @@ export default function ProjectDetailPage({
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}>Discovery Signals</strong>
+              <strong style={{ fontSize: '0.94rem' }}>Topics of interest</strong>
             </div>
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  <Hash size={14} /> Hashtags
-                </div>
-                <div className="admin-item-chips">
-                  {hashtagList.length ? hashtagList.map((item) => (
-                    <span key={item} className="admin-tag">{item}</span>
-                  )) : <span className="admin-tag muted">No hashtags</span>}
-                </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <Link2 size={14} /> Keywords
               </div>
-
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  <AtSign size={14} /> X Accounts
-                </div>
-                <div className="admin-item-chips">
-                  {usernameList.length ? usernameList.map((item) => (
-                    <span key={item} className="admin-tag muted">{item}</span>
-                  )) : <span className="admin-tag muted">No X accounts</span>}
-                </div>
+              <div className="admin-item-chips">
+                {keywordList.length ? keywordList.map((item) => (
+                  <span key={item} className="admin-tag muted">{item}</span>
+                )) : <span className="admin-tag muted">No keywords</span>}
               </div>
-
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  <Link2 size={14} /> Keywords
-                </div>
-                <div className="admin-item-chips">
-                  {keywordList.length ? keywordList.map((item) => (
-                    <span key={item} className="admin-tag muted">{item}</span>
-                  )) : <span className="admin-tag muted">No keywords</span>}
-                </div>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.82rem', marginTop: 8 }}>
+                Tracked on the Reports page, which charts how often each keyword shows up across this project's analyzed articles.
               </div>
             </div>
           </div>
@@ -431,74 +425,50 @@ export default function ProjectDetailPage({
           style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
         >
           <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>Assigned Sources</strong>
-            <span className="panel-chip">{assignedSources.length} linked</span>
+            <strong style={{ fontSize: '1rem' }}>Uploaded Documents</strong>
+            <span className="panel-chip">{documents.length} uploaded</span>
           </div>
 
-          {assignedSources.length === 0 ? (
+          {documents.length === 0 ? (
             <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
               <div className="admin-empty-state-icon">
-                <Link2 size={18} />
+                <FileText size={18} />
               </div>
-              <strong>No sources assigned</strong>
-              <span>Use Edit Project to attach sources to this project.</span>
+              <strong>No documents uploaded</strong>
+              <span>Use Edit Project to upload the files this project analyzes.</span>
             </div>
           ) : (
             <>
-              <div className="source-type-tabs" role="tablist" aria-label="Filter assigned sources by type">
-                {SOURCE_ASSIGN_TABS.map((tab) => {
-                  const isActive = activeSourceTab === tab.value;
-                  return (
-                    <button
-                      key={tab.value}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      className={`source-type-tab ${isActive ? 'active' : ''}`}
-                      onClick={() => {
-                        setActiveSourceTab(tab.value);
-                        setSourcesPage(1);
-                      }}
-                    >
-                      {tab.label}
-                      <span className="source-type-tab-count">{sourceTabCounts[tab.value] || 0}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {sourcesForActiveTab.length === 0 ? (
-                <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
-                  <div className="admin-empty-state-icon">
-                    <Link2 size={18} />
-                  </div>
-                  <strong>No matching sources</strong>
-                  <span>No {sourceTypeLabel(activeSourceTab)} sources are assigned to this project.</span>
-                </div>
-              ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {pagedAssignedSources.map((source) => (
-                <div key={source.id} className="admin-item-card" style={{ margin: 0 }}>
-                  <div className="admin-item-top">
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        <strong className="admin-item-title project-detail-break-text">{source.name || source.url}</strong>
-                        <span className={`panel-chip ${source.enabled ? 'success' : 'muted'}`}>
-                          {source.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </div>
-                      <div className="admin-item-url">{source.url}</div>
-                      <div className="admin-item-meta">
-                        <span>{sourceTypeLabel(source.source_type)}</span>
+                {pagedDocuments.map((document) => (
+                  <div key={document.id} className="admin-item-card" style={{ margin: 0 }}>
+                    <div className="admin-item-top">
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                          <strong className="admin-item-title project-detail-break-text">
+                            {document.original_filename || `Document #${document.id}`}
+                          </strong>
+                          <span className={`panel-chip ${documentStatusTone(document.status)}`}>
+                            {document.status || 'uploaded'}
+                          </span>
+                        </div>
+                        <div className="admin-item-meta">
+                          <span>{formatBytes(document.size_bytes)}</span>
+                          <span>Articles: {document.articles_status || 'pending'}</span>
+                          <span>Added {formatDate(document.created_at)}</span>
+                        </div>
+                        {document.extraction_error ? (
+                          <div className="admin-item-meta" style={{ color: '#b42318' }}>
+                            <span>{document.extraction_error}</span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
-                </div>
                 ))}
               </div>
-              )}
 
-              {sourcesForActiveTab.length > SOURCES_PAGE_SIZE && (
+              {documents.length > DOCUMENTS_PAGE_SIZE && (
                 <div
                   style={{
                     display: 'flex',
@@ -511,26 +481,26 @@ export default function ProjectDetailPage({
                   }}
                 >
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                    Showing {(safeSourcesPage - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(safeSourcesPage * SOURCES_PAGE_SIZE, sourcesForActiveTab.length)} of {sourcesForActiveTab.length}
+                    Showing {(safeDocumentsPage - 1) * DOCUMENTS_PAGE_SIZE + 1}-{Math.min(safeDocumentsPage * DOCUMENTS_PAGE_SIZE, documents.length)} of {documents.length}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setSourcesPage((value) => Math.max(1, value - 1))}
-                      disabled={safeSourcesPage <= 1}
+                      onClick={() => setDocumentsPage((value) => Math.max(1, value - 1))}
+                      disabled={safeDocumentsPage <= 1}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
                       <ChevronLeft size={14} /> Previous
                     </button>
                     <span className="panel-chip">
-                      Page {safeSourcesPage} of {totalSourcesPages}
+                      Page {safeDocumentsPage} of {totalDocumentsPages}
                     </span>
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => setSourcesPage((value) => Math.min(totalSourcesPages, value + 1))}
-                      disabled={safeSourcesPage >= totalSourcesPages}
+                      onClick={() => setDocumentsPage((value) => Math.min(totalDocumentsPages, value + 1))}
+                      disabled={safeDocumentsPage >= totalDocumentsPages}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
                       Next <ChevronRight size={14} />
@@ -551,8 +521,8 @@ export default function ProjectDetailPage({
                 <span>Updated {formatDate(project.updated_at)}</span>
               </div>
               <div className="admin-item-meta">
-                <span>{assignedSources.length} linked source{assignedSources.length === 1 ? '' : 's'}</span>
-                <span>{hashtagList.length} hashtag{hashtagList.length === 1 ? '' : 's'}</span>
+                <span>{documents.length} document{documents.length === 1 ? '' : 's'}</span>
+                <span>{keywordList.length} keyword{keywordList.length === 1 ? '' : 's'}</span>
               </div>
               {canLinkUsers && (
                 <div className="admin-item-meta">
@@ -593,7 +563,7 @@ export default function ProjectDetailPage({
               <BarChart3 size={18} />
             </div>
             <strong>No analyzed articles yet</strong>
-            <span>Run the pipeline for this project to see tone and sentiment insights here.</span>
+            <span>Upload documents, approve their articles, and run an analysis to see tone and sentiment insights here.</span>
           </div>
         ) : (
           <>
@@ -686,7 +656,7 @@ export default function ProjectDetailPage({
           <span className="panel-chip">{ideaClusters.total.toLocaleString()} clusters</span>
         </div>
         <p className="subtitle" style={{ margin: 0 }}>
-          Ideas repeated across analyzed articles for this project, accumulated across every pipeline run.
+          Ideas repeated across analyzed articles for this project, accumulated across every analysis run.
         </p>
 
         {ideaClustersError ? (

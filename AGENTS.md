@@ -4,20 +4,27 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Architecture
 
-Pipeline: Scrapy spider → AI enrichment → Supabase/Postgres → FastAPI → React dashboard.
+Pipeline: uploaded document → text extraction → LLM splits it into articles → human review → AI analysis stage pipeline → Postgres → FastAPI → React dashboard.
 
-- `backend/scraper/spiders/source_rss.py` - Scrapy spider; reads sources from the `sources` table (scoped to the selected project's sources when `PIPELINE_PROJECT_ID` is set), discovers article links, extracts text via trafilatura. `keyword` sources are crawled three ways: their Google News RSS feed (`googlenewsdecoder` resolves each item's `news.google.com/rss/articles/...` redirect-wrapper link to the real publisher URL before fetching it), GDELT's free news-search API (`backend/scraper/gdelt.py`, on by default - toggle with `GDELT_ENABLED`) fetched directly as articles, and - when `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_ENGINE_ID` are set - a general web search via `backend/scraper/web_search.py`, crawled like a `web` source.
-- `backend/services/articles/enrich.py` - clean/dedup/date-window-filter/analyze logic for one article at a time (tags/cleans using the configured LLM via `llm_client.chat_completion`, falling back to neutral defaults if the call fails). Its own `main()` is a batch CLI entry point for the manual/offline workflow below; `backend/scraper/pipelines.py`'s `StreamingEnrichPipeline` reuses these same functions per-article from inside the live crawl instead.
-- `backend/scraper/pipelines.py` - Scrapy item pipeline that cleans/enriches/embeds/saves each article the moment it's scraped, rather than waiting for the whole crawl to finish before enriching anything. Self-disables unless `PIPELINE_RUN_ID` is set, so a bare manual `scrapy crawl` is unaffected. Enriches up to `ENRICH_CONCURRENCY` articles in parallel via a dedicated Twisted thread pool, guarding shared in-memory counters with a lock while the LLM/embedding calls themselves run outside it.
-- `backend/services/articles/store.py` - upserts enriched articles into Supabase.
-- `backend/services/pipeline/pipeline.py` - `run_scraper_pipeline()`: runs the single `scrapy crawl source_rss` subprocess above end to end, then folds the spider's end-of-run fetch diagnostics into the per-source rows the streaming pipeline already wrote live.
-- `backend/main.py` - FastAPI app: scraping, sources, projects, chat (Intelligence Copilot, also via `llm_client.chat_completion`) endpoints.
-- `backend/projects_ai.py` / `backend/project_discovery.py` - call the configured LLM via `llm_client.chat_completion` for hashtag/keyword/username/source discovery.
-- `backend/config.py` - single source of truth for source list and credentials; loads `backend/.env` manually (not python-dotenv). Also resolves the active LLM provider (`LLM_PROVIDER`) and its credentials/base URL/model.
-- `backend/llm_client.py` - provider-neutral `chat_completion(...)` client; the only module aware of OpenAI vs. DeepSeek request/response differences.
-- `dashboard/` - React 19 + Vite dashboard, reads Supabase directly and calls the backend API.
+This is a fork of Strata Media with the entire online tier removed. There is no scraper, no `sources` table, no crawl scheduling, and no `/scrape` endpoint: everything the app analyzes is uploaded by the operator or imported from a JSONL export. `LLM_PROVIDER` defaults to `ollama` for the same reason - the documents being analyzed are exactly the kind of material that should not leave the machine. When touching anything here, the load-bearing assumption is **nothing fetches from the network except the configured LLM (and, opt-in, Hugging Face inference)**.
 
-No automated test suite exists in this repo.
+- `backend/services/documents/extraction.py` - shared text extraction for both document domains: text layer where the file has one, OCR (pytesseract) where it doesn't.
+- `backend/services/projects/project_documents_store.py` / `project_document_articles.py` - opinion-monitor documents: upload → extract → LLM-split into candidate articles → approve → materialize into `articles` and queue analysis. An approved candidate's article gets `source` = the document's filename and `source_url` = `document://project-document/<document_id>`, so every article split out of the same file groups under it (that is what the Articles page's document filter and the keyword-existence document filter read); `url` stays per-article because it is the unique key.
+- `backend/services/competitors/competitor_documents_store.py` / `competitor_document_articles.py` - the same flow for competitor studies, writing to the competitor-side tables.
+- `backend/services/competitors/document_analysis.py` - names the companies a study's approved articles are actually about, tracks each as a competitor, then hands off to `competitor_analysis.generate_findings`. This is how a study gets its competitor set: there is no discovery and no channels to validate.
+- `backend/analysis/` - the AI stage pipeline (language → sentiment → classification → structured extraction → entities → aggregation). `orchestrator.analyze_article()` is the entry point.
+- `backend/services/articles/analysis_defaults.py` - `DEFAULT_ENRICHMENT` (the complete neutral analysis dict every "not analyzed yet" article starts from) and `FATAL_ANALYSIS_ERRORS` (the provider failures that mean "stop, everything else fails identically" rather than "this article failed"). With a local model the most common failure is exactly `LLMConnectionError` - the model server isn't running - so this distinction is what keeps a run from reporting 400 individually-failed articles instead of one unreachable host.
+- `backend/services/articles/reanalyze.py` - `reanalyze_article(article_id, run_id=...)`: re-runs the stage pipeline for one article and saves it. Used both for one-off retries (via FastAPI BackgroundTasks) and in bulk by the analysis pipeline.
+- `backend/services/pipeline/pipeline.py` - `run_analysis_pipeline(run_id, project_id, scope)`: one *analysis run*. Selects the project's in-scope articles (`scope="pending"` = analysis hasn't succeeded yet, `scope="all"` = everything), analyzes them through a small thread pool (`ANALYSIS_CONCURRENCY`, default 2), and writes progress to `pipeline_runs`/`pipeline_run_documents` per article so the dashboard fills in live. It is a worker thread, not a subprocess - cancellation is a flag checked at each article boundary, so a stop lands within one article.
+- `backend/services/pipeline/pipeline_runs.py` - run tracking. Counters are `articles_selected`/`articles_analyzed`/`articles_failed`; stages are `prepare` and `analyze`; the per-run breakdown is per *document* (`pipeline_run_documents`), a document being this product's unit of provenance the way a source was in the crawler.
+- `backend/services/articles/store.py` - upserts analyzed articles into Postgres. An article belongs to the project the caller names; there is no source-based inference of linkage any more.
+- `backend/main.py` - FastAPI app: auth, users/roles, projects, articles, analysis runs (`POST /api/analysis-runs`), Intelligence Copilot chat.
+- `backend/services/` - business logic by domain: `auth/` (login, sessions, users, RBAC), `projects/`, `competitors/` (competitor study), `articles/` (analysis defaults, storage, reanalysis, JSONL import), `pipeline/` (analysis run execution + tracking), `intelligence/` (analytics). `backend/analysis/` and `migrate.py` stay at `backend/` root.
+- `backend/config.py` - single source of truth for credentials and tuning; loads `backend/.env` manually (not python-dotenv). Resolves the active LLM provider (`LLM_PROVIDER`) and its credentials/base URL/model.
+- `backend/llm_client.py` - provider-neutral `chat_completion(...)`; the only module aware of Ollama/DeepSeek (chat-completions) vs. OpenAI (Responses) request-shape differences.
+- `dashboard/` - React 19 + Vite dashboard. "Analysis Runs" is the run history and the place a run is started; "Performance Logs" is per-article analysis health.
+
+Tests live in `backend/tests/` and run with `python -m pytest tests -q` from `backend/`.
 
 ## Commands
 
@@ -26,10 +33,9 @@ Backend (from `backend/`):
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -r requirements-optional.txt   # needed for local embeddings (sentence-transformers)
 uvicorn main:app --port 8000
+python -m pytest tests -q
 ```
-Run pipeline manually (offline/dev, no `PIPELINE_RUN_ID` - the streaming item pipeline stays disabled): `scrapy crawl source_rss -O articles.json` then `python -m services.articles.enrich`. The backend-triggered pipeline instead runs a single `scrapy crawl source_rss` with `PIPELINE_RUN_ID` set, streaming clean+enrich+save per article.
 
 Dashboard (from `dashboard/`):
 ```
@@ -40,16 +46,19 @@ npm run lint      # eslint .
 ```
 
 Docker (full stack from repo root): `docker compose up --build`
-- Public app on `:80` (nginx), backend proxied at `/api` and `/scrape`, Adminer on `:8080`, Postgres in `db` service.
-- Backend container reads `backend/.env`.
+- Public app on `:8210` (nginx), backend proxied at `/api`, Adminer on `:8082`, Postgres in `db`, local LLM in `ollama` (+ one-shot `ollama-pull`).
+- Backend container reads `backend/.env`. Point `OLLAMA_CHAT_BASE_URL` at `http://ollama:11434/v1/chat/completions` there - a localhost URL resolves to the backend container itself.
 
 ## Constraints
 
-- Required backend env vars: `DATABASE_URL`, plus the active LLM provider's key (`OPENAI_API_KEY` by default; `DEEPSEEK_API_KEY` if `LLM_PROVIDER=deepseek`) - used for all AI: enrichment, Copilot chat, project/source discovery.
-- `LLM_PROVIDER` (`openai` default, or `deepseek`) picks the provider; all provider selection, credentials, and request-shape differences are centralized in `backend/config.py` and `backend/llm_client.py`. Feature modules only call `llm_client.chat_completion(...)` and never branch on the provider.
-- OpenAI is called via its Responses API (`OPENAI_CHAT_MODEL`/`OPENAI_CHAT_BASE_URL` overridable); DeepSeek via its OpenAI-compatible chat-completions API (`DEEPSEEK_CHAT_MODEL`/`DEEPSEEK_CHAT_BASE_URL` overridable).
-- `EMBEDDING_MODEL`/`EMBEDDING_DEVICE` still run locally via sentence-transformers; unrelated to the chat LLM.
+- Required backend env vars: `DATABASE_URL`. No API key is needed for the default `LLM_PROVIDER=ollama`; `OPENAI_API_KEY`/`DEEPSEEK_API_KEY` only matter if you switch to those.
+- `LLM_PROVIDER` (`ollama` default, or `openai`, or `deepseek`) picks the app-wide provider. All provider selection, credentials, and request-shape differences are centralized in `backend/config.py` and `backend/llm_client.py`; feature modules only call `llm_client.chat_completion(...)` and never branch on the provider. Switching to a hosted provider sends uploaded document text to that provider - treat that as a product decision, not a config tweak.
+- `COMPETITOR_ANALYSIS_LLM_PROVIDER` optionally overrides the provider for just `backend/services/competitors/`'s document splitting, competitor naming, and finding generation - e.g. a larger local model for finding generation while the rest of the app uses a faster one. Left unset, it inherits `LLM_PROVIDER`. `chat_completion(...)` takes matching `api_key`/`base_url`/`api_style`/`reasoning_effort`/`model` overrides; `config.COMPETITOR_LLM_*` resolves them the same way `config.LLM_*` resolves the app-wide ones.
+- OpenAI is called via its Responses API (`OPENAI_CHAT_MODEL`/`OPENAI_CHAT_BASE_URL` overridable; default `gpt-5-nano`); DeepSeek and Ollama via the OpenAI-compatible chat-completions shape (`DEEPSEEK_CHAT_MODEL`/`OLLAMA_CHAT_MODEL` etc.).
+- `EMBEDDING_MODEL`/`EMBEDDING_DEVICE` run locally via sentence-transformers; unrelated to the chat LLM, and they compete with a local Ollama for the same CPU/GPU.
+- `SENTIMENT_CLASSIFIER_PROVIDER` and `CLASSIFICATION_PROVIDER` (`local` default, or `hf_api`) independently pick whether that stage's model runs in-process (`transformers.pipeline`) or via Hugging Face's hosted Inference API (`backend/hf_inference_client.py`). `hf_api` needs `HF_API_TOKEN` and only `huggingface_hub` (no torch), but it does send text off the machine; `local` needs `transformers`/torch installed.
+- `ANALYSIS_CONCURRENCY` (`2` by default) - how many articles one analysis run analyzes in parallel. Deliberately low: with a local model the ceiling is one model server, which is also competing with the embedding model. Raise it only after watching what the host actually sustains.
+- `STALE_RUN_MINUTES` (`180`) - how long a queued/running analysis run blocks a new run for the same project before it is treated as abandoned. Without it, a backend that died mid-run would block that project forever.
+- `LLM_REQUEST_TIMEOUT_SECONDS` (`60`) - a slow local model, especially CPU-only, can legitimately exceed this; raise it before lowering concurrency.
 - Keep `VITE_API_TARGET` (dashboard) consistent with the backend's actual base URL if deployed separately.
-- `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_ENGINE_ID` (both optional, unset by default) enable the general-web-search tier for `keyword` sources - see `backend/scraper/web_search.py`. Unset, keyword sources are scraped via Google News RSS + GDELT only.
-- `GDELT_ENABLED` (`true` by default, no credentials needed) - GDELT's free DOC 2.0 news-search API tier for `keyword` sources, see `backend/scraper/gdelt.py`. GDELT itself rate-limits to roughly one request per 5 seconds (undocumented exactly, observed stricter in practice); `gdelt.py` throttles its own calls to stay under that, so a project with many keywords takes correspondingly longer to seed this tier. Set `false` to disable.
-- `ENRICH_CONCURRENCY` (`4` by default) - how many articles `StreamingEnrichPipeline` enriches in parallel. Deliberately conservative rather than tuned to one provider: DeepSeek has no published RPM limit but a shared 500-2500 in-flight-request cap at the account level; OpenAI's Tier 1 (by cumulative spend) is comfortably above this default for a small/cheap model but not unlimited; Ollama has no external limit but real local hardware/VRAM throughput instead. Raise it only after confirming your own provider/host handles it.
+- Uploaded files live under `storage/` (bind-mounted into the backend container), so that path has to persist alongside the database. LLM system prompts live in `storage/prompts/` and are loaded by `backend/prompt_loader.py`.

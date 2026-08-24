@@ -55,13 +55,13 @@ class AnalyzeRouteTests(unittest.TestCase):
         findings = [{"id": 1, "headline": "Opens third roastery", "confidence": 0.8,
                      "confidence_reason": "Three independent outlets carried it."}]
 
-        def fake_job(run_id, project_id, period_days, scrape_first, pipeline_run_id=None):
+        def fake_job(run_id, project_id, period_days, pipeline_run_id=None):
             log = competitor_analysis._analysis_runs.logger(run_id)
             log("Checking 23 article(s) from the last 30 days against each competitor...")
             log("Cafe Younes: high impact - Opens third roastery")
             competitor_analysis._analysis_runs.update(
                 run_id, status="success", stage="done", generated=1,
-                skipped=[], validation={"scanned": 23}, scrape_run=None,
+                skipped=[], validation={"scanned": 23},
             )
 
         with patch.object(competitor_analysis, "run_analysis_job", side_effect=fake_job), \
@@ -87,8 +87,8 @@ class AnalyzeRouteTests(unittest.TestCase):
                          "Three independent outlets carried it.")
 
     def test_second_click_attaches_to_the_run_already_in_flight(self):
-        """Double-clicking "Run analysis" must not start a second scrape and a
-        second round of LLM calls against the same competitors."""
+        """Double-clicking "Run analysis" must not start a second round of LLM
+        calls against the same competitors."""
         with patch.object(competitor_analysis, "run_analysis_job", side_effect=lambda *a: None), \
              patch("services.competitors.competitor_api.project_has_articles", return_value=True):
             first = self.client.post("/api/competitor/studies/5/analyze", json={})
@@ -128,16 +128,18 @@ class AnalyzeRouteTests(unittest.TestCase):
         response = self.client.get(f"/api/competitor/studies/5/analyze/{run_id}")
         self.assertEqual(response.status_code, 404)
 
-    def test_scraping_without_sources_still_fails_fast_with_a_real_status(self):
+    def test_a_study_with_no_evidence_fails_fast_with_a_real_status(self):
         """The checks that can answer immediately stayed in the handler - moving
-        them into the job would turn a 400 into a job that fails a minute later."""
-        with patch("services.competitors.competitor_api.get_active_run_for_project", return_value=None), \
-             patch("services.competitors.competitor_api.list_sources_for_project", return_value=[]):
-            response = self.client.post("/api/competitor/studies/5/analyze", json={"scrape": True})
+        them into the job would turn a 400 into a job that fails a minute later.
+
+        With nothing uploaded, analysis has nothing to read, and "approve some
+        articles first" is the actionable answer."""
+        with patch("services.competitors.competitor_api.project_has_articles", return_value=False):
+            response = self.client.post("/api/competitor/studies/5/analyze", json={})
 
         self.assertEqual(response.status_code, 400)
         # main.py normalizes every HTTPException to {"error": ...}.
-        self.assertIn("No sources", response.json()["error"])
+        self.assertIn("Upload documents", response.json()["error"])
 
 
 class ListStudiesFindingCountTests(unittest.TestCase):

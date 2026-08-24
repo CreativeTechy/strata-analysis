@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, CalendarClock, ChevronRight, Gauge, Network, Rss, Sparkles, TrendingDown, TrendingUp,
+  Activity, ChevronRight, FileText, Gauge, Network, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -123,11 +123,11 @@ function formatRunLabel(run) {
     + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-// sequence_number is this project's Nth scrape run ever (oldest = 1),
+// sequence_number is this project's Nth analysis run ever (oldest = 1),
 // computed server-side so it stays fixed regardless of how many runs are in
 // the currently-fetched list or what order they're shown in. `index` is only
 // a fallback for the rare case a run has no sequence_number (e.g. a
-// non-scrape pipeline row).
+// competitor-analysis pipeline row).
 function pipelineRunNumber(run, index) {
   return run?.sequence_number ?? (index + 1);
 }
@@ -135,19 +135,19 @@ function pipelineRunNumber(run, index) {
 // Full label (with date/time) for the tab list, where several runs are
 // shown side by side and the date disambiguates them at a glance.
 function pipelineRunTitle(run, index) {
-  return `Pipeline #${pipelineRunNumber(run, index)}: ${formatRunLabel(run)}`;
+  return `Analysis #${pipelineRunNumber(run, index)}: ${formatRunLabel(run)}`;
 }
 
 // Compact label for summary spots (metric cards, the "showing run" note)
 // where the number alone is already unambiguous and a repeated date/time is
 // just clutter.
 function pipelineRunShortLabel(run, index) {
-  return `Pipeline #${pipelineRunNumber(run, index)}`;
+  return `Analysis #${pipelineRunNumber(run, index)}`;
 }
 
 export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
-  loading, error, pipelineHealth, nextScheduledRun, runs = [], selectedRunId, onRunChange,
+  loading, error, pipelineHealth, runs = [], selectedRunId, onRunChange,
 }) {
   const data = intelligence || {};
   const total = Number(data.total || 0);
@@ -169,20 +169,20 @@ export default function DashboardOverview({
       <div>
         <span className="intelligence-eyebrow"><Sparkles size={14} /> Intelligence dashboard</span>
         <h2>Project intelligence</h2>
-        <p className="subtitle">Signals from the articles and sources already monitored for this project.</p>
+        <p className="subtitle">Signals from the documents and articles already analyzed for this project.</p>
         <div className="filter-tabs-shell">
           <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter type">
             <button type="button" role="tab" aria-selected={!selectedRunId} className={`source-type-tab ${!selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(null)}>Date range</button>
-            {runs.length > 0 ? <button type="button" role="tab" aria-selected={!!selectedRunId} className={`source-type-tab ${selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(selectedRunId || runs[0].id)}>Pipeline run</button> : null}
+            {runs.length > 0 ? <button type="button" role="tab" aria-selected={!!selectedRunId} className={`source-type-tab ${selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(selectedRunId || runs[0].id)}>Analysis run</button> : null}
           </div>
           <div className="filter-tab-divider" aria-hidden="true" />
           {selectedRunId ? (
             runs.length > 3 ? (
-              <select className="filter-select filter-run-select" value={selectedRunId} onChange={(event) => onRunChange?.(event.target.value)} aria-label="Filter by pipeline run">
+              <select className="filter-select filter-run-select" value={selectedRunId} onChange={(event) => onRunChange?.(event.target.value)} aria-label="Filter by analysis run">
                 {runs.map((run, index) => <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>)}
               </select>
             ) : (
-              <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
+              <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
                 {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button></span>)}
               </div>
             )
@@ -211,14 +211,13 @@ export default function DashboardOverview({
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Activity size={18} />} label="Pipeline health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
-        <MetricCard icon={<CalendarClock size={18} />} label="Next run" value={nextScheduledRun ? formatDate(nextScheduledRun.nextRunAt) : 'Not scheduled'} detail={nextScheduledRun ? 'Selected project' : 'Enable a repeat schedule'} tone="orange" />
+        <MetricCard icon={<Activity size={18} />} label="Analysis health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
         <MetricCard icon={<Network size={18} />} label="Analyzed articles" value={loading ? '—' : total.toLocaleString()} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex) : PERIODS.find((item) => item.key === period)?.label} tone="blue" />
         <MetricCard icon={<Gauge size={18} />} label="Net sentiment" value={loading ? '—' : `${Number(data.net_sentiment || 0) >= 0 ? '+' : ''}${data.net_sentiment || 0}`} detail="Positive minus negative" tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
-        <MetricCard icon={<Rss size={18} />} label="Active sources" value={loading ? '—' : Number(data.active_sources || 0).toLocaleString()} detail="Assigned to this project" tone="blue" />
+        <MetricCard icon={<FileText size={18} />} label="Documents" value={loading ? '—' : Number(data.document_count || 0).toLocaleString()} detail="Uploaded to this project" tone="blue" />
       </section>
 
-      {loading ? <div className="glass-card intelligence-loading">Loading intelligence…</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>No analyzed articles in this period</strong><p className="subtitle">Run the pipeline or choose a broader time range to populate this dashboard.</p></div> : <>
+      {loading ? <div className="glass-card intelligence-loading">Loading intelligence…</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>No analyzed articles in this period</strong><p className="subtitle">Run an analysis or choose a broader time range to populate this dashboard.</p></div> : <>
         <section className="intelligence-top-grid">
           <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>Sentiment breakdown</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [`${value} articles`, name]} /></PieChart></ResponsiveContainer><strong>{data.net_sentiment >= 0 ? '+' : ''}{data.net_sentiment}</strong><span>net sentiment</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <div key={entry.name}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{entry.name}</label><strong>{percent(entry.value, total)}%</strong></div>)}</div></div></article>
           <article className="glass-card intelligence-card intelligence-line-card"><h3>Article volume &amp; sentiment over time</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={formatDate} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} /><Legend /><Line type="monotone" dataKey="total" name="Total" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name="Positive" stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name="Negative" stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name="Neutral" stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
@@ -397,13 +396,13 @@ export default function DashboardOverview({
 
         <section className="intelligence-bottom-grid">
           <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <span key={`${term.kind}-${term.term}`} className={term.kind}><b>{term.term}</b> <em>{term.mentions}</em></span>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article>
-          <article className="glass-card intelligence-card intelligence-pipeline-card"><div className="intelligence-card-heading"><h3>Article discovery by pipeline run</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value) => [`${value} articles`, 'Discovered']} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a successful pipeline run to compare article discovery.</p>}</article>
+          <article className="glass-card intelligence-card intelligence-pipeline-card"><div className="intelligence-card-heading"><h3>Articles analyzed by run</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value) => [`${value} articles`, 'Discovered']} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a successful analysis run to compare article volume.</p>}</article>
         </section>
 
         <section className="intelligence-run-sentiment-grid">
           <article className="glass-card intelligence-card intelligence-run-sentiment-card">
-            <h3>Sentiment variation across pipeline runs</h3>
-            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value, name) => [`${value} articles`, name]} /><Legend /><Line type="monotone" dataKey="positive" name="Positive" stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name="Neutral" stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name="Negative" stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="mixed" name="Mixed" stroke={SENTIMENT_COLORS.mixed} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a pipeline run with analyzed articles to compare sentiment across runs.</p>}
+            <h3>Sentiment variation across analysis runs</h3>
+            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value, name) => [`${value} articles`, name]} /><Legend /><Line type="monotone" dataKey="positive" name="Positive" stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name="Neutral" stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name="Negative" stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="mixed" name="Mixed" stroke={SENTIMENT_COLORS.mixed} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete an analysis run with analyzed articles to compare sentiment across runs.</p>}
           </article>
         </section>
       </>}

@@ -96,8 +96,9 @@ export const setDocumentArticleStatus = (candidateId, status) =>
   request(`/document-articles/${candidateId}/status`, { method: 'POST', body: { status } });
 export const approveAllDocumentArticles = (projectId) =>
   request(`/${projectId}/document-articles/approve-all`, { method: 'POST' });
-/** Re-queues sentiment analysis for every approved candidate's article — a
- *  manual retry for whichever ones failed. */
+/** Starts a tracked analysis run over this project's approved articles that
+ *  haven't been analyzed successfully — a manual retry for whichever ones
+ *  failed. Returns { run_id }, visible on the Analysis Runs page. */
 export const reanalyzeDocumentArticles = (projectId) =>
   request(`/${projectId}/document-articles/reanalyze`, { method: 'POST' });
 

@@ -7,19 +7,19 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
-  ShieldAlert,
   CircleAlert,
   CircleCheck,
-  Rss,
-  Filter,
-  Save,
-  Layers,
-  ExternalLink,
+  FileText,
+  ListChecks,
+  ScanSearch,
+  Sparkles,
 } from 'lucide-react';
 
 function prettyStage(stage) {
   if (!stage) return 'queued';
   if (stage === 'done') return 'completed';
+  if (stage === 'prepare') return 'selecting articles';
+  if (stage === 'analyze') return 'analyzing';
   return stage;
 }
 
@@ -40,8 +40,8 @@ function formatDateTime(iso) {
 
 function formatDuration(ms) {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
-  // Sub-second stages (cleaning is often just in-memory filtering) are real,
-  // measured durations - round-tripping through whole seconds would show "0s".
+  // Sub-second stages (selecting articles is a single query) are real, measured
+  // durations - round-tripping through whole seconds would show "0s".
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const totalSeconds = Math.round(ms / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -72,55 +72,33 @@ function projectNameForRun(run, projectsById) {
   return run.project_id != null ? `Project #${run.project_id}` : 'Unassigned';
 }
 
-// Scraping, cleaning, enriching, and saving all happen interleaved within a
-// single crawl now (see backend/scraper/pipelines.py's StreamingEnrichPipeline) -
-// one source can finish while another is still being fetched, so separate
-// clean/enrich start-finish timestamps for the whole run no longer mean
-// anything distinct from the scrape span itself.
+// A run has exactly two stages: work out what to analyze, then analyze it.
+// Nearly all of the wall clock is the second one - it is one model pass per
+// article - so showing them separately is what tells "the query is slow" apart
+// from "the model is slow".
 const STAGE_ROWS = [
-  { key: 'scrape', label: 'Scraping & enriching', startField: 'scrape_started_at', endField: 'scrape_finished_at', Icon: Rss },
+  { key: 'prepare', label: 'Selecting articles', startField: 'prepare_started_at', endField: 'prepare_finished_at', Icon: ListChecks },
+  { key: 'analyze', label: 'Analyzing', startField: 'analysis_started_at', endField: 'analysis_finished_at', Icon: Sparkles },
 ];
 
 const TOTAL_STATS = [
-  { key: 'articles_scraped', label: 'Articles scraped', Icon: Rss, tint: 'rgba(255, 159, 67, 0.14)', color: 'var(--primary-color)' },
-  { key: 'articles_cleaned', label: 'Articles cleaned', Icon: Filter, tint: 'rgba(46, 134, 222, 0.14)', color: '#2e86de' },
-  { key: 'articles_saved', label: 'Articles saved', Icon: Save, tint: 'rgba(46, 213, 115, 0.14)', color: '#2ed573' },
-  { key: 'crawl_pages', label: 'Pages crawled', Icon: Layers, tint: 'rgba(116, 125, 140, 0.14)', color: '#747d8c' },
+  { key: 'articles_selected', label: 'Articles selected', Icon: ListChecks, tint: 'rgba(46, 134, 222, 0.14)', color: '#2e86de' },
+  { key: 'articles_analyzed', label: 'Articles analyzed', Icon: ScanSearch, tint: 'rgba(46, 213, 115, 0.14)', color: '#2ed573' },
+  { key: 'articles_failed', label: 'Articles failed', Icon: CircleAlert, tint: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' },
 ];
 
-// Anchor target for a source row: prefer the real configured URL recorded
-// during this run's fetch diagnostics; fall back to the source name only
-// when it happens to already be a URL (legacy rows predating source_url).
-function sourceHref(row) {
-  if (row.source_url) return row.source_url;
-  if (typeof row.source === 'string' && /^https?:\/\//i.test(row.source)) return row.source;
-  return null;
-}
-
-const SOURCE_COLUMNS = [
-  { key: 'scraped', label: 'Scraped' },
-  { key: 'duplicate', label: 'Duplicate' },
-  { key: 'blocked', label: 'Blocked' },
-  { key: 'date_filtered', label: 'Date filtered' },
-  { key: 'skipped_existing', label: 'Already enriched' },
-  { key: 'kept', label: 'Kept' },
-  { key: 'enriched', label: 'Enriched' },
-  { key: 'saved', label: 'Saved' },
+const DOCUMENT_COLUMNS = [
+  { key: 'selected', label: 'Selected' },
+  { key: 'analyzed', label: 'Analyzed' },
+  { key: 'failed', label: 'Failed' },
 ];
 
-// A source's fetch-status badge, distinct from the "Blocked" column above
-// (that one counts articles content_guard rejected AFTER a successful
-// fetch - this is about whether the source's own page could be reached at
-// all this run). See backend/services/pipeline/source_diagnostics.py.
-function sourceStatusBadge(source) {
-  if (source.network_blocked) {
-    return { label: `Blocked (HTTP ${source.http_status ?? '?'})`, color: '#ff4757', Icon: ShieldAlert };
+function documentStatusBadge(row) {
+  if (row.failed) {
+    return { label: `${row.failed} failed`, color: '#ff4757', Icon: CircleAlert };
   }
-  if (source.http_status) {
-    return { label: `HTTP ${source.http_status}`, color: '#ff4757', Icon: CircleAlert };
-  }
-  if (source.fetch_note) {
-    return { label: 'Issue', color: '#ffb13b', Icon: CircleAlert };
+  if (row.analyzed < row.selected) {
+    return { label: 'In progress', color: '#ffb13b', Icon: Loader2 };
   }
   return { label: 'OK', color: '#2ed573', Icon: CircleCheck };
 }
@@ -161,10 +139,10 @@ function SummaryField({ label, children }) {
 export default function PipelineRunDetailPage({ projects = [] }) {
   const { runId } = useParams();
   const [run, setRun] = useState(null);
-  const [sources, setSources] = useState([]);
+  const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [expandedSources, setExpandedSources] = useState(() => new Set());
+  const [expandedDocuments, setExpandedDocuments] = useState(() => new Set());
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -189,7 +167,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load run (${res.status})`);
           if (cancelled) return null;
           setRun(data?.run || null);
-          setSources(Array.isArray(data?.sources) ? data.sources : []);
+          setDocuments(Array.isArray(data?.documents) ? data.documents : []);
           return data?.run || null;
         })
         .catch((err) => {
@@ -202,14 +180,14 @@ export default function PipelineRunDetailPage({ projects = [] }) {
     };
 
     setRun(null);
-    setSources([]);
+    setDocuments([]);
     load({ showLoading: true }).then((loadedRun) => {
       if (cancelled) return;
       const status = (loadedRun?.status || '').toLowerCase();
       if (status !== 'queued' && status !== 'running') return;
-      // Per-source rows fill in live while the run is active (see
-      // backend/scraper/pipelines.py's StreamingEnrichPipeline) - poll until
-      // the run reaches a terminal status instead of leaving this static.
+      // Per-document rows fill in live while the run is active (the pipeline
+      // writes them per article) - poll until the run reaches a terminal
+      // status instead of leaving this static.
       intervalId = setInterval(() => {
         load().then((polledRun) => {
           const polledStatus = (polledRun?.status || '').toLowerCase();
@@ -227,8 +205,8 @@ export default function PipelineRunDetailPage({ projects = [] }) {
     };
   }, [runId]);
 
-  const toggleSource = (key) => {
-    setExpandedSources((prev) => {
+  const toggleDocument = (key) => {
+    setExpandedDocuments((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -244,14 +222,14 @@ export default function PipelineRunDetailPage({ projects = [] }) {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <Database size={14} /> Pipeline history
+            <Database size={14} /> Analysis history
           </div>
-          <h1 className="admin-page-title">Pipeline Run Details</h1>
+          <h1 className="admin-page-title">Analysis Run Details</h1>
           {projectName ? <p className="admin-page-subtitle">{projectName}</p> : null}
         </div>
         <div className="admin-page-toolbar">
           <Link to="/pipeline-runs" className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ArrowLeft size={16} /> Back to Pipeline Runs
+            <ArrowLeft size={16} /> Back to Analysis Runs
           </Link>
         </div>
       </div>
@@ -320,7 +298,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             <h3 className="run-detail-section-title">Timing</h3>
             {!run.has_detail ? (
               <div className="run-detail-fallback">
-                Details unavailable for legacy run — this run finished before per-stage timing was tracked.
+                Details unavailable for this run — it finished before per-stage timing was tracked.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -353,22 +331,22 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           <div className="glass-card">
-            <h3 className="run-detail-section-title">Per-source breakdown</h3>
+            <h3 className="run-detail-section-title">Per-document breakdown</h3>
             {!run.has_detail ? (
               <div className="run-detail-fallback">
-                Details unavailable for legacy run — this run finished before per-source stats were tracked.
+                Details unavailable for this run — it finished before per-document stats were tracked.
               </div>
-            ) : sources.length === 0 ? (
-              <div className="run-detail-fallback">No per-source data recorded for this run yet.</div>
+            ) : documents.length === 0 ? (
+              <div className="run-detail-fallback">No per-document data recorded for this run yet.</div>
             ) : (
               <div className="table-scroll">
                 <table className="run-detail-source-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', background: 'var(--glass-bg)' }}>
                       <th style={{ padding: '8px 10px', width: 28 }} />
-                      <th style={{ padding: '8px 10px' }}>Source</th>
-                      <th style={{ padding: '8px 10px' }}>Fetch status</th>
-                      {SOURCE_COLUMNS.map((col) => (
+                      <th style={{ padding: '8px 10px' }}>Document</th>
+                      <th style={{ padding: '8px 10px' }}>Status</th>
+                      {DOCUMENT_COLUMNS.map((col) => (
                         <th key={col.key} style={{ padding: '8px 10px', textAlign: 'right' }}>
                           {col.label}
                         </th>
@@ -376,13 +354,11 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {sources.map((row) => {
-                      const key = row.source;
-                      const isExpanded = expandedSources.has(key);
-                      const badge = sourceStatusBadge(row);
-                      const hasDetails = Boolean(row.fetch_note);
-                      const href = sourceHref(row);
-                      const showNameSeparately = href && row.source && row.source !== href;
+                    {documents.map((row) => {
+                      const key = row.document;
+                      const isExpanded = expandedDocuments.has(key);
+                      const badge = documentStatusBadge(row);
+                      const hasDetails = Boolean(row.note);
                       return (
                         <Fragment key={key}>
                           <tr style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
@@ -390,7 +366,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                               {hasDetails ? (
                                 <button
                                   type="button"
-                                  onClick={() => toggleSource(key)}
+                                  onClick={() => toggleDocument(key)}
                                   aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
                                   style={{
                                     background: 'none',
@@ -407,31 +383,10 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                               ) : null}
                             </td>
                             <td style={{ padding: '8px 10px', wordBreak: 'break-word', maxWidth: 280 }}>
-                              {showNameSeparately ? (
-                                <div style={{ fontWeight: 600, marginBottom: 2 }}>{row.source}</div>
-                              ) : null}
-                              {href ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title={`Visit ${href}`}
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'flex-start',
-                                    gap: 4,
-                                    color: 'var(--primary-color)',
-                                    textDecoration: 'none',
-                                    fontWeight: showNameSeparately ? 400 : 600,
-                                    wordBreak: 'break-all',
-                                  }}
-                                >
-                                  {href}
-                                  <ExternalLink size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                                </a>
-                              ) : (
-                                row.source
-                              )}
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                                <FileText size={13} style={{ flexShrink: 0, color: 'var(--text-light)' }} />
+                                {row.document}
+                              </span>
                             </td>
                             <td style={{ padding: '8px 10px' }}>
                               <span
@@ -451,7 +406,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                                 <badge.Icon size={13} /> {badge.label}
                               </span>
                             </td>
-                            {SOURCE_COLUMNS.map((col) => (
+                            {DOCUMENT_COLUMNS.map((col) => (
                               <td key={col.key} style={{ padding: '8px 10px', textAlign: 'right' }}>
                                 {row[col.key] ?? 0}
                               </td>
@@ -460,8 +415,8 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                           {isExpanded && hasDetails ? (
                             <tr style={{ background: 'rgba(0,0,0,0.02)' }}>
                               <td />
-                              <td colSpan={SOURCE_COLUMNS.length + 2} style={{ padding: '8px 10px 12px', fontSize: '0.8rem', color: 'var(--text-dark)' }}>
-                                {row.fetch_note}
+                              <td colSpan={DOCUMENT_COLUMNS.length + 2} style={{ padding: '8px 10px 12px', fontSize: '0.8rem', color: 'var(--text-dark)' }}>
+                                {row.note}
                               </td>
                             </tr>
                           ) : null}

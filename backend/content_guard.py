@@ -1,24 +1,18 @@
-"""Shared guard against Google consent/interstitial and search pages, and
-against Reddit/Telegram responses that are not real content, being stored as
-articles.
+"""Guard against Google consent/interstitial and search-results pages being
+treated as real articles.
 
-Used in two places: the scraper (backend/scraper/spiders/source_rss.py), which
-is the primary chokepoint since it decides what gets yielded as a scraped
-item in the first place, and the enrichment cleaner
-(backend/services/articles/enrich.py), which is a secondary safeguard for
-anything that reaches it another way (for example a previously-generated
-articles.json re-run through enrich.py after this guard was added).
+Only reachable through imported data now (an article split out of an uploaded
+document has no URL to judge), but a JSONL export from a crawler carries
+exactly these: a consent interstitial that was scraped as if it were an
+article, or a `news.google.com` search page. Letting one into a competitor
+study's evidence would put Google's cookie banner into a report someone plans
+against, so the check stays.
 """
 
 import re
 from urllib.parse import urlparse
 
-# Google's own domains never host editorial/publisher content. news.google.com
-# in particular is where the "keyword" source type used to point directly at
-# a search results page (see services/sources/sources_store.py's
-# _derive_term_url) - Google serves a
-# cookie/consent interstitial there instead of results for many requests, and
-# that interstitial was being scraped as if it were an article.
+# Google's own domains never host editorial/publisher content.
 BLOCKED_DOMAINS = {
     "google.com",
     "news.google.com",
@@ -35,71 +29,23 @@ _TITLE_PATTERNS = [
     re.compile(r"google\s*(privacy policy|terms of service)", re.I),
 ]
 
-# Shared with the enrichment cleaner (services/articles/enrich.py) so a tweet
-# URL is recognized the same way in both places - see is_tweet_url below.
-TWEET_STATUS_RE = re.compile(r'(?:twitter|x)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)')
-
-
-def is_tweet_url(url):
-    """True for an individual tweet/post URL (twitter.com or x.com .../status/<id>).
-
-    Tweets are naturally much shorter than articles - a one-line reply or
-    quick take is often under 200 characters - so callers use this to exempt
-    tweets from the article-length quality filter instead of discarding them
-    as if they were stubs.
-    """
-    return bool(TWEET_STATUS_RE.search(url or ""))
-
 
 def is_blocked_domain(url):
-    """True for a Google consent/search/accounts domain, however it was reached."""
-    netloc = (urlparse(url or "").netloc or "").lower()
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    return netloc in BLOCKED_DOMAINS or netloc.endswith(".google.com")
+    host = urlparse(str(url or "").strip()).netloc.lower()
+    if not host:
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    return host in BLOCKED_DOMAINS
 
 
 def is_consent_title(title):
-    """True when a title matches a known Google consent/interstitial page."""
-    title = (title or "").strip()
-    if not title:
+    text = str(title or "").strip()
+    if not text:
         return False
-    return any(pattern.search(title) for pattern in _TITLE_PATTERNS)
+    return any(pattern.search(text) for pattern in _TITLE_PATTERNS)
 
 
 def is_blocked_article(url, title):
+    """True if this row is a consent/search page rather than an article."""
     return is_blocked_domain(url) or is_consent_title(title)
-
-
-def is_reddit_blocked_payload(payload):
-    """True when a Reddit JSON response is an error/interstitial rather than
-    a real Listing.
-
-    Reddit's public `.json` endpoints return a plain error dict - not a
-    Listing (which always has top-level `kind`/`data` keys) - for private,
-    banned or quarantined subreddits/users, and for some rate-limited/blocked
-    requests. Treat any of those the same as an empty listing: nothing to
-    store, not an error worth failing the run over.
-    """
-    if not isinstance(payload, dict):
-        return False
-    if "error" in payload:
-        return True
-    if str(payload.get("reason") or "").strip().lower() in {"private", "banned", "quarantined"}:
-        return True
-    return False
-
-
-def is_telegram_channel_unavailable(status):
-    """True when a `t.me/s/<channel>` request was redirected away from the
-    `/s/` preview path.
-
-    Confirmed by hand against the live site: a channel that exists and is
-    public serves the `/s/` preview directly with status 200; a handle that
-    does not exist (or is not a public channel) 302-redirects to the bare
-    `t.me/<handle>` app-install/contact page instead. The scraper requests
-    with redirects disabled so this status is what the callback actually
-    sees, rather than silently following into that unrelated page and
-    scraping its boilerplate as if it were a message.
-    """
-    return status in (301, 302, 303, 307, 308)

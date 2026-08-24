@@ -1,104 +1,96 @@
-# Strata Media - Source Intelligence
+# Strata - Document Analysis
 
-Strata Media ingests content from configured sources, enriches it with AI, stores
-it in Supabase, and surfaces it in the dashboard.
+Strata analyzes documents you upload. Nothing is fetched from the web: files go
+in, a local LLM reads them, and the dashboard reports what people are saying,
+which topics repeat, and what competitors are up to.
+
+It is a fork of Strata Media (a crawler-fed media-intelligence product) with the
+entire online tier removed - no scraper, no sources, no scheduled crawls - and
+`ollama` as the default LLM provider, so the documents being analyzed never
+leave the operator's machine.
 
 ## Pipeline
 
-- `backend/scraper/` - Scrapy project for source and page extraction
-- `backend/services/articles/enrich.py` - AI enrichment stage
-- `backend/services/articles/store.py` - Supabase upsert layer
-- `backend/main.py` - FastAPI API for scraping, sources, projects, and chat
+- `backend/services/documents/` - extracts text from an uploaded file (text
+  layer where the file has one, OCR where it doesn't)
+- `backend/services/projects/project_document_articles.py` - splits a
+  document's text into reviewable article candidates
+- `backend/analysis/` - the AI stage pipeline (language, sentiment,
+  classification, structured extraction, entities)
+- `backend/services/pipeline/pipeline.py` - runs that analysis over a project's
+  articles as a tracked *analysis run*
+- `backend/services/articles/store.py` - Postgres upsert layer
+- `backend/main.py` - FastAPI API for auth, projects, articles, analysis runs, chat
 - `dashboard/` - React + Vite dashboard
 
-## Stages
+## How content gets in
 
-1. Scraper - `backend/scraper/spiders/source_rss.py`. Reads sources from
-   Supabase `sources` (scoped to the selected project's sources when running
-   for a specific project), discovers article links, and extracts clean
-   title/date/text with trafilatura. `keyword` sources also query GDELT's
-   free news-search API (`backend/scraper/gdelt.py`, on by default) and, when
-   `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_ENGINE_ID` are configured, a general web
-   search via `backend/scraper/web_search.py` (Google Custom Search JSON
-   API), alongside their Google News RSS feed.
-2. Enricher - `backend/services/articles/enrich.py`. Cleans and tags each
-   article with AI, then falls back to neutral defaults if the request fails.
-   For a backend-triggered run, this happens per article as it's scraped
-   (`backend/scraper/pipelines.py`'s `StreamingEnrichPipeline`, calling into
-   `enrich.py`'s own functions) rather than as a separate pass after the
-   whole crawl finishes - see [Run the pipeline manually](#6-run-the-pipeline-manually)
-   for the batch/offline alternative.
-3. Saver - `backend/services/articles/store.py`. Upserts enriched articles
-   into Supabase, immediately after each article is enriched.
-4. Dashboard - `dashboard/`. Reads live data from Supabase and calls the
-   backend API. A running pipeline's detail page polls for updates, so a
-   source's results (and any other source's) appear as soon as that source
-   finishes, without waiting for the whole run.
+1. **Upload** - a project (Opinion Monitor) or a study (Competitor Analysis)
+   takes files: pdf, doc/docx, xls/xlsx, csv, png/jpg. Each is saved and
+   extracted in the background; a scanned PDF falls through to OCR.
+2. **Split** - the LLM splits each document's text into discrete article
+   candidates. A survey export holds many respondents; a report covers several
+   distinct mentions. Each becomes its own reviewable item.
+3. **Review** - you approve or reject each candidate. Approving materializes it
+   into the `articles` table and queues its analysis.
+4. **Analyze** - the AI stage pipeline runs over it: sentiment, tone, topics,
+   demographics, entities, structured feedback.
 
-A single configured LLM provider is used everywhere in this app for AI:
-article enrichment (`backend/services/articles/enrich.py`), Intelligence
-Copilot chat (`backend/main.py`), and hashtag/keyword/username/source
-discovery (`backend/services/projects/projects_ai.py` and
-`backend/services/projects/project_discovery.py`). All provider
-selection and request formatting lives in `backend/llm_client.py`; feature
-modules just call `chat_completion(...)` and never know which provider is
-active.
+A JSONL import (`Articles → Import`) is the other way in, for moving data
+between deployments or bringing in an export from elsewhere.
 
-### Choosing an LLM provider
+## Analysis runs
 
-Set `LLM_PROVIDER` in `backend/.env` to pick the backend:
+An analysis run is this product's unit of work, replacing the crawler's scrape
+run. It re-executes the AI stage pipeline over a project's articles and records
+progress as it goes, so **Analysis Runs** in the dashboard shows live counts,
+per-document results, and a stop button.
 
-- `deepseek` (default) - uses DeepSeek's OpenAI-compatible chat-completions
-  API. Requires `DEEPSEEK_API_KEY`; `DEEPSEEK_CHAT_BASE_URL` and
-  `DEEPSEEK_CHAT_MODEL` are optional overrides (default model
-  `deepseek-v4-pro`).
-- `openai` - uses OpenAI's Responses API. Requires `OPENAI_API_KEY`;
-  `OPENAI_CHAT_BASE_URL` and `OPENAI_CHAT_MODEL` are optional overrides
-  (default model `gpt-5-nano`).
-- `ollama` - fully offline/local, no API key or internet access needed. Talks
-  to a local model server that speaks the same chat-completions shape as
-  DeepSeek. `OLLAMA_CHAT_BASE_URL` and `OLLAMA_CHAT_MODEL` are optional
-  overrides (default model `llama3.1`). Under Docker, an `ollama` service and
-  a one-shot `ollama-pull` job are included behind the `ollama` Compose
-  profile - see [Docker Deployment](#docker-deployment). Outside Docker, run
-  `ollama serve` locally instead.
+Start one from the **Analysis Runs** page (pick a project and a scope) or from a
+project's detail page. Scope is either:
 
-Only the env vars for the selected provider need to be set - switching
-providers is a single env var change, no code changes or redeploy of a
-different image required. Whichever provider is active, LLM failures surface
-the same stable, provider-neutral error codes (`llm_config_error`,
-`llm_auth_error`, `llm_rate_limited`, `llm_timeout`, `llm_unavailable`,
-`llm_bad_request`, `llm_invalid_response`) to the dashboard - raw provider
-errors are never sent to the client.
+- **Not yet analyzed** - only articles whose analysis has not succeeded, so a
+  re-run after a model outage costs exactly what the outage cost.
+- **Everything** - re-analyze the whole project, which is what you want after
+  switching to a different local model.
 
-#### Scoping a provider to competitor analysis only
+Runs stamp the articles they analyze (`articles.pipeline_run_id`), which is what
+lets Dashboard, Reports and Competitor Analysis scope to one specific run
+instead of a date window.
 
-`LLM_PROVIDER` is app-wide - it also drives article enrichment, Intelligence
-Copilot chat, and project/source discovery. To use Ollama (or any other
-provider) for just `backend/services/competitors/` - document splitting,
-competitor naming, and finding generation - without switching those other
-features over, set `COMPETITOR_ANALYSIS_LLM_PROVIDER` instead:
+There is no scheduler: runs are started deliberately.
 
-```
-LLM_PROVIDER=deepseek                       # everything else keeps using DeepSeek
-COMPETITOR_ANALYSIS_LLM_PROVIDER=ollama     # competitor analysis only uses the local model
-```
+## LLM provider
 
-Left unset (the default), competitor analysis just inherits `LLM_PROVIDER`,
-so nothing changes unless this is set explicitly. Competitor *discovery*
-(`backend/services/competitors/competitor_discovery.py` - suggesting
-competitors from the LLM's own knowledge and verifying them against the live
-web) and the business-profile scraper
-(`backend/services/competitors/business_profile_store.py`) stay on the
-app-wide provider regardless - both need live web access to do their job, so
-routing them to an offline model wouldn't make them offline anyway.
+Set `LLM_PROVIDER` in `backend/.env`:
+
+- `ollama` (default) - a model on your own hardware, no API key or internet
+  access needed. Point `OLLAMA_CHAT_BASE_URL` at wherever it runs;
+  `OLLAMA_CHAT_MODEL` picks the model (default `llama3.1`).
+- `openai` - OpenAI's Responses API. Requires `OPENAI_API_KEY`.
+- `deepseek` - DeepSeek's OpenAI-compatible chat-completions API. Requires
+  `DEEPSEEK_API_KEY`.
+
+All provider selection and request formatting lives in `backend/llm_client.py`;
+feature modules just call `chat_completion(...)` and never know which provider
+is active. Switching to a hosted provider means the uploaded documents are sent
+to that provider - a deliberate choice, not a default.
+
+`COMPETITOR_ANALYSIS_LLM_PROVIDER` scopes a different provider to just
+`backend/services/competitors/` (document splitting, competitor naming, finding
+generation) - e.g. a larger local model for the long reasoning that finding
+generation does, while everything else uses a faster one.
+
+Sentiment and classification are separate Hugging Face models, not the LLM.
+They run in-process by default (`SENTIMENT_CLASSIFIER_PROVIDER=local`,
+`CLASSIFICATION_PROVIDER=local`); setting either to `hf_api` sends that text to
+Hugging Face's hosted inference instead.
 
 ### Ollama: model resource requirements
 
-Figures below are the commonly published sizes for each model's default
-(Q4_K_M-quantized) Ollama tag - not measured on this repo's own hardware.
-"Min RAM" is CPU-only inference; GPU VRAM is only needed if you want GPU
-acceleration (recommended - see the latency comparison below).
+Commonly published sizes for each model's default (Q4_K_M-quantized) Ollama tag
+- not measured on this repo's own hardware. "Min RAM" is CPU-only inference;
+GPU VRAM is only needed for GPU acceleration (recommended - see below).
 
 | Model (`OLLAMA_CHAT_MODEL`) | Params | Download size | Min RAM (CPU) | Recommended VRAM (GPU) |
 |---|---|---|---|---|
@@ -111,229 +103,117 @@ acceleration (recommended - see the latency comparison below).
 | `mixtral:8x7b` | 47B (13B active) | ~26 GB | ~32 GB+ | ~24 GB |
 | `llama3.1:70b` | 70B | ~40 GB | ~64 GB+ | ~48 GB (or multi-GPU) |
 
-Rule of thumb: budget roughly the download size in RAM/VRAM just to load
-the model, plus headroom for context - the `ollama-pull` job's target
-(`OLLAMA_CHAT_MODEL` in `backend/.env`, default `llama3.1`, which resolves to
-the 8B tag) should stay within what the Docker host actually has free, since
-`ollama` has no graceful "not enough memory" path beyond an OOM kill.
+Rule of thumb: budget roughly the download size in RAM/VRAM just to load the
+model, plus headroom for context - `ollama` has no graceful "not enough memory"
+path beyond an OOM kill.
 
-### Ollama vs. hosted APIs: round-trip time
+### What local inference costs in wall-clock time
 
-This app's three heaviest LLM calls - splitting a document into article
-candidates, naming competitors from evidence, and writing an analysis card
-(`backend/services/competitors/`) - request up to 1,600-3,000 output tokens
-per call and are currently given 90-120s timeouts (`chat_completion(...,
-timeout=...)`). That budget was set against hosted-provider latency; it does
-not necessarily hold for a local model, which matters when picking whether
-Ollama is viable for a given call site.
+The heaviest calls - splitting a document into candidates, naming competitors
+from evidence, writing an analysis card - request up to 1,600-3,000 output
+tokens each and are given 90-120s timeouts (`chat_completion(..., timeout=...)`).
 
-| Backend | Typical throughput | Time for a ~2,000-token reply | Notes |
-|---|---|---|---|
-| DeepSeek / OpenAI (hosted) | tens-to-100+ tok/s, served on datacenter GPUs | ~3-10s end-to-end (incl. network) | What the existing 90-120s timeouts were sized for |
-| Ollama, CPU-only, 7-8B model | roughly 5-20 tok/s on a typical consumer CPU | ~2-7 minutes | Comfortably exceeds the current timeouts - would need `timeout=` raised at each call site, or a smaller model |
-| Ollama, CPU-only, 13B+ model | roughly 1-8 tok/s | ~4-30+ minutes | Not practical without a GPU |
-| Ollama, consumer GPU (8-24 GB VRAM), 7-8B model | roughly 40-100+ tok/s | ~20-50s | Closest to hosted-API latency; first request after container start also pays a one-time model-load cost (seconds to tens of seconds) that hosted APIs don't have |
+| Setup | Typical throughput | Time for a ~2,000-token reply |
+|---|---|---|
+| Ollama, consumer GPU (8-24 GB VRAM), 7-8B model | ~40-100+ tok/s | ~20-50s |
+| Ollama, CPU-only, 7-8B model | ~5-20 tok/s | ~2-7 minutes |
+| Ollama, CPU-only, 13B+ model | ~1-8 tok/s | ~4-30+ minutes |
+| Hosted (OpenAI/DeepSeek) | tens-to-100+ tok/s | ~3-10s incl. network |
 
-These are widely-cited hardware expectations, not a benchmark run against
-this project's own containerized `ollama` service - actual numbers depend
-heavily on the host's CPU/GPU. If you want real numbers, the `ollama`
-Compose profile can be brought up and timed directly against one of the
-three call sites above; ask and this can be run and measured rather than
-estimated.
+These are widely-cited hardware expectations, not a benchmark of this repo. The
+practical reading: a GPU makes local inference comparable to a hosted API, and
+CPU-only inference on an 8B model is usable but slow enough that
+`LLM_REQUEST_TIMEOUT_SECONDS` may need raising. `ANALYSIS_CONCURRENCY` (default
+2) is deliberately low for the same reason - every worker competes for the same
+GPU as the local embedding model.
 
 ## Clone And Run
 
-### 1. Clone the repository
-
-```bash
-git clone <repo-url>
-cd strata-media
-```
-
-If you already have the repo locally, pull the latest changes instead:
-
-```bash
-git pull
-```
-
-### 2. Prepare the backend environment
-
-Copy the example env file and edit the values for your machine:
+### 1. Prepare the backend environment
 
 ```bash
 cd backend
-copy .env.example .env
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS/Linux
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-On macOS/Linux, use `cp .env.example .env` instead of `copy`.
+Fill in `DATABASE_URL`. With the default `LLM_PROVIDER=ollama` no API key is
+needed - just make sure `ollama serve` is running and the model in
+`OLLAMA_CHAT_MODEL` has been pulled (`ollama pull llama3.1`).
 
-Set at minimum:
+OCR needs the `tesseract` binary on PATH (the Docker image installs it).
 
-- `DATABASE_URL`
-- An LLM provider's credentials - by default `OPENAI_API_KEY` (OpenAI),
-  required for enrichment, Intelligence Copilot chat, and project/source
-  discovery. Set `LLM_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` instead to use
-  DeepSeek - see [Choosing an LLM provider](#choosing-an-llm-provider).
-
-### 3. Run the backend locally
+### 2. Run the backend
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-optional.txt
 uvicorn main:app --port 8000
 ```
 
-If you don't need local embeddings, you can skip the optional requirements
-file.
+Migrations run on startup (`MIGRATE_ON_STARTUP=false` to manage them out of
+band), and the bootstrap admin is created if the `users` table is empty.
 
-Migrations run automatically on startup (see
-[Schema migrations](#schema-migrations)), so a fresh, empty `DATABASE_URL`
-gets every table created for you the first time you run `uvicorn`. To apply
-them without starting the server - e.g. before seeding - run it directly:
-
-```bash
-python migrate.py
-```
-
-### 4. Seed example data (optional)
-
-The dashboard is empty until something has scraped or a project has been
-analyzed. To have example data to look at right away, run one or both of the
-bundled seed scripts from `backend/` (venv active, `DATABASE_URL` set):
-
-```bash
-python seed_competitor_demo.py        # fictional "Northwind" competitor study
-python seed_strata_create_demo.py     # real strata create study: 10 competitors, 5 AI-generated reports
-```
-
-Both talk to the database directly, need no LLM API key, and are safe to
-re-run - each resets just its own study. Remove one with `--wipe`:
-
-```bash
-python seed_strata_create_demo.py --wipe
-```
-
-`seed_strata_create_demo.py` reproduces a real completed run of this
-project's own competitor-study pipeline (real competitor names, a real
-derived business profile, real AI-written reports), captured directly from
-this project's database. It does not reseed the underlying scraped articles
-or the "filtered out" evidence trail behind a report, so that panel is empty
-for this seeded study - see the module docstring for why.
-
-### 5. Run the dashboard locally
-
-Open a second terminal:
+### 3. Run the dashboard
 
 ```bash
 cd dashboard
 npm install
-copy .env.example .env
-npm run dev
+npm run dev       # expects the backend at http://localhost:8000
+npm run build
+npm run lint
 ```
 
-On macOS/Linux, use `cp .env.example .env` instead of `copy`.
+Override the backend URL with `VITE_API_TARGET` if it isn't on port 8000.
 
-The dashboard expects the backend on `http://localhost:8000` unless you set
-`VITE_API_TARGET`.
-
-### 6. Run the pipeline manually
-
-You can run the scrape/enrich/save flow directly from the backend folder.
-This is the offline/dev path - the streaming item pipeline that enriches as
-it scrapes (used by the `/scrape` endpoint and the scheduler) only activates
-when `PIPELINE_RUN_ID` is set, so a bare manual run like this stays as two
-separate steps against a plain JSON file:
+### 4. Tests
 
 ```bash
-scrapy crawl source_rss -O articles.json
-python -m services.articles.enrich
+cd backend
+python -m pytest tests -q
 ```
 
 ## Docker Deployment
-
-This repo includes a full Docker stack:
-
-- `db` runs PostgreSQL 16
-- `backend` runs the FastAPI API
-- `frontend` builds the React dashboard
-- `nginx` exposes the public app on port 80
-- `adminer` provides a database UI on port 8080
-- `ollama` / `ollama-pull` (opt-in, see below) run a fully local/offline LLM
-
-### Start the stack
 
 ```bash
 docker compose up --build
 ```
 
-### Fully offline LLM (Ollama), containerized
+- `db` runs PostgreSQL 16
+- `backend` runs the FastAPI API
+- `frontend` builds the React dashboard
+- `nginx` exposes the public app on port 8210
+- `adminer` provides a database UI on port 8082
+- `ollama` runs the local LLM, with a one-shot `ollama-pull` job that fetches
+  `OLLAMA_CHAT_MODEL` once the server is healthy
 
-To run the LLM entirely inside Docker instead of depending on a host-machine
-install, set `LLM_PROVIDER=ollama` in `backend/.env` (see
-[Choosing an LLM provider](#choosing-an-llm-provider)), then bring the stack
-up with the `ollama` profile enabled:
-
-```bash
-docker compose --profile ollama up --build
-```
-
-This starts an `ollama` service (the official `ollama/ollama` image, model
-weights persisted in the `ollama-data` volume) and a one-shot `ollama-pull`
-job that waits for it to be healthy and pulls `OLLAMA_CHAT_MODEL` (default
-`llama3.1`). Both stay off during a plain `docker compose up`, so deployments
-using OpenAI/DeepSeek pay no extra image pull or startup cost. To pull a
-different model after changing `OLLAMA_CHAT_MODEL`:
+Set `OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions` in
+`backend/.env` so the backend reaches the `ollama` container rather than
+itself. After changing the model:
 
 ```bash
-docker compose --profile ollama up ollama-pull
+docker compose up ollama-pull
 ```
 
 ### What runs where
 
-- Public app: `http://localhost/`
-- Adminer: `http://localhost:8080/`
-- Backend API: proxied through nginx at `/api` and `/scrape`
+- Public app: `http://localhost:8210/`
+- Adminer: `http://localhost:8082/` (System `PostgreSQL`, Server `db`, user /
+  password / database all `strata`)
+- Backend API: proxied through nginx at `/api`
 - Database: `db:5432` inside the Docker network
-
-### Required Docker env files
-
-The backend container reads `backend/.env`. Make sure it contains values for:
-
-- `DATABASE_URL=postgresql://strata:strata@db:5432/strata`
-- Whichever LLM provider is selected via `LLM_PROVIDER` (default `openai`,
-  requiring `OPENAI_API_KEY`) - required for enrichment, Intelligence Copilot
-  chat, and project/source discovery. See
-  [Choosing an LLM provider](#choosing-an-llm-provider).
-
-### Adminer login
-
-Use these values to inspect the local database:
-
-- System: `PostgreSQL`
-- Server: `db`
-- Username: `strata`
-- Password: `strata`
-- Database: `strata`
 
 ### Stop the stack
 
 ```bash
-docker compose down
+docker compose down      # keep data
+docker compose down -v   # drop the Postgres volume too
 ```
 
-To remove the Postgres volume as well:
+## Schema migrations
 
-```bash
-docker compose down -v
-```
-
-### Schema migrations
-
-Schema changes are applied by `backend/migrate.py`, which runs automatically when
-the API starts. Dropping the Postgres volume is no longer needed to pick up a
-schema change.
+Applied by `backend/migrate.py`, automatically on API startup.
 
 ```bash
 # from backend/
@@ -342,119 +222,68 @@ python migrate.py --status   # show applied vs pending, change nothing
 python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
 ```
 
-How it works:
-
-- `schema.sql` is version `0001_baseline`. It is idempotent, so it is safe to
-  re-run, and re-running it is how an existing database converges with a fresh
-  one. It is also still mounted into `docker-entrypoint-initdb.d`, so a brand-new
-  volume starts from it directly.
+- `schema.sql` is version `0001_baseline`. It is idempotent, so re-running it is
+  how an existing database converges with a fresh one. It is also mounted into
+  `docker-entrypoint-initdb.d`, so a brand-new volume starts from it directly.
 - `backend/migrations/NNNN_name.sql` are the forward migrations, applied in
   numeric order, each in its own transaction.
 - Applied versions and their checksums are recorded in `schema_migrations`.
-  Editing a migration after it has been applied is a hard error — the runner
-  refuses rather than letting environments diverge silently. Add a new migration
-  instead.
+  Editing a migration after it has been applied is a hard error - the runner
+  refuses rather than letting environments diverge silently. Add a new
+  migration instead.
 
-To add one: create `backend/migrations/0004_short_name.sql`, keep every statement
-idempotent (`if not exists`, `or replace`, `on conflict do nothing`), and restart
-the backend or run `python migrate.py`.
+## The signal layer
 
-Set `MIGRATE_ON_STARTUP=false` to manage migrations out of band instead — e.g.
-when several backend replicas share one database and only the deploy step should
-migrate it.
+Two derived columns are populated as articles are stored, with no model calls:
 
-### The signal layer
-
-Two derived columns are populated automatically as articles are stored — no
-re-scraping and no model calls:
-
-- **dates** — parses the free-text `articles.published` into `published_at` plus
-  a `published_precision` of `exact`, `day`, or `unknown`. Rows whose date cannot
-  be recovered keep a null `published_at` and must be excluded from time series
-  rather than falling back to `created_at`, which would report when we scraped a
-  story rather than when it was published.
-- **stories** — groups near-identical bodies into `story_groups` so prevalence
-  can be counted per independent story instead of per URL. One wire story
-  republished by thirty outlets is one story, not thirty sources.
-
-Both passes are batched, committed per batch, and resumable — progress lives in
-the data, so an interrupted run is continued by running it again.
-
-### Seeding example data
-
-To load the same bundled example studies into the Docker stack's database,
-run the seed scripts inside the running `backend` container:
-
-```bash
-docker compose exec backend python seed_competitor_demo.py
-docker compose exec backend python seed_strata_create_demo.py
-```
-
-See [Seed example data](#4-seed-example-data-optional) above for what each
-script creates and how to remove one with `--wipe`.
-
-### Reset the database (fresh start)
-
-To wipe all local data and rebuild from scratch:
-
-```bash
-docker compose down -v
-docker compose up --build -d
-```
-
-The volume is recreated from `schema.sql`, then the backend applies any
-migrations on top at startup.
-
-## Deployment Notes
-
-For a production-style deployment, the important pieces are:
-
-- PostgreSQL must be reachable by the backend container
-- `backend/.env` must include the database URL and the active LLM provider's
-  credentials (`OPENAI_API_KEY` by default, or `LLM_PROVIDER=deepseek` plus
-  `DEEPSEEK_API_KEY`)
-
-The current Docker setup is suitable for a single-server deployment where the
-database, backend, frontend, and reverse proxy all run together.
-
-If you deploy the backend separately from the dashboard, keep the API base URL
-consistent with the frontend's `VITE_API_TARGET` setting.
+- **dates** - parses the free-text `articles.published` into `published_at` plus
+  a `published_precision` of `exact`, `day`, or `unknown`. Rows whose date
+  cannot be recovered keep a null `published_at` and are excluded from time
+  series rather than falling back to `created_at`, which would report when the
+  document was uploaded rather than when the thing happened.
+- **stories** - groups near-identical bodies into `story_groups` so prevalence
+  is counted per independent story instead of per row. That matters most for
+  imported data, where one wire story republished by thirty outlets should count
+  once.
 
 ## Authentication & Roles
 
-The dashboard and API require a logged-in session (cookie-based, not tokens
-in localStorage). The first admin is created on backend startup from
-`ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD`
-in `backend/.env`, but only if the `users` table is still empty - it will not
-touch an existing account. Log in with either the username or the email.
+The dashboard and API require a logged-in session (cookie-based, not tokens in
+localStorage). The first admin is created on backend startup from
+`ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_EMAIL` /
+`ADMIN_BOOTSTRAP_PASSWORD` in `backend/.env`, but only if the `users` table is
+still empty - it will not touch an existing account. Log in with either the
+username or the email.
 
-Every authenticated user, regardless of role, can view the dashboard, articles,
-sources, projects, pipeline runs, and the Intelligence Copilot chat. Roles add
-specific write/action permissions on top of that shared read access (`admin` is
-the only role that automatically satisfies every check below -
-`viewer`/`editor`/`operator` are otherwise independent, not a ladder):
+Every authenticated user can view the dashboard, articles, projects, analysis
+runs, and the Intelligence Copilot chat. Roles add write/action permissions on
+top of that shared read access (`admin` automatically satisfies every check
+below; `viewer`/`editor`/`operator` are independent, not a ladder):
 
-- **viewer** - read-only. No create, update, delete, or pipeline actions.
-- **editor** - create, update, and delete sources and projects; link sources to
-  projects; use AI project discovery/suggestions.
-- **operator** - trigger scrapes (`POST /scrape`), stop pipeline runs, and
-  delete all stored articles.
-- **admin** - everything above, plus user management: create, delete, change
-  roles for, and enable/disable users (`/admin/users` in the dashboard, or the
-  `/api/users` endpoints); and role management: create, edit, and delete roles
-  (`/admin/roles` in the dashboard, or the `/api/roles` endpoints).
+- **viewer** - read-only.
+- **editor** - create, update, and delete projects and their documents; use the
+  AI metadata suggestions.
+- **operator** - start and stop analysis runs, import articles, and delete all
+  stored articles.
+- **admin** - everything above, plus user management (`/admin/users`) and role
+  management (`/admin/roles`).
 
-Role administration is gated by its own granular permissions rather than one
-combined "manage roles" permission:
+Role administration is gated by granular permissions rather than one combined
+"manage roles" permission: `roles.view`, `roles.create`, `roles.update`,
+`roles.delete` (blocked for the system `admin` role and for any role still
+assigned to a user). User administration likewise has `users.view`,
+`users.create`, `users.update`, `users.delete`. Deleting a user removes their
+account and any active sessions; a user can never delete their own account.
 
-- `roles.view` - view roles and their permission assignments.
-- `roles.create` - create new roles.
-- `roles.update` - rename a role, edit its description, or change its
-  permission assignments.
-- `roles.delete` - delete a role (blocked for the system `admin` role, and for
-  any role still assigned to a user).
+Project visibility is per-user: **Admin → Project Access** links dashboard users
+to the projects they can see. Admins see every project.
 
-Similarly, user administration has a dedicated `users.delete` permission
-alongside `users.view`/`users.create`/`users.update`. Deleting a user removes
-their account and any active sessions; a user can never delete their own
-account, from either the dashboard or the API.
+## Deployment Notes
+
+- PostgreSQL must be reachable by the backend container.
+- `backend/.env` needs `DATABASE_URL`, and - only if you moved off the local
+  default - the active LLM provider's credentials.
+- If the backend is deployed separately from the dashboard, keep the API base
+  URL consistent with the frontend's `VITE_API_TARGET`.
+- Uploaded documents live under `storage/` (bind-mounted into the backend
+  container), so that path needs to persist alongside the database.

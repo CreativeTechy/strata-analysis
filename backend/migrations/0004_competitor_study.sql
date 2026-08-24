@@ -1,14 +1,14 @@
 -- Competitor study: a second, separate experience alongside sentiment/opinions.
 --
--- A project now declares a `mode`. Sentiment projects behave exactly as before
--- (nothing reads `mode` on that path), while competitor projects add a profile of
--- the user's own business, a ranked competitor set, the accounts belonging to each
--- competitor, and the generated analysis cards.
+-- A project declares a `mode`. Sentiment projects behave exactly as before
+-- (nothing reads `mode` on that path), while competitor projects add a profile
+-- of the user's own business, a competitor set named from the study's uploaded
+-- documents, and the generated analysis cards.
 --
--- Everything else is reused rather than rebuilt: competitor websites and accounts
--- become rows in `sources` linked through `project_sources`, so the existing
--- scraper, pipeline_runs, cancel support and `projects.repeat_*` scheduler drive
--- competitor scraping with no new machinery.
+-- Evidence arrives the same way it does everywhere else in this product: a
+-- document is uploaded, split into articles, and matched against each
+-- competitor (see migrations 0008-0011 and services/competitors/). There are no
+-- competitor channels to validate and nothing to crawl.
 
 alter table public.projects
     add column if not exists mode text not null default 'sentiment';
@@ -24,9 +24,9 @@ create index if not exists projects_mode_idx on public.projects (mode);
 
 -- The user's own business. One per project: it is the reference point every
 -- competitor and every "how does this affect us" judgement is measured against.
--- `context_summary` is the AI's reading of the market, derived from the scraped
--- website rather than from what the user typed, so the model reasons about the
--- business as it actually presents itself.
+-- `context_summary` is the AI's structured reading of what the user typed about
+-- their business, so every "how does this affect us" judgement is measured
+-- against one consistent description rather than a free-text field.
 create table if not exists public.business_profiles (
     id                bigint generated always as identity primary key,
     project_id        bigint not null unique references public.projects(id) on delete cascade,
@@ -41,12 +41,6 @@ create table if not exists public.business_profiles (
     audience          jsonb not null default '[]'::jsonb,
     differentiators   jsonb not null default '[]'::jsonb,
     keywords          jsonb not null default '[]'::jsonb,
-    -- Website scrape used to build the context above.
-    scrape_status     text not null default 'pending',
-    scrape_error      text,
-    scraped_pages     integer not null default 0,
-    scraped_chars     integer not null default 0,
-    scraped_at        timestamptz,
     context_summary   text,
     embedding_json    jsonb default '[]'::jsonb,
     embedding_model   text,
@@ -56,12 +50,6 @@ create table if not exists public.business_profiles (
     created_at        timestamptz not null default now(),
     updated_at        timestamptz not null default now()
 );
-
-alter table public.business_profiles
-    drop constraint if exists business_profiles_scrape_status_check;
-alter table public.business_profiles
-    add constraint business_profiles_scrape_status_check
-    check (scrape_status in ('pending', 'running', 'success', 'failed', 'skipped'));
 
 drop trigger if exists set_business_profiles_updated_at on public.business_profiles;
 create trigger set_business_profiles_updated_at
@@ -90,7 +78,6 @@ create table if not exists public.competitors (
     status            text not null default 'suggested',
     discovery_source  text not null default 'ai',
     discovery_query   text,
-    last_scraped_at   timestamptz,
     last_analyzed_at  timestamptz,
     created_at        timestamptz not null default now(),
     updated_at        timestamptz not null default now()
@@ -123,43 +110,6 @@ create index if not exists competitors_status_idx on public.competitors (project
 drop trigger if exists set_competitors_updated_at on public.competitors;
 create trigger set_competitors_updated_at
 before update on public.competitors
-for each row
-execute function public.set_updated_at();
-
-
--- Social/web accounts belonging to a competitor. Discovery guesses handles from
--- the competitor's name, and guesses are wrong often enough that they carry an
--- explicit validation state: nothing feeds analysis until it is `valid`. A
--- wrongly-attributed account would otherwise put another company's activity into
--- a report someone plans against.
-create table if not exists public.competitor_accounts (
-    id                bigint generated always as identity primary key,
-    competitor_id     bigint not null references public.competitors(id) on delete cascade,
-    platform          text not null,
-    handle            text,
-    url               text not null,
-    confidence        numeric,
-    validation_status text not null default 'pending',
-    validation_reason text,
-    source_id         bigint references public.sources(id) on delete set null,
-    created_at        timestamptz not null default now(),
-    updated_at        timestamptz not null default now()
-);
-
-alter table public.competitor_accounts
-    drop constraint if exists competitor_accounts_validation_check;
-alter table public.competitor_accounts
-    add constraint competitor_accounts_validation_check
-    check (validation_status in ('pending', 'valid', 'rejected'));
-
-create unique index if not exists competitor_accounts_key
-    on public.competitor_accounts (competitor_id, platform, lower(url));
-create index if not exists competitor_accounts_competitor_idx
-    on public.competitor_accounts (competitor_id);
-
-drop trigger if exists set_competitor_accounts_updated_at on public.competitor_accounts;
-create trigger set_competitor_accounts_updated_at
-before update on public.competitor_accounts
 for each row
 execute function public.set_updated_at();
 
@@ -250,7 +200,6 @@ create index if not exists competitor_articles_article_idx
 -- PostgREST-style anon/authenticated roles, which get read-only access.
 alter table public.business_profiles enable row level security;
 alter table public.competitors enable row level security;
-alter table public.competitor_accounts enable row level security;
 alter table public.competitor_findings enable row level security;
 alter table public.competitor_articles enable row level security;
 
@@ -259,7 +208,7 @@ declare
     target text;
 begin
     foreach target in array array[
-        'business_profiles', 'competitors', 'competitor_accounts',
+        'business_profiles', 'competitors',
         'competitor_findings', 'competitor_articles'
     ]
     loop

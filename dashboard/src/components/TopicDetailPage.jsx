@@ -226,7 +226,7 @@ export default function TopicDetailPage() {
             <Workflow size={18} />
           </div>
           <div>
-            <span>Pipeline runs</span>
+            <span>Analysis runs</span>
             <strong>{distinctRunIds.length.toLocaleString()}</strong>
           </div>
         </div>
@@ -235,7 +235,7 @@ export default function TopicDetailPage() {
       <div className="glass-card" style={{ marginBottom: 18 }}>
         <h3 className="run-detail-section-title">Extracted by</h3>
         {distinctRunIds.length === 0 ? (
-          <div className="run-detail-fallback">No pipeline run is recorded for these articles.</div>
+          <div className="run-detail-fallback">No analysis run is recorded for these articles.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {distinctRunIds.map((runId) => {
@@ -255,7 +255,7 @@ export default function TopicDetailPage() {
                 >
                   {detail?.loading ? (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                      <Loader2 size={14} className="spin" /> Loading pipeline run…
+                      <Loader2 size={14} className="spin" /> Loading analysis run…
                     </span>
                   ) : detail?.error ? (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#b42318', fontSize: '0.85rem' }}>
@@ -265,7 +265,7 @@ export default function TopicDetailPage() {
                     <>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600 }}>
                         <Workflow size={15} style={{ color: 'var(--primary-color)' }} />
-                        {detail?.run?.sequence_number ? `Pipeline #${detail.run.sequence_number}` : 'Pipeline run'}
+                        {detail?.run?.sequence_number ? `Analysis #${detail.run.sequence_number}` : 'Analysis run'}
                       </span>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
                         {formatLongDate(detail?.run?.started_at)}

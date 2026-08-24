@@ -120,8 +120,8 @@ def _run_generation(messages: list) -> str | None:
     # (bad/missing credentials, out of credit/quota - see
     # enrich.FATAL_ANALYSIS_ERRORS) stops the whole pipeline there. Anything
     # else (rate limit, timeout, outage, empty/invalid response) just fails
-    # this one article - see services/articles/enrich.py and
-    # scraper/pipelines.py.
+    # this one article - see services/articles/analysis_defaults.py's
+    # FATAL_ANALYSIS_ERRORS.
     return llm_client.chat_completion(
         messages=messages,
         temperature=config.STRUCTURED_EXTRACTION_TEMPERATURE,

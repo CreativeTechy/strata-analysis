@@ -89,10 +89,20 @@ class ReanalyzeArticleTests(unittest.TestCase):
 
 class ReanalyzeArticlesBatchTests(unittest.TestCase):
     def test_runs_each_article_independently_and_collects_results(self):
-        with patch("services.articles.reanalyze.reanalyze_article", side_effect=lambda aid: {"article_id": aid, "ok": True}) as mock_single:
+        with patch("services.articles.reanalyze.reanalyze_article",
+                   side_effect=lambda aid, run_id=None: {"article_id": aid, "ok": True}) as mock_single:
             results = reanalyze.reanalyze_articles([1, 2, 3])
         self.assertEqual(results, [{"article_id": 1, "ok": True}, {"article_id": 2, "ok": True}, {"article_id": 3, "ok": True}])
         self.assertEqual(mock_single.call_count, 3)
+
+    def test_run_id_is_passed_through_to_every_article(self):
+        """The analysis run tags the articles it analyzes, so per-run
+        dashboard/report scoping has something to filter on."""
+        with patch("services.articles.reanalyze.reanalyze_article",
+                   side_effect=lambda aid, run_id=None: {"article_id": aid, "run_id": run_id}) as mock_single:
+            results = reanalyze.reanalyze_articles([7, 8], run_id="run-1")
+        self.assertEqual([r["run_id"] for r in results], ["run-1", "run-1"])
+        self.assertEqual(mock_single.call_count, 2)
 
 
 class MarkHelpersTests(unittest.TestCase):

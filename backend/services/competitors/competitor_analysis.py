@@ -1,4 +1,4 @@
-"""Turn scraped competitor content into decision-grade analysis cards.
+"""Turn stored competitor evidence into decision-grade analysis cards.
 
 Two stages, and the first one matters more than the second.
 
@@ -60,8 +60,9 @@ PROMPT_VERSION = "competitor-analysis-2026-07-27"
 MIN_BODY_CHARS = 400
 # Uploaded-document candidates are LLM-split excerpts, often a paragraph or two
 # by nature (see document_article_extraction_system_prompt.txt) - holding them
-# to the scraped-article floor would reject good evidence as "too short" simply
-# for being short-form, which is what it's supposed to be.
+# to the full-article floor above (which still applies to anything brought in
+# by a JSONL import) would reject good evidence as "too short" simply for being
+# short-form, which is what it's supposed to be.
 MIN_DOCUMENT_BODY_CHARS = 80
 DOCUMENT_URL_PREFIX = "document://"
 # Roughly 16 * MAX_TEXT_PER_EVIDENCE of prompt, so evidence costs about 7k
@@ -226,10 +227,10 @@ def _mentions(text: str, aliases: list[str]) -> str | None:
 
 # Evergreen furniture on a company's own site. Every one of these names the
 # company in its nav and footer, so the mention gate passes them on presence
-# alone, and `_effective_date` dates a `web` page by when it was scraped — so a
-# Contact Us page looks freshly published every crawl and never ages out of the
-# window. Left in, they crowd out actual news and the model gets asked what
-# changed while looking at a careers listing and a store locator.
+# alone, and an undated page is dated by when it entered the system - so a
+# Contact Us page looks freshly published and never ages out of the window.
+# Only reachable via imported articles now (a document candidate has no URL
+# path to read), but an import of a crawler's export carries exactly these.
 _BOILERPLATE_PATH_RE = re.compile(
     r"/(contact|about|about-us|careers?|jobs|work-with-us|team|locations?|stores?|"
     r"store-locator|find-us|franchise|faq|help|support|terms|privacy|policy|policies|"
@@ -299,24 +300,22 @@ def _mention_profile(title: str, summary: str, body: str, aliases: list[str]) ->
 def _effective_date(article: dict) -> datetime | None:
     """The date to judge an article's recency by.
 
-    published_at is authoritative for rss/social content, which carries a real
-    publish timestamp. Plain `web` pages (menus, terms, careers...) are usually
-    evergreen and don't have one; htmldate's fallback extraction latches onto
-    whatever date-shaped text it can find instead (a copyright year, a footer
-    notice), so for those a crawl-side timestamp is the only trustworthy signal.
+    published_at is authoritative when it exists: an imported article carries
+    the real publish timestamp its export recorded. An article split out of an
+    uploaded document has none - the document says whatever it says about when
+    things happened, and nothing reliable maps that onto a per-article date.
 
-    For those pages that timestamp is when the body last *changed*, not when it
-    was first seen. A price rising, a location being added, a product appearing
-    is exactly the move a competitor report exists to catch, and dating by
-    first-seen hid it: re-scraping upserts on url and leaves created_at alone,
-    so a page that changed today still looked as old as its first crawl and
-    stayed outside the window forever. Falls back to created_at for rows
-    written before migration 0017, which have never been observed changing.
+    Failing that, prefer when the body last *changed* over when the row was
+    first written. That matters for imported pages that get re-imported: an
+    upsert keys on url and leaves created_at alone, so dating by first-seen
+    meant a page that changed today still looked as old as its first import and
+    stayed outside the window forever.
     """
-    source_type = config._infer_source_type(str(article.get("source_url") or article.get("source") or ""))
-    if source_type == "web":
-        return article.get("content_changed_at") or article.get("created_at")
-    return article.get("published_at") or article.get("created_at")
+    return (
+        article.get("published_at")
+        or article.get("content_changed_at")
+        or article.get("created_at")
+    )
 
 
 def _candidate_articles(project_id: int, pipeline_run_id: str | None = None) -> list[dict]:
@@ -400,7 +399,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     Returns per-competitor counts plus an aggregate rejection breakdown, so the
     workspace can show what was filtered and why instead of a bare total.
 
-    `pipeline_run_id` scopes evidence to one scrape run instead of a date
+    `pipeline_run_id` scopes evidence to one analysis run instead of a date
     window - when given, `period_days` is ignored entirely rather than
     applied on top, since a run's articles are already a fixed, bounded set.
     """
@@ -891,7 +890,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     survived, what came back - is otherwise invisible until the whole thing
     finishes. Defaults to a no-op so the CLI/seed path can call this unchanged.
 
-    `pipeline_run_id` scopes evidence to one scrape run - see
+    `pipeline_run_id` scopes evidence to one analysis run - see
     validate_competitor_articles. Each card then stamps that run's actual
     start/finish as its period instead of a `period_days`-derived window that
     was never applied.
@@ -1020,20 +1019,18 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
 # --------------------------------------------------------------------------- #
 # Background job
 # --------------------------------------------------------------------------- #
-# Analysis is one LLM call per tracked competitor, optionally preceded by a full
-# scrape+enrich of every source in the study. That is minutes, not seconds, and
-# it was being awaited inline in the POST handler - the user stared at a spinner
-# with no idea whether it was scraping, which competitor it was on, or whether
-# it had hung. It now runs the same way discovery does: queued as a FastAPI
-# BackgroundTask against the shared registry, streaming progress lines the UI
-# polls for.
+# Analysis is one LLM call per tracked competitor. Against a local model that
+# is minutes, not seconds, and it was being awaited inline in the POST handler -
+# the user stared at a spinner with no idea which competitor it was on or
+# whether it had hung. It runs as a FastAPI BackgroundTask against the shared
+# registry instead, streaming progress lines the UI polls for.
 _analysis_runs = JobRegistry("Queued for analysis.")
 
 ACTIVE_ANALYSIS_STATUSES = ACTIVE_STATUSES
 
 
 def create_analysis_run(project_id: int) -> str:
-    return _analysis_runs.create(project_id, generated=0, skipped=[], validation=None, scrape_run=None)
+    return _analysis_runs.create(project_id, generated=0, skipped=[], validation=None)
 
 
 def get_analysis_run(run_id: str) -> dict | None:
@@ -1044,43 +1041,17 @@ def get_active_analysis_run(project_id: int) -> dict | None:
     return _analysis_runs.active_for_project(project_id)
 
 
-def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_first: bool,
+def run_analysis_job(run_id: str, project_id: int, period_days: int,
                      pipeline_run_id: str | None = None) -> None:
-    """Scrape (optionally), validate, and write one card per competitor.
+    """Validate the stored evidence and write one card per competitor.
 
     Every failure path ends as a `failed` run carrying a readable message
     rather than an exception nobody sees: this executes after the response has
     already been sent, so raising here would only reach the server log.
     """
     log = _analysis_runs.logger(run_id)
-    _analysis_runs.update(run_id, status="running", stage="scraping" if scrape_first else "analyzing",
-                          message="Gathering articles." if scrape_first else "Analyzing competitors.")
+    _analysis_runs.update(run_id, status="running", stage="analyzing", message="Analyzing competitors.")
     try:
-        scrape_run = None
-        if scrape_first:
-            # Deferred, and scoped to the branch that needs it: services.pipeline
-            # pulls in the whole scraper, which analysis has no reason to load
-            # when it is running against evidence that is already stored.
-            import uuid as _uuid
-
-            from services.pipeline.pipeline import run_scraper_pipeline
-            from services.pipeline.pipeline_runs import create_pipeline_run, get_pipeline_run
-
-            log("Scraping this study's sources for new articles...")
-            queued = create_pipeline_run(status="queued", stage="queued",
-                                         message="Queued for execution.", project_id=project_id)
-            scrape_id = queued["id"] if queued else _uuid.uuid4().hex
-            run_scraper_pipeline(scrape_id, project_id)
-            scrape_run = get_pipeline_run(scrape_id)
-            if not scrape_run or scrape_run.get("status") != "success":
-                raise RuntimeError(
-                    "Could not gather articles before analysis: "
-                    + ((scrape_run or {}).get("error") or "scrape and enrichment did not complete.")
-                )
-            log(f"Scrape finished: {scrape_run.get('articles_scraped') or 0} article(s) gathered.")
-            _analysis_runs.update(run_id, scrape_run=scrape_run, stage="analyzing",
-                                  message="Analyzing competitors.")
-
         result = generate_findings(project_id, period_days=period_days,
                                    pipeline_run_id=pipeline_run_id, log=log)
 
@@ -1091,7 +1062,7 @@ def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_firs
                 run_id, status="failed", stage="error", error=result["error"],
                 error_code=result.get("error_code"), message=result["error"],
                 generated=result.get("generated") or 0, skipped=result.get("skipped") or [],
-                validation=result.get("validation"), scrape_run=scrape_run,
+                validation=result.get("validation"),
             )
             return
 
@@ -1099,7 +1070,7 @@ def run_analysis_job(run_id: str, project_id: int, period_days: int, scrape_firs
             run_id, status="success", stage="done",
             message=f"Generated {result['generated']} report(s).",
             generated=result["generated"], skipped=result["skipped"],
-            validation=result["validation"], scrape_run=scrape_run,
+            validation=result["validation"],
         )
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
         log(f"Analysis failed: {exc}")
@@ -1131,7 +1102,7 @@ def list_findings(project_id: int, competitor_id: int | None = None,
     shows the current picture rather than every historical run.
 
     `pipeline_run_id`, when given, restricts to findings whose evidence was
-    scoped to that one scrape run (see generate_findings) - a finding
+    scoped to that one analysis run (see generate_findings) - a finding
     generated over a `period_days` date window instead simply has none and is
     excluded, the same as a date-range filter would exclude it.
     """

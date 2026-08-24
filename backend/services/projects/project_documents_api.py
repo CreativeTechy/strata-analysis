@@ -17,9 +17,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
+import uuid
+
 import db
-from services.articles.reanalyze import mark_processing, reanalyze_article, reanalyze_articles
+from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.auth.auth import require_permission
+from services.pipeline.pipeline import run_analysis_pipeline
+from services.pipeline.pipeline_runs import create_pipeline_run, get_active_run_for_project
 from services.projects import project_document_articles, project_documents_store
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -175,13 +179,25 @@ def reanalyze_document_articles(
     background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
-    """Re-runs sentiment analysis for every approved candidate's article -
-    a manual retry for whichever ones failed (network/LLM errors), mirroring
-    the competitor wizard's "Re-run analysis" affordance."""
+    """Re-run analysis for the approved candidates whose articles haven't been
+    analyzed successfully - a manual retry for whichever ones failed.
+
+    Goes through the tracked analysis pipeline rather than firing loose
+    background tasks, so the retry shows up on the Analysis Runs page with the
+    same live counters, per-document breakdown and stop button as any other
+    run. Approving a single candidate still analyzes it inline (see
+    set_document_article_status): that is one article and the wizard wants the
+    answer immediately, not a run to go watch.
+    """
     _project_or_404(project_id)
-    article_ids = project_document_articles.approved_article_ids(project_id)
-    for article_id in article_ids:
-        mark_processing(article_id)
-    if article_ids:
-        background_tasks.add_task(reanalyze_articles, article_ids)
-    return {"queued": len(article_ids)}
+    if not project_document_articles.approved_article_ids(project_id):
+        return {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."}
+
+    active = get_active_run_for_project(project_id)
+    if active:
+        return {"run_id": active["id"], "queued": 0, "message": "An analysis run is already active for this project."}
+
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
+    run_id = run["id"] if run else uuid.uuid4().hex
+    background_tasks.add_task(run_analysis_pipeline, run_id, project_id, "pending")
+    return {"run_id": run_id, "message": "Analysis run started."}

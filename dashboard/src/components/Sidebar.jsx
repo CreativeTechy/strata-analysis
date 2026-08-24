@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard,
   BarChart3,
-  GitMerge,
   MessageSquare,
-  Rss,
   Newspaper,
   Database,
   ScanSearch,
@@ -45,11 +43,9 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Setup',
+    label: 'Analysis',
     items: [
-      { to: '/sources', label: 'Sources', icon: Rss },
-      { to: '/workflow', label: 'Manual Run', icon: GitMerge },
-      { to: '/pipeline-runs', label: 'Pipeline Runs', icon: Database },
+      { to: '/pipeline-runs', label: 'Analysis Runs', icon: Database },
       { to: '/analysis', label: 'Performance Logs', icon: ScanSearch },
     ],
   },
@@ -135,7 +131,7 @@ export default function Sidebar({
           ) : (
             <>
               <h1 className="title">Strata</h1>
-              <p className="subtitle">Media Intelligence</p>
+              <p className="subtitle">Data Analysis</p>
             </>
           )}
         </div>

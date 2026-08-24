@@ -14,29 +14,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, Building2, CalendarClock, Check, ChevronRight,
-  ExternalLink, Layers, LayoutGrid, Lightbulb, Link2, List, Pencil, Plus, Radar, RefreshCw, Search,
-  ShieldCheck, Sparkles, Target, Trash2, TrendingUp, X,
+  FileText, Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
+  Sparkles, Tags, Target, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
-  IMPACT_LABELS, PLATFORM_LABELS, SIZE_TIER_LABELS, addAccount, addCompetitorManual, analyze,
-  avatarGradient, deleteStudy, discoverAccounts, discoverCompetitors, discoverTrackedAccounts,
-  getSchedule, getStudy, initials, listAccounts, listCompetitors, listFindings, pollAnalysisRun,
-  pollDiscoveryRun, relativeTime, saveProfile, setCompetitorStatus, setSchedule, syncSources,
-  updateCompetitor, updateStudy, validateAccount,
+  IMPACT_LABELS, SIZE_TIER_LABELS, analyze, analyzeDocuments, avatarGradient, deleteStudy, getStudy,
+  initials, listCompetitors, listFindings, pollAnalysisRun, relativeTime, saveProfile,
+  setCompetitorStatus, updateCompetitor, updateStudy,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
-import { AddCompetitorForm, AddSourceRow } from './CompetitorSourceEditor.jsx';
 import { DiscoveryLog, ListEditor } from './CompetitorOnboarding.jsx';
 import '../styles/Competitors.css';
 
 const STUDY_STATUS_OPTIONS = ['draft', 'active', 'archived'];
-const SCHEDULE_UNIT_OPTIONS = [
-  { value: 'minutes', label: 'minute(s)' },
-  { value: 'hours', label: 'hour(s)' },
-  { value: 'days', label: 'day(s)' },
-];
 
 const IMPACT_FILTERS = [
   { key: '', label: 'All impact' },
@@ -108,7 +100,7 @@ const ANALYSIS_PERIODS = [
 ];
 
 // Same run-labeling convention as Dashboard/Reports (DashboardOverview.jsx,
-// App.jsx's renderReportsView) - "Pipeline #N: <date>" - so a run means the
+// App.jsx's renderReportsView) - "Analysis #N: <date>" - so a run means the
 // same thing wherever it's picked from.
 function formatPipelineRunLabel(run) {
   const value = run?.finished_at || run?.created_at;
@@ -120,44 +112,13 @@ function formatPipelineRunLabel(run) {
 
 function pipelineRunTitle(run, index) {
   const number = run?.sequence_number ?? (index + 1);
-  return `Pipeline #${number}: ${formatPipelineRunLabel(run)}`;
+  return `Analysis #${number}: ${formatPipelineRunLabel(run)}`;
 }
 
 const VIEW_MODES = [
   { value: 'card', label: 'Cards', icon: LayoutGrid },
   { value: 'list', label: 'List', icon: List },
 ];
-
-const WORKSPACE_TABS = [
-  { value: 'reports', label: 'Reports', icon: BarChart3 },
-  { value: 'sources', label: 'Sources', icon: Link2 },
-];
-
-// The unfiltered "All sources" list spans every account across every tracked
-// and suggested competitor - easily well past a screenful for a study with
-// many competitors, so it's paged rather than rendered all at once.
-const SOURCES_PAGE_SIZE = 20;
-
-// Fixed identity -> colour mapping for the sources chart, in the order the
-// chart always draws them (never re-ordered by count, so a colour always
-// means the same platform group). The three hues are a validated-passing
-// subset of the standard categorical order (run
-// dataviz/scripts/validate_palette.js "#1baf7a,#2a78d6,#4a3aa7" to reproduce);
-// "Other" stays neutral gray rather than a fourth hue, and none of the three
-// overlap the green/amber/red already reserved for validation-status pills
-// elsewhere on this page.
-const SOURCE_GROUPS = [
-  { key: 'content', label: 'Owned content', platforms: new Set(['news', 'web', 'website', 'blog', 'rss']), color: '#1baf7a' },
-  { key: 'x', label: 'X accounts', platforms: new Set(['x']), color: '#2a78d6' },
-  { key: 'hashtag', label: 'Hashtags', platforms: new Set(['hashtag']), color: '#4a3aa7' },
-  { key: 'other', label: 'Other', platforms: new Set(), color: '#94a3b8' },
-];
-const SOURCE_GROUP_BY_KEY = Object.fromEntries(SOURCE_GROUPS.map((group) => [group.key, group]));
-
-function sourceGroupKey(platform) {
-  const found = SOURCE_GROUPS.find((group) => group.platforms.has(platform));
-  return found ? found.key : 'other';
-}
 
 function FindingCard({ finding, onOpen }) {
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
@@ -273,189 +234,6 @@ function StatTile({ icon: Icon, label, value, tone }) {
   );
 }
 
-const SOURCE_STATUS_FILTERS = [
-  { key: '', label: 'All statuses' },
-  { key: 'valid', label: 'Valid' },
-  { key: 'pending', label: 'Pending' },
-  { key: 'rejected', label: 'Rejected' },
-];
-
-/** Bar-per-group chart, always in SOURCE_GROUPS order regardless of count -
- *  a group's colour never changes as filters change which ones have data. */
-function SourceGroupChart({ groupCounts }) {
-  const rows = SOURCE_GROUPS.map((group) => ({ ...group, count: groupCounts[group.key] || 0 }));
-  const max = Math.max(1, ...rows.map((row) => row.count));
-
-  return (
-    <div className="cs-panel" style={{ marginBottom: 20 }}>
-      <h2 className="cs-panel-title"><BarChart3 size={16} /> Sources by channel</h2>
-      <p className="cs-panel-hint">Every discovered or manually-added source across all competitors, by channel type.</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-        {rows.map((row) => (
-          <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ width: 128, flexShrink: 0, fontSize: '0.8rem', color: 'var(--text-dark)', fontWeight: 560 }}>
-              {row.label}
-            </span>
-            <div style={{ flex: 1, height: 16, borderRadius: 8, background: '#f1f5f9', overflow: 'hidden' }}>
-              <div
-                style={{
-                  height: '100%',
-                  width: `${(row.count / max) * 100}%`,
-                  minWidth: row.count ? 4 : 0,
-                  borderRadius: 8,
-                  background: row.color,
-                  transition: 'width 0.2s ease',
-                }}
-              />
-            </div>
-            <span style={{ width: 28, flexShrink: 0, textAlign: 'right', fontSize: '0.82rem', fontWeight: 650, color: 'var(--text-dark)' }}>
-              {row.count}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** All sources (competitor accounts) across the study in one place - the
- *  per-competitor "Sources" drawer shows the same data scoped to one company;
- *  this is the aggregate view across the whole study. */
-function SourcesPanel({
-  sources, filteredTotal, total, groupCounts, search, onSearch, groupFilter, onGroupFilter,
-  statusFilter, onStatusFilter, onChooseCompetitors, page, totalPages, onPageChange,
-}) {
-  return (
-    <>
-      <SourceGroupChart groupCounts={groupCounts} />
-
-      <div className="cs-panel">
-        <h2 className="cs-panel-title"><Link2 size={16} /> All sources</h2>
-        <p className="cs-panel-hint">
-          {total} source{total === 1 ? '' : 's'} across every tracked and suggested competitor.
-        </p>
-
-        {total ? (
-          <>
-            <div className="cs-panel cs-findings-toolbar" style={{ marginTop: 14 }}>
-              <label className="cs-search-field">
-                <Search size={16} />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => onSearch(event.target.value)}
-                  placeholder="Search competitor, handle, or URL..."
-                />
-              </label>
-
-              <select className="cs-select" value={groupFilter} onChange={(event) => onGroupFilter(event.target.value)}
-                aria-label="Filter by channel">
-                <option value="">All channels</option>
-                {SOURCE_GROUPS.map((group) => (
-                  <option key={group.key} value={group.key}>{group.label}</option>
-                ))}
-              </select>
-
-              <select className="cs-select" value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}
-                aria-label="Filter by validation status">
-                {SOURCE_STATUS_FILTERS.map((option) => (
-                  <option key={option.key} value={option.key}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {filteredTotal ? (
-              <div className="cs-rows" style={{ marginTop: 4 }}>
-                {sources.map((source) => {
-                  const group = SOURCE_GROUP_BY_KEY[sourceGroupKey(source.platform)];
-                  return (
-                    <div key={source.id} className="cs-row">
-                      <span
-                        aria-hidden="true"
-                        style={{ width: 8, height: 8, borderRadius: 4, background: group.color, flexShrink: 0 }}
-                      />
-                      <div
-                        className="cs-avatar"
-                        style={{ background: avatarGradient(source.competitor_name), width: 28, height: 28, fontSize: '0.68rem' }}
-                        aria-hidden="true"
-                      >
-                        {initials(source.competitor_name)}
-                      </div>
-                      <div className="cs-row-main">
-                        <div className="cs-row-name">
-                          {source.competitor_name}
-                          <span style={{ fontWeight: 400, color: 'var(--text-light)' }}>
-                            {' '}· {PLATFORM_LABELS[source.platform] || source.platform}
-                            {source.handle ? ` @${source.handle}` : ''}
-                          </span>
-                        </div>
-                        <div className="cs-row-desc">
-                          <a href={source.url} target="_blank" rel="noopener noreferrer"
-                            style={{ color: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            {source.url} <ExternalLink size={11} />
-                          </a>
-                        </div>
-                      </div>
-                      <div className="cs-row-side">
-                        {typeof source.confidence === 'number' ? (
-                          <span className="cs-pill cs-pill-signal">{Math.round(source.confidence * 100)}% confidence</span>
-                        ) : null}
-                        <span className={`cs-pill cs-pill-${source.validation_status}`}>{source.validation_status}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="cs-empty">
-                <div className="cs-empty-icon"><Search size={20} /></div>
-                <h3>No matching sources</h3>
-                <p>Try a different search term or clear the channel/status filters.</p>
-              </div>
-            )}
-
-            {filteredTotal ? (
-              <div className="cs-pagination">
-                <div className="cs-pagination-info">
-                  Showing {(page - 1) * SOURCES_PAGE_SIZE + 1}-{Math.min(page * SOURCES_PAGE_SIZE, filteredTotal)} of {filteredTotal}
-                </div>
-                <div className="cs-pagination-controls">
-                  <button
-                    type="button"
-                    className="cs-btn cs-btn-sm"
-                    onClick={() => onPageChange(Math.max(1, page - 1))}
-                    disabled={page <= 1}
-                  >
-                    Previous
-                  </button>
-                  <span className="cs-pill cs-pill-signal">Page {page} of {totalPages}</span>
-                  <button
-                    type="button"
-                    className="cs-btn cs-btn-sm"
-                    onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-                    disabled={page >= totalPages}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="cs-empty">
-            <div className="cs-empty-icon"><Link2 size={20} /></div>
-            <h3>No sources yet</h3>
-            <p>Track a competitor and confirm or discover its channels to see them here.</p>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={onChooseCompetitors}>
-              <Layers size={15} /> Choose competitors
-            </button>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
 export default function CompetitorWorkspace() {
   const { studyId } = useParams();
   const navigate = useNavigate();
@@ -471,7 +249,7 @@ export default function CompetitorWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
-  const [runMode, setRunMode] = useState(null); // 'scrape' | 'direct' - which choice is currently running
+  const [rereadingDocuments, setRereadingDocuments] = useState(false);
   const [showRunChoice, setShowRunChoice] = useState(false);
   const [periodDays, setPeriodDays] = useState(ANALYSIS_PERIODS[0].days);
   const [pipelineRuns, setPipelineRuns] = useState([]);
@@ -498,35 +276,14 @@ export default function CompetitorWorkspace() {
     }
   });
   const [showCompetitors, setShowCompetitors] = useState(false);
-  const [activeTab, setActiveTab] = useState('reports');
-  const [sourceSearch, setSourceSearch] = useState('');
-  const [sourceGroupFilter, setSourceGroupFilter] = useState('');
-  const [sourceStatusFilter, setSourceStatusFilter] = useState('');
-  const [sourcePage, setSourcePage] = useState(1);
-  const [expandedChannels, setExpandedChannels] = useState(() => new Set());
-  const [accountsByCompetitor, setAccountsByCompetitor] = useState({});
-  const [channelBusy, setChannelBusy] = useState({});
   const [trackingBusy, setTrackingBusy] = useState({});
-  const [unverified, setUnverified] = useState({});
-  const [showAddCompetitor, setShowAddCompetitor] = useState(false);
-  const [addingManual, setAddingManual] = useState(false);
-  const [discoveringCompetitors, setDiscoveringCompetitors] = useState(false);
-  const [discoveryNotice, setDiscoveryNotice] = useState(null);
-  const [discoveringChannels, setDiscoveringChannels] = useState(false);
-  const [discoveryLogs, setDiscoveryLogs] = useState([]);
+  // Which competitors have their alternate-name editor open.
+  const [expandedAliases, setExpandedAliases] = useState(() => new Set());
   const [analysisLogs, setAnalysisLogs] = useState([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState({ name: '', description: '', status: 'active' });
   const [savingEdit, setSavingEdit] = useState(false);
-
-  const [schedule, setScheduleState] = useState(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduleDraft, setScheduleDraft] = useState({
-    repeat_enabled: false, repeat_interval_value: 1, repeat_interval_unit: 'days',
-  });
-  const [savingSchedule, setSavingSchedule] = useState(false);
-
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState(null);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -539,16 +296,14 @@ export default function CompetitorWorkspace() {
       setLoading(true);
       setError('');
       try {
-        const [detail, competitorList, scheduleDetail] = await Promise.all([
+        const [detail, competitorList] = await Promise.all([
           getStudy(studyId),
           listCompetitors(studyId),
-          getSchedule(studyId),
         ]);
         if (cancelled) return;
         setStudy(detail.study);
         setProfile(detail.profile);
         setCompetitors(competitorList.competitors || []);
-        setScheduleState(scheduleDetail.schedule || null);
       } catch (caught) {
         if (!cancelled) setError(caught.message);
       } finally {
@@ -561,9 +316,9 @@ export default function CompetitorWorkspace() {
   }, [studyId]);
 
   // A study is a project, so it has the same pipeline_runs rows any project's
-  // scrapes write - fetched here so "Run analysis" can offer analyzing one
-  // specific past run instead of only a date window, same choice Dashboard/
-  // Reports give over `articles.pipeline_run_id`. Defaults to the latest
+  // analysis runs write - fetched here so "Run analysis" can offer analyzing
+  // one specific past run instead of only a date window, the same choice
+  // Dashboard/Reports give over `articles.pipeline_run_id`. Defaults to the latest
   // completed run the first time this study is opened (tracked per study id
   // so it doesn't fight a choice the user already made); after that, only an
   // explicit pick changes it.
@@ -601,8 +356,8 @@ export default function CompetitorWorkspace() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Findings are fetched separately from the study/competitors/schedule load
-  // above so that changing a filter never has to re-fetch all of those too.
+  // Findings are fetched separately from the study/competitors load above so
+  // that changing a filter never has to re-fetch all of those too.
   useEffect(() => {
     if (!studyId) return undefined;
     let cancelled = false;
@@ -651,29 +406,21 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  // Never scraped before - hint which choice to lead with in the run dialog.
-  const likelyNeedsScrape = !study?.last_run_at;
-
-  const runAnalysis = async (scrapeFirst) => {
-    // Picking a specific past run means "analyze exactly what it gathered" -
-    // a fresh scrape would just be a different, not-yet-selected run.
+  const runAnalysis = async () => {
     const runFilter = pipelineRunId;
-    const willScrapeFirst = scrapeFirst && !runFilter;
     setShowRunChoice(false);
-    setRunMode(willScrapeFirst ? 'scrape' : 'direct');
     setAnalyzing(true);
     setError('');
     setNotice(null);
     setAnalysisLogs([]);
     try {
-      await syncSources(studyId);
-      // Queued, not awaited: a scrape plus one LLM call per competitor runs for
-      // minutes. Poll for progress so the log renders live instead of leaving
-      // the user on a spinner with no idea what stage it reached.
+      // Queued, not awaited: one LLM call per competitor runs for minutes
+      // against a local model. Poll for progress so the log renders live
+      // instead of leaving the user on a spinner with no idea what stage it
+      // reached.
       const queued = await analyze(studyId, {
         period_days: periodDays,
         pipeline_run_id: runFilter || undefined,
-        scrape: willScrapeFirst,
       });
       const run = await pollAnalysisRun(studyId, queued.run_id, (r) => setAnalysisLogs(r.logs || []));
       if (run.status === 'failed') throw new Error(run.error || 'Analysis failed.');
@@ -689,8 +436,6 @@ export default function CompetitorWorkspace() {
         pipelineRunId: validation.pipeline_run_id || null,
         skipped: run.skipped || [],
         reasons: validation.rejection_reasons || {},
-        scrapedFirst: Boolean(run.scrape_run),
-        scrapeRun: run.scrape_run || null,
       });
       clearFindingFilters();
     } catch (caught) {
@@ -735,34 +480,6 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  const openSchedule = () => {
-    setScheduleDraft({
-      repeat_enabled: Boolean(schedule?.repeat_enabled),
-      repeat_interval_value: schedule?.repeat_interval_value || 1,
-      repeat_interval_unit: schedule?.repeat_interval_unit || 'days',
-    });
-    setScheduleOpen(true);
-  };
-
-  const handleSaveSchedule = async () => {
-    setSavingSchedule(true);
-    setError('');
-    try {
-      const result = await setSchedule(studyId, {
-        repeat_enabled: scheduleDraft.repeat_enabled,
-        repeat_interval_value: Math.max(1, Number(scheduleDraft.repeat_interval_value) || 1),
-        repeat_interval_unit: scheduleDraft.repeat_interval_unit,
-      });
-      setScheduleState(result.schedule || null);
-      setStudy((prev) => (prev ? { ...prev, ...result.schedule } : prev));
-      setScheduleOpen(false);
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setSavingSchedule(false);
-    }
-  };
-
   const openProfile = () => {
     setProfileDraft({
       industry: profile?.industry || '',
@@ -800,17 +517,20 @@ export default function CompetitorWorkspace() {
     }
   };
 
+  const toggleAliases = (competitorId) => {
+    setExpandedAliases((current) => {
+      const next = new Set(current);
+      if (next.has(competitorId)) next.delete(competitorId);
+      else next.add(competitorId);
+      return next;
+    });
+  };
+
   const toggleTracking = async (competitor) => {
     const nextStatus = competitor.status === 'tracked' ? 'ignored' : 'tracked';
     setTrackingBusy((current) => ({ ...current, [competitor.id]: true }));
     try {
-      // Phase 2: tracking an AI-suggested competitor for the first time
-      // triggers a live web check server-side, so this call can take a beat
-      // longer than a plain status flip — the button shows a spinner for it.
-      const statusResult = await setCompetitorStatus(competitor.id, nextStatus);
-      if (statusResult.verification) {
-        setUnverified((current) => ({ ...current, [competitor.id]: !statusResult.verification.verified }));
-      }
+      await setCompetitorStatus(competitor.id, nextStatus);
       const result = await listCompetitors(studyId);
       setCompetitors(result.competitors || []);
     } catch (caught) {
@@ -820,9 +540,6 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  // Confirmed/valid, pending, and account_count are aggregate counts on the
-  // competitor row itself - refetch them after any channel action so the
-  // "N pending" banner and per-row counts stay in sync with what was just done.
   const refreshCompetitorCounts = async () => {
     try {
       const result = await listCompetitors(studyId);
@@ -832,192 +549,38 @@ export default function CompetitorWorkspace() {
     }
   };
 
-  const toggleChannels = async (competitorId) => {
-    setExpandedChannels((current) => {
-      const next = new Set(current);
-      if (next.has(competitorId)) next.delete(competitorId);
-      else next.add(competitorId);
-      return next;
-    });
-    if (accountsByCompetitor[competitorId]) return;
-    try {
-      const result = await listAccounts(competitorId);
-      setAccountsByCompetitor((current) => ({ ...current, [competitorId]: result.accounts || [] }));
-    } catch (caught) {
-      setError(caught.message);
-    }
-  };
-
-  const decideAccount = async (competitorId, accountId, status) => {
-    try {
-      const result = await validateAccount(accountId, status);
-      setAccountsByCompetitor((current) => ({
-        ...current,
-        [competitorId]: (current[competitorId] || []).map((account) =>
-          account.id === accountId ? result.account : account,
-        ),
-      }));
-      await refreshCompetitorCounts();
-    } catch (caught) {
-      setError(caught.message);
-    }
-  };
-
-  const findChannels = async (competitorId) => {
-    setChannelBusy((current) => ({ ...current, [competitorId]: true }));
-    try {
-      const result = await discoverAccounts(competitorId);
-      setAccountsByCompetitor((current) => ({ ...current, [competitorId]: result.accounts || [] }));
-      await refreshCompetitorCounts();
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setChannelBusy((current) => ({ ...current, [competitorId]: false }));
-    }
-  };
-
-  const addSourceToCompetitor = async (competitorId, source) => {
-    setChannelBusy((current) => ({ ...current, [competitorId]: true }));
-    try {
-      const result = await addAccount(competitorId, { ...source, validation_status: 'valid', confidence: 1 });
-      setAccountsByCompetitor((current) => ({
-        ...current,
-        [competitorId]: [...(current[competitorId] || []), result.account],
-      }));
-      await refreshCompetitorCounts();
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setChannelBusy((current) => ({ ...current, [competitorId]: false }));
-    }
-  };
-
-  const handleAddManualCompetitor = async (payload) => {
+  // Documents approved since the last run can name companies this study has
+  // never heard of, so re-reading them is a distinct action from re-running
+  // analysis over the competitor set it already has.
+  const rereadDocuments = async () => {
     setError('');
-    setAddingManual(true);
+    setRereadingDocuments(true);
     try {
-      await addCompetitorManual(studyId, payload);
+      const result = await analyzeDocuments(studyId);
       await refreshCompetitorCounts();
-      setShowAddCompetitor(false);
+      setFindings(result.findings || []);
+      setNotice({
+        generated: result.generated || 0,
+        scanned: result.articles_considered || 0,
+        periodDays: null,
+        pipelineRunId: null,
+        skipped: result.skipped || [],
+        reasons: {},
+        derivedCompetitors: result.derived_competitors || [],
+      });
+      clearFindingFilters();
     } catch (caught) {
       setError(caught.message);
     } finally {
-      setAddingManual(false);
-    }
-  };
-
-  // Optional, from the workspace rather than onboarding - runs the same
-  // background discovery job and merges results into the existing list.
-  const runDiscovery = async () => {
-    setError('');
-    setDiscoveryNotice(null);
-    setDiscoveringCompetitors(true);
-    setDiscoveryLogs([]);
-    try {
-      const queued = await discoverCompetitors(studyId, { limit: 12, with_accounts: false });
-      const run = await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
-      if (run.status === 'failed') {
-        throw new Error(run.error || run.message || 'Competitor discovery failed.');
-      }
-      await refreshCompetitorCounts();
-      setShowCompetitors(true);
-      setDiscoveryNotice({ discovered: run.discovered || 0, rejected: run.rejected || [] });
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setDiscoveringCompetitors(false);
-    }
-  };
-
-  // Phase 3: find channels for every tracked competitor that doesn't have one
-  // yet, in one shot, instead of clicking "Find channels" per competitor.
-  const runChannelDiscovery = async () => {
-    setError('');
-    setDiscoveringChannels(true);
-    setDiscoveryLogs([]);
-    try {
-      const queued = await discoverTrackedAccounts(studyId);
-      if (queued.run_id) {
-        const run = await pollDiscoveryRun(studyId, queued.run_id, (r) => setDiscoveryLogs(r.logs || []));
-        if (run.status === 'failed') {
-          throw new Error(run.error || run.message || 'Channel discovery failed.');
-        }
-        // Cached per-competitor account lists are now stale for whichever
-        // competitors just got new channels - drop the cache so re-expanding
-        // "Sources" re-fetches instead of showing the old (empty) list.
-        setAccountsByCompetitor({});
-        await refreshCompetitorCounts();
-      }
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setDiscoveringChannels(false);
+      setRereadingDocuments(false);
     }
   };
 
   const stats = useMemo(() => {
     const tracked = competitors.filter((item) => item.status === 'tracked');
-    const pendingChannels = competitors.reduce((sum, item) => sum + (item.pending_account_count || 0), 0);
     const highImpact = findings.filter((item) => item.impact_level === 'high').length;
-    const channellessTracked = tracked.filter((item) => !item.account_count).length;
-    return { tracked: tracked.length, pendingChannels, highImpact, channellessTracked };
+    return { tracked: tracked.length, highImpact };
   }, [competitors, findings]);
-
-  // Every competitor already carries its full `accounts` list from
-  // listCompetitors() (see loadAll below) - no extra request needed to see
-  // every source across the study at once.
-  const allSources = useMemo(
-    () => competitors.flatMap((competitor) => (competitor.accounts || []).map((account) => ({
-      ...account,
-      competitor_id: competitor.id,
-      competitor_name: competitor.name,
-    }))),
-    [competitors],
-  );
-
-  const sourceGroupCounts = useMemo(() => {
-    const counts = Object.fromEntries(SOURCE_GROUPS.map((group) => [group.key, 0]));
-    for (const source of allSources) counts[sourceGroupKey(source.platform)] += 1;
-    return counts;
-  }, [allSources]);
-
-  const sourceStats = useMemo(() => ({
-    total: allSources.length,
-    valid: allSources.filter((source) => source.validation_status === 'valid').length,
-    pending: allSources.filter((source) => source.validation_status === 'pending').length,
-    rejected: allSources.filter((source) => source.validation_status === 'rejected').length,
-  }), [allSources]);
-
-  const filteredSources = useMemo(() => {
-    const query = sourceSearch.trim().toLowerCase();
-    return allSources.filter((source) => {
-      if (sourceGroupFilter && sourceGroupKey(source.platform) !== sourceGroupFilter) return false;
-      if (sourceStatusFilter && source.validation_status !== sourceStatusFilter) return false;
-      if (query) {
-        const haystack = `${source.competitor_name} ${source.handle || ''} ${source.url || ''}`.toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    });
-  }, [allSources, sourceGroupFilter, sourceStatusFilter, sourceSearch]);
-
-  // A new search/filter should land back on page 1, not wherever the user was
-  // scrolled to on the old result set - adjusted during render (React's
-  // documented pattern for this) rather than an effect, so it takes effect in
-  // the same render as the filter change instead of one tick later.
-  const sourceFilterKey = `${sourceSearch}|${sourceGroupFilter}|${sourceStatusFilter}`;
-  const [prevSourceFilterKey, setPrevSourceFilterKey] = useState(sourceFilterKey);
-  if (sourceFilterKey !== prevSourceFilterKey) {
-    setPrevSourceFilterKey(sourceFilterKey);
-    setSourcePage(1);
-  }
-
-  const sourceTotalPages = Math.max(1, Math.ceil(filteredSources.length / SOURCES_PAGE_SIZE));
-  const sourceSafePage = Math.min(sourcePage, sourceTotalPages);
-  const pagedSources = useMemo(
-    () => filteredSources.slice((sourceSafePage - 1) * SOURCES_PAGE_SIZE, sourceSafePage * SOURCES_PAGE_SIZE),
-    [filteredSources, sourceSafePage],
-  );
 
   if (loading) {
     return (
@@ -1057,28 +620,18 @@ export default function CompetitorWorkspace() {
           <button type="button" className="cs-btn" onClick={() => setShowCompetitors((value) => !value)}>
             <Layers size={15} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}
           </button>
-          <button type="button" className="cs-btn" onClick={runDiscovery} disabled={discoveringCompetitors}>
-            {discoveringCompetitors ? <span className="cs-spinner" /> : <Radar size={15} />}
-            {discoveringCompetitors ? 'Discovering...' : 'Discover with AI'}
+          <button type="button" className="cs-btn" onClick={rereadDocuments} disabled={rereadingDocuments || analyzing}>
+            {rereadingDocuments ? <span className="cs-spinner" /> : <FileText size={15} />}
+            {rereadingDocuments ? 'Reading documents...' : 'Re-read documents'}
           </button>
-          {stats.channellessTracked > 0 && (
-            <button type="button" className="cs-btn" onClick={runChannelDiscovery} disabled={discoveringChannels}>
-              {discoveringChannels ? <span className="cs-spinner" /> : <Search size={15} />}
-              {discoveringChannels ? 'Finding channels...' : `Find channels (${stats.channellessTracked})`}
-            </button>
-          )}
-          <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
+          <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing || rereadingDocuments}>
             {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
-            {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
+            {analyzing ? 'Analysing...' : 'Run analysis'}
           </button>
           {canManage && (
             <>
               <button type="button" className="cs-btn" onClick={openProfile}>
                 <Building2 size={15} /> {profile ? 'Edit profile' : 'Add profile'}
-              </button>
-              <button type="button" className="cs-btn" onClick={openSchedule}>
-                <CalendarClock size={15} />
-                {schedule?.repeat_enabled ? `Every ${schedule.repeat_interval_value} ${schedule.repeat_interval_unit}` : 'Tracking off'}
               </button>
               <button type="button" className="cs-btn" onClick={openEdit}>
                 <Pencil size={15} /> Edit study
@@ -1096,10 +649,6 @@ export default function CompetitorWorkspace() {
         </div>
       </div>
 
-      {(discoveringCompetitors || discoveringChannels) ? (
-        <DiscoveryLog logs={discoveryLogs} active={discoveringCompetitors || discoveringChannels} />
-      ) : null}
-
       {analyzing || analysisLogs.length ? (
         <DiscoveryLog logs={analysisLogs} active={analyzing} />
       ) : null}
@@ -1110,49 +659,18 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      {discoveryNotice ? (
-        <div className="cs-alert cs-alert-info">
-          <Sparkles size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>
-            Discovered {discoveryNotice.discovered} competitor{discoveryNotice.discovered === 1 ? '' : 's'}.
-            {discoveryNotice.rejected.length
-              ? ` ${discoveryNotice.rejected.length} suggestion${discoveryNotice.rejected.length === 1 ? '' : 's'} dropped during checking.`
-              : ''}
-            {' '}Review them in the competitors list below.
-          </span>
-        </div>
-      ) : null}
-
-      {stats.pendingChannels > 0 ? (
-        <div className="cs-alert cs-alert-warn">
-          <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>
-            {stats.pendingChannels} channel{stats.pendingChannels === 1 ? '' : 's'} still awaiting
-            confirmation. Unconfirmed channels are not scraped, so their activity is missing from
-            these reports.{' '}
-            <button type="button" onClick={() => setShowCompetitors(true)}
-              style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>
-              Review them
-            </button>
-          </span>
-        </div>
-      ) : null}
-
       {notice ? (
         <div className="cs-alert cs-alert-info">
           <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
-            {notice.scrapedFirst ? (
-              <>
-                This study had no articles yet, so we scraped and enriched its sources first
-                {notice.scrapeRun?.articles_saved ? ` (${notice.scrapeRun.articles_saved} saved)` : ''}, then{' '}
-              </>
-            ) : null}
             Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
-            {notice.scanned} scanned article{notice.scanned === 1 ? '' : 's'}
+            {notice.scanned} article{notice.scanned === 1 ? '' : 's'}
             {notice.pipelineRunId
-              ? ' from the selected pipeline run'
+              ? ' from the selected analysis run'
               : notice.periodDays ? ` in the last ${notice.periodDays} days` : ''}.
+            {notice.derivedCompetitors?.length
+              ? ` Covering ${notice.derivedCompetitors.map((item) => item.name).join(', ')}.`
+              : ''}
             {Object.keys(notice.reasons).length ? (
               <>
                 {' '}Filtered out:{' '}
@@ -1170,59 +688,26 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      <div className="cs-view-tabs" role="tablist" aria-label="Switch workspace tab" style={{ marginBottom: 16 }}>
-        {WORKSPACE_TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.value;
-          return (
-            <button key={tab.value} type="button" role="tab" aria-selected={isActive}
-              className={`cs-view-tab${isActive ? ' active' : ''}`} onClick={() => setActiveTab(tab.value)}>
-              <Icon size={14} /> {tab.label}
-            </button>
-          );
-        })}
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+        <StatTile icon={Radar} label="Tracked" value={stats.tracked} />
+        <StatTile icon={BarChart3} label="Reports" value={findings.length} />
+        <StatTile icon={TrendingUp} label="High impact" value={stats.highImpact}
+          tone={stats.highImpact ? '#b91c1c' : undefined} />
+        <StatTile icon={CalendarClock} label="Last run"
+          value={study?.last_run_at ? relativeTime(study.last_run_at) : 'Never'} />
       </div>
-
-      {activeTab === 'sources' ? (
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
-          <StatTile icon={Link2} label="Total sources" value={sourceStats.total} />
-          <StatTile icon={ShieldCheck} label="Valid" value={sourceStats.valid} />
-          <StatTile icon={RefreshCw} label="Pending" value={sourceStats.pending}
-            tone={sourceStats.pending ? '#a16207' : undefined} />
-          <StatTile icon={X} label="Rejected" value={sourceStats.rejected} />
-        </div>
-      ) : (
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
-          <StatTile icon={Radar} label="Tracked" value={stats.tracked} />
-          <StatTile icon={BarChart3} label="Reports" value={findings.length} />
-          <StatTile icon={TrendingUp} label="High impact" value={stats.highImpact}
-            tone={stats.highImpact ? '#b91c1c' : undefined} />
-          <StatTile icon={CalendarClock} label="Last run"
-            value={study?.last_run_at ? relativeTime(study.last_run_at) : 'Never'} />
-        </div>
-      )}
 
       {showCompetitors ? (
         <div className="cs-panel" style={{ marginBottom: 20 }}>
           <h2 className="cs-panel-title"><Layers size={16} /> Competitors</h2>
           <p className="cs-panel-hint">
-            Only tracked competitors are scraped and analysed. Ranked by size.
+            Named from this study&rsquo;s approved document articles. Only tracked competitors get a
+            report; untrack anything the documents mention but you aren&rsquo;t watching.
           </p>
-
-          <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: '1px solid #eef1f6' }}>
-            {showAddCompetitor ? (
-              <AddCompetitorForm onSubmit={handleAddManualCompetitor} busy={addingManual} />
-            ) : (
-              <button type="button" className="cs-btn cs-btn-sm" onClick={() => setShowAddCompetitor(true)}>
-                <Plus size={13} /> Add competitor manually
-              </button>
-            )}
-          </div>
 
           <div className="cs-rows">
             {competitors.map((competitor) => {
-              const channelsOpen = expandedChannels.has(competitor.id);
-              const accounts = accountsByCompetitor[competitor.id];
+              const aliasesOpen = expandedAliases.has(competitor.id);
               return (
                 <div key={competitor.id}>
                   <div className="cs-row">
@@ -1233,9 +718,10 @@ export default function CompetitorWorkspace() {
                     <div className="cs-row-main">
                       <div className="cs-row-name">{competitor.name}</div>
                       <div className="cs-row-desc">
-                        {competitor.valid_account_count}/{competitor.account_count} channels confirmed
-                        {competitor.pending_account_count ? ` · ${competitor.pending_account_count} pending` : ''}
-                        {competitor.finding_count ? ` · ${competitor.finding_count} report(s)` : ''}
+                        {competitor.finding_count
+                          ? `${competitor.finding_count} report${competitor.finding_count === 1 ? '' : 's'}`
+                          : 'No report yet'}
+                        {competitor.aliases?.length ? ` · also known as ${competitor.aliases.join(', ')}` : ''}
                       </div>
                     </div>
                     <div className="cs-row-side">
@@ -1255,16 +741,8 @@ export default function CompetitorWorkspace() {
                       <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
                         {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
                       </span>
-                      {competitor.status === 'tracked' && unverified[competitor.id] ? (
-                        <span
-                          className="cs-pill cs-pill-signal"
-                          title="Tracked, but a live web check couldn't confirm this company exists — worth a manual look."
-                        >
-                          Couldn’t verify
-                        </span>
-                      ) : null}
-                      <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleChannels(competitor.id)}>
-                        <Link2 size={13} /> {channelsOpen ? 'Hide channels' : 'Channels'}
+                      <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleAliases(competitor.id)}>
+                        <Tags size={13} /> {aliasesOpen ? 'Hide names' : 'Other names'}
                       </button>
                       <button
                         type="button"
@@ -1283,59 +761,13 @@ export default function CompetitorWorkspace() {
                     </div>
                   </div>
 
-                  {channelsOpen ? (
+                  {aliasesOpen ? (
                     <div className="cs-rows" style={{ marginLeft: 30, marginBottom: 14 }}>
                       <AliasEditor
                         key={(competitor.aliases || []).join('|')}
                         competitor={competitor}
                         onSave={(aliases) => saveAliases(competitor.id, aliases)}
                       />
-                      {!accounts ? (
-                        <div className="cs-row-desc" style={{ padding: '8px 0' }}>Loading channels...</div>
-                      ) : !accounts.length ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
-                          <span className="cs-row-desc">No channels found yet.</span>
-                          <button type="button" className="cs-btn cs-btn-sm"
-                            onClick={() => findChannels(competitor.id)} disabled={channelBusy[competitor.id]}>
-                            {channelBusy[competitor.id] ? <span className="cs-spinner" /> : <Search size={13} />} Find channels
-                          </button>
-                        </div>
-                      ) : null}
-                      {accounts?.length ? (
-                        accounts.map((account) => (
-                          <div key={account.id} className="cs-row">
-                            <div className="cs-row-main">
-                              <div className="cs-row-name">
-                                {PLATFORM_LABELS[account.platform] || account.platform}
-                                {account.handle ? <span style={{ fontWeight: 400, color: 'var(--text-light)' }}> @{account.handle}</span> : null}
-                              </div>
-                              <div className="cs-row-desc">{account.url}</div>
-                            </div>
-                            <div className="cs-row-side">
-                              {account.confidence != null ? (
-                                <span className="cs-pill cs-pill-signal">
-                                  {Math.round(Number(account.confidence) * 100)}% sure
-                                </span>
-                              ) : null}
-                              <span className={`cs-pill cs-pill-${account.validation_status}`}>
-                                {account.validation_status}
-                              </span>
-                              {account.validation_status !== 'rejected' ? (
-                                <button type="button" className="cs-btn cs-btn-sm cs-btn-danger"
-                                  onClick={() => decideAccount(competitor.id, account.id, 'rejected')}>
-                                  <Trash2 size={13} /> Not theirs
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))
-                      ) : null}
-                      {Array.isArray(accounts) ? (
-                        <AddSourceRow
-                          busy={Boolean(channelBusy[competitor.id])}
-                          onSubmit={(source) => addSourceToCompetitor(competitor.id, source)}
-                        />
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -1345,24 +777,7 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
-      {activeTab === 'sources' ? (
-        <SourcesPanel
-          sources={pagedSources}
-          filteredTotal={filteredSources.length}
-          total={allSources.length}
-          groupCounts={sourceGroupCounts}
-          search={sourceSearch}
-          onSearch={setSourceSearch}
-          groupFilter={sourceGroupFilter}
-          onGroupFilter={setSourceGroupFilter}
-          statusFilter={sourceStatusFilter}
-          onStatusFilter={setSourceStatusFilter}
-          onChooseCompetitors={() => setShowCompetitors(true)}
-          page={sourceSafePage}
-          totalPages={sourceTotalPages}
-          onPageChange={setSourcePage}
-        />
-      ) : (findings.length > 0 || hasFindingFilters) ? (
+      {(findings.length > 0 || hasFindingFilters) ? (
         <>
           <div className="cs-panel cs-findings-toolbar">
             <label className="cs-search-field">
@@ -1487,18 +902,18 @@ export default function CompetitorWorkspace() {
           <h3>No reports yet</h3>
           <p>
             {stats.tracked
-              ? 'Competitors are tracked but nothing has been analysed. Run the analysis to scrape fresh evidence or read what is already on file.'
-              : 'Track at least one competitor, confirm their channels, then run the analysis.'}
+              ? 'Competitors are tracked but nothing has been analysed yet. Run the analysis over the evidence on file.'
+              : 'Upload documents and approve their articles, then re-read the documents to find the companies they are about.'}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {stats.tracked ? (
               <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowRunChoice(true)} disabled={analyzing}>
                 {analyzing ? <span className="cs-spinner" /> : <Sparkles size={15} />}
-                {analyzing ? (runMode === 'scrape' ? 'Scraping & analysing...' : 'Analysing...') : 'Run analysis'}
+                {analyzing ? 'Analysing...' : 'Run analysis'}
               </button>
             ) : (
-              <button type="button" className="cs-btn cs-btn-primary" onClick={() => setShowCompetitors(true)}>
-                <Layers size={15} /> Choose competitors
+              <button type="button" className="cs-btn cs-btn-primary" onClick={rereadDocuments} disabled={rereadingDocuments}>
+                {rereadingDocuments ? <span className="cs-spinner" /> : <FileText size={15} />} Re-read documents
               </button>
             )}
           </div>
@@ -1517,8 +932,8 @@ export default function CompetitorWorkspace() {
             </div>
 
             <p id="run-analysis-message" className="confirm-modal-message">
-              Scrape this study&rsquo;s sources for fresh articles first, or analyse the evidence already on file?
-              {' '}{study?.last_run_at ? `Last scraped ${relativeTime(study.last_run_at)}.` : 'This study has never been scraped.'}
+              Re-reads the evidence already on file and rewrites a card per tracked competitor.
+              {' '}{study?.last_run_at ? `Last run ${relativeTime(study.last_run_at)}.` : 'This study has never been analysed.'}
             </p>
 
             <div className="cs-run-period" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1533,7 +948,7 @@ export default function CompetitorWorkspace() {
                     <button type="button" role="tab" aria-selected={!!pipelineRunId}
                       className={`source-type-tab ${pipelineRunId ? 'active' : ''}`}
                       onClick={() => setPipelineRunId(pipelineRunId || pipelineRuns[0].id)}>
-                      Pipeline run
+                      Analysis run
                     </button>
                   ) : null}
                 </div>
@@ -1542,7 +957,7 @@ export default function CompetitorWorkspace() {
               {pipelineRunId ? (
                 <select className="cs-select filter-run-select" value={pipelineRunId}
                   onChange={(event) => setPipelineRunId(event.target.value)}
-                  aria-label="Pipeline run to analyze">
+                  aria-label="Analysis run to analyze">
                   {pipelineRuns.map((run, index) => (
                     <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
                   ))}
@@ -1561,41 +976,24 @@ export default function CompetitorWorkspace() {
 
               <small>
                 {pipelineRunId
-                  ? 'Only the articles that specific pipeline run gathered are used as evidence - no new scrape runs.'
+                  ? 'Only the articles that analysis run covered are used as evidence.'
                   : (<>
                       Evidence outside this window is ignored, and each report says which window it covers.
-                      Pages scraped from a competitor&rsquo;s own site are dated by when they were fetched, so
-                      a longer window mainly helps with competitors the news covers rarely.
+                      An article split out of an uploaded document is dated by when the document was added,
+                      so a longer window mainly helps studies built up over time.
                     </>)}
               </small>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '4px 0 6px' }}>
-              {pipelineRunId ? (
-                <button type="button" onClick={() => runAnalysis(false)}
-                  className="cs-btn cs-btn-primary"
-                  style={{ justifyContent: 'flex-start', width: '100%' }}>
-                  <Sparkles size={15} />
-                  <span style={{ textAlign: 'left', flex: 1 }}>Analyze this pipeline run</span>
-                </button>
-              ) : (
-                <>
-                  <button type="button" onClick={() => runAnalysis(true)}
-                    className={`cs-btn${likelyNeedsScrape ? ' cs-btn-primary' : ''}`}
-                    style={{ justifyContent: 'flex-start', width: '100%' }}>
-                    <RefreshCw size={15} />
-                    <span style={{ textAlign: 'left', flex: 1 }}>Scrape &amp; analyze</span>
-                    {likelyNeedsScrape ? <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span> : null}
-                  </button>
-                  <button type="button" onClick={() => runAnalysis(false)}
-                    className={`cs-btn${likelyNeedsScrape ? '' : ' cs-btn-primary'}`}
-                    style={{ justifyContent: 'flex-start', width: '100%' }}>
-                    <Sparkles size={15} />
-                    <span style={{ textAlign: 'left', flex: 1 }}>Analyze existing articles</span>
-                    {likelyNeedsScrape ? null : <span style={{ fontSize: '0.72rem', opacity: 0.85 }}>Recommended</span>}
-                  </button>
-                </>
-              )}
+              <button type="button" onClick={runAnalysis}
+                className="cs-btn cs-btn-primary"
+                style={{ justifyContent: 'flex-start', width: '100%' }}>
+                <Sparkles size={15} />
+                <span style={{ textAlign: 'left', flex: 1 }}>
+                  {pipelineRunId ? 'Analyze this run' : 'Analyze this window'}
+                </span>
+              </button>
             </div>
 
             <div className="confirm-modal-actions">
@@ -1633,36 +1031,6 @@ export default function CompetitorWorkspace() {
             ))}
           </select>
         </div>
-      </ConfirmModal>
-
-      <ConfirmModal
-        open={scheduleOpen}
-        title="Tracking schedule"
-        message="Automatically re-scrape and re-analyse this study's competitors on a recurring interval."
-        confirmLabel={savingSchedule ? 'Saving...' : 'Save schedule'}
-        cancelLabel="Cancel"
-        onClose={() => setScheduleOpen(false)}
-        onConfirm={handleSaveSchedule}
-      >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', marginBottom: 14 }}>
-          <input type="checkbox" checked={scheduleDraft.repeat_enabled}
-            onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_enabled: event.target.checked })} />
-          Scrape and re-analyse automatically
-        </label>
-        {scheduleDraft.repeat_enabled ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: '0.88rem' }}>
-            <span>Every</span>
-            <input className="cs-input" type="number" min="1" style={{ width: 78 }}
-              value={scheduleDraft.repeat_interval_value}
-              onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_interval_value: event.target.value })} />
-            <select className="cs-input" style={{ width: 130 }} value={scheduleDraft.repeat_interval_unit}
-              onChange={(event) => setScheduleDraft({ ...scheduleDraft, repeat_interval_unit: event.target.value })}>
-              {SCHEDULE_UNIT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </div>
-        ) : null}
       </ConfirmModal>
 
       <ConfirmModal

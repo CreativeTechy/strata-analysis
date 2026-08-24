@@ -231,7 +231,7 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
     clauses = []
     params = []
 
@@ -280,22 +280,22 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         clauses.append("coalesce(published, created_at) <= %s")
         params.append(date_to_value)
 
-    scraped_from_value = _normalize_date_bound(scraped_from)
-    if scraped_from_value:
+    added_from_value = _normalize_date_bound(added_from)
+    if added_from_value:
         clauses.append("fetched_at >= %s")
-        params.append(scraped_from_value)
+        params.append(added_from_value)
 
-    scraped_to_value = _normalize_date_bound(scraped_to)
-    if scraped_to_value:
+    added_to_value = _normalize_date_bound(added_to)
+    if added_to_value:
         clauses.append("fetched_at <= %s")
-        params.append(scraped_to_value)
+        params.append(added_to_value)
 
     if clauses:
         return " where " + " and ".join(clauses), params
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -310,8 +310,8 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
-        scraped_from=scraped_from,
-        scraped_to=scraped_to,
+        added_from=added_from,
+        added_to=added_to,
     )
 
     try:
@@ -339,7 +339,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         return [], 0
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
     if not config.DATABASE_URL:
         return []
 
@@ -362,8 +362,8 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             date_from=date_from,
             date_to=date_to,
             source_url=source_url,
-            scraped_from=scraped_from,
-            scraped_to=scraped_to,
+            added_from=added_from,
+            added_to=added_to,
             max_limit=page_size,
         )
         if not batch:
@@ -501,7 +501,7 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, scraped_from=None, scraped_to=None, select=ARTICLES_SELECT):
+def _search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, select=ARTICLES_SELECT):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
@@ -512,8 +512,8 @@ def _search_results(search=None, sentiment=None, category=None, project_id=None,
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
-        scraped_from=scraped_from,
-        scraped_to=scraped_to,
+        added_from=added_from,
+        added_to=added_to,
     )
     ranked_rows, matched_rows = _rank_search_rows(rows, search)
     if _normalize_text(search):
@@ -908,7 +908,7 @@ def _topic_summary(rows):
     }
 
 
-def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, scraped_from=None, scraped_to=None):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -921,8 +921,8 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             category=category,
             project_id=project_id,
             source_url=source_url,
-            scraped_from=scraped_from,
-            scraped_to=scraped_to,
+            added_from=added_from,
+            added_to=added_to,
         )
         rows = rows[offset:offset + limit]
         rows = _attach_project_similarity_scores(rows, project_id)
@@ -944,8 +944,8 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         order=f"{field}.{direction}",
         select=ARTICLES_SELECT,
         source_url=source_url,
-        scraped_from=scraped_from,
-        scraped_to=scraped_to,
+        added_from=added_from,
+        added_to=added_to,
     )
     rows = _attach_project_similarity_scores(rows, project_id)
     return {
@@ -957,7 +957,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, scraped_from=None, scraped_to=None):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None):
     """Yield full article rows for the JSONL export, one page at a time.
 
     A generator rather than a list: the export carries `text` and
@@ -982,8 +982,8 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             category=category,
             project_id=project_id,
             source_url=source_url,
-            scraped_from=scraped_from,
-            scraped_to=scraped_to,
+            added_from=added_from,
+            added_to=added_to,
             select=select,
         )
         yield from _apply_similarity_scores(rows, scores)
@@ -1004,8 +1004,8 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             order=f"{field}.{direction}",
             select=select,
             source_url=source_url,
-            scraped_from=scraped_from,
-            scraped_to=scraped_to,
+            added_from=added_from,
+            added_to=added_to,
             max_limit=page_size,
         )
         if not batch:

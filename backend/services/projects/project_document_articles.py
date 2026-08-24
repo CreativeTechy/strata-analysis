@@ -27,7 +27,7 @@ import config
 import db
 from llm_client import chat_completion
 from prompt_loader import load_prompt
-from services.articles.enrich import DEFAULT_ENRICHMENT
+from services.articles.analysis_defaults import DEFAULT_ENRICHMENT
 from services.articles.store import save_articles
 
 logger = logging.getLogger(__name__)
@@ -157,8 +157,8 @@ def _materialize(candidate: dict) -> int | None:
     but stable `url` - articles.url is unique/not-null and there is no real
     URL for an uploaded document - so re-approving is idempotent.
 
-    Starts from DEFAULT_ENRICHMENT (enrich.py's own fallback for "no real
-    analysis ran") rather than a bare dict: several `articles` columns are
+    Starts from DEFAULT_ENRICHMENT (analysis_defaults.py's own fallback for
+    "no real analysis ran") rather than a bare dict: several `articles` columns are
     not-null with no python-side default (e.g. sentiment_low_confidence,
     analysis_attempt_count), and save_articles inserts whatever the caller
     passes - including an explicit NULL that overrides the column's own DB
@@ -166,12 +166,20 @@ def _materialize(candidate: dict) -> int | None:
     overridden to 'pending' rather than DEFAULT_ENRICHMENT's 'failed': nothing
     crashed here, sentiment/topic tagging just hasn't run yet - the caller is
     expected to queue reanalyze_article() for the returned id next."""
+    document = db.fetch_one(
+        "select original_filename from project_documents where id = %s",
+        (int(candidate["document_id"]),),
+    )
     url = f"document://project-document/{candidate['document_id']}/article/{candidate['id']}"
+    # source_url identifies the *document*, not this one article, so every
+    # article split out of the same file groups under it - that is what the
+    # Articles page's source grouping and the keyword-existence document
+    # filter read. `url` stays per-article because it is the unique key.
     article = {
         **DEFAULT_ENRICHMENT,
         "url": url,
-        "source": "Uploaded document",
-        "source_url": url,
+        "source": (document or {}).get("original_filename") or "Uploaded document",
+        "source_url": f"document://project-document/{candidate['document_id']}",
         "title": candidate["title"],
         "summary": candidate.get("summary") or "",
         "text": candidate["body"],

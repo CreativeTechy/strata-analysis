@@ -9,7 +9,7 @@ transformers install for a network round trip per chunk. Category,
 writer_tone, and article_tone are three independent zero-shot calls against
 the same model/text, since each asks a different question of it
 (writer_tone and article_tone are deliberately never conflated here - that
-only happens later, deterministically, in enrich.py's _compute_overall_tone).
+only happens later, deterministically, in aggregation.compute_overall_tone).
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     # credentials, out of credit/quota - see enrich.FATAL_ANALYSIS_ERRORS)
     # stops the whole pipeline there. Anything else (rate limit, timeout,
     # outage) just fails this one chunk/article - see
-    # services/articles/enrich.py and scraper/pipelines.py.
+    # services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS.
     result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
     result_labels = result.get("labels") or []
     result_scores = result.get("scores") or []

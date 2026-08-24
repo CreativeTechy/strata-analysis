@@ -8,7 +8,7 @@ function readCookie(name) {
 
 function isSameOriginApiRequest(input) {
   const url = typeof input === 'string' ? input : input?.url || '';
-  if (url.startsWith('/api') || url.startsWith('/scrape')) return true;
+  if (url.startsWith('/api')) return true;
   try {
     return new URL(url, window.location.href).origin === window.location.origin;
   } catch {

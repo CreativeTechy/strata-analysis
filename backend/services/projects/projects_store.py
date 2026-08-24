@@ -1,12 +1,17 @@
-"""Postgres-backed project helpers."""
+"""Postgres-backed project helpers.
+
+A project here owns documents, articles, and the users who can see it. It has
+no sources and no schedule: nothing is fetched, so there is nothing to fetch on
+a cadence - `last_run_at`/`last_run_status` record the project's most recent
+analysis run and that is the whole of its run state.
+"""
 
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Iterable
-from urllib.parse import unquote, urlparse, urlunparse
 
 import config
 import db
@@ -18,8 +23,7 @@ from psycopg.types.json import Jsonb
 PROJECT_SELECT = (
     "id,name,mode,status,description,location,location_type,target_audience,hashtags,keywords,usernames,"
     "start_date,end_date,embedding_json,embedding_model,embedding_source,embedded_at,"
-    "repeat_enabled,repeat_interval_value,repeat_interval_unit,first_run_at,repeat_weekdays,"
-    "next_run_at,last_run_at,last_run_status,"
+    "last_run_at,last_run_status,"
     "created_at,updated_at"
 )
 
@@ -36,19 +40,12 @@ PROJECT_MUTABLE_FIELDS = (
     "usernames",
     "start_date",
     "end_date",
-    "repeat_enabled",
-    "repeat_interval_value",
-    "repeat_interval_unit",
-    "first_run_at",
-    "repeat_weekdays",
 )
 PROJECT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
-PROJECT_SCHEDULE_FIELDS = ("next_run_at", "last_run_at", "last_run_status")
+# Written by the analysis pipeline (record_run_completion), never by a user edit.
+PROJECT_RUN_FIELDS = ("last_run_at", "last_run_status")
 
-REPEAT_INTERVAL_UNITS = ("minutes", "hours", "days")
 LOCATION_TYPES = ("on_site", "remote", "hybrid")
-REPEAT_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-WEEKDAY_INDEX = {day: index for index, day in enumerate(REPEAT_WEEKDAYS)}
 
 
 @lru_cache(maxsize=1)
@@ -99,35 +96,8 @@ def _project_embedding_fields():
     return [field for field in PROJECT_EMBEDDING_FIELDS if field in columns]
 
 
-def _project_schedule_fields():
-    columns = _project_columns()
-    return [field for field in PROJECT_SCHEDULE_FIELDS if field in columns]
-
-
 def _jsonb_param(value):
     return Jsonb(value if value is not None else [])
-
-
-def _normalize_url(value):
-    text = str(value or "").strip()
-    if not text:
-        return ""
-
-    parsed = urlparse(text)
-    if parsed.scheme and parsed.netloc:
-        path = unquote(parsed.path or "").rstrip("/")
-        return urlunparse(
-            (
-                parsed.scheme.lower(),
-                parsed.netloc.lower(),
-                path,
-                parsed.params or "",
-                parsed.query or "",
-                parsed.fragment or "",
-            )
-        )
-
-    return text.rstrip("/")
 
 
 def _clean_ids(values: Iterable) -> list[int]:
@@ -159,7 +129,7 @@ def _clean_terms(values: Iterable) -> list[str]:
     return cleaned
 
 
-def _normalize_project(row, source_ids=None, user_ids=None):
+def _normalize_project(row, user_ids=None):
     row = row or {}
     hashtags = row.get("hashtags") or []
     keywords = row.get("keywords") or []
@@ -188,34 +158,11 @@ def _normalize_project(row, source_ids=None, user_ids=None):
         "embedding_model": (row.get("embedding_model") or "").strip(),
         "embedding_source": (row.get("embedding_source") or "").strip(),
         "embedded_at": row.get("embedded_at"),
-        "repeat_enabled": bool(row.get("repeat_enabled", False)),
-        "repeat_interval_value": row.get("repeat_interval_value"),
-        "repeat_interval_unit": (row.get("repeat_interval_unit") or "").strip().lower(),
-        "first_run_at": row.get("first_run_at"),
-        "repeat_weekdays": _validate_weekdays(row.get("repeat_weekdays")),
-        "next_run_at": row.get("next_run_at"),
         "last_run_at": row.get("last_run_at"),
         "last_run_status": (row.get("last_run_status") or "").strip(),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "source_ids": _clean_ids(source_ids or []),
         "user_ids": _clean_ids(user_ids or []),
-    }
-
-
-def _normalize_source(row):
-    url = (row.get("url") or "").strip()
-    name = (row.get("name") or "").strip() or url
-    source_type = config._resolve_source_type(row.get("source_type") or "", url)
-    return {
-        "id": row.get("id"),
-        "url": url,
-        "name": name,
-        "enabled": bool(row.get("enabled", True)),
-        "source_type": source_type,
-        "limited": bool(row.get("limited", False)),
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
     }
 
 
@@ -226,19 +173,6 @@ def _fetch_rows(query, params=None):
         return db.fetch_all(query, params or ())
     except Exception:
         return []
-
-
-def _fetch_project_source_map():
-    rows = _fetch_rows("select project_id, source_id from project_sources order by project_id asc, source_id asc")
-    mapping = defaultdict(list)
-    for row in rows:
-        try:
-            project_id = int(row.get("project_id"))
-            source_id = int(row.get("source_id"))
-        except Exception:
-            continue
-        mapping[project_id].append(source_id)
-    return mapping
 
 
 def _fetch_project_user_map():
@@ -264,33 +198,6 @@ def _fetch_user_project_map():
         except Exception:
             continue
         mapping[user_id].append(project_id)
-    return mapping
-
-
-def _fetch_source_project_map():
-    rows = _fetch_rows("select project_id, source_id from project_sources order by source_id asc, project_id asc")
-    mapping = defaultdict(list)
-    for row in rows:
-        try:
-            project_id = int(row.get("project_id"))
-            source_id = int(row.get("source_id"))
-        except Exception:
-            continue
-        mapping[source_id].append(project_id)
-    return mapping
-
-
-def _fetch_source_url_map():
-    rows = _fetch_rows("select id, url from sources order by id asc")
-    mapping = defaultdict(list)
-    for row in rows:
-        try:
-            source_id = int(row.get("id"))
-        except Exception:
-            continue
-        key = _normalize_url(row.get("url"))
-        if key:
-            mapping[key].append(source_id)
     return mapping
 
 
@@ -399,12 +306,8 @@ def list_projects(visible_project_ids=None):
             """,
             params,
         )
-        source_map = _fetch_project_source_map()
         user_map = _fetch_project_user_map()
-        return [
-            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
-            for row in rows
-        ]
+        return [_normalize_project(row, user_map.get(row.get("id"), [])) for row in rows]
     except Exception:
         return []
 
@@ -443,10 +346,9 @@ def list_projects_page(limit=25, offset=0, visible_project_ids=None):
         total_row = db.fetch_one(
             f"select count(*)::int as total from projects {count_where_sql}", tuple(count_params)
         )
-        source_map = _fetch_project_source_map()
         user_map = _fetch_project_user_map()
         projects = [
-            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
+            _normalize_project(row, user_map.get(row.get("id"), []))
             for row in rows
             if isinstance(row, dict)
         ]
@@ -472,9 +374,8 @@ def get_project(project_id):
         )
         if not rows:
             return None
-        source_map = _fetch_project_source_map()
         user_map = _fetch_project_user_map()
-        return _normalize_project(rows[0], source_map.get(rows[0].get("id"), []), user_map.get(rows[0].get("id"), []))
+        return _normalize_project(rows[0], user_map.get(rows[0].get("id"), []))
     except Exception:
         return None
 
@@ -486,87 +387,6 @@ def _validate_location_type(value):
     if text not in LOCATION_TYPES:
         raise ValueError(f"location_type must be one of {', '.join(LOCATION_TYPES)}.")
     return text
-
-
-def _validate_weekdays(values):
-    cleaned = []
-    seen = set()
-    for value in values or []:
-        text = str(value or "").strip().lower()
-        if text and text in WEEKDAY_INDEX and text not in seen:
-            seen.add(text)
-            cleaned.append(text)
-    return cleaned
-
-
-def _coerce_datetime(value):
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    if isinstance(value, str) and value.strip():
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except Exception:
-            return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    return None
-
-
-def _apply_weekday_filter(base_time, weekdays):
-    """Roll `base_time` forward (never backward) to the next day matching one of `weekdays`."""
-    if not isinstance(base_time, datetime):
-        return base_time
-    allowed = {WEEKDAY_INDEX[day] for day in weekdays or [] if day in WEEKDAY_INDEX}
-    if not allowed:
-        return base_time
-    candidate = base_time
-    for _ in range(7):
-        if candidate.weekday() in allowed:
-            return candidate
-        candidate = candidate + timedelta(days=1)
-    return base_time
-
-
-def _validate_repeat_fields(repeat_enabled, interval_value, interval_unit):
-    """Raise ValueError on bad input; return (value, unit) normalized for storage."""
-    unit = str(interval_unit or "").strip().lower()
-
-    if not repeat_enabled:
-        # Preserve a previously configured interval so re-enabling keeps the old cadence,
-        # but don't hard-fail on garbage input for a disabled schedule.
-        try:
-            value = int(interval_value) if interval_value not in (None, "") else None
-        except Exception:
-            value = None
-        if value is not None and value <= 0:
-            value = None
-        if unit and unit not in REPEAT_INTERVAL_UNITS:
-            unit = ""
-        return value, unit
-
-    try:
-        value = int(interval_value)
-    except Exception:
-        raise ValueError("repeat_interval_value must be a positive integer when repeat is enabled.")
-    if value <= 0:
-        raise ValueError("repeat_interval_value must be greater than 0 when repeat is enabled.")
-    if unit not in REPEAT_INTERVAL_UNITS:
-        raise ValueError(f"repeat_interval_unit must be one of {', '.join(REPEAT_INTERVAL_UNITS)}.")
-    return value, unit
-
-
-def _compute_next_run_at(base_time, value, unit, weekdays=None):
-    if not value or unit not in REPEAT_INTERVAL_UNITS:
-        return None
-
-    base_time = _coerce_datetime(base_time) or datetime.now(timezone.utc)
-
-    if unit == "minutes":
-        delta = timedelta(minutes=value)
-    elif unit == "hours":
-        delta = timedelta(hours=value)
-    else:
-        delta = timedelta(days=value)
-    return _apply_weekday_filter(base_time + delta, weekdays)
 
 
 def _project_payload(project):
@@ -583,11 +403,6 @@ def _project_payload(project):
     if isinstance(usernames, str):
         usernames = [part.strip() for part in usernames.replace("\n", ",").split(",")]
 
-    repeat_enabled = bool(project.get("repeat_enabled"))
-    repeat_interval_value, repeat_interval_unit = _validate_repeat_fields(
-        repeat_enabled, project.get("repeat_interval_value"), project.get("repeat_interval_unit")
-    )
-
     return {
         "name": (project.get("name") or "").strip(),
         "status": (project.get("status") or "draft").strip().lower() or "draft",
@@ -600,135 +415,20 @@ def _project_payload(project):
         "usernames": _clean_terms(usernames or []),
         "start_date": project.get("start_date") or None,
         "end_date": project.get("end_date") or None,
-        "repeat_enabled": repeat_enabled,
-        "repeat_interval_value": repeat_interval_value,
-        "repeat_interval_unit": repeat_interval_unit or None,
-        "first_run_at": _coerce_datetime(project.get("first_run_at")),
-        "repeat_weekdays": _validate_weekdays(project.get("repeat_weekdays")),
     }
 
 
-def _apply_repeat_schedule(project_id, previous, payload):
-    """Recompute next_run_at when the repeat settings actually changed; system fields only."""
-    if "next_run_at" not in _project_schedule_fields():
-        return None
-
-    repeat_enabled = payload["repeat_enabled"]
-    interval_value = payload["repeat_interval_value"]
-    interval_unit = payload["repeat_interval_unit"]
-    first_run_at = payload.get("first_run_at")
-    weekdays = payload.get("repeat_weekdays") or []
-    previous = previous or {}
-
-    if not repeat_enabled:
-        if not previous.get("repeat_enabled") and previous.get("next_run_at") is None:
-            return None
-        next_run_at = None
-    else:
-        interval_changed = (
-            not previous.get("repeat_enabled")
-            or previous.get("repeat_interval_value") != interval_value
-            or (previous.get("repeat_interval_unit") or None) != interval_unit
-            or previous.get("next_run_at") is None
-            or _coerce_datetime(previous.get("first_run_at")) != first_run_at
-        )
-        if not interval_changed:
-            return None
-        if first_run_at:
-            # First (re)save of a repeating project: seed the schedule from the
-            # user-chosen first run instead of "now + interval".
-            next_run_at = _apply_weekday_filter(first_run_at, weekdays)
-        else:
-            next_run_at = _compute_next_run_at(previous.get("last_run_at"), interval_value, interval_unit, weekdays)
-
-    try:
-        row = db.fetch_one(
-            f"""
-            update projects
-            set next_run_at = %s
-            where id = %s
-            returning {_project_select_sql()}
-            """,
-            (next_run_at, int(project_id)),
-        )
-        return _normalize_project(row) if row else None
-    except Exception:
-        return None
-
-
-def list_due_projects():
-    """Projects with repeat enabled whose next_run_at has passed."""
-    if not config.DATABASE_URL or "next_run_at" not in _project_schedule_fields():
-        return []
-
-    try:
-        rows = db.fetch_all(
-            f"""
-            select {_project_select_sql()}
-            from projects
-            where repeat_enabled = true
-              and next_run_at is not null
-              and next_run_at <= now()
-            order by next_run_at asc
-            """
-        )
-        source_map = _fetch_project_source_map()
-        user_map = _fetch_project_user_map()
-        return [
-            _normalize_project(row, source_map.get(row.get("id"), []), user_map.get(row.get("id"), []))
-            for row in rows
-        ]
-    except Exception:
-        return []
-
-
-def claim_due_project(project_id):
-    """Atomically clear next_run_at so only one poller starts this project's run."""
-    if not config.DATABASE_URL:
-        return False
-
-    try:
-        row = db.fetch_one(
-            """
-            update projects
-            set next_run_at = null
-            where id = %s
-              and repeat_enabled = true
-              and next_run_at is not null
-              and next_run_at <= now()
-            returning id
-            """,
-            (int(project_id),),
-        )
-        return bool(row)
-    except Exception:
-        return False
-
-
 def record_run_completion(project_id, *, status, completed_at=None):
-    """Stamp last_run_at/last_run_status and, if repeat is enabled, schedule the next run."""
+    """Stamp the project with how its most recent analysis run ended."""
     if not config.DATABASE_URL or project_id is None:
         return None
 
     completed_at = completed_at or datetime.now(timezone.utc)
-    project = get_project(project_id)
-    if not project:
+    if not get_project(project_id):
         return None
 
     assignments = ["last_run_at = %s", "last_run_status = %s"]
-    params = [completed_at, str(status or "").strip().lower()]
-
-    if project.get("repeat_enabled") and project.get("repeat_interval_value") and project.get("repeat_interval_unit"):
-        next_run_at = _compute_next_run_at(
-            completed_at,
-            project.get("repeat_interval_value"),
-            project.get("repeat_interval_unit"),
-            project.get("repeat_weekdays"),
-        )
-        assignments.append("next_run_at = %s")
-        params.append(next_run_at)
-
-    params.append(int(project_id))
+    params = [completed_at, str(status or "").strip().lower(), int(project_id)]
     try:
         row = db.fetch_one(
             f"""
@@ -742,25 +442,6 @@ def record_run_completion(project_id, *, status, completed_at=None):
         return _normalize_project(row) if row else None
     except Exception:
         return None
-
-
-def _set_project_sources(project_id, source_ids):
-    project_id = int(project_id)
-    source_ids = _clean_ids(source_ids)
-    try:
-        db.execute("delete from project_sources where project_id = %s", (project_id,))
-        for source_id in source_ids:
-            db.execute(
-                """
-                insert into project_sources (project_id, source_id)
-                values (%s, %s)
-                on conflict (project_id, source_id) do nothing
-                """,
-                (project_id, source_id),
-            )
-        return source_ids
-    except Exception:
-        return []
 
 
 def _set_project_users(project_id, user_ids):
@@ -800,7 +481,6 @@ def create_project(project, *, embed=True):
     if not payload["name"]:
         return None
 
-    source_ids = _clean_ids(project.get("source_ids") or [])
     # Every project is linked to the admin (full_access) user(s) by default,
     # on top of whatever users were explicitly selected at creation time.
     user_ids = _clean_ids(list(project.get("user_ids") or []) + users_store.list_full_access_user_ids())
@@ -811,7 +491,7 @@ def create_project(project, *, embed=True):
         insert_columns = ", ".join(write_fields)
         insert_values = ", ".join(["%s"] * len(write_fields))
         params = [
-            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames", "repeat_weekdays"} else payload[field]
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
             for field in write_fields
         ]
         row = db.fetch_one(
@@ -827,17 +507,10 @@ def create_project(project, *, embed=True):
         created = _normalize_project(row)
         if embed:
             created.update(_persist_project_embedding(created))
-        if source_ids:
-            created["source_ids"] = set_project_sources(created["id"], source_ids)
-        else:
-            created["source_ids"] = []
         if user_ids:
             created["user_ids"] = set_project_users(created["id"], user_ids)
         else:
             created["user_ids"] = []
-        schedule_update = _apply_repeat_schedule(created["id"], None, payload)
-        if schedule_update:
-            created["next_run_at"] = schedule_update.get("next_run_at")
         return created
     except Exception as e:
         raise RuntimeError(f"Database request failed: {e}") from e
@@ -847,9 +520,7 @@ def update_project(project_id, project, *, embed=True):
     if not config.DATABASE_URL:
         return None
 
-    previous = get_project(project_id)
     payload = _project_payload(project)
-    source_ids = project.get("source_ids") if isinstance(project, dict) else None
     user_ids = project.get("user_ids") if isinstance(project, dict) else None
     try:
         write_fields = _project_write_fields()
@@ -857,7 +528,7 @@ def update_project(project_id, project, *, embed=True):
             return None
         assignments = ", ".join(f"{field} = %s" for field in write_fields)
         params = [
-            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames", "repeat_weekdays"} else payload[field]
+            _jsonb_param(payload[field]) if field in {"hashtags", "keywords", "usernames"} else payload[field]
             for field in write_fields
         ]
         params.append(int(project_id))
@@ -876,10 +547,6 @@ def update_project(project_id, project, *, embed=True):
         normalized = _normalize_project(row)
         if embed:
             normalized.update(_persist_project_embedding(normalized))
-        if source_ids is not None:
-            normalized["source_ids"] = _set_project_sources(project_id, source_ids)
-        else:
-            normalized["source_ids"] = list_project_source_ids(project_id)
         if user_ids is not None:
             # Keep admin (full_access) users linked even if they weren't in
             # the submitted selection, so the "admin sees every project"
@@ -888,9 +555,6 @@ def update_project(project_id, project, *, embed=True):
             normalized["user_ids"] = _set_project_users(project_id, merged_user_ids)
         else:
             normalized["user_ids"] = list_project_user_ids(project_id)
-        schedule_update = _apply_repeat_schedule(project_id, previous, payload)
-        if schedule_update:
-            normalized["next_run_at"] = schedule_update.get("next_run_at")
         return normalized
     except Exception as e:
         raise RuntimeError(f"Database request failed: {e}") from e
@@ -905,60 +569,6 @@ def delete_project(project_id):
         return True
     except Exception:
         return False
-
-
-def list_project_source_ids(project_id):
-    if not config.DATABASE_URL:
-        return []
-
-    try:
-        rows = _fetch_rows(
-            "select source_id from project_sources where project_id = %s order by source_id asc",
-            (int(project_id),),
-        )
-        ids = []
-        seen = set()
-        for row in rows:
-            try:
-                source_id = int(row.get("source_id"))
-            except Exception:
-                continue
-            if source_id not in seen:
-                seen.add(source_id)
-                ids.append(source_id)
-        return ids
-    except Exception:
-        return []
-
-
-def list_source_project_ids(source_id):
-    if not config.DATABASE_URL:
-        return []
-
-    try:
-        rows = _fetch_rows(
-            "select project_id from project_sources where source_id = %s order by project_id asc",
-            (int(source_id),),
-        )
-        ids = []
-        seen = set()
-        for row in rows:
-            try:
-                project_id = int(row.get("project_id"))
-            except Exception:
-                continue
-            if project_id not in seen:
-                seen.add(project_id)
-                ids.append(project_id)
-        return ids
-    except Exception:
-        return []
-
-
-def set_project_sources(project_id, source_ids):
-    if not config.DATABASE_URL:
-        return []
-    return _set_project_sources(project_id, source_ids)
 
 
 def set_project_users(project_id, user_ids):
@@ -1023,34 +633,12 @@ def list_project_ids_for_user(user_id):
         return []
 
 
-def set_source_projects(source_id, project_ids):
-    if not config.DATABASE_URL:
-        return []
-
-    source_id = int(source_id)
-    project_ids = _clean_ids(project_ids)
-    try:
-        db.execute("delete from project_sources where source_id = %s", (source_id,))
-        for project_id in project_ids:
-            db.execute(
-                """
-                insert into project_sources (project_id, source_id)
-                values (%s, %s)
-                on conflict (project_id, source_id) do nothing
-                """,
-                (project_id, source_id),
-            )
-        return project_ids
-    except Exception:
-        return []
-
-
 def project_has_articles(project_id):
-    """Whether the project has any article at all, regardless of source.
+    """Whether the project has any article at all.
 
-    Used to decide whether analysis needs a scrape/enrich pass first - a
-    project can have zero articles overall even if it has sources assigned,
-    e.g. right after creation or before the first pipeline run.
+    Used to tell "nothing has been uploaded yet" apart from "documents are
+    uploaded but nothing has been approved into an article", which read the
+    same from an empty findings/analysis result otherwise.
     """
     if not config.DATABASE_URL or project_id is None:
         return False
@@ -1062,26 +650,6 @@ def project_has_articles(project_id):
         return bool((row or {}).get("has_articles"))
     except Exception:
         return False
-
-
-def list_sources_for_project(project_id):
-    if not config.DATABASE_URL:
-        return []
-
-    try:
-        rows = _fetch_rows(
-            """
-            select f.id, f.url, f.name, f.enabled, f.source_type, f.limited, f.created_at, f.updated_at
-            from sources f
-            inner join project_sources ef on ef.source_id = f.id
-            where ef.project_id = %s
-            order by f.created_at asc
-            """,
-            (int(project_id),),
-        )
-        return [_normalize_source(row) for row in rows]
-    except Exception:
-        return []
 
 
 def set_article_projects(article_ids, project_id, similarity_scores=None):
@@ -1149,85 +717,15 @@ def list_article_similarity_scores_for_project(project_id):
 
 
 def list_article_ids_for_project(project_id):
+    """Every article linked to the project, via `article_projects`.
+
+    That link is now the only way an article belongs to a project - it is
+    written when a document candidate is approved (or an import is scoped to a
+    project), rather than being inferred from which source fetched it.
+    """
     if not config.DATABASE_URL:
         return []
-
-    ids = []
-    seen = set()
-
-    for article_id in _fetch_article_project_map(project_id):
-        if article_id in seen:
-            continue
-        seen.add(article_id)
-        ids.append(article_id)
-
-    source_ids = list_project_source_ids(project_id)
-    if not source_ids:
-        return ids
-
-    try:
-        rows = _fetch_rows(
-            """
-            select a.id
-            from articles a
-            inner join sources f on f.url = a.source_url
-            inner join project_sources ef on ef.source_id = f.id
-            where ef.project_id = %s
-            order by a.id asc
-            """,
-            (int(project_id),),
-        )
-    except Exception:
-        rows = []
-
-    for row in rows:
-        try:
-            article_id = int(row.get("id"))
-        except Exception:
-            continue
-        if article_id in seen:
-            continue
-        seen.add(article_id)
-        ids.append(article_id)
-
-    return ids
-
-
-def list_project_ids_for_source_url(source_url):
-    if not config.DATABASE_URL:
-        return []
-
-    key = _normalize_url(source_url)
-    if not key:
-        return []
-
-    try:
-        rows = _fetch_rows(
-            """
-            select e.id
-            from projects e
-            inner join project_sources ef on ef.project_id = e.id
-            inner join sources f on f.id = ef.source_id
-            where lower(f.url) = lower(%s)
-            order by e.id asc
-            """,
-            (key,),
-        )
-    except Exception:
-        return []
-
-    ids = []
-    seen = set()
-    for row in rows:
-        try:
-            project_id = int(row.get("id"))
-        except Exception:
-            continue
-        if project_id in seen:
-            continue
-        seen.add(project_id)
-        ids.append(project_id)
-    return ids
+    return list(_fetch_article_project_map(project_id))
 
 
 def diagnose_project_setup():

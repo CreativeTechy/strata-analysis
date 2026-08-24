@@ -1,17 +1,13 @@
-"""Central configuration for the generic source pipeline.
+"""Central configuration for the analysis pipeline.
 
-Single source of truth for the dynamic source list and for the credentials each
-stage needs. Everything reads from here so swapping sources or rotating keys is
-a one-place change.
+Single source of truth for the credentials and tuning every stage needs.
+Everything reads from here, so rotating keys or pointing the app at a
+different local model is a one-place change.
 """
 
 import os
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlparse
-
-from trafilatura.feeds import find_feed_urls
-
 import db
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,9 +39,12 @@ _load_dotenv()
 DATABASE_URL = db.get_database_url()
 
 # --- LLM provider ------------------------------------------------------------
-# `LLM_PROVIDER` picks which backend every AI feature (enrichment, Intelligence
-# Copilot chat, project metadata suggestions, project/source discovery) talks
-# to. Everything provider-specific - credentials, base URL, default model, and
+# `LLM_PROVIDER` picks which backend every AI feature (article analysis,
+# Intelligence Copilot chat, project metadata suggestions, document splitting)
+# talks to. It defaults to `ollama`: this product is meant to run against a
+# model on the operator's own hardware, and the uploaded documents it analyzes
+# are exactly the kind of material that should not leave the machine. The
+# hosted providers stay supported for anyone who wants them. Everything provider-specific - credentials, base URL, default model, and
 # request/response shape - is resolved here and in llm_client.py; feature
 # modules only ever call llm_client.chat_completion() and never branch on the
 # provider themselves.
@@ -87,9 +86,9 @@ _LLM_PROVIDER_DEFAULTS = {
     },
 }
 
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").strip().lower() or "ollama"
 if LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
-    LLM_PROVIDER = "deepseek"
+    LLM_PROVIDER = "ollama"
 
 # Per-provider env vars are kept as top-level names (OPENAI_API_KEY et al. are
 # unchanged from before this switch existed, so existing deployments that only
@@ -160,9 +159,9 @@ LLM_REASONING_EFFORT = _active_values["reasoning_effort"]
 
 # Competitor analysis (backend/services/competitors/ - document splitting,
 # competitor naming, and finding generation) can run against a different
-# provider than the rest of the app (enrichment, Intelligence Copilot,
-# project/source discovery), e.g. Ollama for a fully offline setup, without
-# switching everything else over. Left unset (the default), it just inherits
+# provider than the rest of the app (article analysis, Intelligence Copilot,
+# project metadata suggestions) - e.g. a larger local model for the long
+# reasoning that finding generation does, and a fast one for everything else. Left unset (the default), it just inherits
 # LLM_PROVIDER above - nothing changes unless this is explicitly set.
 COMPETITOR_ANALYSIS_LLM_PROVIDER = os.environ.get("COMPETITOR_ANALYSIS_LLM_PROVIDER", "").strip().lower()
 if COMPETITOR_ANALYSIS_LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
@@ -181,7 +180,7 @@ COMPETITOR_LLM_REASONING_EFFORT = _competitor_values["reasoning_effort"]
 # giving up (see llm_client.py's own default). Raise this for a slow remote
 # backend (e.g. a Colab-hosted Ollama instance behind an ngrok tunnel) where
 # a real response can legitimately take longer than 60s, especially under
-# ENRICH_CONCURRENCY > 1 competing for the same GPU.
+# ANALYSIS_CONCURRENCY > 1 competing for the same GPU.
 try:
     LLM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "60"))
 except ValueError:
@@ -192,8 +191,10 @@ EMBEDDING_MODEL = os.environ.get(
 ).strip()
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
-SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30") or 30)
-SCHEDULER_STALE_RUN_MINUTES = int(os.environ.get("SCHEDULER_STALE_RUN_MINUTES", "180") or 180)
+# How long an analysis run may sit in queued/running before a new run for the
+# same project is allowed to start anyway. Without this, a backend that died
+# mid-run would block that project's analysis forever.
+STALE_RUN_MINUTES = int(os.environ.get("STALE_RUN_MINUTES", "180") or 180)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -215,7 +216,7 @@ HF_API_TIMEOUT_SECONDS = float(os.environ.get("HF_API_TIMEOUT_SECONDS", "30") or
 # Dedicated sentiment classifier (see sentiment_classifier.py) - the sole
 # source of article `overall_sentiment`/`sentiment`. The LLM is never used
 # for sentiment, so there is no toggle to fall back to it; if the classifier
-# can't run, enrich.py defaults sentiment to "neutral" and logs it instead.
+# can't run, the sentiment stage falls back to "neutral" and logs it instead.
 SENTIMENT_CLASSIFIER_MODEL = os.environ.get(
     "SENTIMENT_CLASSIFIER_MODEL", "cardiffnlp/twitter-roberta-base-sentiment-latest"
 ).strip()
@@ -299,119 +300,19 @@ LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
 
-# --- Scraping proxy: optional network egress ---------------------------------
-# Any source can anti-bot-block requests from datacenter/cloud IP ranges (see
-# scraper/spiders/source_rss.py's BLOCKED_STATUS_CODES/blocked-source
-# reporting, and services/pipeline/pipeline.py's summary of it). Routing
-# requests through a proxy is one mitigation for that. Unset (the default)
-# changes nothing - requests go out directly. Full proxy URL, e.g.
-# `http://user:pass@host:port` - Scrapy's HttpProxyMiddleware parses embedded
-# basic-auth credentials from the URL itself, no separate credential fields
-# needed.
-# SCRAPE_PROXY_URL is the fallback used for every source type (rss/web/
-# keyword/social/username/hashtag, and reddit/telegram when their own proxy
-# below is unset). REDDIT_PROXY_URL/TELEGRAM_PROXY_URL override it for just
-# those two platforms, e.g. to route them through a different proxy pool.
-SCRAPE_PROXY_URL = os.environ.get("SCRAPE_PROXY_URL", "").strip()
-REDDIT_PROXY_URL = os.environ.get("REDDIT_PROXY_URL", "").strip()
-TELEGRAM_PROXY_URL = os.environ.get("TELEGRAM_PROXY_URL", "").strip()
-
-# --- Reddit OAuth (optional) -------------------------------------------------
-# Reddit's officially sanctioned path for programmatic access - an app-only
-# ("client_credentials") token via a registered Reddit app - is far less
-# likely to be blocked than the unauthenticated `.json` endpoints, at the
-# cost of requiring credentials (which the rest of this source type
-# deliberately doesn't). Both unset (the default) keeps using the public
-# `.json` endpoints with no behavior change. Register an app (type "script")
-# at https://www.reddit.com/prefs/apps to get a client id/secret.
-REDDIT_OAUTH_CLIENT_ID = os.environ.get("REDDIT_OAUTH_CLIENT_ID", "").strip()
-REDDIT_OAUTH_CLIENT_SECRET = os.environ.get("REDDIT_OAUTH_CLIENT_SECRET", "").strip()
-# Reddit requires a distinctive User-Agent for API use (generic/browser UAs
-# are rate-limited harder) - see https://github.com/reddit-archive/reddit/wiki/API#rules.
-REDDIT_OAUTH_USER_AGENT = os.environ.get("REDDIT_OAUTH_USER_AGENT", "").strip()
-
-
-def reddit_oauth_configured() -> bool:
-    return bool(REDDIT_OAUTH_CLIENT_ID and REDDIT_OAUTH_CLIENT_SECRET)
-
-
-# --- Google Custom Search (optional) -----------------------------------------
-# General-web-search tier for "keyword" sources (see scraper/web_search.py and
-# source_rss.py's start()) - a keyword otherwise only reaches Google News via
-# its RSS feed, missing ordinary (non-news) web pages that mention it. Create
-# a Programmable Search Engine at https://programmablesearchengine.google.com/
-# (set it to search the whole web) for the engine id, and an API key with the
-# Custom Search API enabled at https://console.cloud.google.com/apis/credentials.
-# Free for 100 queries/day, then billed - unconfigured (the default) simply
-# skips this tier and keyword sources behave exactly as before.
-GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "").strip()
-GOOGLE_CSE_ENGINE_ID = os.environ.get("GOOGLE_CSE_ENGINE_ID", "").strip()
-
-
-def google_cse_configured() -> bool:
-    return bool(GOOGLE_CSE_API_KEY and GOOGLE_CSE_ENGINE_ID)
-
-
-# --- GDELT (optional, on by default) -----------------------------------------
-# Free, no-key news-search tier for "keyword" sources (see scraper/gdelt.py) -
-# GDELT's own global news index, queried alongside (not instead of) the
-# Google News RSS feed, so a keyword's news coverage doesn't depend solely on
-# resolving Google's redirect-wrapper links. Set to false/0/no to disable.
-GDELT_ENABLED = os.environ.get("GDELT_ENABLED", "true").strip().lower() not in {"false", "0", "no"}
-
-
-# --- Skip re-enrichment for already-known articles ---------------------------
-# When a scraped URL is already in the `articles` table with a successful
-# analysis from the *current* enrichment version (analysis_pipeline_version ==
-# PIPELINE_VERSION - see services/articles/enrich.py), reuse that stored
-# analysis instead of paying for another LLM + embedding call. The article
-# still flows through the normal save path either way, so a project seeing it
-# for the first time still gets linked to it. Set false to force every scrape
-# run to re-enrich everything (reanalyze.py's per-article endpoint is the
-# other way to force a re-enrichment without this).
-SKIP_EXISTING_ARTICLES = _env_bool("SKIP_EXISTING_ARTICLES", True)
-
-
-# --- Streaming enrichment concurrency ----------------------------------------
-# How many articles StreamingEnrichPipeline (scraper/pipelines.py) enriches in
-# parallel, off Scrapy's reactor thread, instead of one at a time blocking the
-# whole crawl. Kept deliberately low by default rather than tuned to any one
-# provider's ceiling, since LLM_PROVIDER is user-selectable and the limiting
-# factor differs a lot by provider:
-#   - deepseek: no published per-minute limit, but a shared *concurrency* cap
-#     (500-2500 in-flight requests) at the account level, across everything
-#     else that account is doing too - not just this app.
-#   - openai: tier-based (by cumulative spend); a fresh/low-spend account's
-#     Tier 1 default is generously above this default for a small/cheap model,
-#     but nowhere near unlimited.
-#   - ollama: no external rate limit at all, but real local hardware/VRAM
-#     throughput instead - a low default avoids swamping a single local
-#     model server (and the local embedding model, which competes for the
-#     same CPU/GPU) with too many simultaneous generations.
-# Raise this if you have a well-provisioned account/host and have confirmed
-# your own provider's actual limits comfortably clear it.
+# --- Analysis concurrency ----------------------------------------------------
+# How many articles one analysis run (services/pipeline/pipeline.py) analyzes
+# in parallel. Deliberately low: with the default `ollama` provider the
+# limiting factor is one local model server, which also competes with the local
+# embedding model for the same CPU/GPU, so a high number here mostly produces
+# queueing and timeouts rather than throughput. Raise it only after watching
+# what your own host actually sustains - and further still if you point
+# LLM_PROVIDER at a hosted provider, whose ceiling is an account-level
+# concurrency/rate limit instead.
 try:
-    ENRICH_CONCURRENCY = max(1, int(os.environ.get("ENRICH_CONCURRENCY", "4")))
+    ANALYSIS_CONCURRENCY = max(1, int(os.environ.get("ANALYSIS_CONCURRENCY", "2")))
 except ValueError:
-    ENRICH_CONCURRENCY = 4
-
-
-# --- Google News link-decode concurrency -------------------------------------
-# How many news.google.com/rss/articles/... redirect-wrapper links
-# source_rss.py's parse_feed() decodes at once (see googlenewsdecoder in
-# CLAUDE.md). A Google News search feed carries up to ~100 of these, each
-# decode being a real network round trip (fetch the wrapper page, then a
-# signed batchexecute call) - resolved one at a time this was measured at
-# 7-11 minutes for a single feed, blocking the whole crawl for that entire
-# span. Higher than ENRICH_CONCURRENCY by default: this endpoint's own
-# rate-limiting is undocumented (unlike the LLM providers ENRICH_CONCURRENCY
-# is sized against), so this is a starting point to tune from, not a
-# researched ceiling - lower it if you see a rise in decode failures
-# (skipped links, not errors - see _resolve_google_news_link).
-try:
-    GOOGLE_NEWS_DECODE_CONCURRENCY = max(1, int(os.environ.get("GOOGLE_NEWS_DECODE_CONCURRENCY", "8")))
-except ValueError:
-    GOOGLE_NEWS_DECODE_CONCURRENCY = 8
+    ANALYSIS_CONCURRENCY = 2
 
 
 # Apply pending schema migrations when the API starts. Set false to manage them
@@ -444,150 +345,3 @@ CORS_ALLOWED_ORIGINS = [
 ADMIN_BOOTSTRAP_USERNAME = os.environ.get("ADMIN_BOOTSTRAP_USERNAME", "").strip()
 ADMIN_BOOTSTRAP_EMAIL = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip()
 ADMIN_BOOTSTRAP_PASSWORD = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "").strip()
-
-
-def _looks_like_feed_url(url: str) -> bool:
-    url = (url or "").strip().lower()
-    return any(
-        token in url
-        for token in (
-            "/feed",
-            "/rss",
-            "/atom",
-            ".xml",
-            ".rss",
-            ".rdf",
-            "?feed=",
-        )
-    )
-
-
-def _looks_like_social_url(url: str) -> bool:
-    host = urlparse((url or "").strip()).netloc.lower()
-    return any(
-        domain in host
-        for domain in (
-            "x.com",
-            "twitter.com",
-            "facebook.com",
-            "instagram.com",
-            "tiktok.com",
-            "linkedin.com",
-            "youtube.com",
-            "threads.net",
-        )
-    )
-
-
-def _looks_like_reddit_url(url: str) -> bool:
-    host = urlparse((url or "").strip()).netloc.lower().removeprefix("www.")
-    return host == "reddit.com" or host.endswith(".reddit.com")
-
-
-def _looks_like_telegram_url(url: str) -> bool:
-    host = urlparse((url or "").strip()).netloc.lower().removeprefix("www.")
-    return host in {"t.me", "telegram.me"}
-
-
-def _infer_source_type(url: str) -> str:
-    if _looks_like_feed_url(url):
-        return "rss"
-    if _looks_like_reddit_url(url):
-        return "reddit"
-    if _looks_like_telegram_url(url):
-        return "telegram"
-    if _looks_like_social_url(url):
-        return "social"
-    return "web"
-
-
-KNOWN_SOURCE_TYPES = {"rss", "web", "social", "hashtag", "keyword", "username", "reddit", "telegram"}
-
-
-def _resolve_source_type(source_type_input: str, url: str) -> str:
-    """Pick the source_type to store, trusting an explicit known value.
-
-    Legacy rows stored as rss/web whose URL is actually a social profile get
-    upgraded to social, same as before this was centralized. reddit.com used
-    to be lumped into the generic social bucket, so a legacy row stored as
-    social (or rss/web) whose URL is actually reddit.com/t.me gets upgraded
-    to the dedicated reddit/telegram type the same way. hashtag/keyword/
-    username are never overridden even though their derived URLs live on
-    x.com/google.com (which would otherwise infer as social/web).
-    """
-    source_type_input = (source_type_input or "").strip().lower()
-    inferred_type = _infer_source_type(url)
-    if source_type_input in KNOWN_SOURCE_TYPES:
-        if source_type_input in {"rss", "web", "social"} and inferred_type in {"reddit", "telegram"}:
-            return inferred_type
-        if source_type_input in {"rss", "web"} and inferred_type == "social":
-            return "social"
-        return source_type_input
-    return inferred_type or "rss"
-
-
-def _normalize_source_record(row):
-    url = (row.get("url") or "").strip()
-    name = (row.get("name") or "").strip()
-    source_type = _resolve_source_type(row.get("source_type") or "", url)
-    return {
-        "id": row.get("id"),
-        "url": url,
-        "name": name,
-        "enabled": bool(row.get("enabled", True)),
-        "source_type": source_type,
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-        "source": row.get("source", "database"),
-    }
-
-
-@lru_cache(maxsize=256)
-def _discover_feed_urls(url: str):
-    """Return discovered feed URLs for a homepage, or [] if none are found."""
-    if not url:
-        return []
-    try:
-        discovered = find_feed_urls(url)
-        if isinstance(discovered, list):
-            return [u.strip() for u in discovered if u and u.strip()]
-    except Exception:
-        pass
-    return []
-
-
-def load_source_records():
-    """Return configured source records with source_type preserved.
-
-    Scoped to the project's assigned sources when PIPELINE_PROJECT_ID is set
-    (the scraper subprocess always has this when a project was selected -
-    see run_scraper_pipeline), otherwise every source in the table.
-    """
-    if not DATABASE_URL:
-        return []
-
-    project_id = os.environ.get("PIPELINE_PROJECT_ID", "").strip()
-    try:
-        if project_id:
-            records = db.fetch_all(
-                """
-                select s.id, s.url, s.name, s.enabled, s.source_type, s.created_at, s.updated_at
-                from sources s
-                inner join project_sources ps on ps.source_id = s.id
-                where ps.project_id = %s
-                order by s.created_at asc
-                """,
-                (int(project_id),),
-            )
-        else:
-            records = db.fetch_all(
-                """
-                select id, url, name, enabled, source_type, created_at, updated_at
-                from sources
-                order by created_at asc
-                """
-            )
-    except Exception:
-        return []
-
-    return [_normalize_source_record({**row, "source": "database"}) for row in records]

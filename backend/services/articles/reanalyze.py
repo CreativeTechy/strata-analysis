@@ -1,11 +1,11 @@
-"""On-demand (re)analysis for already-scraped articles.
+"""On-demand (re)analysis for a single stored article.
 
-This is the single/batch "run the analysis pipeline on this article again"
-path used by the FastAPI layer (main.py) - distinct from pipeline.py's
-scrape -> enrich -> save subprocess pipeline. It runs in-process (called via
-FastAPI BackgroundTasks) since it's a lightweight, per-article job that
-doesn't need subprocess isolation or cancellation the way a multi-stage
-crawl does.
+This is the "run the analysis pipeline on this article again" primitive.
+Two callers sit on top of it: the FastAPI layer (main.py, the project
+document endpoints) queues it via BackgroundTasks for one-off retries, and
+services/pipeline/pipeline.py drives it in bulk as a tracked analysis run.
+It always runs in-process - a single article is seconds of model calls, not
+work that needs its own process.
 """
 
 from __future__ import annotations
@@ -82,11 +82,16 @@ def _primary_project_id_for_article(article_id: int) -> int | None:
     return int(ids[0]) if len(ids) == 1 else None
 
 
-def reanalyze_article(article_id: int) -> dict:
+def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     """Runs synchronously in whatever context calls it - the FastAPI routes
     in main.py invoke this via BackgroundTasks so the request itself
     returns immediately. Always returns a result dict, never raises -
-    failures are reported in the dict and persisted to analysis_error."""
+    failures are reported in the dict and persisted to analysis_error.
+
+    `run_id`, when this is part of a tracked analysis run, tags the article
+    with that run so per-run dashboard/report scoping works. save_articles
+    only fills it in where it is still null, so an article keeps the run that
+    first analyzed it rather than being re-attributed on every retry."""
     article = load_article_for_reanalysis(article_id)
     if not article:
         return {"article_id": article_id, "ok": False, "analysis_status": "not_found", "analysis_error": "article_not_found"}
@@ -100,7 +105,7 @@ def reanalyze_article(article_id: int) -> dict:
 
     merged = {**article, **result}
     try:
-        saved, _ = save_articles([merged], project_id=project_id)
+        saved, _ = save_articles([merged], project_id=project_id, run_id=run_id)
     except Exception as e:
         _mark_failed(article_id, f"save_failed: {e}")
         return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": f"save_failed: {e}"}
@@ -113,5 +118,5 @@ def reanalyze_article(article_id: int) -> dict:
     }
 
 
-def reanalyze_articles(article_ids: list[int]) -> list[dict]:
-    return [reanalyze_article(article_id) for article_id in article_ids]
+def reanalyze_articles(article_ids: list[int], run_id: str | None = None) -> list[dict]:
+    return [reanalyze_article(article_id, run_id=run_id) for article_id in article_ids]

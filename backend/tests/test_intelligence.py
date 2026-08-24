@@ -126,6 +126,22 @@ class IntelligenceHelpersTests(unittest.TestCase):
         self.assertEqual(keyword_existence_over_time([{"title": "EV"}], []), [])
 
 
+class ClassifyPlatformTests(unittest.TestCase):
+    """Articles split out of an uploaded document carry a synthetic
+    `document://` url; grouping them under "Web" alongside imported pages made
+    the platform breakdown claim a provenance they don't have."""
+
+    def test_document_articles_are_their_own_platform(self):
+        self.assertEqual(
+            intelligence.classify_platform({"url": "document://project-document/3/article/7"}),
+            "Documents",
+        )
+
+    def test_imported_articles_still_classify_by_host(self):
+        self.assertEqual(intelligence.classify_platform({"url": "https://x.com/someone/status/1"}), "X")
+        self.assertEqual(intelligence.classify_platform({"url": "https://news.example.com/a"}), "Web")
+
+
 class GetProjectIntelligenceTests(unittest.TestCase):
     """get_project_intelligence() does a deferred `from
     services.articles.articles_store import _topic_summary` import inside the
@@ -142,11 +158,11 @@ class GetProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["period"], "30d")
         self.assertIsNone(result["run_id"])
         self.assertEqual(result["total"], 0)
-        self.assertEqual(result["active_sources"], 0)
+        self.assertEqual(result["document_count"], 0)
         self.assertIn("insights", result)
 
     def test_run_id_passes_through_into_the_response(self):
-        """When a specific pipeline run is selected, the response should echo
+        """When a specific analysis run is selected, the response should echo
         it back so the frontend can confirm which run it's looking at."""
         with patch.object(intelligence, "_database_ready", return_value=False):
             result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, run_id="run-123")

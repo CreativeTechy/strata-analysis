@@ -16,7 +16,7 @@ class HFInferenceError(Exception):
 
     Carries the same `code`/`user_message` shape as llm_client.LLMError so
     callers that treat "the AI provider call failed" as fatal (see
-    services/articles/enrich.py, scraper/pipelines.py) can build one clear
+    services/pipeline/pipeline.py) can build one clear
     message regardless of which provider (chat LLM or HF) actually failed.
     `detail` holds the raw provider/exception text for server-side logs
     only - never send it to the client.

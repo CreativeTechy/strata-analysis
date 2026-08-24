@@ -11,7 +11,7 @@ import config
 import db
 import dedup
 from embeddings import cosine_similarity, get_embedding
-from services.projects.projects_store import list_project_ids_for_source_url, list_projects, set_article_projects
+from services.projects.projects_store import list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
 from trusted_sources import is_trusted_domain
@@ -750,7 +750,7 @@ def get_existing_enrichment(urls):
     stage for a URL it already has a good analysis for.
 
     Callers still decide whether a given hit is actually reusable (see
-    services/articles/enrich.py's PIPELINE_VERSION check) - this only
+    analysis/orchestrator.py's PIPELINE_VERSION) - this only
     filters on analysis_status, not on which version produced it."""
     urls = [u for u in (urls or []) if u]
     if not urls or not config.DATABASE_URL:
@@ -778,19 +778,14 @@ def _source_key(article):
 def save_articles(articles, batch_size=50, project_id=None, run_id=None):
     """Upserts articles and returns (total_saved, saved_count_by_source).
 
-    `project_id` additionally links every saved article to that project and
-    scopes their idea-cluster attribution to it. When omitted (the
-    subprocess pipeline's call site - enrich.py never passes it), it falls
-    back to the PIPELINE_RUN_ID/PIPELINE_PROJECT_ID env var the scrape
-    subprocess sets, exactly as before. Callers running in-process (e.g.
-    reanalyze.py, which has no such env var scoped to one request) should
-    pass it explicitly instead.
+    `project_id` links every saved article to that project and scopes their
+    idea-cluster attribution to it. Every caller runs in-process and knows
+    which project it is acting for, so it is always passed explicitly.
 
-    `run_id` tags every saved article with the pipeline run that produced it
-    (so dashboard/reports stats can be scoped to one run). Same fallback: the
-    scrape subprocess's call sites never pass it, so it resolves from
-    PIPELINE_RUN_ID; callers outside a scrape run leave it None, which
-    `_upsert_article_row` treats as "don't touch the existing value".
+    `run_id` tags every saved article with the analysis run that produced it,
+    so dashboard/reports stats can be scoped to one run. Left None (an upload
+    or import, which is not a run), `_upsert_article_row` treats it as "don't
+    touch the existing value".
     """
     if not config.DATABASE_URL:
         print("Database credentials not set, skipping upload.")
@@ -798,22 +793,7 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
 
     sent = 0
     saved_by_source = defaultdict(int)
-    if project_id is None:
-        try:
-            from os import environ
 
-            raw_project_id = (environ.get("PIPELINE_PROJECT_ID") or "").strip()
-            if raw_project_id:
-                project_id = int(raw_project_id)
-        except Exception:
-            project_id = None
-
-    if run_id is None:
-        from os import environ
-
-        run_id = (environ.get("PIPELINE_RUN_ID") or "").strip() or None
-
-    source_project_cache = {}
     linked_articles = defaultdict(set)
     linked_scores = defaultdict(dict)
     project_embedding_cache = None
@@ -861,16 +841,13 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
                 _replace_article_children(article_id, article)
                 _replace_idea_clusters_for_article(article_id, project_id, article.get("frequent_ideas"))
 
-                source_url = (row.get("source_url") or article.get("source_url") or "").strip()
-                if not source_url:
-                    continue
-                if source_url not in source_project_cache:
-                    source_project_cache[source_url] = list_project_ids_for_source_url(source_url)
-                project_ids = list(source_project_cache.get(source_url) or [])
-                if project_id is not None and project_id not in project_ids:
-                    project_ids.append(project_id)
-                for linked_project_id in project_ids:
-                    linked_articles[linked_project_id].add(article_id)
+                # An article belongs to the project the caller named - the
+                # document it was split out of, or the import that brought it
+                # in. (The crawler this was forked from also inferred linkage
+                # from which configured source fetched the URL; there are no
+                # sources here, so the explicit link is the only one.)
+                if project_id is not None:
+                    linked_articles[project_id].add(article_id)
 
                 article_embedding = article.get("embedding_json") or row.get("embedding_json") or []
                 if isinstance(article_embedding, list) and article_embedding:

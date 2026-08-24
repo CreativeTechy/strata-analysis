@@ -2,7 +2,7 @@
 
 Single source of truth for the category/tone enums the zero-shot
 classification stage classifies into and the rest of the pipeline validates
-against - previously these enums were copy-pasted independently in enrich.py
+against - one definition rather than an enum copy-pasted per stage
 and articles_store.py.
 """
 

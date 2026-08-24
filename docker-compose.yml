@@ -36,16 +36,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # Fully-offline local LLM, opt-in via `docker compose --profile ollama up`.
-  # Not started by a plain `docker compose up`, so deployments using
-  # OpenAI/DeepSeek pay no cost for it. To actually route the backend here,
-  # set OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions in
-  # backend/.env - "ollama" is this service's name, resolvable from the
-  # backend container over the Docker network, but not from backend/.env's
-  # own localhost default (which would resolve to the backend container
-  # itself). Point OLLAMA_CHAT_BASE_URL at a remote tunnel (e.g. ngrok in
-  # front of Ollama running on Google Colab) instead to test against that
-  # without touching this file.
+  # The local LLM every AI feature runs against by default. Set
+  # OLLAMA_CHAT_BASE_URL=http://ollama:11434/v1/chat/completions in
+  # backend/.env to route the backend here - "ollama" is this service's name,
+  # resolvable from the backend container over the Docker network, unlike
+  # backend/.env's own localhost default (which would resolve to the backend
+  # container itself). Point OLLAMA_CHAT_BASE_URL at a remote tunnel (e.g.
+  # ngrok in front of Ollama on another machine) to use that instead.
   ollama:
     image: ollama/ollama:latest
     volumes:
@@ -58,12 +55,11 @@ services:
       timeout: 5s
       retries: 30
     restart: unless-stopped
-    profiles: ["ollama"]
 
   # One-shot: pulls OLLAMA_CHAT_MODEL (backend/.env, default llama3.1) into
   # the `ollama-data` volume once the server is healthy, then exits. Re-run
-  # via `docker compose --profile ollama up ollama-pull` after changing the
-  # model - already-pulled models are a no-op.
+  # via `docker compose up ollama-pull` after changing the model -
+  # already-pulled models are a no-op.
   ollama-pull:
     image: ollama/ollama:latest
     env_file:
@@ -76,7 +72,6 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: ["ollama pull \"$${OLLAMA_CHAT_MODEL:-llama3.1}\""]
     restart: "no"
-    profiles: ["ollama"]
 
   frontend:
     build:

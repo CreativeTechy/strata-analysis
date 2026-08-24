@@ -1,6 +1,6 @@
 """Pure value-normalization helpers shared across analysis stages.
 
-Extracted from enrich.py so structured_extraction.py and aggregation.py can
+Kept separate so structured_extraction.py and aggregation.py can
 reuse the exact same feedback-list/people-opinion/frequent-idea normalization
 instead of a second copy drifting out of sync.
 """

@@ -1,7 +1,4 @@
-scrapy>=2.11
-trafilatura>=1.9
-requests>=2.31
-googlenewsdecoder>=0.1.7  # resolves news.google.com/rss/articles/... redirect-wrapper links to the real publisher URL
+requests>=2.31   # LLM/HF HTTP calls (llm_client.py); no crawling in this product
 psycopg[binary]>=3.2
 fastapi>=0.110
 python-multipart>=0.0.9  # required by FastAPI for UploadFile/File(...) parsing
@@ -11,7 +8,7 @@ bcrypt>=4.1
 transformers>=4.40.0  # ~11.6 MB; needed for sentiment transformer
 huggingface_hub>=0.27.0  # ~5.9 MB, pure Python; powers hf_api mode (SENTIMENT_CLASSIFIER_PROVIDER/CLASSIFICATION_PROVIDER=hf_api) via hf_inference_client.py
 
-# Competitor document extraction (text path).
+# Document extraction - the only way content enters this product.
 pymupdf>=1.24     # PDF text + page rendering for the OCR fallback, ~15-40 MB
 python-docx>=1.1  # .docx, pure python
 openpyxl>=3.1     # .xlsx, pure python

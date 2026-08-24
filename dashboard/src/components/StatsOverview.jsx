@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, Globe2, Radio, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
+import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicSentimentChart from './DemographicSentimentChart';
@@ -57,7 +57,7 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
   })}</ul> : <p>No signals in this category yet.</p>}</article>;
 }
 
-export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, sources = [], period = 'all', runId = null }) {
+export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null }) {
   const projectId = project?.id ?? null;
 
   const configuredKeywords = useMemo(
@@ -65,12 +65,18 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     [project]
   );
   const keywordOptions = useMemo(() => configuredKeywords.map((keyword) => ({ value: keyword, label: keyword })), [configuredKeywords]);
-  const sourceOptions = useMemo(() => {
-    const linkedIds = new Set((project?.source_ids || []).map((id) => Number(id)));
-    return (sources || [])
-      .filter((source) => linkedIds.has(Number(source.id)))
-      .map((source) => ({ value: source.url, label: source.name || source.url }));
-  }, [project, sources]);
+
+  // Articles split out of a document all share that document's synthetic
+  // source_url (see project_document_articles._materialize), so the existing
+  // source_url filter is exactly a per-document filter here.
+  const [documents, setDocuments] = useState([]);
+  const documentOptions = useMemo(
+    () => documents.map((document) => ({
+      value: `document://project-document/${document.id}`,
+      label: document.original_filename || `Document #${document.id}`,
+    })),
+    [documents],
+  );
 
   const [sourceFilter, setSourceFilter] = useState('all');
   const [keywordFilter, setKeywordFilter] = useState('all');
@@ -81,6 +87,19 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   useEffect(() => {
     setSourceFilter('all');
     setKeywordFilter('all');
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId == null) {
+      setDocuments([]);
+      return undefined;
+    }
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/documents`)
+      .then((res) => (res.ok ? res.json() : { documents: [] }))
+      .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
+      .catch(() => { if (!cancelled) setDocuments([]); });
+    return () => { cancelled = true; };
   }, [projectId]);
 
   useEffect(() => {
@@ -118,7 +137,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>Couldn’t load this report</strong><p className="subtitle">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>Try again</button>}</div></section>;
 
   const total = Number(intelligence.total || 0);
-  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>No analyzed articles yet</strong><p className="subtitle">Run the pipeline for {scopeLabel || 'this project'} or broaden the date range to generate a report.</p><Link to="/workflow" className="btn-secondary">Go to Workflow</Link></div></section>;
+  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>No analyzed articles yet</strong><p className="subtitle">Run an analysis for {scopeLabel || 'this project'} or broaden the date range to generate a report.</p><Link to="/pipeline-runs" className="btn-secondary">Go to Analysis Runs</Link></div></section>;
 
   const sentiments = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(intelligence[name] || 0) }));
   const insights = intelligence.insights || {};
@@ -142,7 +161,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       <div className="report-brief-metrics">
         <div><strong>{total.toLocaleString()}</strong><span>Analyzed articles</span></div>
         <div><strong className={intelligence.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{intelligence.net_sentiment >= 0 ? '+' : ''}{intelligence.net_sentiment}</strong><span>Net sentiment</span></div>
-        <div><strong>{Number(intelligence.active_sources || 0).toLocaleString()}</strong><span>Active sources</span></div>
+        <div><strong>{Number(intelligence.document_count || 0).toLocaleString()}</strong><span>Documents</span></div>
       </div>
     </Section>
 
@@ -161,14 +180,14 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
         <>
           <div className="keyword-existence-filters">
             <SearchableSelect
-              label="Source"
-              icon={<Radio size={13} />}
+              label="Document"
+              icon={<FileText size={13} />}
               value={sourceFilter}
               onChange={setSourceFilter}
-              options={sourceOptions}
-              allLabel="All sources"
-              placeholder="Search sources…"
-              disabled={sourceOptions.length === 0}
+              options={documentOptions}
+              allLabel="All documents"
+              placeholder="Search documents…"
+              disabled={documentOptions.length === 0}
             />
             <SearchableSelect
               label="Keyword"

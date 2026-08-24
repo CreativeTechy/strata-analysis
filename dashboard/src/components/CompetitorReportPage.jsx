@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Calendar, Check, ChevronRight, ExternalLink, FileText,
-  Filter, Info, Lightbulb, Link2, ShieldCheck, Sparkles, Target, ThumbsDown,
+  Filter, Info, Lightbulb, ShieldCheck, Sparkles, Target, ThumbsDown,
 } from 'lucide-react';
 import {
   EFFORT_LABELS, IMPACT_LABELS, SIZE_TIER_LABELS, URGENCY_LABELS, avatarGradient,
@@ -88,11 +88,10 @@ export default function CompetitorReportPage() {
     );
   }
 
-  const { finding, rejected_evidence: rejectedEvidence = [], accounts = [], history = [] } = data;
+  const { finding, rejected_evidence: rejectedEvidence = [], history = [] } = data;
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
   const signals = Array.isArray(finding.signals) ? finding.signals : [];
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
-  const validAccounts = accounts.filter((account) => account.validation_status === 'valid');
 
   return (
     <div className="cs-page cs-report">
@@ -282,16 +281,13 @@ export default function CompetitorReportPage() {
           <div className="cs-side-panel">
             <h3><Sparkles size={12} /> How this was built</h3>
             <div className="cs-stat-row">
-              <span>Independent sources</span><span className="cs-stat-value">{finding.story_count}</span>
+              <span>Independent stories</span><span className="cs-stat-value">{finding.story_count}</span>
             </div>
             <div className="cs-stat-row">
               <span>Articles used</span><span className="cs-stat-value">{finding.article_count}</span>
             </div>
             <div className="cs-stat-row">
               <span>Filtered out</span><span className="cs-stat-value">{rejectedEvidence.length}</span>
-            </div>
-            <div className="cs-stat-row">
-              <span>Channels scraped</span><span className="cs-stat-value">{validAccounts.length}</span>
             </div>
             {finding.analysis_model ? (
               <div className="cs-stat-row">
@@ -301,23 +297,6 @@ export default function CompetitorReportPage() {
             ) : null}
           </div>
 
-          {validAccounts.length ? (
-            <div className="cs-side-panel">
-              <h3><Link2 size={12} /> Confirmed channels</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {validAccounts.map((account) => (
-                  <a key={account.id} href={account.url} target="_blank" rel="noreferrer"
-                    style={{ fontSize: '0.83rem', color: 'var(--text-light)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ textTransform: 'capitalize', fontWeight: 600, color: 'var(--text-dark)' }}>
-                      {account.platform}
-                    </span>
-                    {account.handle ? `@${account.handle}` : ''}
-                    <ExternalLink size={10} />
-                  </a>
-                ))}
-              </div>
-            </div>
-          ) : null}
 
           {history.length > 1 ? (
             <div className="cs-side-panel">
