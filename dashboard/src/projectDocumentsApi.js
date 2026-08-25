@@ -72,7 +72,14 @@ async function requestForm(path, formData) {
  *  summary of every chunk that failed and is set whenever any did, even if
  *  status ends up 'processed' from the chunks that succeeded — always show it,
  *  a partial failure shouldn't hide behind a plain success pill. Raw extracted
- *  text isn't in this list — use getDocumentText/getDocumentChunks. */
+ *  text isn't in this list — use getDocumentText/getDocumentChunks.
+ *
+ *  A .json/.jsonl/.ndjson upload moves through the same states, but its
+ *  "extraction" is a parse (extraction_method 'records', always one chunk) and
+ *  its candidates come straight from the file's records instead of an LLM
+ *  split — so it is typically 'processed'/'ready' on the first poll. That path
+ *  is also the only one that sets `articles_error` on a *successful* document:
+ *  it reports records left behind when a file exceeded the per-file cap. */
 export const listDocuments = (projectId) => request(`/${projectId}/documents`);
 export const uploadDocuments = (projectId, files) => {
   const formData = new FormData();

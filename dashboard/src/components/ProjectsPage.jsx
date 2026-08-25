@@ -1121,17 +1121,23 @@ export default function ProjectsPage({
               <div className="proj-dropzone-title">Drag files here, or click to browse</div>
               <div className="proj-dropzone-hint">Multiple files at once are fine</div>
               <div className="proj-dropzone-types">
-                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG'].map((ext) => (
+                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG', 'JSON', 'JSONL'].map((ext) => (
                   <span key={ext} className="panel-chip muted">
                     {ext}
                   </span>
                 ))}
               </div>
+              {/* A JSON/JSONL upload is already a list of articles, so it skips
+                  the LLM split entirely — worth saying, since it also means
+                  those files keep each record's own link and date. */}
+              <div className="proj-dropzone-hint" style={{ marginTop: 6 }}>
+                JSON/JSONL exports are read as articles directly — one record per article, no splitting.
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson"
                 className="proj-sr-only"
                 onChange={(e) => {
                   addPendingFiles(e.target.files);
@@ -1189,6 +1195,14 @@ export default function ProjectsPage({
                         {document.extraction_error && (
                           <span className="proj-row-desc" style={{ color: '#b42318', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <AlertTriangle size={12} /> {document.extraction_error}
+                          </span>
+                        )}
+                        {/* Only a records file sets this on a *successful* read —
+                            it is how a cut-off import ("first 500 of 40,000")
+                            says so, which would otherwise look complete. */}
+                        {document.articles_error && (
+                          <span className="proj-row-desc" style={{ color: '#b54708', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <AlertTriangle size={12} /> {document.articles_error}
                           </span>
                         )}
                       </div>
@@ -1259,7 +1273,7 @@ export default function ProjectsPage({
               </span>
             </div>
             <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
-              Strata split your documents into individual articles. Approve the ones worth
+              Strata read your documents into individual articles. Approve the ones worth
               analyzing — approving queues sentiment analysis for it.
             </p>
 

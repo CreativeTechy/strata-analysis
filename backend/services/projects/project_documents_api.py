@@ -11,6 +11,12 @@ Extraction and article-splitting both run as FastAPI BackgroundTasks - OCR on
 a scanned PDF, and the LLM call that splits text into candidates, can both run
 well past a request's gateway timeout. The wizard polls GET .../documents and
 GET .../document-articles for progress, same as the competitor wizard does.
+
+An uploaded .json/.jsonl/.ndjson (a JSONL export from GET /api/articles/export,
+or any list of article-shaped objects) is one of these documents like any
+other - it just takes the no-OCR, no-LLM branch of process_document. There is
+no separate import endpoint here on purpose: the review-then-approve step is
+the whole point of this wizard, and a second path into `articles` would skip it.
 """
 
 from __future__ import annotations
@@ -90,7 +96,7 @@ async def upload_documents(
                 status_code=400,
                 detail=(
                     f"'{upload.filename}' isn't a supported type "
-                    "(pdf, doc, docx, xls, xlsx, csv, png, jpg, jpeg)."
+                    "(pdf, doc, docx, xls, xlsx, csv, png, jpg, jpeg, json, jsonl, ndjson)."
                 ),
             )
 
