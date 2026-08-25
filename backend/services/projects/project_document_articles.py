@@ -7,6 +7,13 @@ might contain many separate respondents' feedback, a report might cover
 several distinct mentions - so each can be reviewed and approved on its own
 rather than the whole document becoming one undifferentiated blob.
 
+A .json/.jsonl document arrives already split, so it skips the LLM entirely:
+generate_candidates_from_records() persists one candidate per record (parsed
+by services/documents/records.py) through the same table, review step and
+materialization as an LLM-split one. The only difference downstream is
+`record_metadata` - the url/author/published the record carried, which
+_materialize() puts back on the article.
+
 Approved candidates are materialized into the same `articles` table scraped
 pages use (services/articles/store.py's save_articles), linked into
 `article_projects` exactly as a scraped article would be - then queued for
@@ -22,6 +29,8 @@ from __future__ import annotations
 
 import json
 import logging
+
+from psycopg.types.json import Jsonb
 
 import config
 import db
@@ -99,16 +108,37 @@ def generate_candidates(document_id: int, project_id: int, text: str, filename: 
     (project_documents_store.process_document) records articles_status
     from whether this raised, so a failure is visible rather than silently
     producing zero candidates that read the same as "nothing to extract"."""
-    items = _ask_llm(text, filename)
+    return _insert_candidates(document_id, project_id, _ask_llm(text, filename))
+
+
+def generate_candidates_from_records(document_id: int, project_id: int, records: list[dict]) -> list[dict]:
+    """Persists already-split records (services/documents/records.py) as
+    'pending' candidates - the no-LLM counterpart of generate_candidates().
+
+    Same table, same review step, same materialization; the records just carry
+    `metadata` (url/author/published) that an LLM split has no equivalent of."""
+    return _insert_candidates(document_id, project_id, records)
+
+
+def _insert_candidates(document_id: int, project_id: int, items: list[dict]) -> list[dict]:
     saved = []
     for item in items:
+        metadata = item.get("metadata") or None
         record = db.fetch_one(
             """
-            insert into project_document_articles (document_id, project_id, title, summary, body)
-            values (%s, %s, %s, %s, %s)
+            insert into project_document_articles
+                (document_id, project_id, title, summary, body, record_metadata)
+            values (%s, %s, %s, %s, %s, %s)
             returning id, document_id, project_id, title, summary, status, article_id, created_at, updated_at
             """,
-            (int(document_id), int(project_id), item["title"], item["summary"], item["body"]),
+            (
+                int(document_id),
+                int(project_id),
+                item["title"],
+                item["summary"],
+                item["body"],
+                Jsonb(metadata) if metadata else None,
+            ),
         )
         if record:
             saved.append(record)
@@ -143,7 +173,8 @@ def list_candidates(project_id: int) -> list[dict]:
 def get_candidate(candidate_id: int) -> dict | None:
     return db.fetch_one(
         """
-        select id, document_id, project_id, title, summary, body, status, article_id, created_at, updated_at
+        select id, document_id, project_id, title, summary, body, status, article_id,
+               record_metadata, created_at, updated_at
         from project_document_articles where id = %s
         """,
         (int(candidate_id),),
@@ -155,7 +186,10 @@ def _materialize(candidate: dict) -> int | None:
     save_articles() scraped pages use, so it picks up article_projects
     linkage (and everything downstream of that) for free. Keyed on a synthetic
     but stable `url` - articles.url is unique/not-null and there is no real
-    URL for an uploaded document - so re-approving is idempotent.
+    URL for an uploaded document - so re-approving is idempotent. A candidate
+    that came from a .json/.jsonl record keeps that record's own url instead,
+    which is both stable in the same way and what makes re-importing an export
+    update the article it came from rather than duplicating it.
 
     Starts from DEFAULT_ENRICHMENT (analysis_defaults.py's own fallback for
     "no real analysis ran") rather than a bare dict: several `articles` columns are
@@ -170,7 +204,10 @@ def _materialize(candidate: dict) -> int | None:
         "select original_filename from project_documents where id = %s",
         (int(candidate["document_id"]),),
     )
-    url = f"document://project-document/{candidate['document_id']}/article/{candidate['id']}"
+    metadata = candidate.get("record_metadata") or {}
+    url = str(metadata.get("url") or "").strip() or (
+        f"document://project-document/{candidate['document_id']}/article/{candidate['id']}"
+    )
     # source_url identifies the *document*, not this one article, so every
     # article split out of the same file groups under it - that is what the
     # Articles page's source grouping and the keyword-existence document
@@ -183,6 +220,12 @@ def _materialize(candidate: dict) -> int | None:
         "title": candidate["title"],
         "summary": candidate.get("summary") or "",
         "text": candidate["body"],
+        # From a .json/.jsonl record only; an LLM split has neither. `published`
+        # stays the record's raw string - save_articles() is the one place that
+        # parses it into published_at/published_precision, and every trend read
+        # in the product keys off those, so a record's date must survive here.
+        "author": metadata.get("author") or None,
+        "published": metadata.get("published") or None,
         "analysis_status": "pending",
         "analysis_error": None,
     }
