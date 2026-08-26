@@ -156,7 +156,7 @@ def suggest_project_metadata(name, description):
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             max_tokens=400,
-            timeout=35,
+            timeout=config.PROJECT_METADATA_LLM_TIMEOUT_SECONDS,
         )
         payload = json.loads(_extract_json_blob(content))
         if not isinstance(payload, dict):

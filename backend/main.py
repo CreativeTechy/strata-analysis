@@ -1071,7 +1071,6 @@ async def chat(payload: dict, user: dict = Depends(require_permission())):
             ],
             temperature=0.3,
             max_tokens=700,
-            timeout=60,
         )
         return {"reply": reply}
     except LLMError as e:

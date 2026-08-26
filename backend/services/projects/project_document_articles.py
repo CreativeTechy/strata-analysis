@@ -76,7 +76,7 @@ def _ask_llm(text: str, filename: str) -> list[dict]:
         ],
         temperature=0.2,
         max_tokens=3000,
-        timeout=90,
+        timeout=config.PROJECT_DOCUMENT_SPLIT_TIMEOUT_SECONDS,
         model=config.LLM_CHAT_MODEL,
         api_key=config.LLM_API_KEY,
         base_url=config.LLM_CHAT_BASE_URL,

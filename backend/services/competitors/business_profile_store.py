@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlparse
 
+import config
 import db
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
@@ -82,7 +83,7 @@ def derive_profile(name: str, website: str, description: str) -> dict:
             ],
             temperature=0.1,
             max_tokens=1400,
-            timeout=90,
+            timeout=config.BUSINESS_PROFILE_LLM_TIMEOUT_SECONDS,
         )
         parsed = json.loads(_strip_fences(raw))
     except (LLMError, json.JSONDecodeError, ValueError) as exc:

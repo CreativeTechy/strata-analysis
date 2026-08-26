@@ -104,7 +104,7 @@ def _ask_llm(corpus: str, own_business: str) -> list[dict]:
         ],
         temperature=0.1,
         max_tokens=2000,
-        timeout=120,
+        timeout=config.COMPETITOR_NAMING_TIMEOUT_SECONDS,
         model=config.COMPETITOR_LLM_CHAT_MODEL,
         api_key=config.COMPETITOR_LLM_API_KEY,
         base_url=config.COMPETITOR_LLM_CHAT_BASE_URL,
