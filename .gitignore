@@ -28,6 +28,7 @@ backend/enriched_articles.json
 # storage/prompts/ is source content and stays tracked.
 storage/runs/
 storage/competitor_documents/
+storage/project_documents/
 
 # Editor / OS
 .vscode/
