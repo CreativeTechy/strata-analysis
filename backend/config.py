@@ -180,11 +180,50 @@ COMPETITOR_LLM_REASONING_EFFORT = _competitor_values["reasoning_effort"]
 # giving up (see llm_client.py's own default). Raise this for a slow remote
 # backend (e.g. a Colab-hosted Ollama instance behind an ngrok tunnel) where
 # a real response can legitimately take longer than 60s, especially under
-# ANALYSIS_CONCURRENCY > 1 competing for the same GPU.
+# ANALYSIS_CONCURRENCY > 1 competing for the same GPU. This is the default
+# used by any chat_completion() call that doesn't pass its own timeout (e.g.
+# the Intelligence Copilot chat) - the per-call-site overrides below exist
+# because those calls have historically needed a longer budget than a plain
+# chat reply (larger documents, larger max_tokens).
 try:
     LLM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("LLM_REQUEST_TIMEOUT_SECONDS", "60"))
 except ValueError:
     LLM_REQUEST_TIMEOUT_SECONDS = 60
+
+# Project metadata suggestion (backend/services/projects/projects_ai.py) -
+# a short prompt/short reply, so it gets a tighter budget than the general
+# default above.
+PROJECT_METADATA_LLM_TIMEOUT_SECONDS = int(os.environ.get("PROJECT_METADATA_LLM_TIMEOUT_SECONDS", "35") or 35)
+
+# Business profile derivation (backend/services/competitors/business_profile_store.py).
+BUSINESS_PROFILE_LLM_TIMEOUT_SECONDS = int(os.environ.get("BUSINESS_PROFILE_LLM_TIMEOUT_SECONDS", "90") or 90)
+
+# Opinion-monitor document -> candidate articles splitting
+# (backend/services/projects/project_document_articles.py) - a full document
+# in the prompt and up to 3000 output tokens, so it gets more time than a
+# plain chat reply.
+PROJECT_DOCUMENT_SPLIT_TIMEOUT_SECONDS = int(
+    os.environ.get("PROJECT_DOCUMENT_SPLIT_TIMEOUT_SECONDS", "90") or 90
+)
+
+# Competitor study document -> candidate articles splitting
+# (backend/services/competitors/competitor_document_articles.py) - same shape
+# of call as PROJECT_DOCUMENT_SPLIT_TIMEOUT_SECONDS above, just on the
+# competitor side.
+COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS = int(
+    os.environ.get("COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS", "90") or 90
+)
+
+# Naming the companies a competitor study's approved articles are actually
+# about (backend/services/competitors/document_analysis.py) - a full article
+# corpus in the prompt, so it gets the same longer budget as finding
+# generation below.
+COMPETITOR_NAMING_TIMEOUT_SECONDS = int(os.environ.get("COMPETITOR_NAMING_TIMEOUT_SECONDS", "120") or 120)
+
+# Competitor finding generation (backend/services/competitors/competitor_analysis.py)
+# - the heaviest of these calls (most evidence in the prompt, most reasoning),
+# so it gets the longest default budget.
+COMPETITOR_FINDING_TIMEOUT_SECONDS = int(os.environ.get("COMPETITOR_FINDING_TIMEOUT_SECONDS", "120") or 120)
 
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"

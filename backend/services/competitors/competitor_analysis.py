@@ -783,7 +783,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
         ],
         temperature=0.2,
         max_tokens=ANALYSIS_MAX_TOKENS,
-        timeout=120,
+        timeout=config.COMPETITOR_FINDING_TIMEOUT_SECONDS,
         # The card is parsed as JSON below and dropped entirely when that
         # fails, which the user sees as the indistinguishable "Analysis could
         # not be generated". Asking the provider to enforce the shape is free -
