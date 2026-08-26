@@ -72,11 +72,11 @@ class IntelligenceHelpersTests(unittest.TestCase):
         )
         self.assertEqual(points[0], {
             "run_id": "a", "sequence_number": 1, "completed_at": "2026-07-01T00:00:00Z", "total": 4,
-            "positive": 3, "negative": 1, "neutral": 0, "mixed": 0,
+            "net_sentiment": 50, "positive": 3, "negative": 1, "neutral": 0, "mixed": 0,
         })
         self.assertEqual(points[1], {
             "run_id": "b", "sequence_number": 2, "completed_at": "2026-07-02T00:00:00Z", "total": 0,
-            "positive": 0, "negative": 0, "neutral": 0, "mixed": 0,
+            "net_sentiment": 0, "positive": 0, "negative": 0, "neutral": 0, "mixed": 0,
         })
 
     def test_sentiment_by_run_defaults_sequence_number_to_none_when_missing(self):
