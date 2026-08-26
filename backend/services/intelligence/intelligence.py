@@ -238,11 +238,13 @@ def sentiment_by_run_series(runs: list[dict], counts_by_run: dict) -> list[dict]
         run_id = run.get("id")
         counts = counts_by_run.get(run_id) or {}
         values = {key: int(counts.get(key, 0)) for key in VALID_SENTIMENTS}
+        total = sum(values.values())
         points.append({
             "run_id": run_id,
             "sequence_number": run.get("sequence_number"),
             "completed_at": run.get("finished_at") or run.get("created_at"),
-            "total": sum(values.values()),
+            "total": total,
+            "net_sentiment": net_sentiment(values, total),
             **values,
         })
     return points
