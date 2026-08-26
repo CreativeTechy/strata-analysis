@@ -71,6 +71,7 @@ from services.projects.projects_store import (
     update_project,
 )
 from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
+from services.intelligence.trend_summary import generate_trend_summary
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
@@ -658,6 +659,33 @@ def get_project_keyword_existence_view(
     return get_project_keyword_existence(
         project, normalize_period(period), source_url=source_url, keyword=keyword, run_id=run_id,
     )
+
+
+@app.get("/api/projects/{project_id}/trend-summary")
+def get_project_trend_summary_view(
+    project_id: int,
+    period: str = "30d",
+    run_id: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """LLM-generated "overall trend" paragraph for the Reports page -> the
+    configured LLM provider, over the same period/run-scoped articles the
+    rest of the intelligence endpoints use."""
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        return generate_trend_summary(project, normalize_period(period), run_id=run_id)
+    except LLMError as e:
+        logger.warning("Trend summary generation failed (%s): %s", e.code, e.detail or e)
+        return {"error": e.user_message, "error_code": e.code}
+    except Exception:
+        logger.exception("Trend summary generation failed unexpectedly")
+        return {
+            "error": "Something went wrong while generating the trend summary. Please try again.",
+            "error_code": "llm_provider_error",
+        }
 
 
 @app.get("/api/articles/export")

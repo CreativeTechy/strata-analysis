@@ -82,6 +82,12 @@
 .report-brief-section > header > span { display: grid; place-items: center; width: 32px; height: 28px; border-radius: 8px; color: #1d4ed8; background: #eff6ff; font-family: monospace; font-size: .78rem; font-weight: 800; }
 .report-brief-section > header h3 { font-size: 1.05rem; color: var(--text-dark); }
 .report-brief-summary { max-width: 950px; color: var(--text-light); font-size: 1rem; font-weight: 500; line-height: 1.65; }
+.report-trend-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.report-trend-refresh-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid #dbeafe; background: #fff; color: #1d4ed8; cursor: pointer; }
+.report-trend-refresh-btn:hover:not(:disabled) { background: #eff6ff; }
+.report-trend-refresh-btn:disabled { opacity: .6; cursor: default; }
+.report-trend-summary-status { margin-top: 8px; font-size: .8rem; color: var(--text-light); }
+.report-trend-summary-error { color: #b91c1c; }
 .report-brief-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 22px; }
 .report-brief-metrics > div { display: grid; gap: 5px; padding: 17px; border: 1px solid #e0e7ff; border-radius: 13px; background: #fafcff; }
 .report-brief-metrics strong { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.4rem; }
