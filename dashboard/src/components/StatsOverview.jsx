@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
-import DemographicSentimentChart from './DemographicSentimentChart';
+import DemographicPieCarousel from './DemographicPieCarousel';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
@@ -11,13 +11,6 @@ const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', m
 const KEYWORD_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
 function percent(value, total) { return total ? Math.round((Number(value || 0) / total) * 100) : 0; }
-// Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
-// - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
-function distributionLabel(value) {
-  return String(value || 'unknown')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
 function formatDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 
 function Section({ number, title, children }) {
@@ -141,7 +134,6 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
 
   const sentiments = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(intelligence[name] || 0) }));
   const insights = intelligence.insights || {};
-  const genderDistribution = (insights.gender_breakdown || []).filter((entry) => entry.total > 0);
   const leadingIdea = insights.frequent_ideas?.[0]?.idea;
   const leadingConcern = insights.negative_feedback?.[0]?.text || insights.complaints?.[0]?.text;
   const headline = leadingIdea
@@ -254,50 +246,19 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       <div className="report-demographics-grid">
         <div className="report-demographics-block">
           <h4><Users size={16} />Gender</h4>
-          {genderDistribution.length ? (
-            <>
-              <div className="report-gender-sentiment-grid">
-                {genderDistribution.map((entry) => {
-                  const slices = ['positive', 'neutral', 'negative', 'mixed']
-                    .map((key) => ({ key, value: Number(entry[key] || 0) }))
-                    .filter((slice) => slice.value > 0);
-                  return (
-                    <div key={entry.value} className="report-gender-sentiment-item">
-                      <span className="report-gender-sentiment-label">{distributionLabel(entry.value)}</span>
-                      <div className="intelligence-donut">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={slices} dataKey="value" nameKey="key" outerRadius="88%" paddingAngle={3} stroke="none">
-                              {slices.map((slice) => <Cell key={slice.key} fill={COLORS[slice.key]} />)}
-                            </Pie>
-                            <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <span className="report-gender-sentiment-count">{entry.total} article{entry.total === 1 ? '' : 's'}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="report-gender-sentiment-legend">
-                {['positive', 'neutral', 'negative', 'mixed'].map((key) => (
-                  <span key={key}><i style={{ background: COLORS[key] }} />{key}</span>
-                ))}
-              </div>
-            </>
-          ) : <p className="intelligence-empty">No gender detected on analyzed articles yet.</p>}
+          <DemographicPieCarousel data={insights.gender_breakdown} emptyLabel="No gender detected on analyzed articles yet." />
         </div>
         <div className="report-demographics-block">
           <h4><Globe2 size={16} />Region</h4>
-          <DemographicSentimentChart title="Sentiment by region" data={insights.region_breakdown} />
+          <DemographicPieCarousel data={insights.region_breakdown} emptyLabel="No region detected on analyzed articles yet." />
         </div>
         <div className="report-demographics-block">
           <h4><CalendarRange size={16} />Age range</h4>
-          <DemographicSentimentChart title="Sentiment by age range" data={insights.age_range_breakdown} />
+          <DemographicPieCarousel data={insights.age_range_breakdown} emptyLabel="No age range detected on analyzed articles yet." />
         </div>
         <div className="report-demographics-block">
           <h4><Briefcase size={16} />Segment</h4>
-          <DemographicSentimentChart title="Sentiment by segment" data={insights.segment_breakdown} />
+          <DemographicPieCarousel data={insights.segment_breakdown} emptyLabel="No life-situation/occupation segment detected on analyzed articles yet." />
         </div>
       </div>
     </Section>

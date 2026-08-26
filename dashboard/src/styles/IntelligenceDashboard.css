@@ -108,19 +108,32 @@
 .report-feedback-column li:has(.feedback-topic-link) { padding: 0; }
 
 .report-demographics-intro { margin: -6px 0 16px; color: var(--text-light); font-size: .84rem; line-height: 1.5; }
-.report-demographics-grid { display: grid; gap: 16px; }
+.report-demographics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .report-demographics-block { padding: 17px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fbfdff; }
 .report-demographics-block h4 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; color: var(--text-dark); font-size: .81rem; letter-spacing: .05em; text-transform: uppercase; }
+@media (max-width: 760px) { .report-demographics-grid { grid-template-columns: 1fr; } }
 
-.report-gender-sentiment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 14px; }
+.report-gender-sentiment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
 .report-gender-sentiment-item { display: grid; justify-items: center; gap: 4px; }
 .report-gender-sentiment-label { color: var(--text-dark); font-size: .82rem; font-weight: 700; text-transform: capitalize; }
-.report-gender-sentiment-item .intelligence-donut { width: 100%; height: 130px; }
+.report-gender-sentiment-item .intelligence-donut { width: 100%; height: 200px; }
 .report-gender-sentiment-count { color: var(--text-light); font-size: .72rem; }
 .report-gender-sentiment-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-top: 14px; }
 .report-gender-sentiment-legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-light); font-size: .78rem; text-transform: capitalize; }
 .report-gender-sentiment-legend i { width: 9px; height: 9px; border-radius: 50%; }
 @media (max-width: 640px) { .report-gender-sentiment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.demographic-pie-carousel { display: grid; justify-items: center; gap: 6px; }
+.demographic-pie-carousel-nav { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; width: 100%; }
+.demographic-pie-carousel-label { color: var(--text-dark); font-size: .88rem; font-weight: 700; text-align: center; text-transform: capitalize; }
+.demographic-pie-carousel-arrow { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border: 1px solid #e2e8f0; border-radius: 50%; background: #fff; color: var(--text-dark); cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+.demographic-pie-carousel-arrow:hover:not(:disabled) { background: #f8fafc; border-color: #cbd5e1; }
+.demographic-pie-carousel-arrow:disabled { opacity: .35; cursor: default; }
+.demographic-pie-carousel .intelligence-donut { width: 100%; height: 200px; }
+.demographic-pie-carousel-count { color: var(--text-light); font-size: .72rem; }
+.demographic-pie-carousel-dots { display: flex; justify-content: center; gap: 6px; }
+.demographic-pie-carousel-dot { width: 7px; height: 7px; padding: 0; border: none; border-radius: 50%; background: #cbd5e1; cursor: pointer; }
+.demographic-pie-carousel-dot.active { background: var(--secondary-color); }
 .feedback-topic-link { padding: 11px 8px; margin: 0 -8px; border-radius: 8px; transition: background-color .15s ease; }
 .feedback-topic-link:hover { background: rgba(37, 99, 235, 0.08); }
 .feedback-topic-link:hover strong { text-decoration: underline; }

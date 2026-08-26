@@ -26,6 +26,7 @@ const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', 
 
 function languageLabel(code) {
   if (!code || code === 'unknown') return 'Unknown';
+  if (code === 'other') return 'Other';
   try {
     const name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code);
     return name ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
@@ -42,10 +43,10 @@ function distributionLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-// segment is open-ended (unlike region/gender/age_range's handful of values),
-// so the legend/pie is capped to the top `limit` buckets (already sorted
-// desc by the backend) with the long tail folded into one "other" bucket,
-// rather than letting the chart grow unbounded as the taxonomy grows.
+// region/gender/age_range/segment are all open-ended text buckets, so every
+// distribution pie is capped to the top `limit` buckets (already sorted desc
+// by the backend) with the long tail folded into one "other" bucket, rather
+// than letting a chart grow unbounded as the taxonomy grows.
 function capBreakdown(entries, limit = 7) {
   if (entries.length <= limit) return entries;
   const rest = entries.slice(limit);
@@ -58,6 +59,15 @@ function capBreakdown(entries, limit = 7) {
     mixed: acc.mixed + Number(entry.mixed || 0),
   }), { value: 'other', total: 0, positive: 0, negative: 0, neutral: 0, mixed: 0 });
   return [...entries.slice(0, limit), other];
+}
+
+// Same idea as capBreakdown() above but for language_breakdown's {language,
+// count} shape, which carries no sentiment split to fold together.
+function capLanguageBreakdown(entries, limit = 7) {
+  if (entries.length <= limit) return entries;
+  const rest = entries.slice(limit);
+  const otherCount = rest.reduce((sum, entry) => sum + Number(entry.count || 0), 0);
+  return [...entries.slice(0, limit), { language: 'other', count: otherCount }];
 }
 
 function percent(value, total) {
@@ -154,10 +164,10 @@ export default function DashboardOverview({
   const sentimentData = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(data[name] || 0) }));
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
-  const languageData = data.insights?.language_breakdown || [];
-  const regionData = (data.insights?.region_breakdown || []).filter((entry) => entry.total > 0);
-  const genderData = (data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0);
-  const ageRangeData = (data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0);
+  const languageData = capLanguageBreakdown(data.insights?.language_breakdown || []);
+  const regionData = capBreakdown((data.insights?.region_breakdown || []).filter((entry) => entry.total > 0));
+  const genderData = capBreakdown((data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0));
+  const ageRangeData = capBreakdown((data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0));
   const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
   const verifiedData = (data.insights?.verified_breakdown || []).filter((entry) => entry.total > 0);
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
