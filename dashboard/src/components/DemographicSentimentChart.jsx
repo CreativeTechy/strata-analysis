@@ -41,7 +41,7 @@ function ChartTooltip({ active, payload, label }) {
  * [{value, total, positive, negative, neutral, mixed, positive_pct, negative_pct}]
  * already sorted by total desc.
  */
-export default function DemographicSentimentChart({ title, data, maxBuckets = 8 }) {
+export default function DemographicSentimentChart({ title, data, maxBuckets = 7 }) {
   const nonEmpty = (Array.isArray(data) ? data : []).filter((item) => Number(item?.total) > 0);
   const rows = nonEmpty.slice(0, maxBuckets).map((item) => {
     const total = Number(item.total) || 0;
