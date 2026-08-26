@@ -211,7 +211,7 @@ def pipeline_discovery_series(runs: list[dict]) -> list[dict]:
     points = []
     previous = None
     for run in runs:
-        discovered = max(0, int(run.get("articles_scraped") or 0))
+        discovered = max(0, int(run.get("articles_analyzed") or 0))
         if previous is None:
             change = None
         elif previous == 0:
@@ -253,18 +253,11 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         return []
     import db
     if run_id:
-        return db.fetch_all(
-            """
-            select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
-                   a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.segment, a.verified, a.insight_json,
-                   a.published, a.created_at, a.pipeline_run_id, a.source_language
-            from articles a
-            join article_projects ap on ap.article_id = a.id
-            where ap.project_id = %s and a.pipeline_run_id = %s
-            order by a.created_at asc
-            """,
-            (int(project_id), str(run_id)),
-        )
+        # From article_analyses, not `articles`: the article row only ever holds
+        # the *latest* analysis, so reading it here would show every run the
+        # newest run's conclusions. See services/articles/article_analyses.py.
+        from services.articles.article_analyses import fetch_run_article_rows
+        return fetch_run_article_rows(project_id, run_id)
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
@@ -283,20 +276,20 @@ def _fetch_pipeline_runs(project_id: int) -> list[dict]:
     if not _database_ready():
         return []
     import db
-    # sequence_number is numbered over every scrape run for this project
+    # sequence_number is numbered over every analysis run for this project
     # (any status), matching list_pipeline_runs() - not just the successful,
     # finished ones selected below - so "Pipeline #N" means the same run
     # whether it's read off a chart here or off the run-picker tabs.
     return db.fetch_all(
         """
-        select id, finished_at, created_at, articles_scraped, sequence_number
+        select id, finished_at, created_at, articles_analyzed, sequence_number
         from (
-            select id, finished_at, created_at, articles_scraped, sequence_number
+            select id, finished_at, created_at, articles_analyzed, sequence_number
             from (
-                select id, finished_at, created_at, articles_scraped, status,
+                select id, finished_at, created_at, articles_analyzed, status,
                        row_number() over (order by created_at asc) as sequence_number
                 from pipeline_runs
-                where project_id = %s and pipeline = 'scrape'
+                where project_id = %s and pipeline = 'analysis'
             ) numbered
             where status = 'success' and finished_at is not null
             order by finished_at desc
@@ -312,22 +305,17 @@ def _fetch_sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
     ids = [run_id for run_id in run_ids if run_id]
     if not _database_ready() or not ids:
         return {}
-    import db
-    rows = db.fetch_all(
-        """
-        select a.pipeline_run_id as run_id, a.sentiment, count(*)::int as total
-        from articles a
-        join article_projects ap on ap.article_id = a.id
-        where ap.project_id = %s and a.pipeline_run_id = any(%s)
-        group by a.pipeline_run_id, a.sentiment
-        """,
-        (int(project_id), ids),
-    )
+    # Grouping `articles` by pipeline_run_id would credit every article to the
+    # run that *first* analyzed it, so a later run comparing itself against an
+    # earlier one always reported zero. The snapshots record what each run
+    # actually concluded.
+    from services.articles.article_analyses import sentiment_counts_by_run
+    raw = sentiment_counts_by_run(project_id, ids)
     counts_by_run = defaultdict(dict)
-    for row in rows:
-        sentiment = str(row.get("sentiment") or "").lower()
-        if sentiment in VALID_SENTIMENTS:
-            counts_by_run[row.get("run_id")][sentiment] = int(row.get("total") or 0)
+    for run_key, sentiments in raw.items():
+        for sentiment, total in sentiments.items():
+            if sentiment in VALID_SENTIMENTS:
+                counts_by_run[run_key][sentiment] = int(total or 0)
     return counts_by_run
 
 

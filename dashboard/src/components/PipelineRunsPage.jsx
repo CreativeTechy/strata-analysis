@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Database, Play, RefreshCw } from 'lucide-react';
+import { Database, Play, RefreshCw, Trash2 } from 'lucide-react';
+import ConfirmModal from './ConfirmModal';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -49,6 +50,8 @@ export default function PipelineRunsPage({ projects = [] }) {
   const [runScope, setRunScope] = useState('pending');
   const [starting, setStarting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   const loadRuns = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -111,6 +114,28 @@ export default function PipelineRunsPage({ projects = [] }) {
       setError(err?.message || 'Failed to stop analysis run.');
     } finally {
       setStoppingId(null);
+    }
+  };
+
+  // Deletes the run and what was recorded about it - its per-document
+  // breakdown and the per-article snapshots the comparison charts read. The
+  // articles keep the analysis they currently hold, so this removes a
+  // comparison point rather than undoing the run's work.
+  const deleteRun = async (runId) => {
+    setDeletingId(runId);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch(`/api/pipeline-runs/${runId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to delete run (${res.status})`);
+      setNotice(data?.message || 'Analysis run deleted.');
+      await loadRuns();
+    } catch (err) {
+      setError(err?.message || 'Failed to delete analysis run.');
+    } finally {
+      setDeletingId(null);
+      setPendingDelete(null);
     }
   };
 
@@ -286,7 +311,18 @@ export default function PipelineRunsPage({ projects = [] }) {
                     >
                       {stoppingId === run.id ? 'Stopping...' : 'Stop'}
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      className="btn-secondary"
+                      onClick={() => setPendingDelete(run)}
+                      disabled={deletingId === run.id}
+                      title="Delete this run from the history"
+                      aria-label={`Delete analysis run for ${projectNameForRun(run, projectsById)}`}
+                      style={{ padding: '6px 10px', fontSize: '0.75rem', color: '#b42318' }}
+                    >
+                      <Trash2 size={14} /> {deletingId === run.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  )}
                 </div>
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
@@ -305,6 +341,20 @@ export default function PipelineRunsPage({ projects = [] }) {
           ))
         )}
       </div>
+
+      <ConfirmModal
+        open={Boolean(pendingDelete)}
+        title="Delete this analysis run?"
+        message={
+          pendingDelete
+            ? `Analysis #${pendingDelete.sequence_number ?? '?'} for ${projectNameForRun(pendingDelete, projectsById)} will be removed from the history, along with its per-document breakdown and the results the comparison charts read for it. The ${pendingDelete.articles_analyzed || 0} article(s) it analyzed are kept, and so is the analysis currently stored on them.`
+            : ''
+        }
+        confirmLabel={deletingId ? 'Deleting...' : 'Delete run'}
+        confirmButtonStyle={{ background: '#b42318' }}
+        onConfirm={() => pendingDelete && deleteRun(pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

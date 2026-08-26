@@ -75,6 +75,7 @@ from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipelin
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
     create_pipeline_run,
+    delete_pipeline_run,
     get_active_run_for_project,
     get_pipeline_run,
     get_pipeline_run_documents,
@@ -545,6 +546,46 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
         record_run_completion(run["project_id"], status="cancelled", completed_at=datetime.now(timezone.utc))
 
     return {"run": updated or run, "message": "Analysis run cancelled."}
+
+
+@app.delete("/api/pipeline-runs/{run_id}")
+def delete_pipeline_run_endpoint(
+    run_id: str,
+    user: dict = Depends(require_permission("pipeline.delete")),
+):
+    """Remove an analysis run from the history.
+
+    This deletes the run and what was recorded about it - its per-document
+    breakdown and its per-article analysis snapshots - so it stops appearing as
+    a comparison point on the dashboard. The articles and the analysis currently
+    stored on them are left alone; see delete_pipeline_run() for why.
+
+    A run that is still queued/running is refused rather than stopped
+    implicitly: its worker thread would otherwise keep writing progress into a
+    row that no longer exists.
+    """
+    from services.articles.article_analyses import run_article_count
+
+    run = get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+
+    if run.get("project_id") is not None:
+        _ensure_project_visible(run["project_id"], user)
+
+    snapshots = run_article_count(run_id)
+    try:
+        deleted = delete_pipeline_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+
+    return {
+        "message": "Analysis run deleted.",
+        "run_id": run_id,
+        "snapshots_deleted": snapshots,
+    }
 
 
 @app.get("/api/articles")

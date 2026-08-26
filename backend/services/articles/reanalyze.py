@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import db
 from analysis.orchestrator import analyze_article
+from services.articles.article_analyses import record_analysis_snapshot
 from services.articles.store import save_articles
 
 ARTICLE_SOURCE_FIELDS = ("id", "url", "source", "source_url", "title", "author", "published", "text")
@@ -91,7 +92,12 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     `run_id`, when this is part of a tracked analysis run, tags the article
     with that run so per-run dashboard/report scoping works. save_articles
     only fills it in where it is still null, so an article keeps the run that
-    first analyzed it rather than being re-attributed on every retry."""
+    first analyzed it rather than being re-attributed on every retry - and
+    because of that, `articles.pipeline_run_id` alone cannot say what a *later*
+    run concluded. record_analysis_snapshot() below is what makes runs
+    independently comparable: it freezes this run's conclusions into
+    article_analyses, keyed by (run_id, article_id), while the article row keeps
+    only the latest."""
     article = load_article_for_reanalysis(article_id)
     if not article:
         return {"article_id": article_id, "ok": False, "analysis_status": "not_found", "analysis_error": "article_not_found"}
@@ -109,6 +115,14 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     except Exception as e:
         _mark_failed(article_id, f"save_failed: {e}")
         return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": f"save_failed: {e}"}
+
+    # After save_articles, never before: `segment` is derived from people-opinion
+    # votes in a follow-up UPDATE inside that call, so a snapshot taken any
+    # earlier would read the pre-analysis value. Failure here is swallowed by
+    # record_analysis_snapshot - losing a comparison point must not fail an
+    # article the run genuinely analyzed.
+    if run_id and saved:
+        record_analysis_snapshot(run_id, article_id)
 
     return {
         "article_id": article_id,
