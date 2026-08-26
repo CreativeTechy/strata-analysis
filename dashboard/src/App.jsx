@@ -10,6 +10,8 @@ import IntelligencePage from './components/IntelligencePage';
 import CompetitorStudiesPage from './components/CompetitorStudiesPage';
 import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
+import CompetitorsPage from './components/CompetitorsPage';
+import CompetitorEditPage from './components/CompetitorEditPage';
 import CompetitorReportPage from './components/CompetitorReportPage';
 import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
 import PipelineRunsPage from './components/PipelineRunsPage';
@@ -813,6 +815,22 @@ export default function App() {
             element={(
               <RequirePermission permissions={['competitors.view']}>
                 <CompetitorWorkspace />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/:studyId/manage"
+            element={(
+              <RequirePermission permissions={['competitors.view']}>
+                <CompetitorsPage />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/:studyId/edit"
+            element={(
+              <RequirePermission permissions={['competitors.manage']}>
+                <CompetitorEditPage />
               </RequirePermission>
             )}
           />

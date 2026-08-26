@@ -60,8 +60,8 @@ const DOCUMENT_ANALYSIS_STAGES = [
  *  reads as a continuation of that same progress UI rather than a separate
  *  terminal-style log. Renders nothing until there's at least one line, and
  *  stays visible after the run finishes so the trail can still be reviewed.
- *  Exported so CompetitorWorkspace.jsx can reuse it, the same way it already
- *  reuses ListEditor from this file. */
+ *  Exported so CompetitorRunAnalysis.jsx can reuse it, the same way
+ *  CompetitorEditPage.jsx reuses ListEditor from this file. */
 export function DiscoveryLog({ logs, active }) {
   const boxRef = useRef(null);
   const [now, setNow] = useState(null);
