@@ -310,3 +310,35 @@ def upsert_pipeline_run_document_stats(run_id, document_stats):
             )
     except Exception as exc:
         print(f"Failed to persist per-document analysis stats: {exc}")
+
+
+def delete_pipeline_run(run_id):
+    """Delete one analysis run and everything recorded *about* the run.
+
+    What goes: the `pipeline_runs` row, its per-document breakdown
+    (pipeline_run_documents, ON DELETE CASCADE) and its per-article analysis
+    snapshots (article_analyses, ON DELETE CASCADE) - i.e. this run stops being
+    a comparison point on the dashboard's history charts.
+
+    What stays: the articles themselves and the analysis currently on them.
+    `articles.pipeline_run_id` is ON DELETE SET NULL, so an article whose first
+    analysis was this run simply loses that attribution; its stored sentiment,
+    tone and topics are untouched even when this was the run that produced them.
+    Deleting a run discards the *record of a run*, it does not roll the corpus
+    back to some earlier state.
+
+    Returns None when there is no such run, and raises ValueError when the run
+    is still in flight - stop it first, so its worker isn't still writing
+    progress into a row that has been deleted out from under it.
+    """
+    if not config.DATABASE_URL or not run_id:
+        return None
+
+    run = get_pipeline_run(run_id)
+    if not run:
+        return None
+    if run.get("status") in ACTIVE_STATUSES:
+        raise ValueError(f"Run is still {run['status']}; stop it before deleting.")
+
+    db.execute("delete from pipeline_runs where id = %s", (str(run_id),))
+    return run

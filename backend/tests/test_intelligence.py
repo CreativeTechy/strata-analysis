@@ -53,9 +53,9 @@ class IntelligenceHelpersTests(unittest.TestCase):
 
     def test_pipeline_deltas_cover_first_and_zero_baseline_runs(self):
         values = pipeline_discovery_series([
-            {"id": "a", "sequence_number": 1, "articles_scraped": 0},
-            {"id": "b", "sequence_number": 2, "articles_scraped": 10},
-            {"id": "c", "sequence_number": 3, "articles_scraped": 5},
+            {"id": "a", "sequence_number": 1, "articles_analyzed": 0},
+            {"id": "b", "sequence_number": 2, "articles_analyzed": 10},
+            {"id": "c", "sequence_number": 3, "articles_analyzed": 5},
         ])
         self.assertIsNone(values[0]["change_pct"])
         self.assertEqual(values[1]["change_pct"], 100)
