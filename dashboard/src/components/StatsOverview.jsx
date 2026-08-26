@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
+import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, RefreshCw, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
@@ -13,8 +13,8 @@ const KEYWORD_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '
 function percent(value, total) { return total ? Math.round((Number(value || 0) / total) * 100) : 0; }
 function formatDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 
-function Section({ number, title, children }) {
-  return <section className="report-brief-section"><header><span>{number}</span><h3>{title}</h3></header>{children}</section>;
+function Section({ number, title, actions, children }) {
+  return <section className="report-brief-section"><header><span>{number}</span><h3>{title}</h3>{actions ? <span className="report-trend-actions">{actions}</span> : null}</header>{children}</section>;
 }
 
 // A topic's `sources` come back from the API as {id, url, title,
@@ -77,6 +77,12 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const [keywordLoading, setKeywordLoading] = useState(false);
   const [keywordError, setKeywordError] = useState(null);
 
+  const [trendSummary, setTrendSummary] = useState(null);
+  const [trendSummaryLoading, setTrendSummaryLoading] = useState(false);
+  const [trendSummaryError, setTrendSummaryError] = useState(null);
+  const [trendSummaryNonce, setTrendSummaryNonce] = useState(0);
+  const totalArticles = Number(intelligence?.total || 0);
+
   useEffect(() => {
     setSourceFilter('all');
     setKeywordFilter('all');
@@ -126,10 +132,44 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     return () => { cancelled = true; };
   }, [projectId, period, runId, sourceFilter, keywordFilter, configuredKeywords.length]);
 
+  useEffect(() => {
+    if (projectId == null || totalArticles === 0) {
+      setTrendSummary(null);
+      setTrendSummaryError(null);
+      setTrendSummaryLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setTrendSummaryLoading(true);
+    setTrendSummaryError(null);
+    const params = new URLSearchParams({ period });
+    if (runId) params.set('run_id', runId);
+    fetch(`/api/projects/${projectId}/trend-summary?${params.toString()}`)
+      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (!ok || data?.error) {
+          setTrendSummary(null);
+          setTrendSummaryError(data?.error || 'Failed to generate the trend summary');
+          return;
+        }
+        setTrendSummary(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load trend summary', err);
+          setTrendSummary(null);
+          setTrendSummaryError(err?.message || 'Failed to generate the trend summary');
+        }
+      })
+      .finally(() => { if (!cancelled) setTrendSummaryLoading(false); });
+    return () => { cancelled = true; };
+  }, [projectId, period, runId, totalArticles, trendSummaryNonce]);
+
   if (loading) return <section className="report-brief glass-card intelligence-loading">Loading the live intelligence brief…</section>;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>Couldn’t load this report</strong><p className="subtitle">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>Try again</button>}</div></section>;
 
-  const total = Number(intelligence.total || 0);
+  const total = totalArticles;
   if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>No analyzed articles yet</strong><p className="subtitle">Run an analysis for {scopeLabel || 'this project'} or broaden the date range to generate a report.</p><Link to="/pipeline-runs" className="btn-secondary">Go to Analysis Runs</Link></div></section>;
 
   const sentiments = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(intelligence[name] || 0) }));
@@ -148,8 +188,30 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const keywordHasMatches = keywordSeriesData.some((point) => keywordSeriesKeys.some((key) => Number(point[key] || 0) > 0));
 
   return <section className="report-brief">
-    <Section number="01" title="Executive summary">
-      <p className="report-brief-summary">{headline}</p>
+    <Section
+      number="01"
+      title="Executive summary"
+      actions={
+        <button
+          type="button"
+          className="report-trend-refresh-btn"
+          onClick={() => setTrendSummaryNonce((n) => n + 1)}
+          disabled={trendSummaryLoading}
+          aria-busy={trendSummaryLoading}
+          aria-label="Regenerate the AI trend summary"
+          title="Regenerate the AI trend summary"
+        >
+          <RefreshCw size={13} className={trendSummaryLoading ? 'spin' : ''} />
+        </button>
+      }
+    >
+      <p className="report-brief-summary">{trendSummary?.summary || headline}</p>
+      {trendSummaryLoading ? <p className="report-trend-summary-status">Generating AI trend summary…</p> : null}
+      {!trendSummaryLoading && trendSummaryError ? (
+        <p className="report-trend-summary-status report-trend-summary-error">
+          Couldn't generate an AI trend summary right now — showing a quick overview instead.
+        </p>
+      ) : null}
       <div className="report-brief-metrics">
         <div><strong>{total.toLocaleString()}</strong><span>Analyzed articles</span></div>
         <div><strong className={intelligence.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{intelligence.net_sentiment >= 0 ? '+' : ''}{intelligence.net_sentiment}</strong><span>Net sentiment</span></div>

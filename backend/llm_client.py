@@ -12,9 +12,25 @@ currently resolves to.
 
 from __future__ import annotations
 
+import re
+
 import requests
 
 import config
+
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Some locally-hosted reasoning models (e.g. Qwen3 via Ollama) emit their
+    chain-of-thought inline as a <think>...</think> block ahead of the actual
+    answer - strip it so every caller only ever sees the final response text.
+    A block with no closing tag means max_tokens cut it off mid-thought, so
+    drop everything from the opening tag on rather than show a half-finished
+    reasoning trace.
+    """
+    return _THINK_OPEN_RE.sub("", _THINK_BLOCK_RE.sub("", text)).strip()
 
 
 class LLMError(Exception):
@@ -144,7 +160,7 @@ def _extract_output_text_responses(payload) -> str:
             elif content_type == "refusal":
                 refusal = content.get("refusal")
 
-    joined = "\n".join(text.strip() for text in texts if text and text.strip()).strip()
+    joined = _strip_reasoning("\n".join(text.strip() for text in texts if text and text.strip()))
     incomplete_reason = (payload.get("incomplete_details") or {}).get("reason", "unknown")
 
     # A response cut off by the token budget is unusable even when some text
@@ -181,7 +197,7 @@ def _extract_output_text_chat_completions(payload) -> str:
     choice = choices[0]
     finish_reason = choice.get("finish_reason") or "unknown"
     message = choice.get("message") or {}
-    text = (message.get("content") or "").strip()
+    text = _strip_reasoning((message.get("content") or "").strip())
 
     # Normalize to the same finish_reason vocabulary _post()'s retry logic
     # already understands for the Responses API ("max_output_tokens" means
