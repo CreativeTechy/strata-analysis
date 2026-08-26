@@ -340,6 +340,17 @@
   word-break: break-word;
 }
 
+/* Highlights the active search term (e.g. arrived at via a keyword link from
+   the dashboard) inline within a title/summary, rather than just implying
+   the match through the filtered list. */
+.article-search-highlight {
+  background: #fef08a;
+  color: #713f12;
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 700;
+}
+
 /* Footer: keep the date from shrinking, let the source name truncate
    gracefully instead of clipping or forcing the card wider. */
 .articles-page-shell .article-footer > span {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, Info, LayoutGrid, List, FolderKanban, FolderInput, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
@@ -132,6 +132,29 @@ function confidencePct(value) {
   return Number.isFinite(score) ? `${Math.round(score * 100)}%` : null;
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Wraps every case-insensitive occurrence of each word of `term` in `text`
+// with a <mark> - matching the backend's own AND-of-tokens search (see
+// _score_search_row in articles_store.py), which matches an article when
+// all the search's words appear anywhere in it, not just as one contiguous
+// phrase. So "Stellantis battery" highlights "Stellantis" and "battery"
+// separately wherever each shows up, even far apart in the text.
+function highlightMatches(text, term) {
+  const value = text == null ? '' : String(text);
+  const needle = String(term || '').trim();
+  if (!needle) return value;
+  const tokens = [...new Set(needle.split(/\W+/).filter((token) => token.length > 1))];
+  const alternatives = (tokens.length ? tokens : [needle]).map(escapeRegExp).sort((a, b) => b.length - a.length);
+  const parts = value.split(new RegExp(`(${alternatives.join('|')})`, 'gi'));
+  if (parts.length === 1) return value;
+  return parts.map((part, index) =>
+    index % 2 === 1 ? <mark key={index} className="article-search-highlight">{part}</mark> : part
+  );
+}
+
 function getPageNumbers(currentPage, totalPages) {
   if (totalPages <= 7) {
     return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -178,10 +201,17 @@ export default function ArticlesPage({ project = null, projectId = null, project
     const parsed = Number(projectId);
     return Number.isFinite(parsed) ? parsed : null;
   }, [projectId]);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  // Read once on mount (lazy initializers only run on the first render) so a link
+  // like /articles?search=EV&project_id=3 (e.g. from the "Trending keywords &
+  // hashtags" card) pre-fills the filters; later edits to these filters
+  // intentionally don't rewrite the URL.
+  const [searchParams] = useSearchParams();
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [sentiment, setSentiment] = useState('all');
-  const [projectFilter, setProjectFilter] = useState(() => (normalizedProjectId != null ? String(normalizedProjectId) : 'all'));
+  const [projectFilter, setProjectFilter] = useState(() => (
+    searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
+  ));
   const [sourceFilter, setSourceFilter] = useState('all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
@@ -1002,7 +1032,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                           <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
                             {article.sentiment || 'Neutral'}
                           </span>
-                          <span className="article-row-title">{article.title || 'Untitled article'}</span>
+                          <span className="article-row-title">{highlightMatches(article.title || 'Untitled article', search)}</span>
                           <span className="article-row-source">{article.source || 'Unknown source'}</span>
                           <span className="article-row-date">
                             <Calendar size={13} /> {articleDate(article.published)}
@@ -1042,7 +1072,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
                             </div>
 
                             <p className="article-summary">
-                              {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 220)}...` : 'No summary available.')}
+                              {highlightMatches(
+                                article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 220)}...` : 'No summary available.'),
+                                search
+                              )}
                             </p>
 
                             {article.insight_json?.frequent_ideas?.length ? (
@@ -1149,12 +1182,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
                       <h3 className="article-title">
                         <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                          {article.title || 'Untitled article'} <ExternalLink size={14} style={{ opacity: 0.5 }} />
+                          {highlightMatches(article.title || 'Untitled article', search)} <ExternalLink size={14} style={{ opacity: 0.5 }} />
                         </a>
                       </h3>
 
                       <p className="article-summary">
-                        {article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.')}
+                        {highlightMatches(
+                          article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.'),
+                          search
+                        )}
                       </p>
 
                       {article.insight_json?.frequent_ideas?.length ? (

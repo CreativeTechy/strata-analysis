@@ -68,8 +68,10 @@
 .intelligence-platform-sentiment > div > div { display: flex; height: 15px; overflow: hidden; border-radius: 99px; background: #edf2f7; }
 .intelligence-platform-sentiment i { display: block; height: 100%; }
 .intelligence-term-list { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
-.intelligence-term-list > span { display: inline-flex; gap: 6px; align-items: center; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; padding: 7px 10px; border-radius: 999px; font-size: .79rem; }
-.intelligence-term-list > span.hashtag { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
+.intelligence-term-list > .intelligence-term-link { display: inline-flex; gap: 6px; align-items: center; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; padding: 7px 10px; border-radius: 999px; font-size: .79rem; text-decoration: none; cursor: pointer; transition: background .15s ease, box-shadow .15s ease; }
+.intelligence-term-list > .intelligence-term-link:hover, .intelligence-term-list > .intelligence-term-link:focus-visible { background: #dbeafe; box-shadow: 0 0 0 2px rgba(29,78,216,.18); }
+.intelligence-term-list > .intelligence-term-link.hashtag { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
+.intelligence-term-list > .intelligence-term-link.hashtag:hover, .intelligence-term-list > .intelligence-term-link.hashtag:focus-visible { background: #dcfce7; box-shadow: 0 0 0 2px rgba(21,128,61,.18); }
 .intelligence-term-list em { font-style: normal; font-weight: 800; }
 .intelligence-empty { margin-top: 18px; color: var(--text-light); font-size: .82rem; line-height: 1.5; }
 .intelligence-change { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; font-weight: 800; white-space: nowrap; }

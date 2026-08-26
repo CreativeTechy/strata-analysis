@@ -85,7 +85,7 @@ BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
 SEARCH_SCAN_LIMIT = 1000
-SEARCH_MATCH_THRESHOLD = 0.28
+SEARCH_MATCH_THRESHOLD = 0.78
 
 
 def _auth_headers():
@@ -466,7 +466,11 @@ def _score_search_row(row: dict, search: str, query_embedding: list[float] | Non
     elif keyword_score and semantic_score:
         score = min(1.0, (keyword_score * 0.45) + (semantic_score * 0.55))
 
-    matched = exact_phrase_hit or keyword_hits > 0 or semantic_score >= SEARCH_MATCH_THRESHOLD
+    # Every token has to hit, not just one - a query like "Stellantis battery"
+    # must not match every article merely because "Stellantis" (the brand
+    # name in this project's every title) is present on its own.
+    keyword_match = bool(tokens) and keyword_hits == len(tokens)
+    matched = exact_phrase_hit or keyword_match or semantic_score >= SEARCH_MATCH_THRESHOLD
     return score, matched
 
 
@@ -493,7 +497,7 @@ def _rank_search_rows(rows, search: str):
                 item[2],
             ),
         )
-        if matched or score > 0
+        if matched
     ]
     if not ranked_rows:
         ranked_rows = [row for _, _, _, row in sorted(ranked, key=lambda item: (-item[0], item[2]))[:50]]
