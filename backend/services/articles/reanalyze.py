@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 
 import db
 from analysis.orchestrator import analyze_article
+from core.logging import reset_run_id, set_run_id
+from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
 from services.articles.article_analyses import record_analysis_snapshot
 from services.articles.store import save_articles
 
@@ -98,38 +100,54 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     independently comparable: it freezes this run's conclusions into
     article_analyses, keyed by (run_id, article_id), while the article row keeps
     only the latest."""
-    article = load_article_for_reanalysis(article_id)
-    if not article:
-        return {"article_id": article_id, "ok": False, "analysis_status": "not_found", "analysis_error": "article_not_found"}
-
+    token = set_run_id(run_id)
     try:
-        project_id = _primary_project_id_for_article(article_id)
-        result = analyze_article(dict(article), project_context="")
-    except Exception as e:
-        _mark_failed(article_id, str(e))
-        return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": str(e)}
+        article = load_article_for_reanalysis(article_id)
+        if not article:
+            return {"article_id": article_id, "ok": False, "analysis_status": "not_found", "analysis_error": "article_not_found"}
 
-    merged = {**article, **result}
-    try:
-        saved, _ = save_articles([merged], project_id=project_id, run_id=run_id)
-    except Exception as e:
-        _mark_failed(article_id, f"save_failed: {e}")
-        return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": f"save_failed: {e}"}
+        try:
+            project_id = _primary_project_id_for_article(article_id)
+            result = analyze_article(dict(article), project_context="")
+        except FATAL_ANALYSIS_ERRORS as e:
+            # The provider itself is unusable (bad credentials, no quota,
+            # unreachable host) - every remaining article would fail the exact
+            # same way. Still recorded as this article's own failure (an
+            # operator looking at just this row must see why it has no
+            # analysis), but flagged `fatal` so pipeline.py stops the run
+            # instead of grinding through the rest as doomed per-article calls.
+            _mark_failed(article_id, str(e))
+            return {
+                "article_id": article_id, "ok": False, "analysis_status": "failed",
+                "analysis_error": str(e), "fatal": True,
+            }
+        except Exception as e:
+            _mark_failed(article_id, str(e))
+            return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": str(e)}
 
-    # After save_articles, never before: `segment` is derived from people-opinion
-    # votes in a follow-up UPDATE inside that call, so a snapshot taken any
-    # earlier would read the pre-analysis value. Failure here is swallowed by
-    # record_analysis_snapshot - losing a comparison point must not fail an
-    # article the run genuinely analyzed.
-    if run_id and saved:
-        record_analysis_snapshot(run_id, article_id)
+        merged = {**article, **result}
+        try:
+            saved, _ = save_articles([merged], project_id=project_id, run_id=run_id)
+        except Exception as e:
+            _mark_failed(article_id, f"save_failed: {e}")
+            return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": f"save_failed: {e}"}
 
-    return {
-        "article_id": article_id,
-        "ok": bool(saved) and result.get("analysis_status") == "success",
-        "analysis_status": result.get("analysis_status"),
-        "analysis_error": result.get("analysis_error"),
-    }
+        # After save_articles, never before: `segment` is derived from people-opinion
+        # votes in a follow-up UPDATE inside that call, so a snapshot taken any
+        # earlier would read the pre-analysis value. Failure here is swallowed by
+        # record_analysis_snapshot - losing a comparison point must not fail an
+        # article the run genuinely analyzed.
+        if run_id and saved:
+            record_analysis_snapshot(run_id, article_id)
+
+        return {
+            "article_id": article_id,
+            "ok": bool(saved) and result.get("analysis_status") == "success",
+            "analysis_status": result.get("analysis_status"),
+            "analysis_error": result.get("analysis_error"),
+        }
+    finally:
+        reset_run_id(token)
 
 
 def reanalyze_articles(article_ids: list[int], run_id: str | None = None) -> list[dict]:

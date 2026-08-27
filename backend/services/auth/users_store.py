@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 import bcrypt
 
 import config
 import db
 from services.auth import permissions_store
+
+logger = logging.getLogger(__name__)
 
 STATUSES = ("active", "disabled")
 
@@ -152,14 +156,14 @@ def bootstrap_admin() -> None:
         if count_users() > 0:
             return
         if not config.ADMIN_BOOTSTRAP_USERNAME or not config.ADMIN_BOOTSTRAP_PASSWORD:
-            print(
+            logger.warning(
                 "No users exist yet and ADMIN_BOOTSTRAP_USERNAME/ADMIN_BOOTSTRAP_PASSWORD "
                 "are not set - skipping admin bootstrap. Set them in backend/.env and restart."
             )
             return
         admin_role = permissions_store.get_role_by_name("admin")
         if not admin_role:
-            print("No 'admin' role found - run schema.sql to seed default roles before bootstrapping.")
+            logger.warning("No 'admin' role found - run schema.sql to seed default roles before bootstrapping.")
             return
         create_user(
             config.ADMIN_BOOTSTRAP_USERNAME,
@@ -167,6 +171,6 @@ def bootstrap_admin() -> None:
             config.ADMIN_BOOTSTRAP_PASSWORD,
             admin_role["id"],
         )
-        print(f"Bootstrapped initial admin user '{config.ADMIN_BOOTSTRAP_USERNAME}'.")
-    except Exception as e:
-        print(f"Admin bootstrap failed: {e}")
+        logger.info("Bootstrapped initial admin user '%s'.", config.ADMIN_BOOTSTRAP_USERNAME)
+    except Exception:
+        logger.exception("Admin bootstrap failed.")

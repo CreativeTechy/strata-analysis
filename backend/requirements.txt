@@ -1,5 +1,6 @@
 requests>=2.31   # LLM/HF HTTP calls (llm_client.py); no crawling in this product
 psycopg[binary]>=3.2
+psycopg-pool>=3.2  # pooled connections behind db.py's connect()/fetch_*/execute()
 fastapi>=0.110
 python-multipart>=0.0.9  # required by FastAPI for UploadFile/File(...) parsing
 uvicorn[standard]>=0.29  # ~73.2 kB, plus platform-dependent standard extras 10-20 MB

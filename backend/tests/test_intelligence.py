@@ -144,12 +144,12 @@ class ClassifyPlatformTests(unittest.TestCase):
 
 class GetProjectIntelligenceTests(unittest.TestCase):
     """get_project_intelligence() does a deferred `from
-    services.articles.articles_store import _topic_summary` import inside the
-    function body, not at module level - a bad import path there only breaks
-    at call time, so this must actually invoke the function (not just import
-    the module) to catch it. Regression test for a reorg that broke exactly
-    this: the module-level import graph checked out fine while this deferred
-    import still pointed at the pre-move module path."""
+    services.articles.articles_analytics import _topic_summary` import inside
+    the function body, not at module level - a bad import path there only
+    breaks at call time, so this must actually invoke the function (not just
+    import the module) to catch it. Regression test for a reorg that broke
+    exactly this: the module-level import graph checked out fine while this
+    deferred import still pointed at the pre-move module path."""
 
     def test_runs_end_to_end_without_a_database(self):
         with patch.object(intelligence, "_database_ready", return_value=False):

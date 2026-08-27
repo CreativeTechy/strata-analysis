@@ -39,6 +39,7 @@ the model, and every card carries the evidence rows behind it.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +55,8 @@ from embeddings import cosine_similarity
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors.job_runs import ACTIVE_STATUSES, JobRegistry
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "competitor-analysis-2026-07-27"
 
@@ -799,7 +802,7 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     try:
         parsed = json.loads(_strip_fences(raw))
     except (json.JSONDecodeError, ValueError) as exc:
-        print(f"  finding generation returned unparsable output for {competitor.get('name')}: {exc}")
+        logger.warning("Finding generation returned unparsable output for %s: %s", competitor.get("name"), exc)
         return None
 
     if not isinstance(parsed, dict):
@@ -956,7 +959,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
 
     for competitor, finding, error in results:
         if error is not None:
-            print(f"  finding generation failed for {competitor.get('name')}: {error.detail or error}")
+            logger.warning("Finding generation failed for %s: %s", competitor.get("name"), error.detail or error)
             llm_errors.append(error)
             continue
         if finding:

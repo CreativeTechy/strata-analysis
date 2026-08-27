@@ -336,7 +336,7 @@ def _fetch_document_count(project_id: int) -> int:
 
 
 def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
-    from services.articles.articles_store import _topic_summary
+    from services.articles.articles_analytics import _topic_summary
     period = normalize_period(period)
     if run_id:
         rows = _fetch_project_rows(project["id"], run_id=run_id)

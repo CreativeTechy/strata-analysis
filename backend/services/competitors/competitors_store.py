@@ -292,3 +292,89 @@ def competitor_overview(project_id: int) -> list[dict]:
         """,
         (int(project_id),),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Studies - a competitor-mode project. Not "competitors" itself, but competitor_api.py's
+# only other table access, so it lives here rather than in the route module.
+# --------------------------------------------------------------------------- #
+STUDY_COLUMNS = "id, name, mode, status, last_run_at, last_run_status"
+
+
+def get_study(project_id: int) -> dict | None:
+    return db.fetch_one(
+        f"select {STUDY_COLUMNS} from projects where id = %s",
+        (int(project_id),),
+    )
+
+
+def list_studies() -> list[dict]:
+    """Competitor-mode projects with enough summary to render the index."""
+    return db.fetch_all(
+        """
+        with latest_findings as (
+            -- One row per competitor's *current* card, not per generation
+            -- event: generate_finding() always inserts (never updates), so
+            -- re-running analysis on the same competitor leaves its older
+            -- findings in place as history rather than superseding them in
+            -- place. Counting competitor_findings directly counted every
+            -- one of those, so the number grew on every re-run even with
+            -- the competitor set unchanged, and didn't match the study's
+            -- own findings grid - which shows one card per competitor, the
+            -- newest, excluding rejected ones.
+            select distinct on (competitor_id)
+                   project_id, competitor_id, impact_level, generated_at
+            from competitor_findings
+            where validation_status != 'rejected'
+            order by competitor_id, generated_at desc
+        )
+        select p.id, p.name, p.status, p.mode, p.created_at, p.updated_at,
+               p.last_run_at, p.last_run_status,
+               bp.name as business_name, bp.website as business_website,
+               bp.market, bp.industry,
+               coalesce(c.tracked, 0)::int   as tracked_competitors,
+               coalesce(c.suggested, 0)::int as suggested_competitors,
+               coalesce(f.total, 0)::int     as finding_count,
+               coalesce(f.high, 0)::int      as high_impact_count,
+               f.latest_generated_at
+        from projects p
+        left join business_profiles bp on bp.project_id = p.id
+        left join (
+            select project_id,
+                   count(*) filter (where status = 'tracked')   as tracked,
+                   count(*) filter (where status = 'suggested') as suggested
+            from competitors group by project_id
+        ) c on c.project_id = p.id
+        left join (
+            select project_id, count(*) as total,
+                   count(*) filter (where impact_level = 'high') as high,
+                   max(generated_at) as latest_generated_at
+            from latest_findings group by project_id
+        ) f on f.project_id = p.id
+        where p.mode = 'competitor'
+        order by p.created_at desc
+        """
+    )
+
+
+def create_study(name: str, status: str, description: str | None) -> dict | None:
+    return db.fetch_one(
+        """
+        insert into projects (name, mode, status, description)
+        values (%s, 'competitor', %s, %s)
+        returning id, name, mode, status, created_at
+        """,
+        (name, status, description),
+    )
+
+
+def update_study(project_id: int, name: str, status: str, description: str | None) -> dict | None:
+    return db.fetch_one(
+        """
+        update projects
+           set name = %s, status = %s, description = %s, updated_at = now()
+         where id = %s and mode = 'competitor'
+        returning id, name, mode, status, description, created_at, updated_at
+        """,
+        (name, status, description, int(project_id)),
+    )

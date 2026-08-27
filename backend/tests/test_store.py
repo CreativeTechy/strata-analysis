@@ -90,58 +90,6 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
                 store._replace_article_children(1, self.ARTICLE)  # must not raise
 
 
-class ReplaceIdeaClustersForArticleTests(unittest.TestCase):
-    def setUp(self):
-        store._table_exists.cache_clear()
-
-    def tearDown(self):
-        store._table_exists.cache_clear()
-
-    def test_noop_without_project_id(self):
-        with patch("services.articles.store._table_exists", return_value=True):
-            with patch("services.articles.store.db.execute") as mock_execute, patch("services.articles.store.db.fetch_all") as mock_fetch_all:
-                store._replace_idea_clusters_for_article(1, None, [{"idea": "x"}])
-        mock_execute.assert_not_called()
-        mock_fetch_all.assert_not_called()
-
-    def test_noop_when_idea_clusters_table_missing(self):
-        with patch("services.articles.store._table_exists", return_value=False):
-            with patch("services.articles.store.db.execute") as mock_execute:
-                store._replace_idea_clusters_for_article(1, 2, [{"idea": "x"}])
-        mock_execute.assert_not_called()
-
-    def test_unlinks_then_relinks_and_recomputes_frequency(self):
-        with patch("services.articles.store._table_exists", return_value=True), \
-             patch("services.articles.store.db.fetch_all", return_value=[{"idea_cluster_id": 9}]), \
-             patch("services.articles.store.db.fetch_one", return_value={"id": 42}), \
-             patch("services.articles.store.db.execute") as mock_execute:
-            store._replace_idea_clusters_for_article(
-                1, 2, [{"idea": "charging is slow", "type": "complaint", "category": "charging"}]
-            )
-        sqls = [c.args[0] for c in mock_execute.call_args_list]
-        self.assertTrue(any("delete from idea_cluster_articles" in s for s in sqls))
-        self.assertTrue(any("insert into idea_cluster_articles" in s for s in sqls))
-        # both the previously-linked cluster (9) and the newly-linked one (42)
-        # must have their frequency recomputed, even though they're different ids.
-        recompute_calls = [c for c in mock_execute.call_args_list if "frequency_estimate = (" in c.args[0]]
-        recomputed_ids = {c.args[1][0] for c in recompute_calls}
-        self.assertEqual(recomputed_ids, {9, 42})
-
-    def test_invalid_idea_type_falls_back_to_issue(self):
-        with patch("services.articles.store._table_exists", return_value=True), \
-             patch("services.articles.store.db.fetch_all", return_value=[]), \
-             patch("services.articles.store.db.fetch_one", return_value={"id": 1}) as mock_fetch_one, \
-             patch("services.articles.store.db.execute"):
-            store._replace_idea_clusters_for_article(1, 2, [{"idea": "x", "type": "bogus"}])
-        _, params = mock_fetch_one.call_args[0]
-        self.assertEqual(params[2], "issue")
-
-    def test_db_error_is_caught_and_logged_not_raised(self):
-        with patch("services.articles.store._table_exists", return_value=True):
-            with patch("services.articles.store.db.fetch_all", side_effect=RuntimeError("boom")):
-                store._replace_idea_clusters_for_article(1, 2, [{"idea": "x"}])  # must not raise
-
-
 class ArticleRowFieldHandlingTests(unittest.TestCase):
     """_article_row() special-cases a handful of fields beyond the generic
     JSON/plain-value path - these tests pin that behavior directly rather

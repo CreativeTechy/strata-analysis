@@ -12,11 +12,14 @@ currently resolves to.
 
 from __future__ import annotations
 
+import logging
 import re
 
 import requests
 
 import config
+
+logger = logging.getLogger(__name__)
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
@@ -389,13 +392,13 @@ def chat_completion(*, messages, model=None, temperature=0.2, max_tokens=512, ti
             # Give it more room instead.
             current = int(body.get(max_tokens_key) or max_tokens)
             retry_body = {**body, max_tokens_key: min(current * 2, 16000)}
-            print(
-                f"llm_client: empty response from truncation ({exc.detail}); "
-                f"retrying once with {max_tokens_key}={retry_body[max_tokens_key]}"
+            logger.warning(
+                "Empty response from truncation (%s); retrying once with %s=%s",
+                exc.detail, max_tokens_key, retry_body[max_tokens_key],
             )
         else:
             # Otherwise treat it as a transient glitch (stray refusal turn)
             # and retry once with the same request.
-            print(f"llm_client: empty/invalid response ({exc.detail}); retrying once")
+            logger.warning("Empty/invalid response (%s); retrying once", exc.detail)
         payload = _post(base_url, retry_body, timeout, api_key=api_key)
         return _extract_output_text(payload, api_style=api_style)

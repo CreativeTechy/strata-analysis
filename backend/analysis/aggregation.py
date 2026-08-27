@@ -3,7 +3,7 @@ project/batch-level summary (dominant topic/category/sentiment, top
 feedback items, frequent-idea frequency counts, tone breakdowns).
 
 An explicit pipeline stage rather than logic buried in the caller
-rather than inline code in the orchestrator script. articles_store.py has
+rather than inline code in the orchestrator script. articles_analytics.py has
 its own read-time version of this same rollup (_topic_summary) for querying
 already-stored rows from Postgres - this module is the write-time version
 that runs once per pipeline run, over the batch just enriched.

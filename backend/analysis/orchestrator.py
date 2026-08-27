@@ -2,9 +2,9 @@
 
 Runs, per article: article_prep -> structured_extraction -> sentiment ->
 classification (category + writer_tone + article_tone) -> language ->
-entity_extraction (optional) -> embeddings. Results are folded into the same
-article dict shape the old single-LLM enrich_article() used to return (see
-enrich.DEFAULT_ENRICHMENT), plus the additional per-stage metadata
+entity_extraction (optional) -> embeddings. Results are folded into the
+article dict shape services/articles/analysis_defaults.py's
+DEFAULT_ENRICHMENT defines, plus the additional per-stage metadata
 (scores/confidences/model ids/processing status) the persistence layer
 needs - so store.py can write it straight into the columns added for the
 analysis pipeline without any further translation.
@@ -18,7 +18,7 @@ carries neutral/empty content fields but analysis_status="failed" and
 analysis_error set to why - the caller (reanalyze.py) stores that as a real,
 queryable failure state instead of silently guessing at content. A bare
 exception escaping every stage's own handling is the only case this
-doesn't catch; enrich.enrich_article() still guards for that.
+doesn't catch; reanalyze.reanalyze_article() still guards for that.
 """
 
 from __future__ import annotations

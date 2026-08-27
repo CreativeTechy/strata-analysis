@@ -31,12 +31,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import logging
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import db
+from core.logging import configure_logging
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 BASELINE_FILE = BASE_DIR / "schema.sql"
@@ -173,7 +177,7 @@ def run(*, dry_run: bool = False) -> list[str]:
 
     applied: list[str] = []
     for migration in pending:
-        print(f"  applying {migration.version} ...", flush=True)
+        logger.info("Applying migration %s ...", migration.version)
         _apply(migration)
         applied.append(migration.version)
     return applied
@@ -187,9 +191,9 @@ def run_on_startup() -> None:
     """
     applied = run()
     if applied:
-        print(f"Migrations applied: {', '.join(applied)}")
+        logger.info("Migrations applied: %s", ", ".join(applied))
     else:
-        print("Migrations: already up to date.")
+        logger.info("Migrations: already up to date.")
 
 
 def _print_status() -> int:
@@ -217,6 +221,8 @@ def _print_status() -> int:
 
 
 def main() -> int:
+    configure_logging()
+
     parser = argparse.ArgumentParser(description="Apply pending schema migrations.")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--status", action="store_true", help="show state, apply nothing")

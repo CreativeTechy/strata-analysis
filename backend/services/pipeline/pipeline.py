@@ -18,8 +18,16 @@ default 2) rather than serially: with `LLM_PROVIDER=ollama` the ceiling is the
 local model host, not an API quota, and one in-flight request usually leaves
 the machine idle between tokens. Keep it low - every worker competes for the
 same local GPU/CPU as the embedding model.
+
+A run also stops early - the same way a user-requested cancellation does -
+when an article's analysis raises one of FATAL_ANALYSIS_ERRORS (see
+services/articles/analysis_defaults.py): reanalyze_article() flags that
+result `fatal`, and _analyze() below turns it into a PipelineFatalError so
+the rest of `rows` is never handed to doomed calls against an unusable
+provider.
 """
 
+import logging
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -27,12 +35,15 @@ from datetime import datetime, timezone
 
 import config
 import db
+from core.logging import reset_run_id, set_run_id
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
     update_pipeline_run,
     upsert_pipeline_run_document_stats,
 )
 from services.projects.projects_store import record_run_completion
+
+logger = logging.getLogger(__name__)
 
 # Articles whose analysis has not succeeded yet - the default scope, so a
 # re-run after a provider outage picks up exactly what the outage cost and
@@ -52,6 +63,14 @@ _registry_lock = threading.Lock()
 
 class PipelineCancelled(Exception):
     """Raised internally when a run is stopped by the user."""
+
+
+class PipelineFatalError(Exception):
+    """Raised internally when an article's analysis fails with one of
+    FATAL_ANALYSIS_ERRORS (see services/articles/analysis_defaults.py) - the
+    provider itself is unusable, so every remaining article would fail the
+    exact same way. Stops the run the same way PipelineCancelled does,
+    instead of grinding through the rest as doomed per-article calls."""
 
 
 def _is_cancel_requested(run_id):
@@ -145,6 +164,14 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
     `scope` is "pending" (only articles whose analysis hasn't succeeded) or
     "all" (re-analyze everything the project holds).
     """
+    run_id_token = set_run_id(run_id)
+    try:
+        _run_analysis_pipeline(run_id, project_id, scope)
+    finally:
+        reset_run_id(run_id_token)
+
+
+def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
     if _is_cancel_requested(run_id):
         _finish_run(
             run_id,
@@ -252,6 +279,9 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             )
             upsert_pipeline_run_document_stats(run_id, document_snapshot)
 
+            if result.get("fatal"):
+                raise PipelineFatalError(str(result.get("analysis_error") or "The AI provider is unreachable."))
+
         workers = max(1, int(config.ANALYSIS_CONCURRENCY))
         if workers == 1:
             for row in rows:
@@ -286,7 +316,7 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             analysis_finished_at=_now(),
             finished_at=_now(),
         )
-        print(f"[analysis] run {run_id}: {message}.")
+        logger.info("run %s: %s.", run_id, message)
     except PipelineCancelled:
         _finish_run(
             run_id,
@@ -297,10 +327,23 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             cancelled_at=_now(),
             finished_at=_now(),
         )
-        print(f"Analysis run {run_id} cancelled.")
+        logger.info("run %s cancelled.", run_id)
+    except PipelineFatalError as exc:
+        _finish_run(
+            run_id,
+            project_id,
+            status="failed",
+            stage="error",
+            message=f"Analysis stopped: {exc}",
+            error=str(exc),
+            articles_analyzed=counters["analyzed"],
+            articles_failed=counters["failed"],
+            analysis_finished_at=_now(),
+            finished_at=_now(),
+        )
+        logger.warning("run %s stopped: provider unusable (%s).", run_id, exc)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
-        print(f"Analysis run crashed: {exc}")
-        traceback.print_exc()
+        logger.exception("run %s crashed.", run_id)
         _finish_run(
             run_id,
             project_id,

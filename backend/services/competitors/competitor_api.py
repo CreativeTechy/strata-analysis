@@ -24,8 +24,6 @@ from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
 from services.competitors.countries import validate_countries
-from psycopg.types.json import Jsonb
-import db
 from services.auth.auth import require_permission
 from services.pipeline.pipeline_runs import get_pipeline_run
 from services.projects.projects_store import delete_project, project_has_articles
@@ -34,10 +32,7 @@ router = APIRouter(prefix="/api/competitor", tags=["competitor"])
 
 
 def _project_or_404(project_id: int) -> dict:
-    project = db.fetch_one(
-        "select id, name, mode, status, last_run_at, last_run_status from projects where id = %s",
-        (int(project_id),),
-    )
+    project = competitors_store.get_study(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
@@ -56,53 +51,7 @@ def _competitor_or_404(competitor_id: int) -> dict:
 @router.get("/studies")
 def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     """Competitor-mode projects with enough summary to render the index."""
-    return {
-        "studies": db.fetch_all(
-            """
-            with latest_findings as (
-                -- One row per competitor's *current* card, not per generation
-                -- event: generate_finding() always inserts (never updates), so
-                -- re-running analysis on the same competitor leaves its older
-                -- findings in place as history rather than superseding them in
-                -- place. Counting competitor_findings directly counted every
-                -- one of those, so the number grew on every re-run even with
-                -- the competitor set unchanged, and didn't match the study's
-                -- own findings grid - which shows one card per competitor, the
-                -- newest, excluding rejected ones.
-                select distinct on (competitor_id)
-                       project_id, competitor_id, impact_level, generated_at
-                from competitor_findings
-                where validation_status != 'rejected'
-                order by competitor_id, generated_at desc
-            )
-            select p.id, p.name, p.status, p.mode, p.created_at, p.updated_at,
-                   p.last_run_at, p.last_run_status,
-                   bp.name as business_name, bp.website as business_website,
-                   bp.market, bp.industry,
-                   coalesce(c.tracked, 0)::int   as tracked_competitors,
-                   coalesce(c.suggested, 0)::int as suggested_competitors,
-                   coalesce(f.total, 0)::int     as finding_count,
-                   coalesce(f.high, 0)::int      as high_impact_count,
-                   f.latest_generated_at
-            from projects p
-            left join business_profiles bp on bp.project_id = p.id
-            left join (
-                select project_id,
-                       count(*) filter (where status = 'tracked')   as tracked,
-                       count(*) filter (where status = 'suggested') as suggested
-                from competitors group by project_id
-            ) c on c.project_id = p.id
-            left join (
-                select project_id, count(*) as total,
-                       count(*) filter (where impact_level = 'high') as high,
-                       max(generated_at) as latest_generated_at
-                from latest_findings group by project_id
-            ) f on f.project_id = p.id
-            where p.mode = 'competitor'
-            order by p.created_at desc
-            """
-        )
-    }
+    return {"studies": competitors_store.list_studies()}
 
 
 @router.get("/studies/{project_id}/findings/recent")
@@ -126,14 +75,10 @@ def create_study(payload: dict, user: dict = Depends(require_permission("competi
     name = str((payload or {}).get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="A study name is required.")
-    project = db.fetch_one(
-        """
-        insert into projects (name, mode, status, description)
-        values (%s, 'competitor', %s, %s)
-        returning id, name, mode, status, created_at
-        """,
-        (name, str((payload or {}).get("status") or "active"),
-         str((payload or {}).get("description") or "").strip() or None),
+    project = competitors_store.create_study(
+        name,
+        str((payload or {}).get("status") or "active"),
+        str((payload or {}).get("description") or "").strip() or None,
     )
     if not project:
         raise HTTPException(status_code=500, detail="Could not create the study.")
@@ -158,15 +103,11 @@ def update_study(project_id: int, payload: dict, user: dict = Depends(require_pe
     name = str(payload.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="A study name is required.")
-    project = db.fetch_one(
-        """
-        update projects
-           set name = %s, status = %s, description = %s, updated_at = now()
-         where id = %s and mode = 'competitor'
-        returning id, name, mode, status, description, created_at, updated_at
-        """,
-        (name, str(payload.get("status") or "active"),
-         str(payload.get("description") or "").strip() or None, int(project_id)),
+    project = competitors_store.update_study(
+        project_id,
+        name,
+        str(payload.get("status") or "active"),
+        str(payload.get("description") or "").strip() or None,
     )
     if not project:
         raise HTTPException(status_code=404, detail="Study not found")
