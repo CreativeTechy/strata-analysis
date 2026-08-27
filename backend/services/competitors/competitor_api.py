@@ -13,6 +13,7 @@ polls, since either can run well past a gateway timeout.
 
 from __future__ import annotations
 
+import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
@@ -377,6 +378,63 @@ def add_competitor(project_id: int, payload: dict, user: dict = Depends(require_
         raise HTTPException(status_code=400, detail="Could not save the competitor.")
     competitors_store.rerank_competitors(project_id)
     return {"competitor": record}
+
+
+@router.post("/studies/{project_id}/competitors/import")
+async def import_competitors(
+    project_id: int, file: UploadFile = File(...), user: dict = Depends(require_permission("competitors.manage"))
+):
+    """Import competitors from the scraper app's JSONL export
+    (`GET /api/competitors/export` there - see its CLAUDE.md's Handoff section).
+
+    A competitor list the scraper already confirmed by tracking real channels
+    doesn't need to be re-guessed here by document_analysis.py's LLM pass or
+    re-typed by hand - this just upserts each row the same way add_competitor
+    does. A study's tracked-competitor list is at most a few dozen rows, small
+    enough to read and upsert inline rather than as a background job like
+    document extraction below.
+    """
+    _project_or_404(project_id)
+    raw = (await file.read()).decode("utf-8", errors="replace")
+    if not raw.strip():
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if raw.lstrip()[:1] == "[":
+        raise HTTPException(
+            status_code=400, detail="Expected JSON Lines (one competitor object per line), not a JSON array."
+        )
+
+    received = saved = 0
+    errors: list[str] = []
+    for lineno, line in enumerate(raw.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            if len(errors) < 50:
+                errors.append(f"line {lineno}: invalid JSON")
+            continue
+        if not isinstance(entry, dict) or not str(entry.get("name") or "").strip():
+            if len(errors) < 50:
+                errors.append(f"line {lineno}: missing name")
+            continue
+        received += 1
+        record = competitors_store.upsert_competitor(
+            project_id, {**entry, "discovery_source": entry.get("discovery_source") or "scraper_import"}
+        )
+        if record:
+            saved += 1
+        elif len(errors) < 50:
+            errors.append(f"line {lineno}: could not save '{entry.get('name')}'")
+
+    if received == 0:
+        raise HTTPException(status_code=400, detail="Nothing to import.")
+    if saved == 0:
+        raise HTTPException(status_code=400, detail=f"All {received} rows were rejected by the database.")
+
+    competitors_store.rerank_competitors(project_id)
+    return {"received": received, "saved": saved, "skipped": received - saved, "errors": errors}
 
 
 @router.put("/competitors/{competitor_id}")

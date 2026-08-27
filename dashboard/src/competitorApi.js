@@ -127,6 +127,16 @@ export const updateCompetitor = (competitorId, body) =>
   request(`/competitors/${competitorId}`, { method: 'PUT', body });
 export const deleteCompetitor = (competitorId) =>
   request(`/competitors/${competitorId}`, { method: 'DELETE' });
+/** Imports the tracked-competitors JSONL produced by the scraper app's
+ *  `GET /api/competitors/export` (a companion to that app's article export)
+ *  so a competitor list already confirmed there doesn't have to be re-guessed
+ *  by analyzeDocuments() or re-typed by hand. Runs synchronously — a study's
+ *  tracked-competitor list is at most a few dozen rows. */
+export const importCompetitors = (id, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestForm(`/studies/${id}/competitors/import`, formData);
+};
 
 // --- analysis --------------------------------------------------------------
 /** Queues analysis as a background job; returns { run_id, status } immediately.
