@@ -23,7 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
+import db
 import migrate
+from core.logging import configure_logging, reset_request_id, set_request_id
 from prompt_loader import load_prompt
 from services.competitors import competitor_api
 from services.projects import project_documents_api
@@ -84,6 +86,8 @@ from services.pipeline.pipeline_runs import (
     update_pipeline_run,
 )
 
+configure_logging()
+
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR.parent / "storage"
 
@@ -101,6 +105,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _request_id_middleware(request: Request, call_next):
+    """One correlation id per inbound request - reused from X-Request-ID when
+    a caller (e.g. nginx, another service) already set one, otherwise minted
+    here. Every log line emitted while handling this request carries it (see
+    core/logging.py), and it is echoed back so a client can quote it when
+    reporting an issue."""
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    token = set_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 # The competitor study is a separate experience from sentiment/opinions, so its
 # routes live in their own module rather than growing this one.
 app.include_router(competitor_api.router)
@@ -114,6 +136,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
     # existing ad hoc error bodies ({"error": ...}) so the dashboard's
     # shared formatApiError() handles them without special-casing.
     return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    # Anything that reaches here escaped every route's own try/except - log it
+    # with a full traceback (unlike the HTTPException handler above, this is
+    # always a bug, not an expected 4xx) and return a generic body rather than
+    # leaking internals to the client.
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"error": "Internal server error."})
 
 
 def _format_project_context(project: dict | None) -> str:
@@ -194,6 +226,11 @@ def root():
 
 @app.get("/api/health")
 def health_check():
+    try:
+        db.fetch_one("select 1")
+    except Exception:
+        logger.exception("Health check failed: database is unreachable.")
+        raise HTTPException(status_code=503, detail="Database unavailable.")
     return {"status": "healthy", "service": "Strata Analysis API"}
 
 

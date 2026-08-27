@@ -95,7 +95,7 @@ def classify_sentiment(text: str):
         return None
 
     provider = (config.SENTIMENT_CLASSIFIER_PROVIDER or "local").strip().lower()
-    print(f"[sentiment_classifier] provider={provider} model={model_name}", flush=True)
+    logger.info("provider=%s model=%s", provider, model_name)
     if provider == "hf_api":
         return _classify_via_hf_api(model_name, text[:512])
     return _classify_via_local_pipeline(model_name, text[:512])

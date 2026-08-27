@@ -13,10 +13,13 @@ reason: a document is this product's unit of provenance, the way a configured
 source was in a crawler.
 """
 
+import logging
 import uuid
 
 import config
 import db
+
+logger = logging.getLogger(__name__)
 
 
 RUN_COLUMNS = (
@@ -308,8 +311,8 @@ def upsert_pipeline_run_document_stats(run_id, document_stats):
                     counts.get("note") or None,
                 ),
             )
-    except Exception as exc:
-        print(f"Failed to persist per-document analysis stats: {exc}")
+    except Exception:
+        logger.exception("Failed to persist per-document analysis stats for run %s.", run_id)
 
 
 def delete_pipeline_run(run_id):

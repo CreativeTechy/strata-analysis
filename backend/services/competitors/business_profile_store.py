@@ -16,6 +16,7 @@ properly instead of treating it as an optional field.
 from __future__ import annotations
 
 import json
+import logging
 from urllib.parse import urlparse
 
 import config
@@ -23,6 +24,8 @@ import db
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors.countries import country_label, validate_countries
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "competitor-profile-2026-08-24"
 
@@ -87,7 +90,7 @@ def derive_profile(name: str, website: str, description: str) -> dict:
         )
         parsed = json.loads(_strip_fences(raw))
     except (LLMError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  business profile derivation failed: {exc}")
+        logger.warning("Business profile derivation failed: %s", exc)
         return {}
 
     if not isinstance(parsed, dict):

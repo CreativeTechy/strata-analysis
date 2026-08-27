@@ -18,10 +18,14 @@ _replace_article_children()) to avoid a top-level import cycle.
 
 from __future__ import annotations
 
+import logging
+
 import db
 from embeddings import cosine_similarity, get_embedding
 from psycopg.types.json import Jsonb
 from services.articles.store import _table_exists
+
+logger = logging.getLogger(__name__)
 
 
 def _jsonb_param(value):
@@ -31,7 +35,7 @@ def _jsonb_param(value):
 
 
 def _log_db_error(prefix, error):
-    print(f"{prefix}: {error}")
+    logger.error("%s: %s", prefix, error)
 
 
 # A new idea that doesn't exact-match an existing cluster still attaches to it

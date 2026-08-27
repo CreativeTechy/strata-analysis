@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 import hashlib
 import json
+import logging
 
 import config
 import db
@@ -15,6 +16,8 @@ from services.projects.projects_store import list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
 from trusted_sources import is_trusted_domain
+
+logger = logging.getLogger(__name__)
 
 ARTICLE_COLUMNS = (
     "url", "source", "source_url", "title", "author", "published",
@@ -130,7 +133,7 @@ def _legacy_row(article):
 
 
 def _log_db_error(prefix, error):
-    print(f"{prefix}: {error}")
+    logger.error("%s: %s", prefix, error)
 
 
 def _jsonb_param(value):
@@ -542,7 +545,7 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
     from services.articles.idea_clustering import _replace_idea_clusters_for_article
 
     if not config.DATABASE_URL:
-        print("Database credentials not set, skipping upload.")
+        logger.warning("Database credentials not set, skipping upload.")
         return 0, {}
 
     sent = 0
@@ -616,7 +619,7 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
                     if best_project_id is not None and best_score >= 0.78:
                         linked_articles[best_project_id].add(article_id)
                         linked_scores[best_project_id][article_id] = best_score
-            print(f"  Uploaded batch {i // batch_size + 1} ({len(source_batch)} articles)")
+            logger.info("Uploaded batch %s (%s articles)", i // batch_size + 1, len(source_batch))
         except Exception as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             if status_code == 400:
@@ -682,8 +685,10 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
                             persisted.append((article, row))
                             saved_by_source[_source_key(article)] += 1
                     sent += len(legacy_batch)
-                    print(
-                        f"  Uploaded batch {i // batch_size + 1} ({len(legacy_batch)} articles) using legacy article schema fallback"
+                    logger.info(
+                        "Uploaded batch %s (%s articles) using legacy article schema fallback",
+                        i // batch_size + 1,
+                        len(legacy_batch),
                     )
                     continue
                 except Exception as legacy_error:
@@ -700,7 +705,7 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
 
 def delete_all_articles():
     if not config.DATABASE_URL:
-        print("Database credentials not set, skipping article delete.")
+        logger.warning("Database credentials not set, skipping article delete.")
         return 0
 
     try:

@@ -27,6 +27,7 @@ the rest of `rows` is never handed to doomed calls against an unusable
 provider.
 """
 
+import logging
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -34,12 +35,15 @@ from datetime import datetime, timezone
 
 import config
 import db
+from core.logging import reset_run_id, set_run_id
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
     update_pipeline_run,
     upsert_pipeline_run_document_stats,
 )
 from services.projects.projects_store import record_run_completion
+
+logger = logging.getLogger(__name__)
 
 # Articles whose analysis has not succeeded yet - the default scope, so a
 # re-run after a provider outage picks up exactly what the outage cost and
@@ -160,6 +164,14 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
     `scope` is "pending" (only articles whose analysis hasn't succeeded) or
     "all" (re-analyze everything the project holds).
     """
+    run_id_token = set_run_id(run_id)
+    try:
+        _run_analysis_pipeline(run_id, project_id, scope)
+    finally:
+        reset_run_id(run_id_token)
+
+
+def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
     if _is_cancel_requested(run_id):
         _finish_run(
             run_id,
@@ -304,7 +316,7 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             analysis_finished_at=_now(),
             finished_at=_now(),
         )
-        print(f"[analysis] run {run_id}: {message}.")
+        logger.info("run %s: %s.", run_id, message)
     except PipelineCancelled:
         _finish_run(
             run_id,
@@ -315,7 +327,7 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             cancelled_at=_now(),
             finished_at=_now(),
         )
-        print(f"Analysis run {run_id} cancelled.")
+        logger.info("run %s cancelled.", run_id)
     except PipelineFatalError as exc:
         _finish_run(
             run_id,
@@ -329,10 +341,9 @@ def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str
             analysis_finished_at=_now(),
             finished_at=_now(),
         )
-        print(f"Analysis run {run_id} stopped: provider unusable ({exc}).")
+        logger.warning("run %s stopped: provider unusable (%s).", run_id, exc)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
-        print(f"Analysis run crashed: {exc}")
-        traceback.print_exc()
+        logger.exception("run %s crashed.", run_id)
         _finish_run(
             run_id,
             project_id,

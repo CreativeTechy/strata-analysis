@@ -114,7 +114,7 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
 
 def _classify_one(chunk, candidate_labels, hypothesis_template):
     provider = (config.CLASSIFICATION_PROVIDER or "local").strip().lower()
-    print(f"[classification] provider={provider} model={config.CLASSIFICATION_MODEL}", flush=True)
+    logger.info("provider=%s model=%s", provider, config.CLASSIFICATION_MODEL)
     if provider == "hf_api":
         return _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template)
     return _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_template)
