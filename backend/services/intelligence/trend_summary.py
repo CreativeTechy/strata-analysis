@@ -2,18 +2,25 @@
 
 Kept separate from intelligence.py, which is pure deterministic aggregation -
 this is the one place in that package that calls out to the configured LLM.
-Nothing here is stored; like the rest of the intelligence endpoints, it's
-recomputed live from whatever articles are in scope for the requested
-period/run.
+
+Unlike the rest of the intelligence endpoints, the result *is* stored (in
+`project_trend_summaries`, keyed by project/period/run scope) rather than
+recomputed on every page load - an LLM call on every Reports view would burn
+tokens for no benefit when the underlying articles haven't changed. A cache
+hit is returned as-is; regeneration only happens when nothing is cached yet
+for that scope, or the caller explicitly asks for it (the Reports page's
+refresh button).
 """
 
 from __future__ import annotations
 
 from collections import Counter
 
+import db
 from llm_client import chat_completion
 from prompt_loader import load_prompt
 from services.intelligence.intelligence import (
+    _database_ready,
     _fetch_project_rows,
     filter_rows_for_period,
     normalize_period,
@@ -48,12 +55,60 @@ def _project_context_line(project: dict) -> str:
     return " | ".join(parts)
 
 
-def generate_trend_summary(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
+def _load_cached(project_id: int, period: str, run_id: str | None) -> dict | None:
+    if not _database_ready():
+        return None
+    row = db.fetch_one(
+        """
+        select summary, article_count, updated_at
+        from public.project_trend_summaries
+        where project_id = %s and period = %s and run_id = %s
+        """,
+        (project_id, period, run_id or ""),
+    )
+    if not row:
+        return None
+    return {
+        "summary": row["summary"],
+        "article_count": int(row["article_count"] or 0),
+        "period": period,
+        "run_id": run_id,
+        "cached": True,
+        "generated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+def _save_cached(project_id: int, period: str, run_id: str | None, summary: str, article_count: int) -> None:
+    if not _database_ready():
+        return
+    db.execute(
+        """
+        insert into public.project_trend_summaries (project_id, period, run_id, summary, article_count)
+        values (%s, %s, %s, %s, %s)
+        on conflict (project_id, period, run_id) do update
+           set summary = excluded.summary,
+               article_count = excluded.article_count,
+               updated_at = now()
+        """,
+        (project_id, period, run_id or "", summary, article_count),
+    )
+
+
+def generate_trend_summary(
+    project: dict, period: str = "30d", run_id: str | None = None, force: bool = False,
+) -> dict:
     period = normalize_period(period)
+    project_id = project["id"]
+
+    if not force:
+        cached = _load_cached(project_id, period, run_id)
+        if cached is not None:
+            return cached
+
     if run_id:
-        rows = _fetch_project_rows(project["id"], run_id=run_id)
+        rows = _fetch_project_rows(project_id, run_id=run_id)
     else:
-        rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+        rows = filter_rows_for_period(_fetch_project_rows(project_id), period)
     rows = [row for row in rows if _article_summary(row)]
 
     total = len(rows)
@@ -91,4 +146,6 @@ def generate_trend_summary(project: dict, period: str = "30d", run_id: str | Non
         # thought means no visible answer at all - see llm_client._strip_reasoning.
         max_tokens=1500,
     )
-    return {"summary": summary.strip(), "article_count": total, "period": period, "run_id": run_id}
+    summary = summary.strip()
+    _save_cached(project_id, period, run_id, summary, total)
+    return {"summary": summary, "article_count": total, "period": period, "run_id": run_id, "cached": False}
