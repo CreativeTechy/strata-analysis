@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, Info, LayoutGrid, List, FolderKanban, FolderInput, X } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
+import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, FolderInput, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
+import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
+import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
+import ArticleDetailModal from './articles/ArticleDetailModal.jsx';
+import ArticleCard from './articles/ArticleCard.jsx';
+import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
-import { computeOverallTone } from '../lib/tone.js';
+import {
+  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, IMPORT_POLL_MS, JSONL_NAME_RE, DOCUMENT_NAME_RE,
+  FULL_IMPORT_ACCEPT, JSONL_ONLY_ACCEPT, getPageNumbers,
+} from '../lib/articleHelpers.jsx';
 import {
   uploadDocuments,
   pollDocumentExtraction,
@@ -14,219 +23,10 @@ import {
 } from '../projectDocumentsApi.js';
 import '../styles/Articles.css';
 
-const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
-const SORT_OPTIONS = [
-  { value: 'published.desc', label: 'Newest first' },
-  { value: 'published.asc', label: 'Oldest first' },
-  { value: 'relevance_score.desc', label: 'Highest relevance' },
-  { value: 'relevance_score.asc', label: 'Lowest relevance' },
-  { value: 'created_at.desc', label: 'Recently saved' },
-];
-
-const PAGE_SIZES = [12, 24, 48, 96];
-
 const VIEW_MODES = [
   { value: 'card', label: 'Cards', icon: LayoutGrid },
   { value: 'list', label: 'List', icon: List },
 ];
-
-// How often to poll a running import for its counters. Matches the cadence the
-// competitor workspace polls its discovery/analysis jobs at.
-const IMPORT_POLL_MS = 900;
-
-// Folder pickers hand back every file under the folder regardless of the
-// input's `accept` filter, so JSONL exports have to be picked out client-side.
-const JSONL_NAME_RE = /\.(jsonl|ndjson)$/i;
-
-// The broader formats the project-create wizard accepts (see ProjectsPage.jsx's
-// dropzone) - these need extraction/LLM-splitting via the project-documents
-// pipeline, so they only work once a specific project is in scope (see
-// importDocumentFiles below), unlike JSONL exports which import unlinked too.
-const DOCUMENT_NAME_RE = /\.(pdf|docx?|xlsx?|csv|png|jpe?g|json)$/i;
-const FULL_IMPORT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson';
-const JSONL_ONLY_ACCEPT = '.jsonl,.ndjson,application/x-ndjson';
-
-/** Live view of one import job: how far through the file it is, how fast it is
- *  going, and what it could not read. `run` is whatever the last poll returned,
- *  so this renders the same whether the job is queued, running or finished. */
-function ImportProgressBanner({ run, onDismiss }) {
-  const done = run.status === 'success' || run.status === 'failed';
-  const total = run.total_lines || 0;
-  const processed = run.processed || 0;
-  const percent = total ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-  const rate = run.rate_per_second || 0;
-  const logs = run.logs || [];
-
-  return (
-    <div className={`glass-card articles-import-banner ${run.status === 'failed' ? 'is-failed' : ''}`}>
-      {run.status === 'failed' ? <AlertTriangle size={18} /> : <Info size={18} />}
-      <div className="articles-import-banner-body">
-        {run._batchLabel ? <p className="articles-import-batch-label">{run._batchLabel}</p> : null}
-        <div className="articles-import-headline">
-          <strong>{run.message || 'Importing...'}</strong>
-          {!done && rate > 0 ? <span className="articles-import-rate">{Math.round(rate).toLocaleString()} articles/s</span> : null}
-        </div>
-
-        {!done ? (
-          <div
-            className="articles-import-progress"
-            role="progressbar"
-            aria-valuenow={total ? percent : undefined}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Import progress"
-          >
-            {/* Without a line count there is no honest percentage, so show an
-                indeterminate bar rather than a made-up one. */}
-            <div
-              className={`articles-import-progress-fill ${total ? '' : 'is-indeterminate'}`}
-              style={total ? { width: `${percent}%` } : undefined}
-            />
-          </div>
-        ) : null}
-
-        <div className="articles-import-counts">
-          <span>{(run.saved || 0).toLocaleString()} saved</span>
-          {total ? <span>of ~{total.toLocaleString()} lines</span> : null}
-          {run.skipped ? <span>{run.skipped.toLocaleString()} skipped</span> : null}
-          {done && run.elapsed_seconds ? <span>in {run.elapsed_seconds}s</span> : null}
-        </div>
-
-        {done && run.status === 'success' ? (
-          <p className="articles-import-note">Articles matching an existing URL were updated in place.</p>
-        ) : null}
-
-        {run.errors?.length ? (
-          <ul className="articles-import-errors">
-            {run.errors.slice(0, 5).map((item) => (
-              <li key={item.line}>
-                Line {item.line}: {item.error}
-              </li>
-            ))}
-            {run.errors.length > 5 ? <li>and {run.errors.length - 5} more...</li> : null}
-          </ul>
-        ) : null}
-
-        {!done && logs.length ? <p className="articles-import-log">{logs[logs.length - 1].message}</p> : null}
-      </div>
-      {done ? (
-        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
-          <X size={16} />
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-/** Live status for a document import (PDF/DOC/XLS/CSV/image/JSON) going
- *  through the project-documents pipeline: upload -> extract -> LLM-split ->
- *  auto-approve. That pipeline has no single progress counter the way a JSONL
- *  import's line count does, so this just shows the current stage's message. */
-function DocumentImportBanner({ status, onDismiss }) {
-  return (
-    <div className="glass-card articles-import-banner">
-      <Info size={18} />
-      <div className="articles-import-banner-body">
-        <div className="articles-import-headline">
-          <strong>{status.message}</strong>
-        </div>
-      </div>
-      {status.done ? (
-        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
-          <X size={16} />
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function prettyLabel(value) {
-  return String(value || '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function articleDate(value) {
-  if (!value) return 'Unknown date';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
-}
-
-function addedAtLabel(value) {
-  if (!value) return 'Unknown';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-}
-
-function formatMatchScore(value) {
-  const score = Number(value);
-  if (!Number.isFinite(score)) return '';
-  return score.toFixed(2);
-}
-
-function confidencePct(value) {
-  const score = Number(value);
-  return Number.isFinite(score) ? `${Math.round(score * 100)}%` : null;
-}
-
-function escapeRegExp(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Wraps every case-insensitive occurrence of each word of `term` in `text`
-// with a <mark> - matching the backend's own AND-of-tokens search (see
-// _score_search_row in articles_store.py), which matches an article when
-// all the search's words appear anywhere in it, not just as one contiguous
-// phrase. So "Stellantis battery" highlights "Stellantis" and "battery"
-// separately wherever each shows up, even far apart in the text.
-function highlightMatches(text, term) {
-  const value = text == null ? '' : String(text);
-  const needle = String(term || '').trim();
-  if (!needle) return value;
-  const tokens = [...new Set(needle.split(/\W+/).filter((token) => token.length > 1))];
-  const alternatives = (tokens.length ? tokens : [needle]).map(escapeRegExp).sort((a, b) => b.length - a.length);
-  const parts = value.split(new RegExp(`(${alternatives.join('|')})`, 'gi'));
-  if (parts.length === 1) return value;
-  return parts.map((part, index) =>
-    index % 2 === 1 ? <mark key={index} className="article-search-highlight">{part}</mark> : part
-  );
-}
-
-function getPageNumbers(currentPage, totalPages) {
-  if (totalPages <= 7) {
-    return Array.from({ length: totalPages }, (_, i) => i + 1);
-  }
-  const pages = [1];
-  if (currentPage > 3) pages.push('...');
-  const start = Math.max(2, currentPage - 1);
-  const end = Math.min(totalPages - 1, currentPage + 1);
-  for (let page = start; page <= end; page += 1) pages.push(page);
-  if (currentPage < totalPages - 2) pages.push('...');
-  pages.push(totalPages);
-  return pages;
-}
-
-function SkeletonArticleCard() {
-  return (
-    <div className="glass-card article-card article-skeleton" aria-hidden="true">
-      <div className="skeleton-row">
-        <div className="skeleton-pill skeleton-shimmer" />
-        <div className="skeleton-pill skeleton-shimmer" style={{ width: '62%' }} />
-      </div>
-      <div className="skeleton-title skeleton-shimmer" />
-      <div className="skeleton-line skeleton-shimmer" />
-      <div className="skeleton-line skeleton-shimmer" style={{ width: '88%' }} />
-      <div className="skeleton-tags">
-        <div className="skeleton-chip skeleton-shimmer" />
-        <div className="skeleton-chip skeleton-shimmer" style={{ width: 92 }} />
-      </div>
-      <div className="skeleton-footer">
-        <div className="skeleton-line skeleton-shimmer" style={{ width: '38%' }} />
-        <div className="skeleton-line skeleton-shimmer" style={{ width: '28%' }} />
-      </div>
-    </div>
-  );
-}
 
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const normalizedProjectId = useMemo(() => {
@@ -776,94 +576,17 @@ export default function ArticlesPage({ project = null, projectId = null, project
           }}
         />
 
-        <ConfirmModal
+        <ArticleDetailModal
           open={detailArticleId != null}
-          title="Analysis details"
-          hideCancel={!canReprocess}
-          cancelLabel="Close"
-          confirmLabel={canReprocess ? (detailReprocessing ? 'Reprocessing...' : 'Reprocess') : 'Close'}
+          canReprocess={canReprocess}
+          loading={detailLoading}
+          error={detailError}
+          data={detailData}
+          actionMessage={detailActionMessage}
+          reprocessing={detailReprocessing}
           onClose={closeDetailModal}
-          onConfirm={canReprocess ? handleReprocess : closeDetailModal}
-        >
-          {detailLoading ? (
-            <p className="subtitle">Loading analysis details...</p>
-          ) : detailError ? (
-            <p style={{ color: '#b42318' }}>{detailError}</p>
-          ) : detailData ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span
-                  className={`badge ${
-                    detailData.analysis_status === 'failed' ? 'negative' : detailData.analysis_status === 'success' ? 'positive' : 'neutral'
-                  }`}
-                >
-                  {prettyLabel(detailData.analysis_status || 'unknown')}
-                </span>
-                {detailData.analysis_error ? <span className="badge negative">{detailData.analysis_error}</span> : null}
-              </div>
-
-              <div>
-                <strong>Sentiment:</strong> {prettyLabel(detailData.sentiment)}
-                {confidencePct(detailData.confidence?.sentiment) && (
-                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                    (confidence {confidencePct(detailData.confidence.sentiment)}
-                    {detailData.confidence?.sentiment_low_confidence ? ', low confidence' : ''})
-                  </span>
-                )}
-              </div>
-              <div>
-                <strong>Category:</strong> {prettyLabel(detailData.article_category)}
-                {confidencePct(detailData.confidence?.category) && (
-                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                    (confidence {confidencePct(detailData.confidence.category)})
-                  </span>
-                )}
-              </div>
-              <div>
-                <strong>Writer tone:</strong> {prettyLabel(detailData.writer_tone)}
-                {confidencePct(detailData.confidence?.writer_tone) && (
-                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                    (confidence {confidencePct(detailData.confidence.writer_tone)})
-                  </span>
-                )}
-              </div>
-              <div>
-                <strong>Article tone:</strong> {prettyLabel(detailData.article_tone)}
-                {confidencePct(detailData.confidence?.article_tone) && (
-                  <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                    (confidence {confidencePct(detailData.confidence.article_tone)})
-                  </span>
-                )}
-              </div>
-              <div>
-                <strong>Overall tone:</strong> {prettyLabel(detailData.overall_tone)}
-              </div>
-              {detailData.source_language ? (
-                <div>
-                  <strong>Source language:</strong> {detailData.source_language.toUpperCase()}
-                  {confidencePct(detailData.source_language_confidence) && (
-                    <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                      (confidence {confidencePct(detailData.source_language_confidence)})
-                    </span>
-                  )}
-                </div>
-              ) : null}
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-light)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
-                <div>
-                  Models - sentiment: {detailData.models?.sentiment || 'n/a'}, classification: {detailData.models?.classification || 'n/a'}, extraction:{' '}
-                  {detailData.models?.extraction || 'n/a'}
-                </div>
-                <div style={{ marginTop: 4 }}>
-                  Attempts: {detailData.processing?.attempt_count ?? 0} - Last run:{' '}
-                  {detailData.processing?.finished_at ? new Date(detailData.processing.finished_at).toLocaleString() : 'Not yet'}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <p className="subtitle">No analysis data available for this article.</p>
-          )}
-          {detailActionMessage ? <p style={{ marginTop: 10, fontSize: '0.85rem', color: 'var(--text-light)' }}>{detailActionMessage}</p> : null}
-        </ConfirmModal>
+          onReprocess={handleReprocess}
+        />
 
         <div className="articles-filters-row">
           <div className="glass-card articles-filter-panel">
@@ -1135,221 +858,32 @@ export default function ArticlesPage({ project = null, projectId = null, project
             {viewMode === 'list' ? (
               <div className="articles-list">
                 <AnimatePresence>
-                  {articles.map((article, i) => {
-                    const isExpanded = expandedRows.has(article.id);
-                    return (
-                      <motion.div
-                        key={article.url}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.2, delay: Math.min((i % 24) * 0.015, 0.3) }}
-                        className={`glass-card article-row ${isExpanded ? 'expanded' : ''}`}
-                        style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
-                      >
-                        <button
-                          type="button"
-                          className="article-row-summary"
-                          onClick={() => toggleRowExpanded(article.id)}
-                          aria-expanded={isExpanded}
-                        >
-                          <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
-                            {article.sentiment || 'Neutral'}
-                          </span>
-                          <span className="article-row-title">{highlightMatches(article.title || 'Untitled article', search)}</span>
-                          <span className="article-row-source">{article.source || 'Unknown source'}</span>
-                          <span className="article-row-date">
-                            <Calendar size={13} /> {articleDate(article.published)}
-                          </span>
-                          <ChevronDown size={16} className="article-row-chevron" />
-                        </button>
-
-                        {isExpanded ? (
-                          <div className="article-row-details">
-                            <div className="article-meta">
-                              <span className="badge category">
-                                {prettyLabel(article.article_category || article.category || 'general_article')}
-                              </span>
-                              {article.source_language ? (
-                                <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
-                                  Language: {article.source_language.toUpperCase()}
-                                </span>
-                              ) : null}
-                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
-                                Writer: {prettyLabel(article.writer_tone || 'neutral')}
-                              </span>
-                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
-                                Article: {prettyLabel(article.article_tone || 'neutral')}
-                              </span>
-                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
-                                Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
-                              </span>
-                              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
-                                <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
-                              </span>
-                              {article.relevance_score != null && (
-                                <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
-                              )}
-                              {article.project_similarity_score != null && (
-                                <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
-                              )}
-                            </div>
-
-                            <p className="article-summary">
-                              {highlightMatches(
-                                article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 220)}...` : 'No summary available.'),
-                                search
-                              )}
-                            </p>
-
-                            {article.insight_json?.frequent_ideas?.length ? (
-                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                                {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
-                                  <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-                                    {item.idea}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-
-                            {(article.brands?.length > 0 || article.car_models?.length > 0) && (
-                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                                {article.brands?.slice(0, 4).map((brand) => (
-                                  <span key={brand} style={{ fontSize: '0.75rem', color: 'var(--secondary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                                    <Tag size={12} /> {brand}
-                                  </span>
-                                ))}
-                                {article.car_models?.slice(0, 4).map((model) => (
-                                  <span key={model} style={{ fontSize: '0.75rem', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                                    <CarFront size={12} /> {model}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-
-                            <div className="article-row-details-actions">
-                              <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: 'none' }}>
-                                <ExternalLink size={13} /> Open original
-                              </a>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() => setDetailArticleId(article.id)}
-                                title="View analysis details"
-                              >
-                                <Info size={13} /> Analysis details
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                      </motion.div>
-                    );
-                  })}
+                  {articles.map((article, i) => (
+                    <ArticleRow
+                      key={article.url}
+                      article={article}
+                      search={search}
+                      index={i}
+                      isExpanded={expandedRows.has(article.id)}
+                      isRefreshing={isRefreshing}
+                      onToggleExpanded={() => toggleRowExpanded(article.id)}
+                      onShowDetails={() => setDetailArticleId(article.id)}
+                    />
+                  ))}
                 </AnimatePresence>
               </div>
             ) : (
               <div className="articles-grid">
                 <AnimatePresence>
                   {articles.map((article, i) => (
-                    <motion.div
+                    <ArticleCard
                       key={article.url}
-                      layout
-                      initial={{ opacity: 0, scale: 0.96, y: 16 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.96 }}
-                      transition={{ duration: 0.25, delay: Math.min((i % 12) * 0.03, 0.4) }}
-                      className="glass-card article-card"
-                      style={isRefreshing ? { opacity: 0.72, pointerEvents: 'none' } : undefined}
-                    >
-                      <div className="article-header">
-                        <div className="article-meta">
-                          <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
-                            {article.sentiment || 'Neutral'}
-                          </span>
-                          <span className="badge category">
-                            {prettyLabel(article.article_category || article.category || 'general_article')}
-                          </span>
-                          {article.source_language ? (
-                            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
-                              Language: {article.source_language.toUpperCase()}
-                            </span>
-                          ) : null}
-                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
-                            Writer: {prettyLabel(article.writer_tone || 'neutral')}
-                          </span>
-                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
-                            Article: {prettyLabel(article.article_tone || 'neutral')}
-                          </span>
-                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
-                            Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
-                          </span>
-                          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
-                            <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
-                          </span>
-                          {article.relevance_score != null && (
-                            <span className="badge score">Score: {Number(article.relevance_score).toFixed(1)}/10</span>
-                          )}
-                          {article.project_similarity_score != null && (
-                            <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
-                          onClick={() => setDetailArticleId(article.id)}
-                          title="View analysis details"
-                        >
-                          <Info size={13} /> Details
-                        </button>
-                      </div>
-
-                      <h3 className="article-title">
-                        <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                          {highlightMatches(article.title || 'Untitled article', search)} <ExternalLink size={14} style={{ opacity: 0.5 }} />
-                        </a>
-                      </h3>
-
-                      <p className="article-summary">
-                        {highlightMatches(
-                          article.summary || article.insight_json?.summary || (article.text ? `${article.text.substring(0, 160)}...` : 'No summary available.'),
-                          search
-                        )}
-                      </p>
-
-                      {article.insight_json?.frequent_ideas?.length ? (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                          {article.insight_json.frequent_ideas.slice(0, 3).map((item) => (
-                            <span key={item.idea} className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-                              {item.idea}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      {(article.brands?.length > 0 || article.car_models?.length > 0) && (
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                          {article.brands?.slice(0, 2).map((brand) => (
-                            <span key={brand} style={{ fontSize: '0.75rem', color: 'var(--secondary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                              <Tag size={12} /> {brand}
-                            </span>
-                          ))}
-                          {article.car_models?.slice(0, 2).map((model) => (
-                            <span key={model} style={{ fontSize: '0.75rem', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                              <CarFront size={12} /> {model}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="article-footer">
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <Calendar size={14} /> {articleDate(article.published)}
-                        </span>
-                        <span>{article.source || 'Unknown source'}</span>
-                      </div>
-                    </motion.div>
+                      article={article}
+                      search={search}
+                      index={i}
+                      isRefreshing={isRefreshing}
+                      onShowDetails={() => setDetailArticleId(article.id)}
+                    />
                   ))}
                 </AnimatePresence>
               </div>

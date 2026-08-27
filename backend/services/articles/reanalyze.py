@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import db
 from analysis.orchestrator import analyze_article
+from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
 from services.articles.article_analyses import record_analysis_snapshot
 from services.articles.store import save_articles
 
@@ -105,6 +106,18 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     try:
         project_id = _primary_project_id_for_article(article_id)
         result = analyze_article(dict(article), project_context="")
+    except FATAL_ANALYSIS_ERRORS as e:
+        # The provider itself is unusable (bad credentials, no quota,
+        # unreachable host) - every remaining article would fail the exact
+        # same way. Still recorded as this article's own failure (an
+        # operator looking at just this row must see why it has no
+        # analysis), but flagged `fatal` so pipeline.py stops the run
+        # instead of grinding through the rest as doomed per-article calls.
+        _mark_failed(article_id, str(e))
+        return {
+            "article_id": article_id, "ok": False, "analysis_status": "failed",
+            "analysis_error": str(e), "fatal": True,
+        }
     except Exception as e:
         _mark_failed(article_id, str(e))
         return {"article_id": article_id, "ok": False, "analysis_status": "failed", "analysis_error": str(e)}

@@ -133,8 +133,9 @@ class RunGenerationTests(unittest.TestCase):
         JSON didn't validate" - every other article would fail identically,
         so this must propagate as a real exception instead of being folded
         into a per-article "model_unavailable" result. The pipeline
-        (services/articles/enrich.py, scraper/pipelines.py) treats it as
-        fatal and stops rather than grinding through doomed calls."""
+        (services/articles/reanalyze.py, services/pipeline/pipeline.py)
+        treats it as fatal and stops rather than grinding through doomed
+        calls."""
         with patch(
             "analysis.structured_extraction.llm_client.chat_completion",
             side_effect=llm_client.LLMConfigError("no key configured"),

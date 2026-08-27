@@ -132,8 +132,9 @@ def _classify_via_hf_api(model_name: str, text: str):
     # is deliberately NOT caught here - it means the provider call itself
     # never produced a usable answer, and every other article would fail the
     # exact same way. It propagates through analysis/sentiment.py's
-    # _safe_classify to enrich.enrich_article(), which the pipeline treats
-    # as fatal - see services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS.
+    # _safe_classify up to reanalyze.reanalyze_article(), which flags it
+    # fatal for services/pipeline/pipeline.py to stop the run on - see
+    # services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS.
     results = classify_text(model_name, text)
 
     if not results:

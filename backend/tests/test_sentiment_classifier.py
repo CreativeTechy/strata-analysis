@@ -124,7 +124,7 @@ class ClassifySentimentHfApiTests(unittest.TestCase):
         outage...) means every remaining article would fail the same way -
         it must propagate instead of quietly downgrading to "no result", so
         the pipeline can treat it as fatal and stop (see
-        services/articles/enrich.py's FATAL_ANALYSIS_ERRORS)."""
+        services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS)."""
         from hf_inference_client import HFInferenceError
 
         with patch("hf_inference_client.classify_text", side_effect=HFInferenceError("boom")):

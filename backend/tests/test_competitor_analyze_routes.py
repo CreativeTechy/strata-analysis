@@ -172,12 +172,10 @@ class ListStudiesFindingCountTests(unittest.TestCase):
     def test_counts_distinct_competitors_not_total_generation_events(self):
         """3 competitors, one re-analyzed twice more: 5 rows in the table, but
         the study only ever shows 3 cards."""
-        from services.competitors import competitor_api
-
         rows = [
             {"id": 3, "name": "Study"},
         ]
-        with patch("services.competitors.competitor_api.db.fetch_all", return_value=rows) as fetch_all:
+        with patch("services.competitors.competitors_store.db.fetch_all", return_value=rows) as fetch_all:
             self.client.get("/api/competitor/studies")
 
         sql = fetch_all.call_args[0][0]

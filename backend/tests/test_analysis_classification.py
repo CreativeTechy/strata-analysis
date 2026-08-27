@@ -115,7 +115,7 @@ class ClassificationStageHfApiTests(unittest.TestCase):
         outage...) means every remaining chunk/article would fail the same
         way - it must propagate instead of quietly downgrading to
         general_article/low_confidence, so the pipeline can treat it as
-        fatal and stop (see services/articles/enrich.py's
+        fatal and stop (see services/articles/analysis_defaults.py's
         FATAL_ANALYSIS_ERRORS)."""
         from hf_inference_client import HFInferenceError
 

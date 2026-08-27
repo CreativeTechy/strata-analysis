@@ -3,7 +3,7 @@
 Single source of truth for the category/tone enums the zero-shot
 classification stage classifies into and the rest of the pipeline validates
 against - one definition rather than an enum copy-pasted per stage
-and articles_store.py.
+and articles_query.py's VALID_TONES.
 """
 
 VALID_CATEGORIES = (

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell';
-import StatsOverview from './components/StatsOverview';
 import DashboardOverview from './components/DashboardOverview';
+import ReportsView from './components/ReportsView';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
 import TopicDetailPage from './components/TopicDetailPage';
@@ -13,7 +13,6 @@ import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorsPage from './components/CompetitorsPage';
 import CompetitorEditPage from './components/CompetitorEditPage';
 import CompetitorReportPage from './components/CompetitorReportPage';
-import CompetitorPulseCard from './components/CompetitorPulseCard.jsx';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
 import ArticlesPage from './components/ArticlesPage';
@@ -27,105 +26,7 @@ import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
-import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
-import { motion } from 'framer-motion';
-
-const SENTIMENT_COLORS = {
-  positive: '#16a34a',
-  negative: '#e11d48',
-  neutral: '#64748b',
-  mixed: '#f59e0b',
-};
-
-function dominantSentimentFromStats(stats) {
-  const total = Number(stats?.total) || 0;
-  if (!total) {
-    return { label: 'No data yet', color: 'var(--text-light)', pct: 0 };
-  }
-  const entries = [
-    { label: 'Positive', key: 'positive', value: Number(stats.positive) || 0 },
-    { label: 'Negative', key: 'negative', value: Number(stats.negative) || 0 },
-    { label: 'Neutral', key: 'neutral', value: Number(stats.neutral) || 0 },
-    { label: 'Mixed', key: 'mixed', value: Number(stats.mixed) || 0 },
-  ].sort((a, b) => b.value - a.value);
-  const top = entries[0];
-  const pct = Math.round((top.value / total) * 100);
-  return { label: `${top.label} - ${pct}%`, color: SENTIMENT_COLORS[top.key] };
-}
-
-const REPORT_PERIODS = [
-  { key: '7d', label: 'Last 7 days', days: 7 },
-  { key: '30d', label: 'Last 30 days', days: 30 },
-  { key: 'all', label: 'All time', days: null },
-];
-
-// Non-overlapping, back-to-back windows: offsetWindows=0 is "now minus N
-// days through now", offsetWindows=1 is the equal-length window right
-// before that - what "compare to previous period" diffs against.
-function timeAgo(dateString) {
-  if (!dateString) return null;
-  const diffMs = Date.now() - new Date(dateString).getTime();
-  if (!Number.isFinite(diffMs)) return null;
-  if (diffMs < 60000) return 'just now';
-  const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatRunLabel(run) {
-  const value = run?.finished_at || run?.created_at;
-  const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return 'Run';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
-
-// sequence_number is this project's Nth analysis run ever (oldest = 1),
-// computed server-side so it stays fixed regardless of how many runs are in
-// the currently-fetched list or what order they're shown in. `index` is only
-// a fallback for the rare case a run has no sequence_number (e.g. a
-// competitor-analysis pipeline row).
-function pipelineRunNumber(run, index) {
-  return run?.sequence_number ?? (index + 1);
-}
-
-// Full label (with date/time) for the tab list, where several runs are
-// shown side by side and the date disambiguates them at a glance.
-function pipelineRunTitle(run, index) {
-  return `Pipeline #${pipelineRunNumber(run, index)}: ${formatRunLabel(run)}`;
-}
-
-function RequireAuth() {
-  const { user, loading } = useAuth();
-  const location = useLocation();
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        Loading...
-      </div>
-    );
-  }
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
-  return <Outlet />;
-}
-
-function RequirePermission({ permissions, children }) {
-  const { hasPermission } = useAuth();
-  if (!hasPermission(...permissions)) {
-    return (
-      <div style={{ padding: 60, textAlign: 'center' }}>
-        <h2>Access denied</h2>
-        <p className="subtitle">You don't have permission to view this page.</p>
-      </div>
-    );
-  }
-  return children;
-}
+import { RequireAuth, RequirePermission } from './routes/RouteGuards.jsx';
 
 export default function App() {
   const location = useLocation();
@@ -494,228 +395,25 @@ export default function App() {
     />
   );
 
-  const renderReportsView = () => {
-    const hasProjects = projects.length > 0;
-    const liveReport = intelligence || {};
-    const dominantSentiment = dominantSentimentFromStats(liveReport);
-    const totalArticles = Number(liveReport.total) || 0;
-
-    let syncStatus;
-    if (intelligenceError) {
-      syncStatus = {
-        tone: 'error',
-        icon: <AlertCircle size={13} />,
-        label: 'Sync failed',
-        detail: intelligenceError,
-      };
-    } else if (isLoadingIntelligence) {
-      syncStatus = {
-        tone: 'loading',
-        icon: <RefreshCw size={13} className="spin" />,
-        label: 'Syncing',
-        detail: 'Fetching latest data...',
-      };
-    } else {
-      syncStatus = {
-        tone: 'success',
-        icon: <CheckCircle2 size={13} />,
-        label: 'Up to date',
-        detail: lastIntelligenceSyncAt ? `Updated ${timeAgo(lastIntelligenceSyncAt)}` : 'Not synced yet',
-      };
-    }
-
-    return (
-      <div className="content-shell">
-        <header className="report-header">
-          <div className="report-header-top">
-            <div className="report-heading">
-              <span className="report-kicker">
-                <BarChart3 size={13} /> Reports
-              </span>
-              <h2 className="report-title">
-                {selectedProject ? selectedProject.name : 'Select a project'}
-              </h2>
-              <p className="subtitle">
-                Sentiment, categories, and audience insights generated from analyzed articles.
-              </p>
-            </div>
-
-            <div className="report-header-actions">
-              <div className="report-project-control">
-                <label className="report-project-control-label" htmlFor="reports-project-select">
-                  <FolderKanban size={13} /> Project scope
-                </label>
-                <div className="report-project-select-wrap">
-                  <FolderKanban size={16} aria-hidden="true" />
-                  <select
-                    id="reports-project-select"
-                    className="filter-select report-project-select"
-                    value={selectedProjectId ?? ''}
-                    onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                    disabled={isLoadingProjects || !hasProjects}
-                    aria-label="Project scope for this report"
-                  >
-                    {hasProjects ? (
-                      projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.name} ({project.status || 'draft'})
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">No projects yet</option>
-                    )}
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="btn-secondary toolbar-button report-refresh-btn"
-                onClick={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
-                disabled={isLoadingIntelligence || !hasProjects}
-                aria-busy={isLoadingIntelligence}
-              >
-                <RefreshCw size={16} className={isLoadingIntelligence ? 'spin' : ''} />
-                {isLoadingIntelligence ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
-          </div>
-
-          <div className="report-filter-row">
-            <div className="filter-tabs-shell">
-              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter type">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={!reportRunId}
-                  className={`source-type-tab ${!reportRunId ? 'active' : ''}`}
-                  onClick={() => setReportRunId(null)}
-                >
-                  Date range
-                </button>
-                {projectRuns.length > 0 ? (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={!!reportRunId}
-                    className={`source-type-tab ${reportRunId ? 'active' : ''}`}
-                    onClick={() => setReportRunId(reportRunId || projectRuns[0].id)}
-                  >
-                    Analysis run
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="filter-tab-divider" aria-hidden="true" />
-
-              {reportRunId ? (
-                projectRuns.length > 3 ? (
-                  <select
-                    className="filter-select filter-run-select"
-                    value={reportRunId}
-                    onChange={(event) => setReportRunId(event.target.value)}
-                    aria-label="Filter by analysis run"
-                  >
-                    {projectRuns.map((run, index) => (
-                      <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
-                    {projectRuns.map((run, index) => (
-                      <span key={run.id} className="filter-tab-run-item">
-                        {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={reportRunId === run.id}
-                          className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
-                          onClick={() => setReportRunId(run.id)}
-                        >
-                          {pipelineRunTitle(run, index)}
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )
-              ) : (
-                <div className="filter-tab-buttons" role="tablist" aria-label="Report date range">
-                  {REPORT_PERIODS.map((period) => (
-                    <button
-                      key={period.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={reportPeriod === period.key}
-                      className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
-                      onClick={() => setReportPeriod(period.key)}
-                    >
-                      {period.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <ul className="report-summary-chips" aria-label="Report summary">
-            <li className="report-chip">
-              <FolderKanban size={13} aria-hidden="true" />
-              <span className="report-chip-label">Project</span>
-              <strong>{selectedProject ? selectedProject.name : 'None selected'}</strong>
-            </li>
-            <li className="report-chip">
-              <Activity size={13} aria-hidden="true" />
-              <span className="report-chip-label">Articles analyzed</span>
-              <strong>{totalArticles.toLocaleString()}</strong>
-            </li>
-            <li className="report-chip">
-              <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
-              <span className="report-chip-label">Dominant sentiment</span>
-              <strong style={{ color: dominantSentiment.color }}>{dominantSentiment.label}</strong>
-            </li>
-            <li className="report-chip">
-              <CalendarClock size={13} aria-hidden="true" />
-              <span className="report-chip-label">Range</span>
-              <strong>
-                {reportRunId
-                  ? pipelineRunTitle(
-                      projectRuns.find((run) => run.id === reportRunId),
-                      projectRuns.findIndex((run) => run.id === reportRunId),
-                    )
-                  : REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
-              </strong>
-            </li>
-            <li
-              className={`report-chip report-sync-chip report-sync-${syncStatus.tone}`}
-              role="status"
-              aria-live="polite"
-            >
-              {syncStatus.icon}
-              <span className="report-chip-label">{syncStatus.label}</span>
-              <strong>{syncStatus.detail}</strong>
-            </li>
-          </ul>
-        </header>
-
-        {selectedProject?.mode === 'competitor' ? (
-          <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel="Back to reports" />
-        ) : null}
-
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <StatsOverview
-            intelligence={liveReport}
-            scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
-            loading={isLoadingIntelligence}
-            error={intelligenceError}
-            onRetry={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
-            project={selectedProject}
-            period={reportPeriod}
-            runId={reportRunId}
-          />
-        </motion.div>
-      </div>
-    );
-  };
+  const renderReportsView = () => (
+    <ReportsView
+      projects={projects}
+      isLoadingProjects={isLoadingProjects}
+      selectedProject={selectedProject}
+      selectedProjectId={selectedProjectId}
+      onSelectedProjectIdChange={setSelectedProjectId}
+      intelligence={intelligence}
+      isLoadingIntelligence={isLoadingIntelligence}
+      intelligenceError={intelligenceError}
+      lastIntelligenceSyncAt={lastIntelligenceSyncAt}
+      reportPeriod={reportPeriod}
+      onReportPeriodChange={setReportPeriod}
+      reportRunId={reportRunId}
+      onReportRunIdChange={setReportRunId}
+      projectRuns={projectRuns}
+      onRefresh={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
+    />
+  );
 
   return (
     <Routes>
