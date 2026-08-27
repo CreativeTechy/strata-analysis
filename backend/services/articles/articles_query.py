@@ -22,7 +22,7 @@ ARTICLES_SELECT = (
     "insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
-    "source_language,source_language_confidence"
+    "source_language,source_language_confidence,source_run_snapshot"
 )
 
 

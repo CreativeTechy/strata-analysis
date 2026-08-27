@@ -118,6 +118,19 @@ class ParseRecordsTests(unittest.TestCase):
         self.assertTrue(parsed.truncated)
         self.assertEqual(parsed.total_seen, records.MAX_RECORDS + 7)
 
+    def test_source_run_snapshot_is_carried_through_as_metadata(self):
+        snapshot = {"id": "run-1", "started_at": "2026-08-20T00:00:00+00:00", "project_id": 4}
+        text = json.dumps({"title": "A", "text": "one", "source_run_snapshot": snapshot})
+        parsed = records.parse_records(_write("export.jsonl", text), "export.jsonl")
+        self.assertEqual(parsed.records[0]["metadata"]["source_run_snapshot"], snapshot)
+
+    def test_source_run_snapshot_missing_id_is_dropped(self):
+        """Not scraper-app's shape - e.g. a hand-made file that happens to use
+        the same key for something else - so it must not ride through."""
+        text = json.dumps({"title": "A", "text": "one", "source_run_snapshot": {"note": "not a run"}})
+        parsed = records.parse_records(_write("a.jsonl", text), "a.jsonl")
+        self.assertNotIn("source_run_snapshot", parsed.records[0]["metadata"])
+
     def test_extension_matching(self):
         self.assertTrue(records.is_record_file("a.JSONL"))
         self.assertTrue(records.is_record_file("a.ndjson"))
@@ -257,6 +270,13 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
         self.assertEqual(article["url"], "document://project-document/5/article/3")
         self.assertIsNone(article["author"])
         self.assertIsNone(article["published"])
+        self.assertIsNone(article["source_run_snapshot"])
+
+    def test_source_run_snapshot_is_carried_onto_the_article(self):
+        snapshot = {"id": "run-1", "started_at": "2026-08-20T00:00:00+00:00", "project_id": 4}
+        candidate = {**self.CANDIDATE, "record_metadata": {"url": "https://x/1", "source_run_snapshot": snapshot}}
+        _, article = self._materialize(candidate)
+        self.assertEqual(article["source_run_snapshot"], snapshot)
 
 
 class AllowedExtensionTests(unittest.TestCase):

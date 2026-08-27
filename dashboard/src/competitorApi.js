@@ -148,6 +148,13 @@ export const getAnalysisStatus = (id, runId) => request(`/studies/${id}/analyze/
  *  about, tracks them, then runs the same finding generation `analyze()`
  *  triggers. This is how a study gets its competitor set. */
 export const analyzeDocuments = (id) => request(`/studies/${id}/analyze-documents`, { method: 'POST' });
+/** This study's documents annotated with approved-article counts and whether
+ *  a completed run already analyzed each - what the run-analysis dialog's
+ *  scope choices (and its hand-pick checklist) render from. */
+export const getAnalysisScope = (id) => request(`/studies/${id}/analysis-scope`);
+/** This study's analysis-run history, newest first - the "Analysis run"
+ *  filter's source, and what "Analysis #N" is numbered from. */
+export const listAnalysisRuns = (id) => request(`/studies/${id}/analysis-runs`);
 export const listFindings = (id, params = {}) => {
   const query = new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),

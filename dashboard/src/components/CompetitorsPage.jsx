@@ -12,7 +12,7 @@ import {
   AlertTriangle, Check, ChevronRight, FileText, Layers, Pencil, Tags, Upload,
 } from 'lucide-react';
 import {
-  SIZE_TIER_LABELS, analyzeDocuments, avatarGradient, getStudy, importCompetitors, initials,
+  SIZE_TIER_LABELS, avatarGradient, getStudy, importCompetitors, initials,
   listCompetitors, setCompetitorStatus, updateCompetitor,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
@@ -74,7 +74,6 @@ export default function CompetitorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);
-  const [rereadingDocuments, setRereadingDocuments] = useState(false);
   const [trackingBusy, setTrackingBusy] = useState({});
   const [expandedAliases, setExpandedAliases] = useState(() => new Set());
   const [importingCompetitors, setImportingCompetitors] = useState(false);
@@ -122,27 +121,6 @@ export default function CompetitorsPage() {
     },
     onError: (message) => setError(message),
   });
-
-  // Documents approved since the last run can name companies this study has
-  // never heard of, so re-reading them is a distinct action from re-running
-  // analysis over the competitor set it already has.
-  const rereadDocuments = async () => {
-    setError('');
-    setRereadingDocuments(true);
-    try {
-      const result = await analyzeDocuments(studyId);
-      await refreshCompetitors();
-      setNotice({
-        generated: result.generated || 0,
-        scanned: result.articles_considered || 0,
-        derivedCompetitors: result.derived_competitors || [],
-      });
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setRereadingDocuments(false);
-    }
-  };
 
   const saveAliases = async (competitorId, aliases) => {
     try {
@@ -220,11 +198,7 @@ export default function CompetitorsPage() {
           </p>
         </div>
         <div className="cs-head-actions">
-          <RunAnalysisButton run={run} disabled={rereadingDocuments} />
-          <button type="button" className="cs-btn" onClick={rereadDocuments} disabled={rereadingDocuments || run.analyzing}>
-            {rereadingDocuments ? <span className="cs-spinner" /> : <FileText size={15} />}
-            {rereadingDocuments ? 'Reading documents...' : 'Re-read documents'}
-          </button>
+          <RunAnalysisButton run={run} />
           {canManage ? (
             <>
               <input
@@ -242,7 +216,7 @@ export default function CompetitorsPage() {
                 title="Import the tracked-competitors JSONL exported from the scraper app."
               >
                 {importingCompetitors ? <span className="cs-spinner" /> : <Upload size={15} />}
-                {importingCompetitors ? 'Importing...' : 'Import from scraper'}
+                {importingCompetitors ? 'Importing...' : 'Import Competitors'}
               </button>
             </>
           ) : null}
@@ -275,9 +249,6 @@ export default function CompetitorsPage() {
               <>
                 Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
                 {notice.scanned} article{notice.scanned === 1 ? '' : 's'}.
-                {notice.derivedCompetitors?.length
-                  ? ` Covering ${notice.derivedCompetitors.map((item) => item.name).join(', ')}.`
-                  : ''}
               </>
             )}
           </span>
@@ -291,7 +262,7 @@ export default function CompetitorsPage() {
           <div className="cs-empty">
             <div className="cs-empty-icon"><FileText size={20} /></div>
             <h3>No competitors yet</h3>
-            <p>Upload documents and approve their articles, then re-read the documents to find the companies they are about.</p>
+            <p>Import a tracked-competitors list above, or add competitors by hand from the new study wizard.</p>
           </div>
         ) : (
           <div className="cs-rows">

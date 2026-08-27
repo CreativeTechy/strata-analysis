@@ -7,7 +7,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from fastapi.testclient import TestClient
 
 from services.auth import auth
-from services.competitors import competitor_analysis, job_runs
+from services.competitors import analysis_runs_store, competitor_analysis
 import main
 
 FAKE_USER = {"id": 1, "username": "admin", "role_id": 1, "status": "active"}
@@ -15,6 +15,53 @@ FAKE_USER = {"id": 1, "username": "admin", "role_id": 1, "status": "active"}
 
 def _fake_get_current_user():
     return FAKE_USER
+
+
+class _FakeAnalysisRuns:
+    """A minimal in-memory stand-in for analysis_runs_store's Postgres-backed
+    functions, so route tests can exercise the queue/attach/poll contract
+    without a real database - the same role job_runs.JobRegistry played
+    before analysis runs were persisted."""
+
+    def __init__(self):
+        self._runs: dict[int, dict] = {}
+        self._next_id = 1
+        self._sequence: dict[int, int] = {}
+
+    def create_run(self, project_id, scope):
+        run_id = self._next_id
+        self._next_id += 1
+        self._sequence[project_id] = self._sequence.get(project_id, 0) + 1
+        run = {
+            "id": run_id, "project_id": project_id, "sequence_number": self._sequence[project_id],
+            "status": "queued", "scope": scope, "generated": 0, "skipped": [],
+            "validation": None, "error": None, "logs": [],
+            "started_at": None, "finished_at": None,
+        }
+        self._runs[run_id] = run
+        return dict(run)
+
+    def get_run(self, run_id):
+        run = self._runs.get(run_id)
+        return dict(run) if run else None
+
+    def get_active_run(self, project_id):
+        for run in self._runs.values():
+            if run["project_id"] == project_id and run["status"] in ("queued", "running"):
+                return dict(run)
+        return None
+
+    def append_log(self, run_id, message):
+        self._runs[run_id]["logs"].append({"ts": "now", "message": message})
+
+    def logger(self, run_id):
+        return lambda message: self.append_log(run_id, message)
+
+    def mark_success(self, run_id, generated, skipped=None, validation=None):
+        self._runs[run_id].update(
+            status="success", generated=generated, skipped=skipped or [], validation=validation,
+        )
+        return dict(self._runs[run_id])
 
 
 class AnalyzeRouteTests(unittest.TestCase):
@@ -45,29 +92,33 @@ class AnalyzeRouteTests(unittest.TestCase):
             patcher.stop()
 
     def setUp(self):
-        # Each test starts with an empty registry. Runs are process-global and
-        # a queued one for this study makes the next POST attach to it instead
-        # of starting another - correct behaviour (see the double-click test),
-        # but it would otherwise leak between tests here.
-        competitor_analysis._analysis_runs = job_runs.JobRegistry("Queued for analysis.")
+        # Each test starts with an empty, fresh fake registry - it would
+        # otherwise leak an active run between tests (see the double-click
+        # test).
+        self.fake = _FakeAnalysisRuns()
+        self._run_patchers = [
+            patch.object(analysis_runs_store, "create_run", side_effect=self.fake.create_run),
+            patch.object(analysis_runs_store, "get_run", side_effect=self.fake.get_run),
+            patch.object(analysis_runs_store, "get_active_run", side_effect=self.fake.get_active_run),
+        ]
+        for patcher in self._run_patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_post_queues_a_run_and_status_reports_progress_then_findings(self):
         findings = [{"id": 1, "headline": "Opens third roastery", "confidence": 0.8,
                      "confidence_reason": "Three independent outlets carried it."}]
 
-        def fake_job(run_id, project_id, period_days, pipeline_run_id=None):
-            log = competitor_analysis._analysis_runs.logger(run_id)
-            log("Checking 23 article(s) from the last 30 days against each competitor...")
+        def fake_job(run_id, project_id, scope, document_ids=None):
+            log = self.fake.logger(run_id)
+            log("Checking 23 article(s) from the selected documents against each competitor...")
             log("Cafe Younes: high impact - Opens third roastery")
-            competitor_analysis._analysis_runs.update(
-                run_id, status="success", stage="done", generated=1,
-                skipped=[], validation={"scanned": 23},
-            )
+            self.fake.mark_success(run_id, 1, [], {"scanned": 23})
 
         with patch.object(competitor_analysis, "run_analysis_job", side_effect=fake_job), \
              patch("services.competitors.competitor_api.project_has_articles", return_value=True), \
              patch.object(competitor_analysis, "list_findings", return_value=findings):
-            queued = self.client.post("/api/competitor/studies/5/analyze", json={"period_days": 30})
+            queued = self.client.post("/api/competitor/studies/5/analyze", json={"scope": "all"})
             self.assertEqual(queued.status_code, 200)
             run_id = queued.json()["run_id"]
             # The POST itself never carries results - that is the whole point.
@@ -92,40 +143,56 @@ class AnalyzeRouteTests(unittest.TestCase):
         with patch.object(competitor_analysis, "run_analysis_job", side_effect=lambda *a: None), \
              patch("services.competitors.competitor_api.project_has_articles", return_value=True):
             first = self.client.post("/api/competitor/studies/5/analyze", json={})
-            competitor_analysis._analysis_runs.update(first.json()["run_id"], status="running")
+            self.fake._runs[first.json()["run_id"]]["status"] = "running"
             second = self.client.post("/api/competitor/studies/5/analyze", json={})
 
         self.assertEqual(second.json()["run_id"], first.json()["run_id"])
 
-    def _queued_period(self, payload):
-        """The period the job actually receives for a given request body.
-
-        Clears the registry first: the mocked job never reaches a terminal
-        status, so the run left behind by the previous call would still be
-        active and this POST would attach to it instead of queuing.
-        """
-        competitor_analysis._analysis_runs = job_runs.JobRegistry("Queued for analysis.")
+    def _queued_scope(self, payload):
+        """The scope (and document_ids) the job actually receives for a given
+        request body."""
         with patch.object(competitor_analysis, "run_analysis_job") as job, \
              patch("services.competitors.competitor_api.project_has_articles", return_value=True):
-            self.client.post("/api/competitor/studies/5/analyze", json=payload)
-        return job.call_args[0][2]
+            response = self.client.post("/api/competitor/studies/5/analyze", json=payload)
+        return response, job
 
-    def test_period_selector_reaches_the_job(self):
-        """The dialog's window picker is only meaningful if the value survives
-        the round trip - it used to be hardcoded to 30 in the dashboard."""
-        self.assertEqual(self._queued_period({"period_days": 365}), 365)
-        self.assertEqual(self._queued_period({"period_days": 90}), 90)
+    def test_scope_selector_reaches_the_job(self):
+        """The dialog's scope picker is only meaningful if the choice survives
+        the round trip to the job that actually resolves it."""
+        response, job = self._queued_scope({"scope": "all"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(job.call_args[0][2], "all")
 
-    def test_period_is_clamped_to_a_sane_range(self):
-        self.assertEqual(self._queued_period({"period_days": 99999}), 365)
-        self.assertEqual(self._queued_period({"period_days": -5}), 1)
-        # Absent or zero falls back to the default rather than meaning "no window".
-        self.assertEqual(self._queued_period({}), competitor_analysis.DEFAULT_PERIOD_DAYS)
-        self.assertEqual(self._queued_period({"period_days": 0}), competitor_analysis.DEFAULT_PERIOD_DAYS)
+        # A fresh registry: the previous run is still "queued" (its mocked job
+        # never reaches a terminal status), so without this the next POST
+        # would attach to it instead of queuing a new one - correct behaviour
+        # in general (see the double-click test), but not what this case means
+        # to exercise.
+        self.fake._runs.clear()
+        response, job = self._queued_scope({})
+        self.assertEqual(response.status_code, 200)
+        # Absent falls back to "documents not yet analyzed", not "everything".
+        self.assertEqual(job.call_args[0][2], "pending")
+
+    def test_selected_scope_carries_its_document_ids(self):
+        response, job = self._queued_scope({"scope": "selected", "document_ids": [7, 9]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(job.call_args[0][2], "selected")
+        self.assertEqual(job.call_args[0][3], [7, 9])
+
+    def test_selected_scope_without_document_ids_is_rejected(self):
+        response, job = self._queued_scope({"scope": "selected"})
+        self.assertEqual(response.status_code, 400)
+        job.assert_not_called()
+
+    def test_unknown_scope_is_rejected(self):
+        response, job = self._queued_scope({"scope": "everything"})
+        self.assertEqual(response.status_code, 400)
+        job.assert_not_called()
 
     def test_status_404s_for_a_run_belonging_to_another_study(self):
-        run_id = competitor_analysis.create_analysis_run(999)
-        response = self.client.get(f"/api/competitor/studies/5/analyze/{run_id}")
+        run = self.fake.create_run(999, "pending")
+        response = self.client.get(f"/api/competitor/studies/5/analyze/{run['id']}")
         self.assertEqual(response.status_code, 404)
 
     def test_a_study_with_no_evidence_fails_fast_with_a_real_status(self):

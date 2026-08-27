@@ -54,7 +54,7 @@ from content_guard import is_blocked_article
 from embeddings import cosine_similarity
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
-from services.competitors.job_runs import ACTIVE_STATUSES, JobRegistry
+from services.competitors import analysis_runs_store
 
 logger = logging.getLogger(__name__)
 
@@ -321,13 +321,35 @@ def _effective_date(article: dict) -> datetime | None:
     )
 
 
-def _candidate_articles(project_id: int, pipeline_run_id: str | None = None) -> list[dict]:
+def _candidate_articles(project_id: int, pipeline_run_id: str | None = None,
+                        document_ids: list[int] | None = None) -> list[dict]:
     """Project articles that could plausibly concern a competitor.
 
-    Scoped to one pipeline run when given, instead of every article ever
-    linked to the project - the "Pipeline run" choice in the run-analysis
-    dialog, mirroring the same filter Reports offers over `articles.pipeline_run_id`.
+    Scoped to a specific set of uploaded documents when `document_ids` is
+    given - the run-analysis dialog's document scope, joined through
+    `competitor_document_articles` rather than trusting every article ever
+    linked to the project, so a document that hasn't been chosen for this run
+    contributes nothing even if it has approved articles.
+
+    Otherwise scoped to one pipeline run when `pipeline_run_id` is given -
+    the (now-legacy) "Pipeline run" choice, mirroring the same filter Reports
+    offers over `articles.pipeline_run_id`.
     """
+    if document_ids:
+        return db.fetch_all(
+            """
+            select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
+                   a.published_at, a.published_precision, a.created_at,
+                   a.content_changed_at, a.story_id,
+                   a.sentiment, a.article_category, a.embedding_json
+            from articles a
+            join competitor_document_articles cda on cda.article_id = a.id
+            where cda.project_id = %s and cda.status = 'approved'
+              and cda.document_id = any(%s)
+            order by a.created_at desc
+            """,
+            (int(project_id), [int(d) for d in document_ids]),
+        )
     clause = "and a.pipeline_run_id = %s" if pipeline_run_id else ""
     params = (int(project_id), str(pipeline_run_id)) if pipeline_run_id else (int(project_id),)
     return db.fetch_all(
@@ -396,24 +418,29 @@ def _semantic_match(article_vector, competitor_vector) -> float | None:
 
 def validate_competitor_articles(project_id: int, competitors: list[dict],
                                  period_days: int = DEFAULT_PERIOD_DAYS,
-                                 pipeline_run_id: str | None = None, log=None) -> dict:
+                                 pipeline_run_id: str | None = None,
+                                 document_ids: list[int] | None = None, log=None) -> dict:
     """Attribute articles to competitors, recording accept/reject reasons.
 
     Returns per-competitor counts plus an aggregate rejection breakdown, so the
     workspace can show what was filtered and why instead of a bare total.
 
-    `pipeline_run_id` scopes evidence to one analysis run instead of a date
-    window - when given, `period_days` is ignored entirely rather than
-    applied on top, since a run's articles are already a fixed, bounded set.
+    `document_ids` scopes evidence to a specific set of uploaded documents -
+    the run-analysis dialog's scope choice - and, like `pipeline_run_id`,
+    means `period_days` is ignored entirely rather than applied on top, since
+    the document set is already a fixed, bounded pool. `document_ids` takes
+    precedence when both would otherwise apply.
     """
     log = log or (lambda _message: None)
-    articles = _candidate_articles(project_id, pipeline_run_id)
+    articles = _candidate_articles(project_id, pipeline_run_id, document_ids)
     since = None
-    if not pipeline_run_id:
+    if not pipeline_run_id and not document_ids:
         since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
         if since is not None:
             articles = [a for a in articles if (_effective_date(a) or since) >= since]
-    if pipeline_run_id:
+    if document_ids:
+        window = f"the selected document{'' if len(document_ids) == 1 else 's'}"
+    elif pipeline_run_id:
         window = "the selected pipeline run"
     else:
         window = f"the last {period_days} days" if period_days else "all time"
@@ -540,8 +567,9 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             for competitor_id, stats in per_competitor.items()
         },
         "rejection_reasons": rejection_reasons,
-        "period_days": None if pipeline_run_id else period_days,
+        "period_days": None if (pipeline_run_id or document_ids) else period_days,
         "pipeline_run_id": pipeline_run_id,
+        "document_ids": document_ids,
     }
 
 
@@ -743,7 +771,7 @@ def _format_evidence(rows: list[dict]) -> str:
 
 def generate_finding(business_profile: dict, competitor: dict, period_days: int = DEFAULT_PERIOD_DAYS,
                      period_start: datetime | None = None, period_end: datetime | None = None,
-                     pipeline_run_id: str | None = None) -> dict | None:
+                     pipeline_run_id: str | None = None, analysis_run_id: int | None = None) -> dict | None:
     """Build one analysis card for one competitor, or None when evidence is absent.
 
     `period_start`/`period_end`, when given, override the `period_days`-derived
@@ -751,6 +779,9 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     run instead, so the card reports that run's actual start/finish rather than
     an arbitrary day count that was never applied. `pipeline_run_id` is stamped
     alongside so the reports list can later filter to "cards from this run".
+    `analysis_run_id` is the (separate, persisted) competitor-analysis run that
+    produced this card, stamped the same way so the reports toolbar can filter
+    by it.
     """
     from services.competitors.business_profile_store import profile_context
 
@@ -849,14 +880,14 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             whats_up, impact, impact_level, actions, signals, evidence,
             confidence, confidence_reason, article_count, story_count,
             validation_status, analysis_model, prompt_version, generated_at,
-            pipeline_run_id
+            pipeline_run_id, analysis_run_id
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning id, project_id, competitor_id, period_start, period_end, headline,
                   whats_up, impact, impact_level, actions, signals, evidence,
                   confidence, confidence_reason, article_count, story_count,
                   validation_status, validation_notes, analysis_model,
-                  prompt_version, generated_at, pipeline_run_id
+                  prompt_version, generated_at, pipeline_run_id, analysis_run_id
         """,
         (
             int(competitor["project_id"]),
@@ -879,12 +910,15 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
             PROMPT_VERSION,
             now,
             pipeline_run_id,
+            int(analysis_run_id) if analysis_run_id is not None else None,
         ),
     )
 
 
 def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
-                      pipeline_run_id: str | None = None, log=None) -> dict:
+                      pipeline_run_id: str | None = None,
+                      document_ids: list[int] | None = None,
+                      analysis_run_id: int | None = None, log=None) -> dict:
     """Validate evidence then produce one card per tracked competitor.
 
     `log` receives one human-readable progress line per step. It exists because
@@ -893,10 +927,14 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     survived, what came back - is otherwise invisible until the whole thing
     finishes. Defaults to a no-op so the CLI/seed path can call this unchanged.
 
-    `pipeline_run_id` scopes evidence to one analysis run - see
-    validate_competitor_articles. Each card then stamps that run's actual
-    start/finish as its period instead of a `period_days`-derived window that
-    was never applied.
+    `document_ids` scopes evidence to a specific set of uploaded documents -
+    the run-analysis dialog's scope choice. `pipeline_run_id` scopes it to one
+    (legacy, sentiment-pipeline) analysis run instead - see
+    validate_competitor_articles for how the two interact. Either way, each
+    card stamps that scope's actual start/finish as its period instead of a
+    `period_days`-derived window that was never applied. `analysis_run_id` is
+    the persisted competitor-analysis run this call is part of, stamped on
+    every card it produces so the reports toolbar can filter by it.
     """
     from services.competitors.business_profile_store import get_profile
     from services.competitors.competitors_store import list_competitors
@@ -911,10 +949,12 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
 
     log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.")
     validation = validate_competitor_articles(project_id, competitors, period_days,
-                                              pipeline_run_id, log=log)
+                                              pipeline_run_id, document_ids, log=log)
 
     period_start = period_end = None
-    if pipeline_run_id:
+    if document_ids:
+        period_days = None  # not a time window - the document set already fixes the evidence pool
+    elif pipeline_run_id:
         from services.pipeline.pipeline_runs import get_pipeline_run
 
         run = get_pipeline_run(pipeline_run_id)
@@ -938,7 +978,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
             log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...")
         try:
             finding = generate_finding(profile, competitor, period_days, period_start, period_end,
-                                       pipeline_run_id)
+                                       pipeline_run_id, analysis_run_id)
         except LLMError as exc:
             log(f"{name}: failed - {exc.user_message}")
             return competitor, None, exc
@@ -1025,60 +1065,51 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
 # Analysis is one LLM call per tracked competitor. Against a local model that
 # is minutes, not seconds, and it was being awaited inline in the POST handler -
 # the user stared at a spinner with no idea which competitor it was on or
-# whether it had hung. It runs as a FastAPI BackgroundTask against the shared
-# registry instead, streaming progress lines the UI polls for.
-_analysis_runs = JobRegistry("Queued for analysis.")
-
-ACTIVE_ANALYSIS_STATUSES = ACTIVE_STATUSES
-
-
-def create_analysis_run(project_id: int) -> str:
-    return _analysis_runs.create(project_id, generated=0, skipped=[], validation=None)
-
-
-def get_analysis_run(run_id: str) -> dict | None:
-    return _analysis_runs.get(run_id)
-
-
-def get_active_analysis_run(project_id: int) -> dict | None:
-    return _analysis_runs.active_for_project(project_id)
-
-
-def run_analysis_job(run_id: str, project_id: int, period_days: int,
-                     pipeline_run_id: str | None = None) -> None:
-    """Validate the stored evidence and write one card per competitor.
+# whether it had hung. It runs as a FastAPI BackgroundTask against a
+# persisted run (see analysis_runs_store) instead, streaming progress lines
+# the UI polls for.
+def run_analysis_job(run_id: int, project_id: int, scope: str,
+                     document_ids: list[int] | None = None) -> None:
+    """Resolve the scope to a concrete document set, then validate the stored
+    evidence and write one card per competitor.
 
     Every failure path ends as a `failed` run carrying a readable message
     rather than an exception nobody sees: this executes after the response has
     already been sent, so raising here would only reach the server log.
     """
-    log = _analysis_runs.logger(run_id)
-    _analysis_runs.update(run_id, status="running", stage="analyzing", message="Analyzing competitors.")
+    log = analysis_runs_store.logger(run_id)
+    analysis_runs_store.mark_running(run_id)
     try:
-        result = generate_findings(project_id, period_days=period_days,
-                                   pipeline_run_id=pipeline_run_id, log=log)
+        resolved = analysis_runs_store.resolve_scope(project_id, scope, document_ids)
+        if not resolved:
+            message = (
+                "No documents matched this selection."
+                if scope == "selected"
+                else "Every document has already been analyzed by a previous run."
+                if scope == "pending"
+                else "No documents with approved articles to analyze."
+            )
+            log(message)
+            analysis_runs_store.mark_failed(run_id, message)
+            return
+
+        log(f"Scope: {len(resolved)} document{'' if len(resolved) == 1 else 's'}.")
+        result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log)
 
         # A provider failure is a failed run, not a run that generated zero
         # reports - same distinction generate_findings itself draws.
         if result.get("error"):
-            _analysis_runs.update(
-                run_id, status="failed", stage="error", error=result["error"],
-                error_code=result.get("error_code"), message=result["error"],
-                generated=result.get("generated") or 0, skipped=result.get("skipped") or [],
-                validation=result.get("validation"),
+            analysis_runs_store.mark_failed(
+                run_id, result["error"], result.get("generated") or 0,
+                result.get("skipped"), result.get("validation"),
             )
             return
 
-        _analysis_runs.update(
-            run_id, status="success", stage="done",
-            message=f"Generated {result['generated']} report(s).",
-            generated=result["generated"], skipped=result["skipped"],
-            validation=result["validation"],
-        )
+        analysis_runs_store.record_covered_documents(run_id, resolved)
+        analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
         log(f"Analysis failed: {exc}")
-        _analysis_runs.update(run_id, status="failed", stage="error",
-                              error=str(exc), message=str(exc))
+        analysis_runs_store.mark_failed(run_id, str(exc))
 
 
 # --------------------------------------------------------------------------- #
@@ -1089,7 +1120,7 @@ FINDING_COLUMNS = """
     whats_up, impact, impact_level, actions, signals, evidence, confidence,
     confidence_reason, article_count, story_count, validation_status,
     validation_notes, analysis_model, prompt_version, generated_at,
-    pipeline_run_id
+    pipeline_run_id, analysis_run_id
 """
 
 _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 2 end"
@@ -1098,16 +1129,21 @@ _IMPACT_ORDER = "case impact_level when 'high' then 0 when 'medium' then 1 else 
 def list_findings(project_id: int, competitor_id: int | None = None,
                   impact_level: str | None = None, latest_only: bool = True,
                   search: str | None = None, date_from: str | None = None,
-                  date_to: str | None = None, pipeline_run_id: str | None = None) -> list[dict]:
+                  date_to: str | None = None, pipeline_run_id: str | None = None,
+                  analysis_run_id: int | None = None) -> list[dict]:
     """Findings for the workspace, highest impact and most recent first.
 
     `latest_only` keeps one card per competitor — the newest — so the card grid
     shows the current picture rather than every historical run.
 
-    `pipeline_run_id`, when given, restricts to findings whose evidence was
-    scoped to that one analysis run (see generate_findings) - a finding
-    generated over a `period_days` date window instead simply has none and is
-    excluded, the same as a date-range filter would exclude it.
+    `analysis_run_id`, when given, restricts to findings generated by that one
+    persisted competitor-analysis run (see run_analysis_job) - the current
+    "Analysis run" filter. `pipeline_run_id` is the older, sentiment-pipeline-
+    scoped equivalent, kept for findings generated before this run tracking
+    existed. Either way, a finding generated over a `period_days` date window
+    instead simply has neither and is excluded, the same as a date-range
+    filter would exclude it. The three are mutually exclusive, in that order
+    of priority.
     """
     clauses = ["f.project_id = %s"]
     params: list = [int(project_id)]
@@ -1122,7 +1158,10 @@ def list_findings(project_id: int, competitor_id: int | None = None,
         clauses.append("(f.headline ilike %s or f.whats_up ilike %s or c.name ilike %s)")
         like = f"%{search}%"
         params.extend([like, like, like])
-    if pipeline_run_id:
+    if analysis_run_id:
+        clauses.append("f.analysis_run_id = %s")
+        params.append(int(analysis_run_id))
+    elif pipeline_run_id:
         clauses.append("f.pipeline_run_id = %s")
         params.append(str(pipeline_run_id))
     else:

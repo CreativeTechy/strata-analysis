@@ -139,6 +139,18 @@ class ArticleRowFieldHandlingTests(unittest.TestCase):
         value = self._field_value(self._article(), "reprocess_requested_at")
         self.assertIsNone(value)
 
+    def test_source_run_snapshot_dict_is_wrapped_for_jsonb(self):
+        snapshot = {"id": "abc123", "started_at": "2026-08-24T00:00:00+00:00", "project_id": 7}
+        value = self._field_value(self._article(source_run_snapshot=snapshot), "source_run_snapshot")
+        self.assertEqual(value.obj, snapshot)
+
+    def test_source_run_snapshot_absent_stays_sql_null(self):
+        """Unlike the list-shaped ARTICLE_JSON_FIELDS, a missing snapshot must
+        stay NULL rather than fall back to `[]` - it's an object column, and
+        `[]` would misrepresent "no run" as an empty list."""
+        value = self._field_value(self._article(), "source_run_snapshot")
+        self.assertIsNone(value)
+
 
 class UpsertArticleRowConflictClauseTests(unittest.TestCase):
     """_upsert_article_row()'s on-conflict clause must not blindly overwrite
@@ -168,6 +180,29 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
             captured["sql"],
         )
         self.assertNotIn("pipeline_run_id = excluded.pipeline_run_id", captured["sql"])
+
+    def test_source_run_snapshot_keeps_the_first_saved_value(self):
+        """source_run_snapshot - scraper-app collection provenance, set once
+        at candidate-approval time (project_document_articles.py) - must
+        follow the same first-writer-wins rule as pipeline_run_id, for the
+        same reason: a later save (reanalyze, re-approval) must not blank it."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a"}
+        with patch("services.articles.store._article_write_fields", return_value=["url", "source_run_snapshot"]):
+            with patch("services.articles.store._article_columns", return_value={"url", "source_run_snapshot"}):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn(
+            "source_run_snapshot = coalesce(articles.source_run_snapshot, excluded.source_run_snapshot)",
+            captured["sql"],
+        )
+        self.assertNotIn("source_run_snapshot = excluded.source_run_snapshot", captured["sql"])
 
 
 if __name__ == "__main__":

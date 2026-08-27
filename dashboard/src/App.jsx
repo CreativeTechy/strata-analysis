@@ -12,6 +12,7 @@ import CompetitorOnboarding from './components/CompetitorOnboarding';
 import CompetitorWorkspace from './components/CompetitorWorkspace';
 import CompetitorsPage from './components/CompetitorsPage';
 import CompetitorEditPage from './components/CompetitorEditPage';
+import CompetitorDocumentsPage from './components/CompetitorDocuments';
 import CompetitorReportPage from './components/CompetitorReportPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
@@ -521,6 +522,14 @@ export default function App() {
             element={(
               <RequirePermission permissions={['competitors.view']}>
                 <CompetitorsPage />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/competitors/:studyId/documents"
+            element={(
+              <RequirePermission permissions={['competitors.manage']}>
+                <CompetitorDocumentsPage />
               </RequirePermission>
             )}
           />

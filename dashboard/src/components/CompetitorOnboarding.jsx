@@ -1,64 +1,51 @@
 /**
  * Competitor study onboarding.
  *
- *   1. Upload documents — a study name plus the files themselves. Each upload
- *                         is saved immediately, then extracted (text library or
- *                         OCR, decided server-side) in the background; this step
- *                         polls and shows each file's status as it resolves.
- *                         Extraction success also kicks off splitting the text
- *                         into candidate articles, reviewed next.
- *   2. Review articles  — each document's extracted text is split into candidate
- *                         articles by the LLM; approving one turns it into a real
- *                         article the analysis can read. "Approve all" is the
- *                         fast path.
- *   3. Analyze & report — reads the approved articles for the companies they are
- *                         actually about, tracks each one, writes a report card
- *                         per company, then opens the workspace.
+ *   1. Add competitors  — a study name plus the companies to track: import the
+ *                         tracked-competitors JSONL exported by the scraper
+ *                         app, or type names in by hand. Nothing here reads a
+ *                         document — the competitor set is user-given, not
+ *                         AI-derived.
+ *   2. Review & track   — decide which of the added competitors actually get
+ *                         a report. Only tracked competitors are analyzed;
+ *                         anything left ignored (or removed) stays out.
+ *   3. Add documents    — optional. Upload files to build the evidence a
+ *                         report is written from; each document's extracted
+ *                         text is split into candidate articles by the LLM,
+ *                         and approving one turns it into a real article.
+ *                         Skippable — evidence can be added later from the
+ *                         workspace, and analysis runs from there too.
  *
- * Extraction and analysis each run tens of seconds to minutes, so both show
- * staged progress instead of an indeterminate spinner.
+ * Document extraction and article-splitting each run tens of seconds to
+ * minutes in the background, so step 3 shows staged progress instead of an
+ * indeterminate spinner.
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight,
-  FileCheck, ListChecks, Loader2, Plus, ScanText, Sparkles, Trash2, Upload, X,
+  FileCheck, Layers, ListChecks, Loader2, Plus, ScanText, Tags, Trash2, Upload, X,
 } from 'lucide-react';
 import {
-  analyzeDocuments, approveAllDocumentArticles, createStudy, deleteDocument, listDocumentArticles,
-  pollArticleCandidates, pollDocumentExtraction, setDocumentArticleStatus, uploadDocuments,
+  addCompetitor, approveAllDocumentArticles, avatarGradient, createStudy, deleteCompetitor,
+  deleteDocument, importCompetitors, initials, listCompetitors, listDocumentArticles,
+  pollArticleCandidates, pollDocumentExtraction, setCompetitorStatus, setDocumentArticleStatus,
+  uploadDocuments,
 } from '../competitorApi.js';
 import '../styles/Competitors.css';
 
-/** Offline swaps step 3 for its own "Review articles" and skips step 4
- *  (Competitors) and step 5 (Channels) entirely — there's nothing to track or
- *  find channels for yet, so they're left out of the chip row rather than
- *  shown as passed-through. Step 5 (Channels)/6 (Schedule) also collapse into
- *  a single id 5: there's nothing to re-scrape or review, so instead it runs
- *  analysis straight off the approved articles and shows the resulting report. */
 const STEPS = [
-  { id: 1, label: 'Upload documents', icon: Upload },
-  { id: 2, label: 'Review articles', icon: FileCheck },
-  { id: 3, label: 'Analyze & report', icon: ScanText },
-];
-
-// Mirrors document_analysis.py's two-stage shape: name the companies the
-// documents are actually about, then run the same evidence-validation +
-// finding-generation an online study uses.
-const DOCUMENT_ANALYSIS_STAGES = [
-  'Reading approved articles for company names',
-  'Matching evidence to each company',
-  'Writing findings',
+  { id: 1, label: 'Add competitors', icon: Layers },
+  { id: 2, label: 'Review & track', icon: Tags },
+  { id: 3, label: 'Add documents', icon: Upload },
 ];
 
 /** Real-time progress lines from an analysis run's `logs` (see
  *  competitorApi.js's pollAnalysisRun `onUpdate`) — each poll can add more, so
- *  this auto-scrolls to keep the latest line in view. Styled like StageList
- *  (same row/icon language: a checkmark per finished line, a spinner on the
- *  most recent one while the run is still active) so the real detail trail
- *  reads as a continuation of that same progress UI rather than a separate
- *  terminal-style log. Renders nothing until there's at least one line, and
+ *  this auto-scrolls to keep the latest line in view. Styled like a checklist
+ *  (a checkmark per finished line, a spinner on the most recent one while the
+ *  run is still active). Renders nothing until there's at least one line, and
  *  stays visible after the run finishes so the trail can still be reviewed.
  *  Exported so CompetitorRunAnalysis.jsx can reuse it, the same way
  *  CompetitorEditPage.jsx reuses ListEditor from this file. */
@@ -105,39 +92,6 @@ export function DiscoveryLog({ logs, active }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-
-/** Staged feedback for a slow request. Advances on a timer purely so the wait
- *  reads as progress; it never claims the work finished — that is driven by the
- *  response, which replaces this component entirely. Rendered only while a
- *  request is in flight, so each run mounts it fresh at stage zero. */
-function StageList({ stages }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setActiveIndex((current) => Math.min(current + 1, stages.length - 1));
-    }, 2600);
-    return () => clearInterval(timer);
-  }, [stages.length]);
-
-  return (
-    <div className="cs-progress">
-      {stages.map((stage, i) => {
-        const done = i < activeIndex;
-        const active = i === activeIndex;
-        return (
-          <div
-            key={stage}
-            className={`cs-progress-row${active ? ' cs-progress-row-active' : ''}${done ? ' cs-progress-row-done' : ''}`}
-          >
-            {done ? <CheckCircle2 size={15} /> : active ? <span className="cs-spinner" /> : <span style={{ width: 15 }} />}
-            <span>{stage}</span>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -198,10 +152,6 @@ export function ListEditor({ label, hint, values, onChange, placeholder }) {
   );
 }
 
-/** Fixed-list country multi-select: type to filter, click a match to add,
- *  selected countries render as removable pills. Modeled on ListEditor above,
- *  since free text would let "USA" and "United States" reach the discovery
- *  prompt as different values. */
 export default function CompetitorOnboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
@@ -209,6 +159,19 @@ export default function CompetitorOnboarding() {
   const [studyName, setStudyName] = useState('');
   const [studyId, setStudyId] = useState(null);
 
+  // ---- Step 1/2: competitors -------------------------------------------
+  const [competitors, setCompetitors] = useState([]);
+  const [manualName, setManualName] = useState('');
+  const [manualWebsite, setManualWebsite] = useState('');
+  const [manualDescription, setManualDescription] = useState('');
+  const [addingManual, setAddingManual] = useState(false);
+  const [importingCompetitors, setImportingCompetitors] = useState(false);
+  const importInputRef = useRef(null);
+  const [trackingBusy, setTrackingBusy] = useState({});
+  const [removingCompetitor, setRemovingCompetitor] = useState({});
+  const [trackingAll, setTrackingAll] = useState(false);
+
+  // ---- Step 3: documents -------------------------------------------------
   const [documents, setDocuments] = useState([]);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [uploadingDocs, setUploadingDocs] = useState(false);
@@ -224,9 +187,6 @@ export default function CompetitorOnboarding() {
   const [reviewingArticles, setReviewingArticles] = useState(false);
   const [decidingCandidate, setDecidingCandidate] = useState({});
   const [approvingAll, setApprovingAll] = useState(false);
-
-  const [analyzingDocuments, setAnalyzingDocuments] = useState(false);
-  const [documentAnalysis, setDocumentAnalysis] = useState(null);
 
   const documentById = useMemo(
     () => Object.fromEntries(documents.map((document) => [document.id, document])),
@@ -248,12 +208,111 @@ export default function CompetitorOnboarding() {
     () => articleCandidates.filter((candidate) => candidate.status === 'approved').length,
     [articleCandidates],
   );
+  const trackedCount = useMemo(
+    () => competitors.filter((competitor) => competitor.status === 'tracked').length,
+    [competitors],
+  );
 
   const ensureStudy = async () => {
     if (studyId) return studyId;
     const created = await createStudy({ name: studyName.trim() || 'Untitled competitor study' });
     setStudyId(created.study.id);
     return created.study.id;
+  };
+
+  const refreshCompetitors = async (id) => {
+    const result = await listCompetitors(id);
+    setCompetitors(result.competitors || []);
+  };
+
+  // Step 1: type a name (website/description optional) and add it directly —
+  // no discovery, no evidence requirement. Created 'tracked' by default since
+  // typing a name in is already a deliberate "watch this company" action; the
+  // next step is still there to change anyone's mind.
+  const addManualCompetitor = async () => {
+    const name = manualName.trim();
+    if (!name) return;
+    setError('');
+    setAddingManual(true);
+    try {
+      const id = await ensureStudy();
+      await addCompetitor(id, {
+        name,
+        website: manualWebsite.trim() || undefined,
+        description: manualDescription.trim() || undefined,
+        status: 'tracked',
+      });
+      await refreshCompetitors(id);
+      setManualName('');
+      setManualWebsite('');
+      setManualDescription('');
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setAddingManual(false);
+    }
+  };
+
+  // A study built by scraping (rather than uploaded documents) hands its
+  // tracked-competitor list over as JSONL via the scraper app's
+  // `GET /api/competitors/export` - importing it here saves re-typing that
+  // same list by hand.
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || importingCompetitors) return;
+    setError('');
+    setImportingCompetitors(true);
+    try {
+      const id = await ensureStudy();
+      await importCompetitors(id, file);
+      await refreshCompetitors(id);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setImportingCompetitors(false);
+    }
+  };
+
+  const toggleTracking = async (competitor) => {
+    const nextStatus = competitor.status === 'tracked' ? 'ignored' : 'tracked';
+    setTrackingBusy((current) => ({ ...current, [competitor.id]: true }));
+    try {
+      await setCompetitorStatus(competitor.id, nextStatus);
+      await refreshCompetitors(studyId);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setTrackingBusy((current) => ({ ...current, [competitor.id]: false }));
+    }
+  };
+
+  // One call per untracked competitor — the API has no bulk-status route, and
+  // a study's competitor list is at most a few dozen rows, so this is cheap.
+  const trackAllCompetitors = async () => {
+    const untracked = competitors.filter((competitor) => competitor.status !== 'tracked');
+    if (!untracked.length) return;
+    setError('');
+    setTrackingAll(true);
+    try {
+      await Promise.all(untracked.map((competitor) => setCompetitorStatus(competitor.id, 'tracked')));
+      await refreshCompetitors(studyId);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setTrackingAll(false);
+    }
+  };
+
+  const removeCompetitor = async (competitorId) => {
+    setRemovingCompetitor((current) => ({ ...current, [competitorId]: true }));
+    try {
+      await deleteCompetitor(competitorId);
+      setCompetitors((current) => current.filter((competitor) => competitor.id !== competitorId));
+    } catch (caught) {
+      setError(caught.message);
+      setRemovingCompetitor((current) => ({ ...current, [competitorId]: false }));
+    }
   };
 
   const addPendingFiles = (fileList) => {
@@ -269,14 +328,14 @@ export default function CompetitorOnboarding() {
     setArticleCandidates(result.articles || []);
   };
 
-  // Offline step 2: create the study (if needed), upload whatever files are
-  // staged, then poll until each one's background extraction (text library or
-  // OCR, decided server-side) settles, then poll again until the candidate
-  // articles split out of that text are ready too — the upload button
-  // re-enables as soon as the files are saved, so a second batch can go up
-  // while the first is still extracting; both polls just re-list from the
-  // server, so overlapping calls converge on the same truth rather than
-  // conflicting.
+  // Step 3: create the study (if step 1 never did — documents alone are
+  // enough to start one), upload whatever files are staged, then poll until
+  // each one's background extraction (text library or OCR, decided
+  // server-side) settles, then poll again until the candidate articles split
+  // out of that text are ready too — the upload button re-enables as soon as
+  // the files are saved, so a second batch can go up while the first is still
+  // extracting; both polls just re-list from the server, so overlapping calls
+  // converge on the same truth rather than conflicting.
   const uploadPendingDocuments = async () => {
     if (!pendingFiles.length) return;
     setError('');
@@ -316,14 +375,13 @@ export default function CompetitorOnboarding() {
     }
   };
 
-  // Offline step 3: resume watching for any document still generating
-  // candidates when this step is (re)entered — Continue on step 2 isn't
-  // gated on generation finishing, so it can still be running here. Reads
-  // documentsRef instead of depending on `documents` directly so this only
-  // re-runs on an actual step change, not on every document-list update the
-  // poll itself causes.
+  // Resume watching for any document still generating candidates when step 3
+  // is (re)entered — uploading doesn't gate on generation finishing, so it
+  // can still be running here. Reads documentsRef instead of depending on
+  // `documents` directly so this only re-runs on an actual step change, not
+  // on every document-list update the poll itself causes.
   useEffect(() => {
-    if (step !== 2 || !studyId) return;
+    if (step !== 3 || !studyId) return;
     let cancelled = false;
     (async () => {
       const activeIds = documentsRef.current
@@ -381,20 +439,14 @@ export default function CompetitorOnboarding() {
     }
   };
 
-  // Step 5 (offline): names the competitors the approved articles are
-  // actually about, tracks them, then generates one finding card per company
-  // — the same report an online study ends up with, just derived from
-  // documents rather than from a name the user typed.
-  const runDocumentAnalysis = async () => {
+  const goToStep2 = async () => {
     setError('');
-    setAnalyzingDocuments(true);
     try {
-      const result = await analyzeDocuments(studyId);
-      setDocumentAnalysis(result);
+      const id = await ensureStudy();
+      await refreshCompetitors(id);
+      setStep(2);
     } catch (caught) {
       setError(caught.message);
-    } finally {
-      setAnalyzingDocuments(false);
     }
   };
 
@@ -408,9 +460,10 @@ export default function CompetitorOnboarding() {
         <div>
           <h1>New competitor study</h1>
           <p>
-            Upload the documents this study is built from. Strata splits them into articles for you
-            to approve, works out which companies those articles are actually about, and writes a
-            report card for each one.
+            Name the companies this study tracks — import a list or add them one at a time — then
+            decide which ones get a report. Documents are optional and can be added now or later;
+            approving the articles split out of them is what gives a tracked competitor evidence to
+            report on.
           </p>
         </div>
       </div>
@@ -453,14 +506,13 @@ export default function CompetitorOnboarding() {
         </div>
       ) : null}
 
-      {/* ---------------- Step 1: upload documents ---------------- */}
+      {/* ---------------- Step 1: add competitors ---------------- */}
       {step === 1 ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Upload size={16} /> Upload your documents</h2>
+          <h2 className="cs-panel-title"><Layers size={16} /> Add your competitors</h2>
           <p className="cs-panel-hint">
-            Add every file you want this study built from. Each one is extracted as soon as it
-            uploads — text where the file has any, OCR where it doesn&rsquo;t — and you can add more
-            later from the workspace.
+            Import the tracked-competitors list exported from the scraper app, or add companies by
+            hand. You can add more of either later from the workspace.
           </p>
 
           <div className="cs-field">
@@ -473,6 +525,202 @@ export default function CompetitorOnboarding() {
               onChange={(event) => setStudyName(event.target.value)}
             />
           </div>
+
+          <div className="cs-field">
+            <label className="cs-label">Import a list</label>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".jsonl,.ndjson,application/x-ndjson"
+              onChange={handleImportFile}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="cs-btn"
+              onClick={() => importInputRef.current?.click()}
+              disabled={importingCompetitors}
+              title="Import the tracked-competitors JSONL exported from the scraper app."
+            >
+              {importingCompetitors ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
+              {importingCompetitors ? 'Importing...' : 'Import JSONL'}
+            </button>
+          </div>
+
+          <div className="cs-field">
+            <label className="cs-label">Add one by hand</label>
+            <div className="cs-grid-2">
+              <input
+                className="cs-input"
+                value={manualName}
+                placeholder="Company name"
+                onChange={(event) => setManualName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addManualCompetitor();
+                  }
+                }}
+              />
+              <input
+                className="cs-input"
+                value={manualWebsite}
+                placeholder="Website (optional)"
+                onChange={(event) => setManualWebsite(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addManualCompetitor();
+                  }
+                }}
+              />
+            </div>
+            <textarea
+              className="cs-textarea"
+              style={{ minHeight: 60, marginTop: 8 }}
+              value={manualDescription}
+              placeholder="What they do (optional)"
+              onChange={(event) => setManualDescription(event.target.value)}
+            />
+            <button
+              type="button"
+              className="cs-btn cs-btn-primary"
+              style={{ marginTop: 8 }}
+              onClick={addManualCompetitor}
+              disabled={addingManual || !manualName.trim()}
+            >
+              {addingManual ? <Loader2 size={15} className="cs-spin" /> : <Plus size={15} />}
+              {addingManual ? 'Adding...' : 'Add competitor'}
+            </button>
+          </div>
+
+          {competitors.length ? (
+            <div className="cs-field">
+              <label className="cs-label">
+                Added
+                <span className="cs-label-hint">{competitors.length} competitor{competitors.length === 1 ? '' : 's'}</span>
+              </label>
+              <div className="cs-pills">
+                {competitors.map((competitor) => (
+                  <span key={competitor.id} className="cs-pill">{competitor.name}</span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><Layers size={20} /></div>
+              <h3>No competitors yet</h3>
+              <p>Import a list or add one above to get started.</p>
+            </div>
+          )}
+
+          <div className="cs-wizard-foot">
+            <button
+              type="button"
+              className="cs-btn cs-btn-primary"
+              onClick={goToStep2}
+              disabled={!competitors.length}
+            >
+              <ArrowRight size={15} /> Continue to review
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 2: review & track competitors ---------------- */}
+      {step === 2 ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><Tags size={16} /> Review & track</h2>
+          <p className="cs-panel-hint">
+            Only tracked competitors get a report. Untrack anything you added but don&rsquo;t want to
+            follow, or remove it outright.
+          </p>
+
+          {competitors.length ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+              <span style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
+                <strong style={{ color: 'var(--text-dark)' }}>{trackedCount}</strong> tracked of{' '}
+                <strong style={{ color: 'var(--text-dark)' }}>{competitors.length}</strong> added
+              </span>
+              <button
+                type="button"
+                className="cs-btn cs-btn-primary"
+                onClick={trackAllCompetitors}
+                disabled={trackingAll || trackedCount === competitors.length}
+              >
+                {trackingAll ? <Loader2 size={15} className="cs-spin" /> : <Check size={15} />}
+                {trackingAll ? 'Tracking...' : `Track all${competitors.length - trackedCount ? ` (${competitors.length - trackedCount})` : ''}`}
+              </button>
+            </div>
+          ) : null}
+
+          {competitors.length === 0 ? (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><Tags size={20} /></div>
+              <h3>No competitors yet</h3>
+              <p>Go back and import a list or add one by hand.</p>
+            </div>
+          ) : (
+            <div className="cs-rows">
+              {competitors.map((competitor) => (
+                <div key={competitor.id} className="cs-row">
+                  <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
+                    {initials(competitor.name)}
+                  </div>
+                  <div className="cs-row-main">
+                    <div className="cs-row-name">{competitor.name}</div>
+                    {competitor.description ? <div className="cs-row-desc">{competitor.description}</div> : null}
+                  </div>
+                  <div className="cs-row-side">
+                    <button
+                      type="button"
+                      className={`cs-btn cs-btn-sm${competitor.status === 'tracked' ? ' cs-btn-primary' : ''}`}
+                      onClick={() => toggleTracking(competitor)}
+                      disabled={Boolean(trackingBusy[competitor.id])}
+                    >
+                      {trackingBusy[competitor.id] ? (
+                        <span className="cs-spinner" />
+                      ) : competitor.status === 'tracked' ? (
+                        <><Check size={13} /> Tracking</>
+                      ) : (
+                        'Track'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="cs-btn cs-btn-sm cs-btn-danger"
+                      onClick={() => removeCompetitor(competitor.id)}
+                      disabled={Boolean(removingCompetitor[competitor.id])}
+                    >
+                      <Trash2 size={13} /> Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="cs-wizard-foot">
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(3)}>
+              <ArrowRight size={15} /> Continue to documents
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ---------------- Step 3: add documents (optional) ---------------- */}
+      {step === 3 ? (
+        <div className="cs-panel">
+          <h2 className="cs-panel-title"><Upload size={16} /> Add documents <span className="cs-label-hint" style={{ marginLeft: 6 }}>optional</span></h2>
+          <p className="cs-panel-hint">
+            Upload files to give your tracked competitors something to be reported on. Each one is
+            extracted as soon as it uploads — text where the file has any, OCR where it doesn&rsquo;t —
+            and split into candidate articles for you to approve below. Skip this and add documents
+            later from the workspace if you&rsquo;d rather do that first.
+          </p>
 
           <div className="cs-field">
             <label className="cs-label" htmlFor="cs-offline-files">Files</label>
@@ -545,7 +793,7 @@ export default function CompetitorOnboarding() {
                 type="button"
                 className="cs-btn cs-btn-primary"
                 onClick={uploadPendingDocuments}
-                disabled={uploadingDocs || !studyName.trim()}
+                disabled={uploadingDocs}
               >
                 {uploadingDocs ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
                 {uploadingDocs ? 'Uploading...' : `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`}
@@ -610,36 +858,7 @@ export default function CompetitorOnboarding() {
                 })}
               </div>
             </div>
-          ) : (
-            <div className="cs-empty">
-              <div className="cs-empty-icon"><Upload size={20} /></div>
-              <h3>No documents yet</h3>
-              <p>Choose files above, then upload them to attach them to this study.</p>
-            </div>
-          )}
-
-          <div className="cs-wizard-foot">
-            <button
-              type="button"
-              className="cs-btn cs-btn-primary"
-              onClick={() => setStep(2)}
-              disabled={!documents.length || uploadingDocs}
-            >
-              <ArrowRight size={15} /> Continue to review articles
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ---------------- Step 2: review extracted articles ---------------- */}
-      {step === 2 ? (
-        <div className="cs-panel">
-          <h2 className="cs-panel-title"><FileCheck size={16} /> Review extracted articles</h2>
-          <p className="cs-panel-hint">
-            Each item below was split out of one of your documents. Approving one turns it into an
-            article your study can run analysis on later;
-            rejecting leaves it out. Nothing here is final — you can leave items pending and decide later.
-          </p>
+          ) : null}
 
           {reviewingArticles ? (
             <div className="cs-panel" style={{ marginBottom: 16, background: '#fcfdff' }}>
@@ -650,28 +869,18 @@ export default function CompetitorOnboarding() {
             </div>
           ) : null}
 
-          {!reviewingArticles && !articleCandidates.length ? (
-            <div className="cs-empty">
-              <div className="cs-empty-icon"><FileCheck size={20} /></div>
-              <h3>No articles yet</h3>
-              <p>
-                {documents.some((document) => document.articles_status === 'failed')
-                  ? 'Splitting a document into articles failed — check its error on the upload step.'
-                  : 'Nothing usable was found in your documents.'}
-              </p>
-            </div>
-          ) : null}
-
           {articleCandidates.length ? (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-                <span style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                  <strong style={{ color: 'var(--text-dark)' }}>{approvedCandidateCount}</strong> approved,{' '}
-                  <strong style={{ color: 'var(--text-dark)' }}>{pendingCandidateCount}</strong> pending review
-                </span>
+            <div className="cs-field">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                <label className="cs-label" style={{ marginBottom: 0 }}>
+                  Review extracted articles
+                  <span className="cs-label-hint">
+                    {approvedCandidateCount} approved, {pendingCandidateCount} pending
+                  </span>
+                </label>
                 <button
                   type="button"
-                  className="cs-btn cs-btn-primary"
+                  className="cs-btn cs-btn-primary cs-btn-sm"
                   onClick={approveAllPending}
                   disabled={approvingAll || !pendingCandidateCount}
                 >
@@ -725,64 +934,23 @@ export default function CompetitorOnboarding() {
                   </div>
                 </div>
               ))}
-            </>
-          ) : null}
-
-          <div className="cs-wizard-foot">
-            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)}>
-              <ArrowLeft size={15} /> Back
-            </button>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(3)} disabled={reviewingArticles}>
-              <ArrowRight size={15} /> Continue to analysis
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ---------------- Step 3: analyze & report ---------------- */}
-      {step === 3 ? (
-        <div className="cs-panel">
-          <h2 className="cs-panel-title"><ScanText size={16} /> Analyze & report</h2>
-          <p className="cs-panel-hint">
-            {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
-            {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
-            We&rsquo;ll read those articles for the companies they&rsquo;re actually about, track each
-            one, then generate a report card per company. You can re-run this later from the workspace
-            once you approve more documents.
-          </p>
-
-          {analyzingDocuments ? <StageList stages={DOCUMENT_ANALYSIS_STAGES} /> : null}
-
-          {!analyzingDocuments && documentAnalysis ? (
-            <div className="cs-alert cs-alert-info" style={{ marginBottom: 16 }}>
-              <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>
-                Generated {documentAnalysis.generated} report{documentAnalysis.generated === 1 ? '' : 's'} from{' '}
-                {documentAnalysis.articles_considered} approved article{documentAnalysis.articles_considered === 1 ? '' : 's'}
-                {documentAnalysis.derived_competitors?.length
-                  ? `, covering ${documentAnalysis.derived_competitors.map((c) => c.name).join(', ')}`
-                  : ''}.
-                {documentAnalysis.skipped?.length ? (
-                  <> {documentAnalysis.skipped.length} competitor{documentAnalysis.skipped.length === 1 ? '' : 's'} had no
-                    usable evidence.</>
-                ) : null}
-                {documentAnalysis.derivation_error ? <> {documentAnalysis.derivation_error}</> : null}
-              </span>
             </div>
           ) : null}
 
-          {!analyzingDocuments ? (
-            <button type="button" className="cs-btn cs-btn-primary" onClick={runDocumentAnalysis} style={{ marginBottom: 16 }}>
-              <Sparkles size={15} /> {documentAnalysis ? 'Re-run analysis' : 'Run analysis'}
-            </button>
+          {!documents.length && !pendingFiles.length ? (
+            <div className="cs-empty">
+              <div className="cs-empty-icon"><FileCheck size={20} /></div>
+              <h3>No documents yet</h3>
+              <p>Add some above, or finish now and add them later from the workspace.</p>
+            </div>
           ) : null}
 
           <div className="cs-wizard-foot">
-            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)} disabled={analyzingDocuments}>
+            <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)}>
               <ArrowLeft size={15} /> Back
             </button>
-            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={analyzingDocuments}>
-              <CheckCircle2 size={15} /> Open workspace
+            <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={uploadingDocs}>
+              <CheckCircle2 size={15} /> {documents.length ? 'Finish' : 'Skip & finish'}
             </button>
           </div>
         </div>

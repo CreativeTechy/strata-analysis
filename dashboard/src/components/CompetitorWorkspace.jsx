@@ -19,7 +19,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight,
   Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
-  Sparkles, Target, TrendingUp, X,
+  Sparkles, Target, TrendingUp, Upload, X,
 } from 'lucide-react';
 import {
   IMPACT_LABELS, SIZE_TIER_LABELS, avatarGradient, getStudy,
@@ -29,7 +29,7 @@ import { useAuth } from '../auth/useAuth.js';
 import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,
 } from './CompetitorRunAnalysis.jsx';
-import { pipelineRunTitle, useRunAnalysis } from '../useRunAnalysis.js';
+import { analysisRunTitle, useRunAnalysis } from '../useRunAnalysis.js';
 import '../styles/Competitors.css';
 
 const IMPACT_FILTERS = [
@@ -176,10 +176,10 @@ export default function CompetitorWorkspace() {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  // Filters the reports list by which pipeline run generated the evidence -
-  // separate from the run picker in the run-analysis modal, which picks what
-  // a *new* analysis run should use. Not defaulted to the latest run: unlike
-  // starting a fresh analysis, opening the reports list should show
+  // Filters the reports list by which analysis run generated the evidence -
+  // separate from the scope picker in the run-analysis modal, which picks
+  // what a *new* analysis run should read. Not defaulted to the latest run:
+  // unlike starting a fresh analysis, opening the reports list should show
   // everything already on file until the user asks to narrow it.
   const [findingsRunId, setFindingsRunId] = useState(null);
   const [findingsLoading, setFindingsLoading] = useState(false);
@@ -241,7 +241,7 @@ export default function CompetitorWorkspace() {
           // would just silently narrow it further.
           date_from: findingsRunId ? undefined : (dateFrom || undefined),
           date_to: findingsRunId ? undefined : (dateTo || undefined),
-          pipeline_run_id: findingsRunId || undefined,
+          analysis_run_id: findingsRunId || undefined,
         });
         if (!cancelled) setFindings(result.findings || []);
       } catch (caught) {
@@ -282,10 +282,10 @@ export default function CompetitorWorkspace() {
       setNotice({
         generated: result.generated,
         scanned: validation.scanned || 0,
-        // From the run, not the picker: reports the window actually analyzed,
-        // which stays right even if the selector is changed afterwards.
-        periodDays: validation.period_days || null,
-        pipelineRunId: validation.pipeline_run_id || null,
+        // From the run, not the picker: reports how many documents this run
+        // actually read, which stays right even if the scope choice is
+        // changed afterwards.
+        documentCount: validation.document_ids?.length || null,
         skipped: result.skipped || [],
         reasons: validation.rejection_reasons || {},
       });
@@ -340,6 +340,11 @@ export default function CompetitorWorkspace() {
             <Layers size={15} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}
           </Link>
           {canManage ? (
+            <Link to={`/competitors/${studyId}/documents`} className="cs-btn">
+              <Upload size={15} /> Add documents
+            </Link>
+          ) : null}
+          {canManage ? (
             <Link to={`/competitors/${studyId}/edit`} className="cs-btn">
               <Pencil size={15} /> Full edit
             </Link>
@@ -361,9 +366,9 @@ export default function CompetitorWorkspace() {
           <span>
             Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
             {notice.scanned} article{notice.scanned === 1 ? '' : 's'}
-            {notice.pipelineRunId
-              ? ' from the selected analysis run'
-              : notice.periodDays ? ` in the last ${notice.periodDays} days` : ''}.
+            {notice.documentCount
+              ? ` across ${notice.documentCount} document${notice.documentCount === 1 ? '' : 's'}`
+              : ''}.
             {Object.keys(notice.reasons || {}).length ? (
               <>
                 {' '}Filtered out:{' '}
@@ -417,34 +422,34 @@ export default function CompetitorWorkspace() {
                   onClick={() => setFindingsRunId(null)}>
                   Date range
                 </button>
-                {run.pipelineRuns.length > 0 ? (
+                {run.analysisRuns.length > 0 ? (
                   <button type="button" role="tab" aria-selected={!!findingsRunId}
                     className={`source-type-tab ${findingsRunId ? 'active' : ''}`}
-                    onClick={() => setFindingsRunId(findingsRunId || run.pipelineRuns[0].id)}>
-                    Pipeline run
+                    onClick={() => setFindingsRunId(findingsRunId || run.analysisRuns[0].id)}>
+                    Analysis run
                   </button>
                 ) : null}
               </div>
             </div>
 
             {findingsRunId ? (
-              run.pipelineRuns.length > 3 ? (
+              run.analysisRuns.length > 3 ? (
                 <select className="cs-select filter-run-select" value={findingsRunId}
                   onChange={(event) => setFindingsRunId(event.target.value)}
-                  aria-label="Filter by pipeline run">
-                  {run.pipelineRuns.map((pipelineRun, index) => (
-                    <option key={pipelineRun.id} value={pipelineRun.id}>{pipelineRunTitle(pipelineRun, index)}</option>
+                  aria-label="Filter by analysis run">
+                  {run.analysisRuns.map((analysisRun) => (
+                    <option key={analysisRun.id} value={analysisRun.id}>{analysisRunTitle(analysisRun)}</option>
                   ))}
                 </select>
               ) : (
-                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by pipeline run">
-                  {run.pipelineRuns.map((pipelineRun, index) => (
-                    <span key={pipelineRun.id} className="filter-tab-run-item">
+                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
+                  {run.analysisRuns.map((analysisRun, index) => (
+                    <span key={analysisRun.id} className="filter-tab-run-item">
                       {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
-                      <button type="button" role="tab" aria-selected={findingsRunId === pipelineRun.id}
-                        className={`source-type-tab ${findingsRunId === pipelineRun.id ? 'active' : ''}`}
-                        onClick={() => setFindingsRunId(pipelineRun.id)}>
-                        {pipelineRunTitle(pipelineRun, index)}
+                      <button type="button" role="tab" aria-selected={findingsRunId === analysisRun.id}
+                        className={`source-type-tab ${findingsRunId === analysisRun.id ? 'active' : ''}`}
+                        onClick={() => setFindingsRunId(analysisRun.id)}>
+                        {analysisRunTitle(analysisRun)}
                       </button>
                     </span>
                   ))}
