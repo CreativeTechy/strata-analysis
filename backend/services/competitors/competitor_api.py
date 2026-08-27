@@ -276,7 +276,7 @@ async def upload_documents(
                 status_code=400,
                 detail=(
                     f"'{upload.filename}' isn't a supported type "
-                    "(pdf, doc, docx, xls, xlsx, csv, png, jpg, jpeg)."
+                    "(pdf, doc, docx, xls, xlsx, csv, png, jpg, jpeg, json, jsonl, ndjson)."
                 ),
             )
 

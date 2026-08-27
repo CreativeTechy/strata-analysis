@@ -5,6 +5,13 @@ import { ExternalLink, Calendar, CarFront, Tag, Search, ChevronLeft, ChevronRigh
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { computeOverallTone } from '../lib/tone.js';
+import {
+  uploadDocuments,
+  pollDocumentExtraction,
+  pollArticleCandidates,
+  listDocumentArticles,
+  setDocumentArticleStatus,
+} from '../projectDocumentsApi.js';
 import '../styles/Articles.css';
 
 const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
@@ -30,6 +37,14 @@ const IMPORT_POLL_MS = 900;
 // Folder pickers hand back every file under the folder regardless of the
 // input's `accept` filter, so JSONL exports have to be picked out client-side.
 const JSONL_NAME_RE = /\.(jsonl|ndjson)$/i;
+
+// The broader formats the project-create wizard accepts (see ProjectsPage.jsx's
+// dropzone) - these need extraction/LLM-splitting via the project-documents
+// pipeline, so they only work once a specific project is in scope (see
+// importDocumentFiles below), unlike JSONL exports which import unlinked too.
+const DOCUMENT_NAME_RE = /\.(pdf|docx?|xlsx?|csv|png|jpe?g|json)$/i;
+const FULL_IMPORT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson';
+const JSONL_ONLY_ACCEPT = '.jsonl,.ndjson,application/x-ndjson';
 
 /** Live view of one import job: how far through the file it is, how fast it is
  *  going, and what it could not read. `run` is whatever the last poll returned,
@@ -95,6 +110,28 @@ function ImportProgressBanner({ run, onDismiss }) {
         {!done && logs.length ? <p className="articles-import-log">{logs[logs.length - 1].message}</p> : null}
       </div>
       {done ? (
+        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
+          <X size={16} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Live status for a document import (PDF/DOC/XLS/CSV/image/JSON) going
+ *  through the project-documents pipeline: upload -> extract -> LLM-split ->
+ *  auto-approve. That pipeline has no single progress counter the way a JSONL
+ *  import's line count does, so this just shows the current stage's message. */
+function DocumentImportBanner({ status, onDismiss }) {
+  return (
+    <div className="glass-card articles-import-banner">
+      <Info size={18} />
+      <div className="articles-import-banner-body">
+        <div className="articles-import-headline">
+          <strong>{status.message}</strong>
+        </div>
+      </div>
+      {status.done ? (
         <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
           <X size={16} />
         </button>
@@ -226,6 +263,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importRun, setImportRun] = useState(null);
+  const [documentImportStatus, setDocumentImportStatus] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
@@ -532,30 +570,99 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   };
 
+  // Imports a batch of non-JSONL documents (PDF/DOC/XLS/CSV/image/JSON) via
+  // the same upload -> extract -> LLM-split pipeline the project-create
+  // wizard uses, then auto-approves only the candidates split out of *these*
+  // documents (not every pending candidate in the project - see approve_all's
+  // docstring - a wizard mid-review elsewhere shouldn't get its candidates
+  // silently approved by an Articles-page import).
+  const importDocumentFiles = async (files) => {
+    const projectId = projectFilter;
+    setDocumentImportStatus({ message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
+    const { documents } = await uploadDocuments(projectId, files);
+    const documentIds = documents.map((doc) => doc.id);
+
+    setDocumentImportStatus({ message: 'Extracting text...' });
+    await pollDocumentExtraction(projectId, documentIds, () => {});
+
+    setDocumentImportStatus({ message: 'Splitting into articles...' });
+    const afterSplit = await pollArticleCandidates(projectId, documentIds, () => {});
+    const failedIds = new Set(
+      afterSplit
+        .filter((doc) => documentIds.includes(doc.id) && (doc.status === 'failed' || doc.articles_status === 'failed'))
+        .map((doc) => doc.id)
+    );
+
+    const { articles: candidates } = await listDocumentArticles(projectId);
+    const toApprove = candidates.filter((candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'pending');
+
+    setDocumentImportStatus({ message: `Adding ${toApprove.length} article${toApprove.length === 1 ? '' : 's'}...` });
+    let approved = 0;
+    for (const candidate of toApprove) {
+      try {
+        await setDocumentArticleStatus(candidate.id, 'approved');
+        approved += 1;
+        setReloadToken((value) => value + 1);
+      } catch {
+        // Left pending - reviewable from the project's document-review view.
+      }
+    }
+
+    setDocumentImportStatus({
+      message: `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`,
+      done: true,
+    });
+
+    if (failedIds.size) {
+      const names = documents.filter((doc) => failedIds.has(doc.id)).map((doc) => doc.original_filename || `Document #${doc.id}`);
+      throw new Error(`${failedIds.size} file(s) failed to process: ${names.join(', ')}`);
+    }
+  };
+
   const handleImportFile = async (event) => {
     const picked = Array.from(event.target.files || []);
     // Clear the input straight away so re-picking the same file(s)/folder still fires onChange.
     event.target.value = '';
     if (!picked.length || importing) return;
 
-    // A folder pick hands back every file it contains, so keep only JSONL exports.
-    const files = picked.filter((file) => JSONL_NAME_RE.test(file.webkitRelativePath || file.name));
-    if (!files.length) {
-      setError('No .jsonl/.ndjson files found in the selected folder.');
+    // Document formats (PDF/DOC/XLS/CSV/image/JSON) need the project-documents
+    // pipeline, which is project-scoped - so they're only accepted once a
+    // specific project is in the filter, same as project-create requires one.
+    const hasProject = projectFilter !== 'all';
+    const jsonlFiles = [];
+    const documentFiles = [];
+    const skipped = [];
+    for (const file of picked) {
+      const name = file.webkitRelativePath || file.name;
+      if (JSONL_NAME_RE.test(name)) {
+        jsonlFiles.push(file);
+      } else if (DOCUMENT_NAME_RE.test(name)) {
+        if (hasProject) documentFiles.push(file);
+        else skipped.push(name);
+      }
+    }
+
+    if (!jsonlFiles.length && !documentFiles.length) {
+      setError(
+        skipped.length
+          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`
+          : 'No supported files found in the selection.'
+      );
       return;
     }
 
     setImporting(true);
     setError('');
     setImportRun(null);
+    setDocumentImportStatus(null);
 
     // Files are imported one at a time (the backend runs one job per upload)
     // so failures on one file don't abort the rest of the batch.
     const failures = [];
-    for (let i = 0; i < files.length; i += 1) {
-      const file = files[i];
+    for (let i = 0; i < jsonlFiles.length; i += 1) {
+      const file = jsonlFiles[i];
       const displayName = file.webkitRelativePath || file.name;
-      const batchLabel = files.length > 1 ? `File ${i + 1} of ${files.length}: ${displayName}` : null;
+      const batchLabel = jsonlFiles.length > 1 ? `File ${i + 1} of ${jsonlFiles.length}: ${displayName}` : null;
       try {
         await importSingleFile(file, batchLabel);
       } catch (err) {
@@ -563,15 +670,30 @@ export default function ArticlesPage({ project = null, projectId = null, project
       }
     }
 
+    if (documentFiles.length) {
+      try {
+        await importDocumentFiles(documentFiles);
+      } catch (err) {
+        const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
+        failures.push({ name, error: err?.message || 'Failed to import.' });
+      }
+    }
+
+    const messages = [];
     if (failures.length) {
-      setError(
-        files.length > 1
-          ? `${failures.length} of ${files.length} file(s) failed to import: ${failures
+      const totalFiles = jsonlFiles.length + documentFiles.length;
+      messages.push(
+        totalFiles > 1
+          ? `${failures.length} of ${totalFiles} file(s) failed to import: ${failures
               .map((f) => `${f.name} (${f.error})`)
               .join('; ')}`
           : failures[0].error
       );
     }
+    if (skipped.length) {
+      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`);
+    }
+    if (messages.length) setError(messages.join(' '));
 
     setOffset(0);
     setReloadToken((value) => value + 1);
@@ -893,7 +1015,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <input
                   ref={importInputRef}
                   type="file"
-                  accept=".jsonl,.ndjson,application/x-ndjson"
+                  accept={projectFilter === 'all' ? JSONL_ONLY_ACCEPT : FULL_IMPORT_ACCEPT}
                   multiple
                   onChange={handleImportFile}
                   style={{ display: 'none' }}
@@ -904,12 +1026,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   disabled={loading || importing || deletingAll}
                   title={
                     projectFilter === 'all'
-                      ? 'Import one or more JSONL exports. Articles are not linked to a project.'
-                      : 'Import one or more JSONL exports into the project currently in scope.'
+                      ? 'Import one or more JSONL exports. Articles are not linked to a project. Select a project to also import PDF, Word, Excel, CSV, image, or JSON documents.'
+                      : 'Import JSONL exports, or PDF/Word/Excel/CSV/image/JSON documents, into the project currently in scope.'
                   }
                 >
                   <Upload size={16} />
-                  {importing ? 'Importing...' : 'Import JSONL'}
+                  {importing ? 'Importing...' : 'Import Files'}
                 </button>
                 <input
                   ref={importFolderInputRef}
@@ -926,8 +1048,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   disabled={loading || importing || deletingAll}
                   title={
                     projectFilter === 'all'
-                      ? 'Import every JSONL export in a folder. Articles are not linked to a project.'
-                      : 'Import every JSONL export in a folder into the project currently in scope.'
+                      ? 'Import every JSONL export in a folder. Articles are not linked to a project. Select a project to also import PDF, Word, Excel, CSV, image, or JSON documents.'
+                      : 'Import every JSONL export, or PDF/Word/Excel/CSV/image/JSON document, in a folder into the project currently in scope.'
                   }
                 >
                   <FolderInput size={16} />
@@ -972,6 +1094,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
         ) : null}
 
         {importRun ? <ImportProgressBanner run={importRun} onDismiss={() => setImportRun(null)} /> : null}
+        {documentImportStatus ? (
+          <DocumentImportBanner status={documentImportStatus} onDismiss={() => setDocumentImportStatus(null)} />
+        ) : null}
 
         {isInitialLoading ? (
           viewMode === 'list' ? (
