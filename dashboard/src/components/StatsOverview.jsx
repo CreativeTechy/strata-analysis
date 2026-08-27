@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, RefreshCw, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -81,6 +81,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const [trendSummaryLoading, setTrendSummaryLoading] = useState(false);
   const [trendSummaryError, setTrendSummaryError] = useState(null);
   const [trendSummaryNonce, setTrendSummaryNonce] = useState(0);
+  // Set right before bumping trendSummaryNonce from the refresh button, and
+  // read (then cleared) inside the effect it triggers - a plain nonce bump
+  // from a dependency change (project/period/run switch) must NOT force a
+  // fresh LLM call, only the explicit refresh click should.
+  const forceRegenerateRef = useRef(false);
   const totalArticles = Number(intelligence?.total || 0);
 
   useEffect(() => {
@@ -140,10 +145,13 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       return undefined;
     }
     let cancelled = false;
+    const forceRegenerate = forceRegenerateRef.current;
+    forceRegenerateRef.current = false;
     setTrendSummaryLoading(true);
     setTrendSummaryError(null);
     const params = new URLSearchParams({ period });
     if (runId) params.set('run_id', runId);
+    if (forceRegenerate) params.set('regenerate', 'true');
     fetch(`/api/projects/${projectId}/trend-summary?${params.toString()}`)
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
       .then(({ ok, data }) => {
@@ -195,7 +203,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
         <button
           type="button"
           className="report-trend-refresh-btn"
-          onClick={() => setTrendSummaryNonce((n) => n + 1)}
+          onClick={() => { forceRegenerateRef.current = true; setTrendSummaryNonce((n) => n + 1); }}
           disabled={trendSummaryLoading}
           aria-busy={trendSummaryLoading}
           aria-label="Regenerate the AI trend summary"

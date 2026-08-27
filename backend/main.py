@@ -666,17 +666,23 @@ def get_project_trend_summary_view(
     project_id: int,
     period: str = "30d",
     run_id: str | None = None,
+    regenerate: bool = False,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """LLM-generated "overall trend" paragraph for the Reports page -> the
     configured LLM provider, over the same period/run-scoped articles the
-    rest of the intelligence endpoints use."""
+    rest of the intelligence endpoints use.
+
+    Cached in `project_trend_summaries`: a plain load returns whatever is
+    already stored for this project/period/run scope (generating it once if
+    nothing is cached yet), and only `regenerate=true` - the Reports page's
+    refresh button - spends another LLM call to replace it."""
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     try:
-        return generate_trend_summary(project, normalize_period(period), run_id=run_id)
+        return generate_trend_summary(project, normalize_period(period), run_id=run_id, force=regenerate)
     except LLMError as e:
         logger.warning("Trend summary generation failed (%s): %s", e.code, e.detail or e)
         return {"error": e.user_message, "error_code": e.code}
