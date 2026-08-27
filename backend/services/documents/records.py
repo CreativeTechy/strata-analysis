@@ -22,11 +22,20 @@ Shapes accepted, so that "the file I have" usually just works:
 
 Per record, the title/body/summary keys are matched loosely (`title` or
 `headline` or ..., `text` or `body` or ...) because the second source of these
-files is whatever the operator exported out of some other tool. Only `url`,
-`author` and `published` are carried through as metadata - everything else in
-a record (including any analysis fields an export carries) is deliberately
-dropped, since a candidate is re-analyzed by this app's own pipeline once
-approved.
+files is whatever the operator exported out of some other tool. `url`,
+`author`, `published` and `source_run_snapshot` are carried through as
+metadata - everything else in a record (including any analysis fields an
+export carries) is deliberately dropped, since a candidate is re-analyzed by
+this app's own pipeline once approved.
+
+`source_run_snapshot` is scraper-app's collection provenance for this
+article - `{id, started_at, project_id}` naming the pipeline run that first
+scraped it, in scraper-app's own database (see that repo's
+services/articles/store.py). It rides through untouched so an approved
+candidate can carry it onto the real `articles` row (see
+services/projects/project_document_articles.py's `_materialize()`), the same
+way `url`/`author`/`published` already do; a record from anywhere else
+(a hand-made JSON list, another tool's export) simply won't have it.
 """
 
 from __future__ import annotations
@@ -54,6 +63,7 @@ SUMMARY_KEYS = ("summary", "description", "excerpt", "snippet")
 URL_KEYS = ("url", "link", "permalink")
 AUTHOR_KEYS = ("author", "byline", "writer")
 PUBLISHED_KEYS = ("published", "published_at", "date", "published_date", "created_at")
+SOURCE_RUN_SNAPSHOT_KEY = "source_run_snapshot"
 
 # The keys an envelope object may hide the actual list behind.
 LIST_KEYS = ("articles", "records", "items", "data", "results")
@@ -102,6 +112,21 @@ def _first_string(item: dict, keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _source_run_snapshot(item: dict) -> dict | None:
+    """scraper-app's collection-run provenance for this record, if the
+    export it came from carried one - see the module docstring. Validated
+    just enough to keep garbage out of record_metadata: a dict with a
+    non-empty `id` is the shape scraper-app's store.py actually produces."""
+    value = item.get(SOURCE_RUN_SNAPSHOT_KEY)
+    if not isinstance(value, dict) or not value.get("id"):
+        return None
+    return {
+        "id": str(value.get("id")),
+        "started_at": value.get("started_at"),
+        "project_id": value.get("project_id"),
+    }
+
+
 def _derive_title(body: str) -> str:
     first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
     if len(first_line) <= DERIVED_TITLE_CHARS:
@@ -129,6 +154,7 @@ def _to_record(item: dict) -> dict | None:
         "url": _first_string(item, URL_KEYS),
         "author": _first_string(item, AUTHOR_KEYS),
         "published": _first_string(item, PUBLISHED_KEYS),
+        "source_run_snapshot": _source_run_snapshot(item),
     }
     return {
         "title": title[:TITLE_MAX_CHARS],

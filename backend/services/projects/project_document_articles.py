@@ -226,6 +226,12 @@ def _materialize(candidate: dict) -> int | None:
         # in the product keys off those, so a record's date must survive here.
         "author": metadata.get("author") or None,
         "published": metadata.get("published") or None,
+        # From a .json/.jsonl record whose source was itself a scraper-app
+        # export (services/documents/records.py carries it through as
+        # metadata.source_run_snapshot); absent for an LLM split or any other
+        # upload. save_articles()/_upsert_article_row() keep whatever value is
+        # already on the row once set, so re-approving never blanks it out.
+        "source_run_snapshot": metadata.get("source_run_snapshot") or None,
         "analysis_status": "pending",
         "analysis_error": None,
     }

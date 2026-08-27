@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from llm_client import LLMQuotaError
-from services.competitors import competitor_analysis
+from services.competitors import analysis_runs_store, competitor_analysis
 
 
 class GenerateFindingTests(unittest.TestCase):
@@ -361,49 +361,70 @@ class EvidenceSelectionTests(unittest.TestCase):
 
 
 class AnalysisJobTests(unittest.TestCase):
-    """Analysis runs as a background job now, so its terminal state is the only
-    thing the user ever sees - every path has to reach one that carries the
-    reason."""
+    """Analysis runs as a background job against a persisted run row now, so
+    its terminal state is the only thing the user ever sees - every path has
+    to reach one that carries the reason. Run tracking itself
+    (analysis_runs_store) is mocked throughout - what's under test is
+    run_analysis_job's orchestration, not Postgres."""
 
-    def _run(self, project_id, **patch_kwargs):
-        with patch.object(competitor_analysis, "generate_findings", **patch_kwargs) as generate:
-            run_id = competitor_analysis.create_analysis_run(project_id)
-            competitor_analysis.run_analysis_job(run_id, project_id, 30, False)
-        return competitor_analysis.get_analysis_run(run_id), generate
+    def _run(self, project_id, scope="pending", document_ids=None, resolved=(1, 2),
+             **generate_kwargs):
+        with patch.object(analysis_runs_store, "mark_running") as mark_running, \
+             patch.object(analysis_runs_store, "resolve_scope", return_value=list(resolved)) as resolve, \
+             patch.object(analysis_runs_store, "logger", return_value=lambda _message: None), \
+             patch.object(analysis_runs_store, "mark_success") as mark_success, \
+             patch.object(analysis_runs_store, "mark_failed") as mark_failed, \
+             patch.object(analysis_runs_store, "record_covered_documents") as record_covered, \
+             patch.object(competitor_analysis, "generate_findings", **generate_kwargs) as generate:
+            competitor_analysis.run_analysis_job(99, project_id, scope, document_ids)
+        return {
+            "mark_running": mark_running, "resolve_scope": resolve, "mark_success": mark_success,
+            "mark_failed": mark_failed, "record_covered_documents": record_covered, "generate": generate,
+        }
 
-    def test_successful_job_records_counts_and_gets_a_logger(self):
-        run, generate = self._run(11, return_value={
+    def test_successful_job_resolves_scope_and_records_covered_documents(self):
+        calls = self._run(11, return_value={
             "generated": 2, "skipped": [], "validation": {"scanned": 5}, "error": None,
         })
-        self.assertEqual(run["status"], "success")
-        self.assertEqual(run["generated"], 2)
-        # The job must hand generate_findings a real logger - that callback is
-        # the only reason the user sees anything before the run ends.
-        self.assertTrue(callable(generate.call_args.kwargs["log"]))
+        calls["mark_running"].assert_called_once_with(99)
+        # generate_findings must be handed the resolved document ids, the run
+        # id to stamp on every card, and a real logger - that callback is the
+        # only reason the user sees anything before the run ends.
+        self.assertEqual(calls["generate"].call_args.kwargs["document_ids"], [1, 2])
+        self.assertEqual(calls["generate"].call_args.kwargs["analysis_run_id"], 99)
+        self.assertTrue(callable(calls["generate"].call_args.kwargs["log"]))
+        calls["record_covered_documents"].assert_called_once_with(99, [1, 2])
+        calls["mark_success"].assert_called_once_with(99, 2, [], {"scanned": 5})
+        calls["mark_failed"].assert_not_called()
 
     def test_provider_failure_is_a_failed_run_not_zero_reports(self):
         """Same distinction generate_findings itself draws: a quota/outage error
         must not surface as "nothing needed reporting"."""
-        run, _ = self._run(12, return_value={
+        calls = self._run(12, return_value={
             "generated": 0, "skipped": [], "validation": {},
             "error": "Insufficient balance", "error_code": "llm_quota_exceeded",
         })
-        self.assertEqual(run["status"], "failed")
-        self.assertEqual(run["error_code"], "llm_quota_exceeded")
+        calls["mark_failed"].assert_called_once_with(99, "Insufficient balance", 0, [], {})
+        calls["mark_success"].assert_not_called()
+        # A failed run's evidence is not durable coverage - nothing should be
+        # recorded as analyzed.
+        calls["record_covered_documents"].assert_not_called()
 
     def test_unexpected_exception_becomes_a_failed_run_with_a_reason(self):
         """The job runs after the response is sent, so an exception raised here
         would otherwise reach nothing but the server log."""
-        run, _ = self._run(13, side_effect=RuntimeError("scrape exploded"))
-        self.assertEqual(run["status"], "failed")
-        self.assertIn("scrape exploded", run["error"])
-        self.assertIn("scrape exploded", " ".join(entry["message"] for entry in run["logs"]))
+        calls = self._run(13, side_effect=RuntimeError("analysis exploded"))
+        error = calls["mark_failed"].call_args[0][1]
+        self.assertIn("analysis exploded", error)
 
-    def test_run_is_scoped_to_its_project(self):
-        run_id = competitor_analysis.create_analysis_run(14)
-        self.assertEqual(competitor_analysis.get_analysis_run(run_id)["project_id"], 14)
-        self.assertEqual(competitor_analysis.get_active_analysis_run(14)["run_id"], run_id)
-        self.assertIsNone(competitor_analysis.get_active_analysis_run(9999))
+    def test_empty_scope_fails_without_calling_generate_findings(self):
+        """"Documents not yet analyzed" resolving to nothing (everything was
+        already covered by a prior run) is a real, actionable outcome - not a
+        reason to run generate_findings over zero evidence."""
+        calls = self._run(14, resolved=())
+        calls["generate"].assert_not_called()
+        calls["mark_failed"].assert_called_once()
+        calls["mark_success"].assert_not_called()
 
 
 if __name__ == "__main__":

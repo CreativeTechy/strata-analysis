@@ -44,6 +44,15 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
                 Language: {article.source_language.toUpperCase()}
               </span>
             ) : null}
+            {article.source_run_snapshot?.started_at ? (
+              <span
+                className="panel-chip muted"
+                style={{ textTransform: 'none', letterSpacing: 0 }}
+                title={`Collected by scraper-app pipeline run ${article.source_run_snapshot.id}`}
+              >
+                Collected: {articleDate(article.source_run_snapshot.started_at)}
+              </span>
+            ) : null}
             <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
               Writer: {prettyLabel(article.writer_tone || 'neutral')}
             </span>

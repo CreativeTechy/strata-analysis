@@ -17,6 +17,7 @@ import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
+from services.competitors import analysis_runs_store
 from services.competitors import business_profile_store
 from services.competitors import competitor_analysis
 from services.competitors import competitor_document_articles
@@ -25,7 +26,6 @@ from services.competitors import competitors_store
 from services.competitors import document_analysis
 from services.competitors.countries import validate_countries
 from services.auth.auth import require_permission
-from services.pipeline.pipeline_runs import get_pipeline_run
 from services.projects.projects_store import delete_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
@@ -415,6 +415,26 @@ def remove_competitor(competitor_id: int, user: dict = Depends(require_permissio
 # --------------------------------------------------------------------------- #
 # Analysis
 # --------------------------------------------------------------------------- #
+ANALYSIS_SCOPES = {"pending", "all", "selected"}
+
+
+@router.get("/studies/{project_id}/analysis-scope")
+def analysis_scope(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """This study's documents annotated with approved-article counts and
+    whether a completed run already analyzed each - what the run-analysis
+    dialog renders its scope choices (and the hand-pick checklist) from."""
+    _project_or_404(project_id)
+    return {"documents": analysis_runs_store.documents_with_scope(project_id)}
+
+
+@router.get("/studies/{project_id}/analysis-runs")
+def list_analysis_runs(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """This study's analysis-run history, newest first - the "Analysis run"
+    filter's source, and what "Analysis #N" is numbered from."""
+    _project_or_404(project_id)
+    return {"runs": analysis_runs_store.list_runs(project_id)}
+
+
 @router.post("/studies/{project_id}/analyze")
 def analyze(
     project_id: int,
@@ -426,10 +446,9 @@ def analyze(
 
     Analysis reads evidence that is already stored - the articles this study's
     uploaded documents were split into - so there is nothing to gather first.
-
-    `pipeline_run_id`, when given, scopes evidence to one completed analysis
-    run instead of the `period_days` date window: the "Analysis run" tab in the
-    dialog, matching the same choice Reports offers.
+    `scope` picks which documents' evidence this run draws from: 'pending'
+    (documents no completed run has analyzed yet, the default), 'all', or
+    'selected' (an explicit `document_ids` list from the dialog's checklist).
 
     One LLM call per competitor runs for minutes, which used to be minutes of
     an open request showing an undifferentiated spinner. The checks that can
@@ -439,12 +458,12 @@ def analyze(
     """
     _project_or_404(project_id)
     payload = payload or {}
-    period_days = max(1, min(int(payload.get("period_days") or competitor_analysis.DEFAULT_PERIOD_DAYS), 365))
-    pipeline_run_id = payload.get("pipeline_run_id") or None
-    if pipeline_run_id is not None:
-        run = get_pipeline_run(pipeline_run_id)
-        if not run or int(run.get("project_id") or 0) != int(project_id):
-            raise HTTPException(status_code=404, detail="Analysis run not found for this study.")
+    scope = str(payload.get("scope") or "pending").strip().lower()
+    if scope not in ANALYSIS_SCOPES:
+        raise HTTPException(status_code=400, detail="scope must be pending, all, or selected.")
+    document_ids = payload.get("document_ids") if scope == "selected" else None
+    if scope == "selected" and not document_ids:
+        raise HTTPException(status_code=400, detail="Select at least one document.")
 
     if not project_has_articles(project_id):
         raise HTTPException(
@@ -454,19 +473,19 @@ def analyze(
 
     # Double-clicking "Run analysis" attaches to the run already in flight
     # rather than starting a second one against the same competitors.
-    active = competitor_analysis.get_active_analysis_run(project_id)
+    active = analysis_runs_store.get_active_run(project_id)
     if active:
-        return {"run_id": active["run_id"], "status": active["status"]}
+        return {"run_id": active["id"], "status": active["status"]}
 
-    run_id = competitor_analysis.create_analysis_run(project_id)
+    run = analysis_runs_store.create_run(project_id, scope)
     background_tasks.add_task(
-        competitor_analysis.run_analysis_job, run_id, project_id, period_days, pipeline_run_id,
+        competitor_analysis.run_analysis_job, run["id"], project_id, scope, document_ids,
     )
-    return {"run_id": run_id, "status": "queued"}
+    return {"run_id": run["id"], "sequence_number": run["sequence_number"], "status": "queued"}
 
 
 @router.get("/studies/{project_id}/analyze/{run_id}")
-def analyze_status(project_id: int, run_id: str, user: dict = Depends(require_permission("competitors.view"))):
+def analyze_status(project_id: int, run_id: int, user: dict = Depends(require_permission("competitors.view"))):
     """Progress for one analysis job, including its live `logs`.
 
     Findings are returned on the terminal poll so the workspace can render the
@@ -474,7 +493,7 @@ def analyze_status(project_id: int, run_id: str, user: dict = Depends(require_pe
     endpoint handed back.
     """
     _project_or_404(project_id)
-    run = competitor_analysis.get_analysis_run(run_id)
+    run = analysis_runs_store.get_run(run_id)
     if not run or run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Analysis run not found.")
     if run["status"] in ("success", "failed"):
@@ -486,13 +505,14 @@ def analyze_status(project_id: int, run_id: str, user: dict = Depends(require_pe
 def list_findings(project_id: int, impact: str | None = None, competitor_id: int | None = None,
                   history: bool = False, search: str | None = None,
                   date_from: str | None = None, date_to: str | None = None,
-                  pipeline_run_id: str | None = None,
+                  pipeline_run_id: str | None = None, analysis_run_id: int | None = None,
                   user: dict = Depends(require_permission("competitors.view"))):
     _project_or_404(project_id)
     return {
         "findings": competitor_analysis.list_findings(
             project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
             search=search, date_from=date_from, date_to=date_to, pipeline_run_id=pipeline_run_id,
+            analysis_run_id=analysis_run_id,
         )
     }
 

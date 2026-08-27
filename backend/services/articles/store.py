@@ -33,7 +33,7 @@ ARTICLE_COLUMNS = (
     "source_language", "source_language_confidence", "embedding_dimensions",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at", "content_hash",
-    "pipeline_run_id",
+    "pipeline_run_id", "source_run_snapshot",
 )
 
 LEGACY_ARTICLE_COLUMNS = (
@@ -101,6 +101,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "reprocess_requested_at",
     "content_hash",
     "pipeline_run_id",
+    "source_run_snapshot",
 )
 ARTICLE_JSON_FIELDS = {
     "insight_json",
@@ -140,6 +141,13 @@ def _jsonb_param(value):
     if value is None:
         value = []
     return Jsonb(value)
+
+
+def _jsonb_object_param(value):
+    """Like _jsonb_param, but for an object-shaped column (source_run_snapshot)
+    rather than the list-shaped ones ARTICLE_JSON_FIELDS covers - a missing
+    value has to stay SQL NULL here, not fall back to `[]`."""
+    return Jsonb(value) if isinstance(value, dict) else None
 
 
 def _null_if_blank(value):
@@ -330,6 +338,8 @@ def _article_row(article):
             # `article` (e.g. a cached enrichment written before this field
             # existed) can never silently mark something verified.
             value = is_trusted_domain(row.get("source_url") or row.get("url"))
+        elif field == "source_run_snapshot":
+            value = _jsonb_object_param(row.get("source_run_snapshot"))
         params.append(value)
     return fields, tuple(params)
 
@@ -342,7 +352,11 @@ def _upsert_article_row(article):
     values_sql = ", ".join(["%s"] * len(fields))
     returning_sql = _article_returning_sql()
 
-    updates = [f"{field} = excluded.{field}" for field in fields if field not in ("url", "pipeline_run_id")]
+    updates = [
+        f"{field} = excluded.{field}"
+        for field in fields
+        if field not in ("url", "pipeline_run_id", "source_run_snapshot")
+    ]
     if "pipeline_run_id" in fields:
         # pipeline_run_id records which run *first* saved this article, not
         # whichever run touched it most recently - every run re-crawls all of
@@ -353,6 +367,14 @@ def _upsert_article_row(article):
         # the incoming value only fills in when there was none yet (a brand
         # new article, or a legacy pre-tracking row).
         updates.append("pipeline_run_id = coalesce(articles.pipeline_run_id, excluded.pipeline_run_id)")
+    if "source_run_snapshot" in fields:
+        # Set once, at candidate-approval time (project_document_articles.py),
+        # from provenance a scraper-app export carried in. A later save of the
+        # same article - a reanalyze pass, a re-approval - has no snapshot of
+        # its own to offer, and must not blank out the one already recorded.
+        updates.append(
+            "source_run_snapshot = coalesce(articles.source_run_snapshot, excluded.source_run_snapshot)"
+        )
     # Advanced only when the body actually differs, which is what makes
     # "this page changed" distinguishable from "we crawled this page again".
     # Every SET expression is evaluated against the pre-update row, so

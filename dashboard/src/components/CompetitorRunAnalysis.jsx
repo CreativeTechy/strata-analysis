@@ -1,13 +1,13 @@
 /**
  * Presentational pieces for the shared "run analysis" flow - the button,
- * its progress log, and its period/run-choice modal. State and the actual
+ * its progress log, and its scope-choice dialog. State and the actual
  * queue/poll logic live in useRunAnalysis.js (kept separate so this file can
  * stay component-only for Fast Refresh).
  */
 
 import { Sparkles, X } from 'lucide-react';
 import { relativeTime } from '../competitorApi.js';
-import { ANALYSIS_PERIODS, pipelineRunTitle } from '../useRunAnalysis.js';
+import { SCOPE_LABELS } from '../useRunAnalysis.js';
 import { DiscoveryLog } from './CompetitorOnboarding.jsx';
 
 export function RunAnalysisButton({ run, label = 'Run analysis', primary = true, disabled }) {
@@ -29,8 +29,27 @@ export function RunAnalysisLog({ run }) {
   return <DiscoveryLog logs={run.analysisLogs} active={run.analyzing} />;
 }
 
+const SCOPES = ['pending', 'all', 'selected'];
+
 export function RunAnalysisChoiceModal({ run, lastRunAt }) {
   if (!run.showRunChoice) return null;
+
+  const scopeCount = (scope) => {
+    if (scope === 'pending') return run.pendingDocuments.length;
+    if (scope === 'all') return run.eligibleDocuments.length;
+    return run.selectedDocumentIds.length;
+  };
+
+  const toggleSelected = (documentId) => {
+    run.setSelectedDocumentIds((current) => (
+      current.includes(documentId)
+        ? current.filter((id) => id !== documentId)
+        : [...current, documentId]
+    ));
+  };
+
+  const count = scopeCount(run.scope);
+
   return (
     <div className="confirm-modal-backdrop" role="presentation" onClick={() => run.setShowRunChoice(false)}>
       <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="run-analysis-title"
@@ -43,66 +62,63 @@ export function RunAnalysisChoiceModal({ run, lastRunAt }) {
         </div>
 
         <p id="run-analysis-message" className="confirm-modal-message">
-          Re-reads the evidence already on file and rewrites a card per tracked competitor.
+          Reads the chosen documents' evidence and rewrites a card per tracked competitor.
           {' '}{lastRunAt ? `Last run ${relativeTime(lastRunAt)}.` : 'This study has never been analysed.'}
         </p>
 
-        <div className="cs-run-period" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div className="filter-tabs-shell" style={{ margin: 0 }}>
-            <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Evidence source">
-              <button type="button" role="tab" aria-selected={!run.pipelineRunId}
-                className={`source-type-tab ${!run.pipelineRunId ? 'active' : ''}`}
-                onClick={() => run.setPipelineRunId(null)}>
-                Date range
-              </button>
-              {run.pipelineRuns.length > 0 ? (
-                <button type="button" role="tab" aria-selected={!!run.pipelineRunId}
-                  className={`source-type-tab ${run.pipelineRunId ? 'active' : ''}`}
-                  onClick={() => run.setPipelineRunId(run.pipelineRunId || run.pipelineRuns[0].id)}>
-                  Analysis run
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {run.pipelineRunId ? (
-            <select className="cs-select filter-run-select" value={run.pipelineRunId}
-              onChange={(event) => run.setPipelineRunId(event.target.value)}
-              aria-label="Analysis run to analyze">
-              {run.pipelineRuns.map((pipelineRun, index) => (
-                <option key={pipelineRun.id} value={pipelineRun.id}>{pipelineRunTitle(pipelineRun, index)}</option>
-              ))}
-            </select>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <label htmlFor="cs-analysis-period">Look back over</label>
-              <select id="cs-analysis-period" className="cs-select" style={{ flex: 1 }} value={run.periodDays}
-                onChange={(event) => run.setPeriodDays(Number(event.target.value))}>
-                {ANALYSIS_PERIODS.map((option) => (
-                  <option key={option.days} value={option.days}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <small>
-            {run.pipelineRunId
-              ? 'Only the articles that analysis run covered are used as evidence.'
-              : (<>
-                  Evidence outside this window is ignored, and each report says which window it covers.
-                  An article split out of an uploaded document is dated by when the document was added,
-                  so a longer window mainly helps studies built up over time.
-                </>)}
-          </small>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '4px 0 12px' }}>
+          {SCOPES.map((scope) => (
+            <label key={scope} className="cs-row" style={{ cursor: 'pointer', alignItems: 'flex-start' }}>
+              <input
+                type="radio"
+                name="cs-run-scope"
+                checked={run.scope === scope}
+                onChange={() => run.setScope(scope)}
+                style={{ marginTop: 3 }}
+              />
+              <div className="cs-row-main">
+                <div className="cs-row-name">{SCOPE_LABELS[scope]}</div>
+                <div className="cs-row-desc">
+                  {scope === 'selected'
+                    ? `${run.selectedDocumentIds.length} chosen below`
+                    : `${scopeCount(scope)} document${scopeCount(scope) === 1 ? '' : 's'}`}
+                </div>
+              </div>
+            </label>
+          ))}
         </div>
+
+        {run.scope === 'selected' ? (
+          <div className="cs-rows" style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 12 }}>
+            {run.eligibleDocuments.length ? run.eligibleDocuments.map((document) => (
+              <label key={document.id} className="cs-row" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={run.selectedDocumentIds.includes(document.id)}
+                  onChange={() => toggleSelected(document.id)}
+                />
+                <div className="cs-row-main">
+                  <div className="cs-row-name">{document.original_filename}</div>
+                  <div className="cs-row-desc">
+                    {document.approved_article_count} approved article{document.approved_article_count === 1 ? '' : 's'}
+                    {document.analyzed ? ' · previously analyzed' : ''}
+                  </div>
+                </div>
+              </label>
+            )) : (
+              <div className="cs-row-desc" style={{ padding: '8px 0' }}>No documents with approved articles yet.</div>
+            )}
+          </div>
+        ) : null}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '4px 0 6px' }}>
           <button type="button" onClick={run.runAnalysis}
             className="cs-btn cs-btn-primary"
+            disabled={count === 0}
             style={{ justifyContent: 'flex-start', width: '100%' }}>
             <Sparkles size={15} />
             <span style={{ textAlign: 'left', flex: 1 }}>
-              {run.pipelineRunId ? 'Analyze this run' : 'Analyze this window'}
+              Analyze {count} document{count === 1 ? '' : 's'}
             </span>
           </button>
         </div>
