@@ -500,9 +500,15 @@ export default function CompetitorOnboarding() {
               <div className="cs-dropzone-title">Drag files here, or click to browse</div>
               <div className="cs-dropzone-hint">Multiple files at once are fine</div>
               <div className="cs-dropzone-types">
-                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG'].map((ext) => (
+                {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG', 'JSON', 'JSONL'].map((ext) => (
                   <span key={ext} className="cs-pill cs-pill-signal">{ext}</span>
                 ))}
+              </div>
+              {/* A JSON/JSONL upload is already a list of articles, so it skips
+                  the LLM split entirely - worth saying, since it also means
+                  those files keep each record's own link and date. */}
+              <div className="cs-dropzone-hint" style={{ marginTop: 6 }}>
+                JSON/JSONL exports are read as articles directly — one record per article, no splitting.
               </div>
               <input
                 id="cs-offline-files"
@@ -510,7 +516,7 @@ export default function CompetitorOnboarding() {
                 className="cs-sr-only"
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson"
                 onClick={(event) => event.stopPropagation()}
                 onChange={(event) => {
                   addPendingFiles(event.target.files);
