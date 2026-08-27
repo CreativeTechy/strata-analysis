@@ -6,13 +6,13 @@
  * roster grows in the first place), then per-competitor track/alias controls.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  AlertTriangle, Check, ChevronRight, FileText, Layers, Pencil, Tags,
+  AlertTriangle, Check, ChevronRight, FileText, Layers, Pencil, Tags, Upload,
 } from 'lucide-react';
 import {
-  SIZE_TIER_LABELS, analyzeDocuments, avatarGradient, getStudy, initials,
+  SIZE_TIER_LABELS, analyzeDocuments, avatarGradient, getStudy, importCompetitors, initials,
   listCompetitors, setCompetitorStatus, updateCompetitor,
 } from '../competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
@@ -77,6 +77,8 @@ export default function CompetitorsPage() {
   const [rereadingDocuments, setRereadingDocuments] = useState(false);
   const [trackingBusy, setTrackingBusy] = useState({});
   const [expandedAliases, setExpandedAliases] = useState(() => new Set());
+  const [importingCompetitors, setImportingCompetitors] = useState(false);
+  const importInputRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +162,28 @@ export default function CompetitorsPage() {
     });
   };
 
+  // A study built by scraping (rather than uploaded documents) hands its
+  // tracked-competitor list over as JSONL via the scraper app's
+  // `GET /api/competitors/export` - importing it here saves re-guessing that
+  // same list with an LLM pass over documents, or re-typing it by hand.
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || importingCompetitors) return;
+
+    setImportingCompetitors(true);
+    setError('');
+    try {
+      const result = await importCompetitors(studyId, file);
+      await refreshCompetitors();
+      setNotice({ generated: 0, scanned: 0, imported: result.saved || 0, skipped: result.skipped || 0 });
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setImportingCompetitors(false);
+    }
+  };
+
   const toggleTracking = async (competitor) => {
     const nextStatus = competitor.status === 'tracked' ? 'ignored' : 'tracked';
     setTrackingBusy((current) => ({ ...current, [competitor.id]: true }));
@@ -202,6 +226,27 @@ export default function CompetitorsPage() {
             {rereadingDocuments ? 'Reading documents...' : 'Re-read documents'}
           </button>
           {canManage ? (
+            <>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".jsonl,.ndjson,application/x-ndjson"
+                onChange={handleImportFile}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="cs-btn"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importingCompetitors}
+                title="Import the tracked-competitors JSONL exported from the scraper app."
+              >
+                {importingCompetitors ? <span className="cs-spinner" /> : <Upload size={15} />}
+                {importingCompetitors ? 'Importing...' : 'Import from scraper'}
+              </button>
+            </>
+          ) : null}
+          {canManage ? (
             <Link to={`/competitors/${studyId}/edit`} className="cs-btn">
               <Pencil size={15} /> Full edit
             </Link>
@@ -221,11 +266,20 @@ export default function CompetitorsPage() {
         <div className="cs-alert cs-alert-info">
           <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
-            Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
-            {notice.scanned} article{notice.scanned === 1 ? '' : 's'}.
-            {notice.derivedCompetitors?.length
-              ? ` Covering ${notice.derivedCompetitors.map((item) => item.name).join(', ')}.`
-              : ''}
+            {notice.imported != null ? (
+              <>
+                Imported {notice.imported} competitor{notice.imported === 1 ? '' : 's'} from the scraper export.
+                {notice.skipped ? ` ${notice.skipped} row${notice.skipped === 1 ? '' : 's'} skipped.` : ''}
+              </>
+            ) : (
+              <>
+                Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
+                {notice.scanned} article{notice.scanned === 1 ? '' : 's'}.
+                {notice.derivedCompetitors?.length
+                  ? ` Covering ${notice.derivedCompetitors.map((item) => item.name).join(', ')}.`
+                  : ''}
+              </>
+            )}
           </span>
         </div>
       ) : null}
