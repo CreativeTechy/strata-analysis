@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldPlus } from 'lucide-react';
 import RoleForm from './RoleForm';
+import { listPermissions, createRole } from '../api/adminApi.js';
 
 const emptyValue = { name: '', description: '', permissions: [] };
 
@@ -21,9 +22,7 @@ export default function RoleCreatePage() {
       setLoading(true);
       setLoadError('');
       try {
-        const res = await fetch('/api/permissions');
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `Failed to load permissions (${res.status})`);
+        const data = await listPermissions();
         setPermissions(Array.isArray(data?.permissions) ? data.permissions : []);
       } catch (err) {
         setLoadError(err.message);
@@ -38,13 +37,7 @@ export default function RoleCreatePage() {
     setError('');
     setSubmitting(true);
     try {
-      const res = await fetch('/api/roles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to create role (${res.status})`);
+      await createRole(value);
       navigate('/admin/roles');
     } catch (err) {
       setError(err.message);

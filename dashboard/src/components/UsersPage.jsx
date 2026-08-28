@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { UserPlus, Users as UsersIcon, Ban, CheckCircle2, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
+import {
+  listUsers as apiListUsers, createUser as apiCreateUser, updateUser, deleteUser, listRoles,
+} from '../api/adminApi.js';
 import '../styles/AdminUsers.css';
 
 const emptyDraft = { username: '', email: '', password: '', role: '' };
@@ -21,9 +24,7 @@ export default function UsersPage() {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/users');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to load users (${res.status})`);
+      const data = await apiListUsers();
       setUsers(Array.isArray(data?.users) ? data.users : []);
     } catch (err) {
       setError(err.message);
@@ -34,9 +35,7 @@ export default function UsersPage() {
 
   const loadRoles = async () => {
     try {
-      const res = await fetch('/api/roles');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
+      const data = await listRoles();
       const roleList = Array.isArray(data?.roles) ? data.roles : [];
       setRoles(roleList);
       setDraft((prev) => (prev.role ? prev : { ...prev, role: roleList[0]?.name || '' }));
@@ -56,13 +55,7 @@ export default function UsersPage() {
     setError('');
     setCreating(true);
     try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to create user (${res.status})`);
+      await apiCreateUser(draft);
       setDraft(emptyDraft);
       await loadUsers();
     } catch (err) {
@@ -75,13 +68,7 @@ export default function UsersPage() {
   const setStatus = async (userId, status) => {
     setError('');
     try {
-      const res = await fetch(`/api/users/${userId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to update user (${res.status})`);
+      await updateUser(userId, { status });
       await loadUsers();
     } catch (err) {
       setError(err.message);
@@ -91,13 +78,7 @@ export default function UsersPage() {
   const setRole = async (userId, role) => {
     setError('');
     try {
-      const res = await fetch(`/api/users/${userId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to update user (${res.status})`);
+      await updateUser(userId, { role });
       await loadUsers();
     } catch (err) {
       setError(err.message);
@@ -110,9 +91,7 @@ export default function UsersPage() {
     setError('');
     setDeleting(true);
     try {
-      const res = await fetch(`/api/users/${target.id}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to delete user (${res.status})`);
+      await deleteUser(target.id);
       setDeleteTarget(null);
       await loadUsers();
     } catch (err) {

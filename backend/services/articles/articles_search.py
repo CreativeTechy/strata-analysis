@@ -22,7 +22,6 @@ from services.articles.articles_query import (
 )
 
 SEARCH_SCAN_LIMIT = 1000
-SEARCH_MATCH_THRESHOLD = 0.78
 
 
 def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
@@ -128,7 +127,7 @@ def _score_search_row(row: dict, search: str, query_embedding: list[float] | Non
     # must not match every article merely because "Stellantis" (the brand
     # name in this project's every title) is present on its own.
     keyword_match = bool(tokens) and keyword_hits == len(tokens)
-    matched = exact_phrase_hit or keyword_match or semantic_score >= SEARCH_MATCH_THRESHOLD
+    matched = exact_phrase_hit or keyword_match or semantic_score >= config.SEARCH_SEMANTIC_MATCH_THRESHOLD
     return score, matched
 
 

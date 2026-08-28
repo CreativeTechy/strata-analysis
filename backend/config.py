@@ -354,6 +354,61 @@ except ValueError:
     ANALYSIS_CONCURRENCY = 2
 
 
+# --- Similarity thresholds ---------------------------------------------------
+# Every embedding-based attach-or-create/match decision in the app compares a
+# cosine similarity score (embeddings.cosine_similarity, all in the same
+# config.EMBEDDING_MODEL space) against a floor tuned for that decision's own
+# precision/recall trade-off. Collected here rather than left as a local
+# constant in each module, so tuning one doesn't require finding it first.
+# None of these are empirically validated - they are conservative starting
+# points favoring precision over recall.
+
+# services/articles/store.py's save_articles(): the score at/above which a
+# freshly saved article with no explicit project_id gets auto-linked to the
+# project whose stored embedding it best matches.
+PROJECT_ATTRIBUTION_SIMILARITY_THRESHOLD = float(
+    os.environ.get("PROJECT_ATTRIBUTION_SIMILARITY_THRESHOLD", "0.78") or 0.78
+)
+
+# services/articles/articles_search.py's search_results(): the score at/above
+# which the semantic ranking pass counts a result as a real match rather than
+# background noise from the bounded corpus scan.
+SEARCH_SEMANTIC_MATCH_THRESHOLD = float(
+    os.environ.get("SEARCH_SEMANTIC_MATCH_THRESHOLD", "0.78") or 0.78
+)
+
+# services/competitors/competitor_analysis.py's semantic-mention fallback:
+# only ever consulted when no literal name/alias was found in the text, so
+# this is set high (unrelated passages typically score well below 0.3; a
+# shared-topic-but-different-company pair still commonly clears 0.5-0.6) as a
+# deliberate trade against misattributing someone else's coverage.
+COMPETITOR_SEMANTIC_MATCH_THRESHOLD = float(
+    os.environ.get("COMPETITOR_SEMANTIC_MATCH_THRESHOLD", "0.62") or 0.62
+)
+
+# services/articles/idea_clustering.py: the score at/above which a new idea
+# attaches to an existing idea_clusters row instead of starting a new one.
+IDEA_SIMILARITY_THRESHOLD = float(os.environ.get("IDEA_SIMILARITY_THRESHOLD", "0.86") or 0.86)
+
+# services/articles/idea_clustering.py: same pattern applied to
+# segment_taxonomy. Segment phrases are short (2-4 words), which tends to
+# score lower on cosine similarity than full sentences even when they mean
+# the same thing - hence the slightly lower bar than IDEA_SIMILARITY_THRESHOLD.
+SEGMENT_SIMILARITY_THRESHOLD = float(os.environ.get("SEGMENT_SIMILARITY_THRESHOLD", "0.80") or 0.80)
+
+# services/competitors/competitor_analysis.py's run_analysis_job(): one LLM
+# call per competitor, run through a small thread pool for the same reason
+# ANALYSIS_CONCURRENCY above is kept low - the ceiling is the provider's, and
+# this shares an account with article enrichment and Copilot chat. Distinct
+# from ANALYSIS_CONCURRENCY because it bounds a different pipeline (competitor
+# finding generation, not article sentiment analysis) with its own workload
+# shape.
+try:
+    COMPETITOR_ANALYSIS_CONCURRENCY = max(1, int(os.environ.get("COMPETITOR_ANALYSIS_CONCURRENCY", "4")))
+except ValueError:
+    COMPETITOR_ANALYSIS_CONCURRENCY = 4
+
+
 # Apply pending schema migrations when the API starts. Set false to manage them
 # out of band (`python migrate.py`) — e.g. when several backend replicas share
 # one database and only a deploy step should migrate it.

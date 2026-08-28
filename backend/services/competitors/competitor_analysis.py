@@ -136,14 +136,8 @@ MIN_MENTION_SCORE = 0.35
 # for article/project attribution, where unrelated passages typically land
 # well below 0.3 and a shared-topic-but-different-company pair still commonly
 # clears 0.5 - 0.6; a stricter floor is the deliberate trade against a report
-# that quietly attributes someone else's coverage to this competitor.
-SEMANTIC_MATCH_THRESHOLD = 0.62
-
-# One LLM call per competitor, so a study with a dozen of them serialized into a
-# dozen sequential round trips on a request the user is watching. Kept modest
-# rather than unbounded for the same reason ENRICH_CONCURRENCY is: the ceiling
-# is the provider's, and this shares an account with enrichment and Copilot.
-ANALYSIS_CONCURRENCY = 4
+# that quietly attributes someone else's coverage to this competitor. See
+# config.COMPETITOR_SEMANTIC_MATCH_THRESHOLD.
 
 IMPACT_LEVELS = {"high", "medium", "low"}
 
@@ -409,11 +403,11 @@ def _competitor_embedding_map(competitors: list[dict]) -> dict[int, list[float]]
 
 
 def _semantic_match(article_vector, competitor_vector) -> float | None:
-    """Cosine similarity if it clears SEMANTIC_MATCH_THRESHOLD, else None."""
+    """Cosine similarity if it clears config.COMPETITOR_SEMANTIC_MATCH_THRESHOLD, else None."""
     if not article_vector or not competitor_vector:
         return None
     similarity = cosine_similarity(article_vector, competitor_vector)
-    return similarity if similarity >= SEMANTIC_MATCH_THRESHOLD else None
+    return similarity if similarity >= config.COMPETITOR_SEMANTIC_MATCH_THRESHOLD else None
 
 
 def validate_competitor_articles(project_id: int, competitors: list[dict],
@@ -994,7 +988,11 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     # Progress lines are appended from the worker threads, hence the lock in
     # JobRegistry.append_log - they interleave, which is the point: the user
     # sees several competitors in flight rather than a stalled single line.
-    with ThreadPoolExecutor(max_workers=min(ANALYSIS_CONCURRENCY, len(competitors))) as pool:
+    # config.COMPETITOR_ANALYSIS_CONCURRENCY is kept modest rather than
+    # unbounded for the same reason config.ANALYSIS_CONCURRENCY is: the
+    # ceiling is the provider's, and this shares an account with article
+    # enrichment and Copilot chat.
+    with ThreadPoolExecutor(max_workers=min(config.COMPETITOR_ANALYSIS_CONCURRENCY, len(competitors))) as pool:
         results = list(pool.map(_analyze, competitors))
 
     for competitor, finding, error in results:

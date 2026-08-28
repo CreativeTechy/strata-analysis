@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { Pencil, ShieldAlert, ArrowLeft } from 'lucide-react';
 import RoleForm from './RoleForm';
+import { listRoles, listPermissions, updateRole } from '../api/adminApi.js';
 
 // Edit-only: loads one existing role and its permission set and saves changes
 // back to it. Creating a new role lives in RoleCreatePage.
@@ -21,12 +22,7 @@ export default function RoleEditPage() {
       setLoading(true);
       setLoadError('');
       try {
-        const [rolesRes, permsRes] = await Promise.all([fetch('/api/roles'), fetch('/api/permissions')]);
-        const rolesData = await rolesRes.json().catch(() => ({}));
-        const permsData = await permsRes.json().catch(() => ({}));
-        if (!rolesRes.ok) throw new Error(rolesData?.error || `Failed to load roles (${rolesRes.status})`);
-        if (!permsRes.ok) throw new Error(permsData?.error || `Failed to load permissions (${permsRes.status})`);
-
+        const [rolesData, permsData] = await Promise.all([listRoles(), listPermissions()]);
         const roleList = Array.isArray(rolesData?.roles) ? rolesData.roles : [];
         const found = roleList.find((item) => String(item.id) === String(roleId)) || null;
 
@@ -51,13 +47,7 @@ export default function RoleEditPage() {
     setError('');
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/roles/${role.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to update role (${res.status})`);
+      await updateRole(role.id, value);
       navigate('/admin/roles');
     } catch (err) {
       setError(err.message);

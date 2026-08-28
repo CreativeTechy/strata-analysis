@@ -11,6 +11,8 @@ import {
   Workflow,
   FileText,
 } from 'lucide-react';
+import { getPipelineRun } from '../api/pipelineRunsApi.js';
+import { getArticleAnalysis } from '../api/articlesApi.js';
 const TYPE_COLORS = { praise: '#16a34a', complaint: '#e11d48', issue: '#e11d48', suggestion: '#f59e0b' };
 const ARTICLE_DISPLAY_CAP = 200;
 
@@ -80,10 +82,8 @@ export default function TopicDetailPage() {
     let cancelled = false;
     distinctRunIds.forEach((runId) => {
       setRunDetails((prev) => ({ ...prev, [runId]: { ...(prev[runId] || {}), loading: true } }));
-      fetch(`/api/pipeline-runs/${runId}`)
-        .then(async (res) => {
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load run (${res.status})`);
+      getPipelineRun(runId)
+        .then((data) => {
           if (!cancelled) setRunDetails((prev) => ({ ...prev, [runId]: { run: data?.run || null, loading: false, error: '' } }));
         })
         .catch((err) => {
@@ -133,10 +133,8 @@ export default function TopicDetailPage() {
     let cancelled = false;
     displayedArticleIds.forEach((id) => {
       setArticleDetails((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), loading: true } }));
-      fetch(`/api/articles/${id}/analysis`)
-        .then(async (res) => {
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load article (${res.status})`);
+      getArticleAnalysis(id)
+        .then((data) => {
           if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: data?.analysis || null, loading: false, error: '' } }));
         })
         .catch((err) => {

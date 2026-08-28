@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Database, Play, RefreshCw, Trash2 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import {
+  listPipelineRuns, startAnalysisRun, stopPipelineRun, deletePipelineRun,
+} from '../api/pipelineRunsApi.js';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -57,9 +60,7 @@ export default function PipelineRunsPage({ projects = [] }) {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/pipeline-runs?limit=25');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to load analysis runs (${res.status})`);
+      const data = await listPipelineRuns({ limit: 25 });
       setRuns(Array.isArray(data?.runs) ? data.runs : []);
     } catch (err) {
       setError(err?.message || 'Failed to load analysis runs.');
@@ -87,13 +88,7 @@ export default function PipelineRunsPage({ projects = [] }) {
     setError('');
     setNotice('');
     try {
-      const res = await fetch('/api/analysis-runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: Number(runProjectId), scope: runScope }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to start analysis (${res.status})`);
+      const data = await startAnalysisRun({ project_id: Number(runProjectId), scope: runScope });
       setNotice(data?.message || 'Analysis run started.');
       await loadRuns();
     } catch (err) {
@@ -106,9 +101,7 @@ export default function PipelineRunsPage({ projects = [] }) {
   const stopRun = async (runId) => {
     setStoppingId(runId);
     try {
-      const res = await fetch(`/api/pipeline-runs/${runId}/stop`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to stop run (${res.status})`);
+      await stopPipelineRun(runId);
       await loadRuns();
     } catch (err) {
       setError(err?.message || 'Failed to stop analysis run.');
@@ -126,9 +119,7 @@ export default function PipelineRunsPage({ projects = [] }) {
     setError('');
     setNotice('');
     try {
-      const res = await fetch(`/api/pipeline-runs/${runId}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to delete run (${res.status})`);
+      const data = await deletePipelineRun(runId);
       setNotice(data?.message || 'Analysis run deleted.');
       await loadRuns();
     } catch (err) {

@@ -4,6 +4,8 @@ import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2,
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
+import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
+import { listDocuments } from '../api/projectDocumentsApi.js';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
@@ -99,8 +101,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       return undefined;
     }
     let cancelled = false;
-    fetch(`/api/projects/${projectId}/documents`)
-      .then((res) => (res.ok ? res.json() : { documents: [] }))
+    listDocuments(projectId)
       .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
       .catch(() => { if (!cancelled) setDocuments([]); });
     return () => { cancelled = true; };
@@ -116,15 +117,12 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     let cancelled = false;
     setKeywordLoading(true);
     setKeywordError(null);
-    const params = new URLSearchParams({ period });
-    if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
-    if (keywordFilter !== 'all') params.set('keyword', keywordFilter);
-    if (runId) params.set('run_id', runId);
-    fetch(`/api/projects/${projectId}/keyword-existence?${params.toString()}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Keyword existence request failed: ${res.status}`);
-        return res.json();
-      })
+    getKeywordExistence(projectId, {
+      period,
+      source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+      keyword: keywordFilter !== 'all' ? keywordFilter : undefined,
+      run_id: runId || undefined,
+    })
       .then((data) => { if (!cancelled) setKeywordReport(data); })
       .catch((err) => {
         if (!cancelled) {
@@ -149,11 +147,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     forceRegenerateRef.current = false;
     setTrendSummaryLoading(true);
     setTrendSummaryError(null);
-    const params = new URLSearchParams({ period });
-    if (runId) params.set('run_id', runId);
-    if (forceRegenerate) params.set('regenerate', 'true');
-    fetch(`/api/projects/${projectId}/trend-summary?${params.toString()}`)
-      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => ({})) }))
+    getTrendSummary(projectId, {
+      period,
+      run_id: runId || undefined,
+      regenerate: forceRegenerate ? 'true' : undefined,
+    })
       .then(({ ok, data }) => {
         if (cancelled) return;
         if (!ok || data?.error) {

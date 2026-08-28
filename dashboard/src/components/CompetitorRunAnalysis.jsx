@@ -6,7 +6,7 @@
  */
 
 import { Sparkles, X } from 'lucide-react';
-import { relativeTime } from '../competitorApi.js';
+import { relativeTime } from '../api/competitorApi.js';
 import { SCOPE_LABELS } from '../useRunAnalysis.js';
 import { DiscoveryLog } from './CompetitorOnboarding.jsx';
 

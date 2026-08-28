@@ -17,7 +17,8 @@ import {
   pollDocumentExtraction as pollProjectDocumentExtraction,
   pollArticleCandidates as pollProjectArticleCandidates,
   pollArticleAnalysis as pollProjectArticleAnalysis,
-} from '../projectDocumentsApi.js';
+} from '../api/projectDocumentsApi.js';
+import { suggestProjectMetadata } from '../api/projectsApi.js';
 import {
   CalendarDays,
   Check,
@@ -433,16 +434,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     setIsGeneratingMetadata(true);
     setMetadataError('');
     try {
-      const res = await fetch('/api/projects/suggest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        throw new Error(data?.detail || data?.error || `Failed to generate suggestions (${res.status})`);
-      }
-
+      const data = await suggestProjectMetadata({ name, description });
       const suggestions = data?.suggestions || {};
       setDraft((prev) => ({
         ...prev,

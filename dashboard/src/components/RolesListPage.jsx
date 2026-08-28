@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, ShieldPlus, Trash2, Pencil } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
+import { listRoles, deleteRole } from '../api/adminApi.js';
 import '../styles/AdminUsers.css';
 
 // List-only: the entry point for role administration. Create/edit happen on
@@ -23,9 +24,7 @@ export default function RolesListPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/roles');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to load roles (${res.status})`);
+      const data = await listRoles();
       setRoles(Array.isArray(data?.roles) ? data.roles : []);
     } catch (err) {
       setError(err.message);
@@ -44,9 +43,7 @@ export default function RolesListPage() {
     setError('');
     setDeleting(true);
     try {
-      const res = await fetch(`/api/roles/${target.id}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to delete role (${res.status})`);
+      await deleteRole(target.id);
       setDeleteTarget(null);
       await load();
     } catch (err) {

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 
+import config
 import db
 from embeddings import cosine_similarity, get_embedding
 from psycopg.types.json import Jsonb
@@ -39,20 +40,19 @@ def _log_db_error(prefix, error):
 
 
 # A new idea that doesn't exact-match an existing cluster still attaches to it
-# if their embeddings score at or above this - a conservative starting point
-# favoring precision (avoid wrongly merging distinct ideas) over recall, in
-# the same spirit as this codebase's other hardcoded similarity thresholds
-# (project attribution 0.78 in store.py, competitor matching 0.62, search 0.28).
-# Tune by editing this constant; not empirically validated yet.
-IDEA_SIMILARITY_THRESHOLD = 0.86
-
-# Same idea, applied to segment_taxonomy (see _resolve_segment_label): a new
-# raw segment phrase attaches to an existing canonical label at or above this
-# score. Segment phrases are short (2-4 words) so a slightly lower bar than
-# IDEA_SIMILARITY_THRESHOLD is used - short phrases tend to score lower on
-# cosine similarity than full sentences even when they mean the same thing.
-# Conservative starting point, not empirically validated yet.
-SEGMENT_SIMILARITY_THRESHOLD = 0.80
+# if their embeddings score at or above config.IDEA_SIMILARITY_THRESHOLD - a
+# conservative starting point favoring precision (avoid wrongly merging
+# distinct ideas) over recall, in the same spirit as this codebase's other
+# similarity thresholds (project attribution, competitor matching, search -
+# see config.py's "Similarity thresholds" section). Not empirically validated
+# yet.
+#
+# Same pattern applies to segment_taxonomy via
+# config.SEGMENT_SIMILARITY_THRESHOLD (see _resolve_segment_label): a new raw
+# segment phrase attaches to an existing canonical label at or above that
+# score. Segment phrases are short (2-4 words) so it is set slightly lower
+# than IDEA_SIMILARITY_THRESHOLD - short phrases tend to score lower on cosine
+# similarity than full sentences even when they mean the same thing.
 
 
 def _resolve_segment_label(raw_text):
@@ -95,7 +95,7 @@ def _resolve_segment_label(raw_text):
             if score > best_score:
                 best_score, best_label = score, candidate["canonical_label"]
 
-        if best_label is not None and best_score >= SEGMENT_SIMILARITY_THRESHOLD:
+        if best_label is not None and best_score >= config.SEGMENT_SIMILARITY_THRESHOLD:
             db.execute(
                 "update segment_taxonomy set last_seen_at = now() where canonical_label = %s",
                 (best_label,),
@@ -194,7 +194,7 @@ def _resolve_idea_cluster_id(project_id, idea, idea_type, category):
             if score > best_score:
                 best_score, best_id = score, candidate["id"]
 
-        if best_id is not None and best_score >= IDEA_SIMILARITY_THRESHOLD:
+        if best_id is not None and best_score >= config.IDEA_SIMILARITY_THRESHOLD:
             _touch_idea_cluster(best_id)
             return best_id
 

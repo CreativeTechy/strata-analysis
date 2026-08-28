@@ -18,7 +18,7 @@ import {
 import {
   approveAllDocumentArticles, deleteDocument, getStudy, listDocumentArticles, listDocuments,
   pollArticleCandidates, pollDocumentExtraction, setDocumentArticleStatus, uploadDocuments,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import '../styles/Competitors.css';
 
 const DOCUMENT_ACTIVE_STATUSES = new Set(['uploaded', 'processing']);

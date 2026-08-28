@@ -20,7 +20,12 @@ import {
   pollArticleCandidates,
   listDocumentArticles,
   setDocumentArticleStatus,
-} from '../projectDocumentsApi.js';
+  listDocuments,
+} from '../api/projectDocumentsApi.js';
+import {
+  listArticles, getArticleAnalysis, reprocessArticle, deleteAllArticles,
+  exportArticles, importArticles, getImportStatus,
+} from '../api/articlesApi.js';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
@@ -114,8 +119,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       return undefined;
     }
     let cancelled = false;
-    fetch(`/api/projects/${id}/documents`)
-      .then((res) => (res.ok ? res.json() : { documents: [] }))
+    listDocuments(id)
       .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
       .catch(() => { if (!cancelled) setDocuments([]); });
     return () => { cancelled = true; };
@@ -139,22 +143,17 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setLoading(true);
       setError('');
       try {
-        const params = new URLSearchParams();
-        if (search) params.set('search', search);
-        if (sentiment !== 'all') params.set('sentiment', sentiment);
-        if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
-        if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
-        if (addedFrom) params.set('added_from', addedFrom);
-        if (addedTo) params.set('added_to', addedTo);
-        params.set('limit', String(limit));
-        params.set('offset', String(offset));
-        params.set('sort', sort);
-
-        const res = await fetch(`/api/articles?${params.toString()}`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.detail || data?.error || `Failed to load articles (${res.status})`);
-        }
+        const data = await listArticles({
+          search: search || undefined,
+          sentiment: sentiment !== 'all' ? sentiment : undefined,
+          project_id: projectFilter !== 'all' ? projectFilter : undefined,
+          source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+          added_from: addedFrom || undefined,
+          added_to: addedTo || undefined,
+          limit,
+          offset,
+          sort,
+        }, controller.signal);
 
         setArticles(Array.isArray(data?.articles) ? data.articles : []);
         setTotal(Number(data?.total) || 0);
@@ -187,9 +186,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setDetailError('');
       setDetailActionMessage('');
       try {
-        const res = await fetch(`/api/articles/${detailArticleId}/analysis`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load analysis (${res.status})`);
+        const data = await getArticleAnalysis(detailArticleId, controller.signal);
         setDetailData(data?.analysis || null);
       } catch (err) {
         if (err?.name !== 'AbortError') {
@@ -234,9 +231,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     setDetailReprocessing(true);
     setDetailActionMessage('');
     try {
-      const res = await fetch(`/api/articles/${detailArticleId}/reprocess`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to reprocess article (${res.status})`);
+      await reprocessArticle(detailArticleId);
       setDetailActionMessage('Reprocessing started - reopen this panel in a moment to see the updated result.');
     } catch (err) {
       setDetailActionMessage(err?.message || 'Failed to reprocess article.');
@@ -272,11 +267,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     setDeletingAll(true);
     setError('');
     try {
-      const res = await fetch('/api/articles', { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        throw new Error(data?.detail || data?.error || `Failed to delete articles (${res.status})`);
-      }
+      await deleteAllArticles();
       setSearchInput('');
       setSearch('');
       setSentiment('all');
@@ -298,22 +289,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
     setExporting(true);
     setError('');
     try {
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      if (sentiment !== 'all') params.set('sentiment', sentiment);
-      if (projectFilter !== 'all') params.set('project_id', String(projectFilter));
-      if (sourceFilter !== 'all') params.set('source_url', sourceFilter);
-      if (addedFrom) params.set('added_from', addedFrom);
-      if (addedTo) params.set('added_to', addedTo);
-      params.set('sort', sort);
-
-      const res = await fetch(`/api/articles/export?${params.toString()}`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.detail || data?.error || `Failed to export articles (${res.status})`);
-      }
-
-      const blob = await res.blob();
+      const blob = await exportArticles({
+        search: search || undefined,
+        sentiment: sentiment !== 'all' ? sentiment : undefined,
+        project_id: projectFilter !== 'all' ? projectFilter : undefined,
+        source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+        added_from: addedFrom || undefined,
+        added_to: addedTo || undefined,
+        sort,
+      });
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -341,19 +325,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
     // scrape for that project would have produced. 'all' imports unlinked.
     if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
 
-    const res = await fetch('/api/articles/import', { method: 'POST', body });
-    const queued = await res.json().catch(() => ({}));
-    if (!res.ok || queued?.error) {
-      throw new Error(queued?.detail || queued?.error || `Failed to import articles (${res.status})`);
-    }
+    const queued = await importArticles(body);
 
     let lastSaved = 0;
     for (;;) {
-      const statusRes = await fetch(`/api/articles/import/${queued.run_id}`);
-      const payload = await statusRes.json().catch(() => ({}));
-      if (!statusRes.ok || payload?.error) {
-        throw new Error(payload?.detail || payload?.error || `Lost track of the import (${statusRes.status})`);
-      }
+      const payload = await getImportStatus(queued.run_id);
       const run = payload.run || {};
       setImportRun(batchLabel ? { ...run, _batchLabel: batchLabel } : run);
       // Refresh the list as rows land, not only at the end, so a long import

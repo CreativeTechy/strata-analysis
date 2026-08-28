@@ -21,6 +21,10 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
+import { startAnalysisRun } from '../api/pipelineRunsApi.js';
+import { listIdeaClusters, listIdeaClusterArticles } from '../api/projectsApi.js';
+import { listDocuments } from '../api/projectDocumentsApi.js';
+import { getArticleStats } from '../api/articlesApi.js';
 import '../styles/ProjectDetail.css';
 
 const DOCUMENTS_PAGE_SIZE = 5;
@@ -117,9 +121,8 @@ export default function ProjectDetailPage({
       }
       setStatsLoading(true);
       try {
-        const res = await fetch(`/api/articles/stats?project_id=${project.id}`, { signal: controller.signal });
-        const data = await res.json().catch(() => null);
-        setArticleStats(data && typeof data === 'object' ? data : null);
+        const data = await getArticleStats({ project_id: project.id }, controller.signal);
+        setArticleStats(data);
       } catch (err) {
         if (err?.name !== 'AbortError') setArticleStats(null);
       } finally {
@@ -140,10 +143,7 @@ export default function ProjectDetailPage({
       setIdeaClustersLoading(true);
       setIdeaClustersError('');
       try {
-        const params = new URLSearchParams({ limit: '10', offset: String(ideaOffset) });
-        const res = await fetch(`/api/projects/${project.id}/idea-clusters?${params.toString()}`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load frequent ideas (${res.status})`);
+        const data = await listIdeaClusters(project.id, { limit: 10, offset: ideaOffset }, controller.signal);
         setIdeaClusters({
           clusters: Array.isArray(data?.clusters) ? data.clusters : [],
           total: Number(data?.total) || 0,
@@ -171,9 +171,7 @@ export default function ProjectDetailPage({
     setOpeningClusterId(cluster.id);
     setClusterOpenErrors((current) => ({ ...current, [cluster.id]: '' }));
     try {
-      const res = await fetch(`/api/projects/${project.id}/idea-clusters/${cluster.id}/articles?limit=200`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load articles (${res.status})`);
+      const data = await listIdeaClusterArticles(project.id, cluster.id, { limit: 200 });
       const clusterSources = (Array.isArray(data?.articles) ? data.articles : []).map((article) => ({
         id: article.id,
         url: article.url,
@@ -208,8 +206,7 @@ export default function ProjectDetailPage({
       return undefined;
     }
     let cancelled = false;
-    fetch(`/api/projects/${project.id}/documents`)
-      .then((res) => (res.ok ? res.json() : { documents: [] }))
+    listDocuments(project.id)
       .then((data) => { if (!cancelled) setDocuments(Array.isArray(data?.documents) ? data.documents : []); })
       .catch(() => { if (!cancelled) setDocuments([]); });
     return () => { cancelled = true; };
@@ -221,13 +218,7 @@ export default function ProjectDetailPage({
     setAnalysisNotice('');
     setAnalysisError('');
     try {
-      const res = await fetch('/api/analysis-runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: Number(project.id), scope: 'pending' }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Failed to start analysis (${res.status})`);
+      const data = await startAnalysisRun({ project_id: Number(project.id), scope: 'pending' });
       setAnalysisNotice(data?.message || 'Analysis run started.');
     } catch (err) {
       setAnalysisError(err?.message || 'Failed to start analysis run.');

@@ -308,10 +308,22 @@ def get_study(project_id: int) -> dict | None:
     )
 
 
-def list_studies() -> list[dict]:
-    """Competitor-mode projects with enough summary to render the index."""
+def list_studies(visible_project_ids=None) -> list[dict]:
+    """Competitor-mode projects with enough summary to render the index.
+
+    `visible_project_ids=None` returns every study (admin/full_access view);
+    otherwise only the given ids are returned, matching
+    projects_store.list_projects()'s scoping for non-admin users."""
+    where_sql = "where p.mode = 'competitor'"
+    params: tuple = ()
+    if visible_project_ids is not None:
+        ids = [int(i) for i in visible_project_ids if i is not None]
+        if not ids:
+            return []
+        where_sql += " and p.id = any(%s)"
+        params = (ids,)
     return db.fetch_all(
-        """
+        f"""
         with latest_findings as (
             -- One row per competitor's *current* card, not per generation
             -- event: generate_finding() always inserts (never updates), so
@@ -351,9 +363,10 @@ def list_studies() -> list[dict]:
                    max(generated_at) as latest_generated_at
             from latest_findings group by project_id
         ) f on f.project_id = p.id
-        where p.mode = 'competitor'
+        {where_sql}
         order by p.created_at desc
-        """
+        """,
+        params,
     )
 
 

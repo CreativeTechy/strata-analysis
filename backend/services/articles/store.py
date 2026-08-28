@@ -36,13 +36,6 @@ ARTICLE_COLUMNS = (
     "pipeline_run_id", "source_run_snapshot",
 )
 
-LEGACY_ARTICLE_COLUMNS = (
-    "url", "source", "source_url", "title", "author", "published", "text",
-    "fetched_at", "summary", "sentiment", "relevance_score", "category",
-    "organizations", "entities", "topics", "key_points", "risks", "opportunities",
-    "brands", "car_models",
-)
-
 ARTICLE_MUTABLE_FIELDS = (
     "url",
     "source",
@@ -127,10 +120,6 @@ def _row(article):
         row["published_at"] = parsed
         row["published_precision"] = precision
     return row
-
-
-def _legacy_row(article):
-    return {k: article.get(k) for k in LEGACY_ARTICLE_COLUMNS}
 
 
 def _log_db_error(prefix, error):
@@ -638,84 +627,11 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
                         if score > best_score:
                             best_score = score
                             best_project_id = candidate_project_id
-                    if best_project_id is not None and best_score >= 0.78:
+                    if best_project_id is not None and best_score >= config.PROJECT_ATTRIBUTION_SIMILARITY_THRESHOLD:
                         linked_articles[best_project_id].add(article_id)
                         linked_scores[best_project_id][article_id] = best_score
             logger.info("Uploaded batch %s (%s articles)", i // batch_size + 1, len(source_batch))
         except Exception as e:
-            status_code = getattr(getattr(e, "response", None), "status_code", None)
-            if status_code == 400:
-                try:
-                    legacy_batch = [_legacy_row(a) for a in source_batch]
-                    persisted = []
-                    for article in source_batch:
-                        row = db.fetch_one(
-                            """
-                            insert into articles (
-                                url, source, source_url, title, author, published, text,
-                                fetched_at, summary, sentiment, relevance_score, category,
-                                organizations, entities, topics, key_points, risks, opportunities,
-                                brands, car_models
-                            )
-                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            on conflict (url) do update set
-                                source = excluded.source,
-                                source_url = excluded.source_url,
-                                title = excluded.title,
-                                author = excluded.author,
-                                published = excluded.published,
-                                text = excluded.text,
-                                fetched_at = excluded.fetched_at,
-                                summary = excluded.summary,
-                                sentiment = excluded.sentiment,
-                                relevance_score = excluded.relevance_score,
-                                category = excluded.category,
-                                organizations = excluded.organizations,
-                                entities = excluded.entities,
-                                topics = excluded.topics,
-                                key_points = excluded.key_points,
-                                risks = excluded.risks,
-                                opportunities = excluded.opportunities,
-                                brands = excluded.brands,
-                                car_models = excluded.car_models
-                            returning id, source_url
-                            """,
-                            (
-                                _legacy_row(article)["url"],
-                                _legacy_row(article)["source"],
-                                _legacy_row(article)["source_url"],
-                                _legacy_row(article)["title"],
-                                _legacy_row(article)["author"],
-                                _legacy_row(article)["published"],
-                                _legacy_row(article)["text"],
-                                _null_if_blank(_legacy_row(article)["fetched_at"]),
-                                _legacy_row(article)["summary"],
-                                _legacy_row(article)["sentiment"],
-                                _legacy_row(article)["relevance_score"],
-                                _legacy_row(article)["category"],
-                                _jsonb_param(_legacy_row(article)["organizations"]),
-                                _jsonb_param(_legacy_row(article)["entities"]),
-                                _jsonb_param(_legacy_row(article)["topics"]),
-                                _jsonb_param(_legacy_row(article)["key_points"]),
-                                _jsonb_param(_legacy_row(article)["risks"]),
-                                _jsonb_param(_legacy_row(article)["opportunities"]),
-                                _jsonb_param(_legacy_row(article)["brands"]),
-                                _jsonb_param(_legacy_row(article)["car_models"]),
-                            ),
-                        )
-                        if row:
-                            persisted.append((article, row))
-                            saved_by_source[_source_key(article)] += 1
-                    sent += len(legacy_batch)
-                    logger.info(
-                        "Uploaded batch %s (%s articles) using legacy article schema fallback",
-                        i // batch_size + 1,
-                        len(legacy_batch),
-                    )
-                    continue
-                except Exception as legacy_error:
-                    _log_db_error(f"  Database upload error for batch {i // batch_size + 1}", legacy_error)
-                    continue
             _log_db_error(f"  Database upload error for batch {i // batch_size + 1}", e)
 
     if linked_articles:

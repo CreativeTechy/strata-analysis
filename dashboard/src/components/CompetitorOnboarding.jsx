@@ -32,7 +32,7 @@ import {
   deleteDocument, importCompetitors, initials, listCompetitors, listDocumentArticles,
   pollArticleCandidates, pollDocumentExtraction, setCompetitorStatus, setDocumentArticleStatus,
   uploadDocuments,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import '../styles/Competitors.css';
 
 const STEPS = [
