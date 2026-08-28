@@ -33,6 +33,8 @@ from services.auth import permissions_store
 from services.auth import sessions_store
 from services.auth import users_store
 from services.auth.auth import clear_auth_cookies, get_current_user, require_any_permission, require_permission, set_auth_cookies
+from services.auth.authz import ensure_project_visible as _ensure_project_visible
+from services.auth.authz import visible_project_ids_or_none as _visible_project_ids_or_none
 from services.projects.projects_ai import suggest_project_metadata
 from services.articles.articles_store import (
     compute_overall_tone,
@@ -431,23 +433,6 @@ def remove_role(role_id: int, user: dict = Depends(require_permission("roles.del
     return {"ok": True}
 
 
-def _visible_project_ids_or_none(user: dict):
-    """None means "no restriction" (admin/full_access); otherwise the list of
-    project ids this user is linked to via project_users."""
-    if permissions_store.user_is_full_access(user):
-        return None
-    return list_project_ids_for_user(user["id"])
-
-
-def _ensure_project_visible(project_id: int, user: dict) -> None:
-    """Defense-in-depth for project-scoped mutations: a non-admin acting on a
-    project they can't see gets a 404, same as if it didn't exist."""
-    if permissions_store.user_is_full_access(user):
-        return
-    if int(project_id) not in set(list_project_ids_for_user(user["id"])):
-        raise HTTPException(status_code=404, detail="Project not found.")
-
-
 @app.get("/api/projects")
 def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("projects.view"))):
     visible_ids = _visible_project_ids_or_none(user)
@@ -548,6 +533,8 @@ def get_pipeline_runs(
     project_id: int | None = None,
     user: dict = Depends(require_permission("pipeline.view")),
 ):
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
     return {"runs": list_pipeline_runs(limit=max(1, min(int(limit), 500)), project_id=project_id)}
 
 
@@ -556,6 +543,8 @@ def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission
     run = get_pipeline_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Analysis run not found.")
+    if run.get("project_id") is not None:
+        _ensure_project_visible(run["project_id"], user)
     return {"run": run, "documents": get_pipeline_run_documents(run_id) if run.get("has_detail") else []}
 
 
@@ -564,6 +553,8 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
     run = get_pipeline_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Analysis run not found.")
+    if run.get("project_id") is not None:
+        _ensure_project_visible(run["project_id"], user)
 
     if run["status"] not in ACTIVE_STATUSES:
         return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
@@ -640,6 +631,8 @@ def get_articles(
     added_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
     return list_articles(
         search=search,
         sentiment=sentiment,
@@ -663,6 +656,8 @@ def get_articles_stats(
     date_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
     return get_article_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
 
 
@@ -743,6 +738,9 @@ def export_articles_jsonl(
     added_to: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
+    if project_id is not None:
+        _ensure_project_visible(project_id, user)
+
     def line_stream():
         # export_articles() is a generator, so rows are read a page at a time
         # as the response is written - no project's worth of articles (each

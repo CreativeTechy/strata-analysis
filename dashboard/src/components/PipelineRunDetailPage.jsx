@@ -14,6 +14,7 @@ import {
   ScanSearch,
   Sparkles,
 } from 'lucide-react';
+import { getPipelineRun } from '../api/pipelineRunsApi.js';
 
 function prettyStage(stage) {
   if (!stage) return 'queued';
@@ -161,10 +162,8 @@ export default function PipelineRunDetailPage({ projects = [] }) {
         setLoading(true);
         setError('');
       }
-      return fetch(`/api/pipeline-runs/${runId}`)
-        .then(async (res) => {
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data?.detail || data?.error || `Failed to load run (${res.status})`);
+      return getPipelineRun(runId)
+        .then((data) => {
           if (cancelled) return null;
           setRun(data?.run || null);
           setDocuments(Array.isArray(data?.documents) ? data.documents : []);

@@ -24,7 +24,7 @@ import {
 import {
   IMPACT_LABELS, SIZE_TIER_LABELS, avatarGradient, getStudy,
   initials, listCompetitors, listFindings, relativeTime,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import { useAuth } from '../auth/useAuth.js';
 import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,

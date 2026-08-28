@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import {
   analyze, getAnalysisScope, listAnalysisRuns, pollAnalysisRun,
-} from './competitorApi.js';
+} from './api/competitorApi.js';
 
 export const SCOPE_LABELS = {
   pending: 'Documents not yet analyzed',

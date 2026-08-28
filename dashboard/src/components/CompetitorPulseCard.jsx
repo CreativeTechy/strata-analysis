@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Radar } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
-import { IMPACT_LABELS, avatarGradient, initials, listStudyFindings, relativeTime } from '../competitorApi.js';
+import { IMPACT_LABELS, avatarGradient, initials, listStudyFindings, relativeTime } from '../api/competitorApi.js';
 import '../styles/Competitors.css';
 
 const PAGE_SIZE = 5;

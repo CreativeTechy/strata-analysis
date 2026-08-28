@@ -25,24 +25,38 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 
 import uuid
 
-import db
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.auth.auth import require_permission
+from services.auth.authz import ensure_project_visible
 from services.pipeline.pipeline import run_analysis_pipeline
 from services.pipeline.pipeline_runs import create_pipeline_run, get_active_run_for_project
 from services.projects import project_document_articles, project_documents_store
+from services.projects.projects_store import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-def _project_or_404(project_id: int) -> dict:
-    project = db.fetch_one(
-        "select id, name, mode, status from projects where id = %s",
-        (int(project_id),),
-    )
+def _project_or_404(project_id: int, user: dict) -> dict:
+    """Same "can't see it, so it doesn't exist" shape as main.py's project
+    routes: 404 rather than 403 for a project outside this user's
+    project_users links, not just a permission check on the route itself."""
+    project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_visible(project_id, user)
     return project
+
+
+def _document_or_404(document_id: int, user: dict) -> dict:
+    """Same visibility check as _project_or_404, resolved from the document's
+    own project_id - every document-id-scoped route below takes an id with no
+    project_id in the path, so it can't rely on the caller having already
+    proven visibility the way the project-id-scoped routes can."""
+    document = project_documents_store.get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    ensure_project_visible(document["project_id"], user)
+    return document
 
 
 # --------------------------------------------------------------------------- #
@@ -53,12 +67,13 @@ def list_documents(project_id: int, user: dict = Depends(require_permission("pro
     """Poll this while any document's status is 'uploaded'/'processing', or
     articles_status is 'generating' — those are the only progress signals
     extraction/splitting have, no separate run-tracking object needed."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"documents": project_documents_store.list_documents(project_id)}
 
 
 @router.get("/documents/{document_id}/text")
 def get_document_text(document_id: int, user: dict = Depends(require_permission("projects.view"))):
+    _document_or_404(document_id, user)
     text = project_documents_store.get_document_text(document_id)
     if text is None:
         raise HTTPException(status_code=404, detail="No extracted text for this document.")
@@ -69,6 +84,7 @@ def get_document_text(document_id: int, user: dict = Depends(require_permission(
 def list_document_chunks(document_id: int, user: dict = Depends(require_permission("projects.view"))):
     """Per-page/sheet detail behind a document's rolled-up status and
     extraction_error — which part failed and why, not just that something did."""
+    _document_or_404(document_id, user)
     return {"chunks": project_documents_store.list_chunks(document_id)}
 
 
@@ -82,7 +98,7 @@ async def upload_documents(
     """Save uploaded documents for an offline project and queue extraction for
     each. The response returns as soon as files are saved; the wizard polls
     GET .../documents for extraction status."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     if not files:
         raise HTTPException(status_code=400, detail="Choose at least one file to upload.")
     if len(files) > project_documents_store.MAX_FILES_PER_UPLOAD:
@@ -119,6 +135,7 @@ async def upload_documents(
 
 @router.delete("/documents/{document_id}")
 def remove_document(document_id: int, user: dict = Depends(require_permission("projects.update"))):
+    _document_or_404(document_id, user)
     if not project_documents_store.delete_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
     return {"ok": True}
@@ -133,7 +150,7 @@ def list_document_articles(project_id: int, user: dict = Depends(require_permiss
     """Each row's article_analysis_status reflects the materialized article's
     own analysis_status (pending/processing/success/failed), so the wizard can
     show per-article progress without a separate polling endpoint."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"articles": project_document_articles.list_candidates(project_id)}
 
 
@@ -152,6 +169,7 @@ def set_document_article_status(
     existing = project_document_articles.get_candidate(candidate_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Document article not found")
+    ensure_project_visible(existing["project_id"], user)
     had_article_id = bool(existing.get("article_id"))
 
     candidate = project_document_articles.set_status(candidate_id, status)
@@ -170,7 +188,7 @@ def approve_all_document_articles(
     background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     approved = project_document_articles.approve_all(project_id)
     for candidate in approved:
         if candidate.get("article_id"):
@@ -195,7 +213,7 @@ def reanalyze_document_articles(
     set_document_article_status): that is one article and the wizard wants the
     answer immediately, not a run to go watch.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     if not project_document_articles.approved_article_ids(project_id):
         return {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."}
 

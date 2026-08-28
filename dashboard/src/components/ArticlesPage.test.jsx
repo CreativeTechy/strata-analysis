@@ -5,7 +5,7 @@ import ArticlesPage from './ArticlesPage'
 import { useAuth } from '../auth/useAuth.js'
 
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }))
-vi.mock('../projectDocumentsApi.js', () => ({
+vi.mock('../api/projectDocumentsApi.js', () => ({
   uploadDocuments: vi.fn(),
   pollDocumentExtraction: vi.fn(() => Promise.resolve()),
   pollArticleCandidates: vi.fn(() => Promise.resolve([])),

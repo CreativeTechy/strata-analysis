@@ -181,7 +181,7 @@ def get_candidate(candidate_id: int) -> dict | None:
     )
 
 
-def _materialize(candidate: dict) -> int | None:
+def _materialize(candidate: dict, cur) -> int | None:
     """Turns an approved candidate into a real `articles` row via the same
     save_articles() scraped pages use, so it picks up article_projects
     linkage (and everything downstream of that) for free. Keyed on a synthetic
@@ -199,11 +199,20 @@ def _materialize(candidate: dict) -> int | None:
     default - for any column in ARTICLE_MUTABLE_FIELDS. analysis_status is
     overridden to 'pending' rather than DEFAULT_ENRICHMENT's 'failed': nothing
     crashed here, sentiment/topic tagging just hasn't run yet - the caller is
-    expected to queue reanalyze_article() for the returned id next."""
-    document = db.fetch_one(
+    expected to queue reanalyze_article() for the returned id next.
+
+    Runs on the caller's transaction (`cur`, from set_status()'s
+    db.transaction()) for its own two direct queries, so a failure here or in
+    the status/article_id write right after it rolls both back together
+    instead of leaving a materialized article whose candidate row still shows
+    'pending'/no article_id. save_articles() below still commits on its own
+    connection - its insert is a single idempotent upsert-by-url, so retrying
+    a half-finished approval re-runs it safely rather than duplicating the row."""
+    cur.execute(
         "select original_filename from project_documents where id = %s",
         (int(candidate["document_id"]),),
     )
+    document = cur.fetchone()
     metadata = candidate.get("record_metadata") or {}
     url = str(metadata.get("url") or "").strip() or (
         f"document://project-document/{candidate['document_id']}/article/{candidate['id']}"
@@ -236,7 +245,8 @@ def _materialize(candidate: dict) -> int | None:
         "analysis_error": None,
     }
     save_articles([article], project_id=candidate["project_id"])
-    row = db.fetch_one("select id from articles where url = %s", (url,))
+    cur.execute("select id from articles where url = %s", (url,))
+    row = cur.fetchone()
     return row["id"] if row else None
 
 
@@ -245,7 +255,11 @@ def set_status(candidate_id: int, status: str) -> dict | None:
     pre-update article_id to the post-update one to tell "just materialized"
     apart from "already had an article", and background reanalyze_article
     only for the former, matching how every other on-demand analysis trigger
-    in this codebase runs via FastAPI BackgroundTasks rather than inline."""
+    in this codebase runs via FastAPI BackgroundTasks rather than inline.
+
+    Materializing and recording the result on this candidate row happen in one
+    transaction: an approval that fails partway must not leave the candidate
+    still 'pending' while an article already exists for it (or vice versa)."""
     if status not in {"pending", "approved", "rejected"}:
         return None
     candidate = get_candidate(candidate_id)
@@ -253,13 +267,13 @@ def set_status(candidate_id: int, status: str) -> dict | None:
         return None
 
     article_id = candidate.get("article_id")
-    if status == "approved" and not article_id:
-        article_id = _materialize(candidate)
-
-    db.execute(
-        "update project_document_articles set status = %s, article_id = %s where id = %s",
-        (status, article_id, int(candidate_id)),
-    )
+    with db.transaction() as cur:
+        if status == "approved" and not article_id:
+            article_id = _materialize(candidate, cur)
+        cur.execute(
+            "update project_document_articles set status = %s, article_id = %s where id = %s",
+            (status, article_id, int(candidate_id)),
+        )
     return _select_candidate(candidate_id)
 
 

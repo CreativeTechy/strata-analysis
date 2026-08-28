@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
@@ -240,10 +240,10 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
     }
 
     def _materialize(self, candidate):
-        with patch.object(project_document_articles, "db") as mock_db, \
-             patch.object(project_document_articles, "save_articles") as mock_save:
-            mock_db.fetch_one.side_effect = [{"original_filename": "export.jsonl"}, {"id": 42}]
-            article_id = project_document_articles._materialize(candidate)
+        with patch.object(project_document_articles, "save_articles") as mock_save:
+            mock_cur = MagicMock()
+            mock_cur.fetchone.side_effect = [{"original_filename": "export.jsonl"}, {"id": 42}]
+            article_id = project_document_articles._materialize(candidate, mock_cur)
         return article_id, mock_save.call_args.args[0][0]
 
     def test_record_url_author_and_date_are_carried_onto_the_article(self):

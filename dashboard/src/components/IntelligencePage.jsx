@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { computeOverallTone } from '../lib/tone.js';
+import { listArticles, sendChatMessage } from '../api/articlesApi.js';
 
 const MATCHES_PAGE_SIZE = 4;
 
@@ -112,19 +113,12 @@ export default function IntelligencePage({ project = null, projectId = null, pro
   useEffect(() => {
     async function fetchData() {
       try {
-        const params = new URLSearchParams({
-          limit: '100',
-          offset: '0',
+        const data = await listArticles({
+          limit: 100,
+          offset: 0,
           sort: 'published.desc',
+          project_id: projectFilter !== 'all' ? projectFilter : undefined,
         });
-        if (projectFilter !== 'all') {
-          params.set('project_id', String(projectFilter));
-        }
-        const res = await fetch(`/api/articles?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.error || `Failed to load articles (${res.status})`);
-        }
 
         const curated = (data.articles || []).map((a) => ({ ...a, origin: 'curated' }));
         setArticles(curated);
@@ -225,44 +219,39 @@ export default function IntelligencePage({ project = null, projectId = null, pro
     setIsThinking(true);
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          total: filteredArticles.length,
-          project: activeProject
-            ? {
-                id: activeProject.id,
-                name: activeProject.name,
-                status: activeProject.status,
-                start_date: activeProject.start_date,
-                end_date: activeProject.end_date,
-                description: activeProject.description,
-                location: activeProject.location,
-                target_audience: activeProject.target_audience,
-                hashtags: activeProject.hashtags,
-                keywords: activeProject.keywords,
-              }
-            : null,
-          project_id: activeProject ? activeProject.id : null,
-          articles: filteredArticles.map((a) => ({
-            source: a.source,
-            sentiment: a.sentiment,
-            category: a.category,
-            article_category: a.article_category,
-            writer_tone: a.writer_tone,
-            article_tone: a.article_tone,
-            title: a.title,
-            summary: a.summary,
-            insight_json: a.insight_json,
-            relevance_score: a.relevance_score,
-            project_similarity_score: a.project_similarity_score,
-          })),
-        }),
+      const { ok, data } = await sendChatMessage({
+        question,
+        total: filteredArticles.length,
+        project: activeProject
+          ? {
+              id: activeProject.id,
+              name: activeProject.name,
+              status: activeProject.status,
+              start_date: activeProject.start_date,
+              end_date: activeProject.end_date,
+              description: activeProject.description,
+              location: activeProject.location,
+              target_audience: activeProject.target_audience,
+              hashtags: activeProject.hashtags,
+              keywords: activeProject.keywords,
+            }
+          : null,
+        project_id: activeProject ? activeProject.id : null,
+        articles: filteredArticles.map((a) => ({
+          source: a.source,
+          sentiment: a.sentiment,
+          category: a.category,
+          article_category: a.article_category,
+          writer_tone: a.writer_tone,
+          article_tone: a.article_tone,
+          title: a.title,
+          summary: a.summary,
+          insight_json: a.insight_json,
+          relevance_score: a.relevance_score,
+          project_similarity_score: a.project_similarity_score,
+        })),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
+      if (ok) {
         setChatHistory([...baseHistory, { role: 'bot', text: data.reply || 'No response.' }]);
       } else {
         const text = (data?.error_code && LLM_ERROR_MESSAGES[data.error_code]) || data?.error || DEFAULT_ERROR_MESSAGE;

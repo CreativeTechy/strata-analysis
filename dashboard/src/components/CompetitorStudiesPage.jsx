@@ -11,7 +11,7 @@ import {
   AlertTriangle, Building2, CalendarClock, ChevronRight, LayoutGrid, List, Plus, Radar, Search,
   Sparkles, X,
 } from 'lucide-react';
-import { avatarGradient, initials, listStudies, relativeTime } from '../competitorApi.js';
+import { avatarGradient, initials, listStudies, relativeTime } from '../api/competitorApi.js';
 import '../styles/Competitors.css';
 
 const STATUS_FILTERS = [

@@ -1,24 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AuthContext, permissionsSatisfy } from './authContext.js';
+import { getCurrentUser, login as loginRequest, logout as logoutRequest } from '../api/authApi.js';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/me');
-      if (!res.ok) {
-        setUser(null);
-        return null;
-      }
-      const data = await res.json().catch(() => ({}));
-      setUser(data?.user ?? null);
-      return data?.user ?? null;
-    } catch {
-      setUser(null);
-      return null;
-    }
+    const currentUser = await getCurrentUser();
+    setUser(currentUser);
+    return currentUser;
   }, []);
 
   useEffect(() => {
@@ -37,22 +28,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (username, password) => {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data?.error || data?.detail || 'Login failed.');
-    }
-    setUser(data?.user ?? null);
-    return data?.user ?? null;
+    const loggedInUser = await loginRequest(username, password);
+    setUser(loggedInUser);
+    return loggedInUser;
   }, []);
 
   const logout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await logoutRequest();
     } finally {
       setUser(null);
     }

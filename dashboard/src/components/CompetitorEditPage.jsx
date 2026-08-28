@@ -11,7 +11,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { AlertTriangle, Check, ChevronRight, Trash2 } from 'lucide-react';
 import {
   deleteStudy, getStudy, saveProfile, updateStudy,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import ConfirmModal from './ConfirmModal';
 import { ListEditor } from './CompetitorOnboarding.jsx';
 import '../styles/Competitors.css';

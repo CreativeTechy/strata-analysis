@@ -28,6 +28,12 @@ import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
 import { useAuth } from './auth/useAuth.js';
 import { RequireAuth, RequirePermission } from './routes/RouteGuards.jsx';
+import { listPipelineRuns } from './api/pipelineRunsApi.js';
+import { listLinkableUsers } from './api/adminApi.js';
+import {
+  listProjects, createProject as apiCreateProject, updateProject as apiUpdateProject,
+  deleteProject as apiDeleteProject, setProjectUsers as apiSetProjectUsers, getProjectIntelligence,
+} from './api/projectsApi.js';
 
 export default function App() {
   const location = useLocation();
@@ -108,9 +114,7 @@ export default function App() {
 
   const loadPipelineRuns = async () => {
     try {
-      const res = await fetch('/api/pipeline-runs?limit=25');
-      if (!res.ok) return;
-      const data = await res.json().catch(() => ({}));
+      const data = await listPipelineRuns({ limit: 25 });
       setPipelineRuns(Array.isArray(data?.runs) ? data.runs : []);
     } catch {
       setPipelineRuns([]);
@@ -124,12 +128,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`/api/pipeline-runs?project_id=${scopedProjectId}&limit=500`);
-      if (!res.ok) {
-        setProjectRuns([]);
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
+      const data = await listPipelineRuns({ projectId: scopedProjectId, limit: 500 });
       const runs = Array.isArray(data?.runs) ? data.runs : [];
       const completed = runs
         .filter((run) => run?.finished_at)
@@ -163,9 +162,7 @@ export default function App() {
   const refreshProjects = async () => {
     setIsLoadingProjects(true);
     try {
-      const res = await fetch('/api/projects');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await listProjects();
       setProjects(Array.isArray(data?.projects) ? data.projects : []);
     } catch {
       setProjects([]);
@@ -177,23 +174,13 @@ export default function App() {
   const refreshUsers = async () => {
     setIsLoadingUsers(true);
     try {
-      const res = await fetch('/api/users/linkable');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await listLinkableUsers();
       setUsers(Array.isArray(data?.users) ? data.users : []);
     } catch {
       setUsers([]);
     } finally {
       setIsLoadingUsers(false);
     }
-  };
-
-  const formatApiError = (data, fallback) => {
-    const parts = [data?.error, data?.detail].filter(Boolean);
-    if (parts.length > 0) {
-      return parts.join(' - ');
-    }
-    return fallback;
   };
 
   const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod, runId = null) => {
@@ -205,11 +192,8 @@ export default function App() {
     setIsLoadingIntelligence(true);
     setIntelligenceError(null);
     try {
-      const params = new URLSearchParams({ period });
-      if (runId) params.set('run_id', runId);
-      const res = await fetch(`/api/projects/${scopedProjectId}/intelligence?${params.toString()}`);
-      if (!res.ok) throw new Error(`Intelligence request failed: ${res.status}`);
-      setIntelligence(await res.json());
+      const data = await getProjectIntelligence(scopedProjectId, { period, run_id: runId });
+      setIntelligence(data);
       setLastIntelligenceSyncAt(new Date().toISOString());
     } catch (error) {
       console.error('Failed to load project intelligence', error);
@@ -304,13 +288,7 @@ export default function App() {
   // on a full projects refetch.
   const createProject = async (payload) => {
     try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to add project (${res.status})`));
+      const data = await apiCreateProject(payload);
       const created = data?.project ?? null;
       if (created) {
         setProjects((prev) => [...prev, created]);
@@ -326,13 +304,7 @@ export default function App() {
 
   const updateProject = async (projectId, payload) => {
     try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update project (${res.status})`));
+      const data = await apiUpdateProject(projectId, payload);
       const updated = data?.project ?? null;
       if (updated) {
         setProjects((prev) => prev.map((project) => (Number(project.id) === Number(projectId) ? updated : project)));
@@ -348,13 +320,7 @@ export default function App() {
 
   const setProjectUsers = async (projectId, userIds) => {
     try {
-      const res = await fetch(`/api/projects/${projectId}/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_ids: userIds }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to update linked users (${res.status})`));
+      const data = await apiSetProjectUsers(projectId, userIds);
       await refreshProjects();
       return data;
     } catch (error) {
@@ -365,9 +331,7 @@ export default function App() {
 
   const deleteProject = async (projectId) => {
     try {
-      const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) throw new Error(formatApiError(data, `Failed to delete project (${res.status})`));
+      await apiDeleteProject(projectId);
       await refreshProjects();
       if (Number(selectedProjectId) === Number(projectId)) {
         setSelectedProjectId(null);

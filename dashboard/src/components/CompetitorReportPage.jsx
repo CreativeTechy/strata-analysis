@@ -19,7 +19,7 @@ import {
 import {
   EFFORT_LABELS, IMPACT_LABELS, SIZE_TIER_LABELS, URGENCY_LABELS, avatarGradient,
   formatDate, getFinding, initials, relativeTime, validateFinding,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import '../styles/Competitors.css';
 
 export default function CompetitorReportPage() {

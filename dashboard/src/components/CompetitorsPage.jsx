@@ -14,7 +14,7 @@ import {
 import {
   SIZE_TIER_LABELS, avatarGradient, getStudy, importCompetitors, initials,
   listCompetitors, setCompetitorStatus, updateCompetitor,
-} from '../competitorApi.js';
+} from '../api/competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
 import { useAuth } from '../auth/useAuth.js';
 import {

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ScanSearch, RefreshCw, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
+import { getAnalysisStatus, listAnalysisErrors, reprocessArticle, analyzeArticles } from '../api/articlesApi.js';
 
 const STATUS_ORDER = ['success', 'failed', 'processing', 'pending', 'partial'];
 const STATUS_COLORS = {
@@ -52,11 +53,10 @@ export default function AnalysisPage({ projects = [] }) {
       setStatusLoading(true);
       setStatusError('');
       try {
-        const params = new URLSearchParams();
-        if (projectFilter !== 'all') params.set('project_id', projectFilter);
-        const res = await fetch(`/api/analysis/status?${params.toString()}`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || data?.detail || `Failed to load analysis status (${res.status})`);
+        const data = await getAnalysisStatus(
+          { project_id: projectFilter !== 'all' ? projectFilter : undefined },
+          controller.signal,
+        );
         setStatusCounts(data?.counts || {});
       } catch (err) {
         if (err?.name !== 'AbortError') {
@@ -77,11 +77,10 @@ export default function AnalysisPage({ projects = [] }) {
       setErrorsLoading(true);
       setErrorsError('');
       try {
-        const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
-        if (projectFilter !== 'all') params.set('project_id', projectFilter);
-        const res = await fetch(`/api/articles/analysis-errors?${params.toString()}`, { signal: controller.signal });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || data?.detail || `Failed to load analysis errors (${res.status})`);
+        const data = await listAnalysisErrors(
+          { limit: PAGE_SIZE, offset, project_id: projectFilter !== 'all' ? projectFilter : undefined },
+          controller.signal,
+        );
         setErrorsPage({
           errors: Array.isArray(data?.errors) ? data.errors : [],
           total: Number(data?.total) || 0,
@@ -115,9 +114,7 @@ export default function AnalysisPage({ projects = [] }) {
     setActionError('');
     setReprocessingIds((current) => [...current, articleId]);
     try {
-      const res = await fetch(`/api/articles/${articleId}/reprocess`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || data?.detail || `Failed to reprocess article (${res.status})`);
+      await reprocessArticle(articleId);
     } catch (err) {
       setActionError(err?.message || 'Failed to reprocess article.');
     } finally {
@@ -133,13 +130,7 @@ export default function AnalysisPage({ projects = [] }) {
     const targetIds = selectedIds;
     setReprocessingIds((current) => [...new Set([...current, ...targetIds])]);
     try {
-      const res = await fetch('/api/articles/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ article_ids: targetIds, force: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || data?.detail || `Failed to reprocess selected articles (${res.status})`);
+      await analyzeArticles({ article_ids: targetIds, force: true });
     } catch (err) {
       setActionError(err?.message || 'Failed to reprocess selected articles.');
     } finally {

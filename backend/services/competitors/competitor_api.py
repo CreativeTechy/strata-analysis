@@ -26,23 +26,41 @@ from services.competitors import competitors_store
 from services.competitors import document_analysis
 from services.competitors.countries import validate_countries
 from services.auth.auth import require_permission
+from services.auth.authz import ensure_project_visible, visible_project_ids_or_none
 from services.projects.projects_store import delete_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
 
 
-def _project_or_404(project_id: int) -> dict:
+def _project_or_404(project_id: int, user: dict) -> dict:
+    """Same "can't see it, so it doesn't exist" shape as main.py's project
+    routes: 404 rather than 403 for a study outside this user's project_users
+    links, not just a permission check on the route itself."""
     project = competitors_store.get_study(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_visible(project_id, user)
     return project
 
 
-def _competitor_or_404(competitor_id: int) -> dict:
+def _competitor_or_404(competitor_id: int, user: dict) -> dict:
     competitor = competitors_store.get_competitor(competitor_id)
     if not competitor:
         raise HTTPException(status_code=404, detail="Competitor not found")
+    ensure_project_visible(competitor["project_id"], user)
     return competitor
+
+
+def _document_or_404(document_id: int, user: dict) -> dict:
+    """Same visibility check as _project_or_404, resolved from the document's
+    own project_id - every document-id-scoped route below takes an id with no
+    project_id in the path, so it can't rely on the caller having already
+    proven visibility the way the study-id-scoped routes can."""
+    document = competitor_documents_store.get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    ensure_project_visible(document["project_id"], user)
+    return document
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +69,7 @@ def _competitor_or_404(competitor_id: int) -> dict:
 @router.get("/studies")
 def list_studies(user: dict = Depends(require_permission("competitors.view"))):
     """Competitor-mode projects with enough summary to render the index."""
-    return {"studies": competitors_store.list_studies()}
+    return {"studies": competitors_store.list_studies(visible_project_ids=visible_project_ids_or_none(user))}
 
 
 @router.get("/studies/{project_id}/findings/recent")
@@ -62,7 +80,7 @@ def list_recent_study_findings(
     user: dict = Depends(require_permission("competitors.view")),
 ):
     """Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     limit = max(1, min(int(limit), 50))
     offset = max(0, int(offset))
     findings, total = competitor_analysis.list_recent_findings(project_id, limit=limit, offset=offset)
@@ -87,7 +105,7 @@ def create_study(payload: dict, user: dict = Depends(require_permission("competi
 
 @router.get("/studies/{project_id}")
 def get_study(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
-    project = _project_or_404(project_id)
+    project = _project_or_404(project_id, user)
     return {
         "study": project,
         "profile": business_profile_store.get_profile(project_id),
@@ -98,7 +116,7 @@ def get_study(project_id: int, user: dict = Depends(require_permission("competit
 
 @router.put("/studies/{project_id}")
 def update_study(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     payload = payload or {}
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -116,7 +134,7 @@ def update_study(project_id: int, payload: dict, user: dict = Depends(require_pe
 
 @router.delete("/studies/{project_id}")
 def remove_study(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     if not delete_project(project_id):
         raise HTTPException(status_code=500, detail="Unable to delete the study.")
     return {"ok": True}
@@ -127,7 +145,7 @@ def remove_study(project_id: int, user: dict = Depends(require_permission("compe
 # --------------------------------------------------------------------------- #
 @router.get("/studies/{project_id}/profile")
 def get_profile(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"profile": business_profile_store.get_profile(project_id)}
 
 
@@ -140,7 +158,7 @@ def build_profile(project_id: int, payload: dict, user: dict = Depends(require_p
     but produces weaker competitor judgements, and that should be visible
     rather than inferred later from poor matches.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     payload = payload or {}
     if not str(payload.get("name") or "").strip():
         raise HTTPException(status_code=400, detail="A business name is required.")
@@ -152,7 +170,7 @@ def build_profile(project_id: int, payload: dict, user: dict = Depends(require_p
 @router.put("/studies/{project_id}/profile")
 def update_profile(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
     """Save user edits to the profile without re-deriving it."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     payload = payload or {}
     if payload.get("target_countries") is not None and not isinstance(payload["target_countries"], list):
         raise HTTPException(status_code=400, detail="target_countries must be a list of ISO country codes.")
@@ -171,12 +189,13 @@ def update_profile(project_id: int, payload: dict, user: dict = Depends(require_
 def list_documents(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
     """Poll this while any document's status is 'uploaded'/'processing' — that's
     the only progress signal extraction has, no separate run-tracking needed."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"documents": competitor_documents_store.list_documents(project_id)}
 
 
 @router.get("/documents/{document_id}/text")
 def get_document_text(document_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    _document_or_404(document_id, user)
     text = competitor_documents_store.get_document_text(document_id)
     if text is None:
         raise HTTPException(status_code=404, detail="No extracted text for this document.")
@@ -187,6 +206,7 @@ def get_document_text(document_id: int, user: dict = Depends(require_permission(
 def list_document_chunks(document_id: int, user: dict = Depends(require_permission("competitors.view"))):
     """Per-page/sheet detail behind a document's rolled-up status and
     extraction_error — which part failed and why, not just that something did."""
+    _document_or_404(document_id, user)
     return {"chunks": competitor_documents_store.list_chunks(document_id)}
 
 
@@ -204,7 +224,7 @@ async def upload_documents(
     same reasoning as competitor discovery below. The response returns as soon
     as files are saved; the wizard polls GET .../documents for extraction status.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     if not files:
         raise HTTPException(status_code=400, detail="Choose at least one file to upload.")
     if len(files) > competitor_documents_store.MAX_FILES_PER_UPLOAD:
@@ -241,6 +261,7 @@ async def upload_documents(
 
 @router.delete("/documents/{document_id}")
 def remove_document(document_id: int, user: dict = Depends(require_permission("competitors.manage"))):
+    _document_or_404(document_id, user)
     if not competitor_documents_store.delete_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
     return {"ok": True}
@@ -254,7 +275,7 @@ def remove_document(document_id: int, user: dict = Depends(require_permission("c
 def list_document_articles(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
     """Poll this while any document's articles_status is 'generating' — same
     shape as list_documents for extraction, no separate run-tracking needed."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"articles": competitor_document_articles.list_candidates(project_id)}
 
 
@@ -265,6 +286,11 @@ def set_document_article_status(
     """Approving materializes the candidate into a real `articles` row
     (see competitor_document_articles._materialize); rejecting just marks it."""
     status = str((payload or {}).get("status") or "").strip().lower()
+    existing = competitor_document_articles.get_candidate(candidate_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Document article not found")
+    ensure_project_visible(existing["project_id"], user)
+
     candidate = competitor_document_articles.set_status(candidate_id, status)
     if not candidate:
         raise HTTPException(status_code=400, detail="status must be pending, approved, or rejected.")
@@ -273,7 +299,7 @@ def set_document_article_status(
 
 @router.post("/studies/{project_id}/document-articles/approve-all")
 def approve_all_document_articles(project_id: int, user: dict = Depends(require_permission("competitors.manage"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"articles": competitor_document_articles.approve_all(project_id)}
 
 
@@ -286,7 +312,7 @@ def analyze_documents(project_id: int, user: dict = Depends(require_permission("
     see document_analysis.py for why that ordering has to happen here rather
     than at upload time.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     result = document_analysis.analyze_documents(project_id)
     if result.get("error"):
         status = 502 if result.get("error_code") else 400
@@ -302,13 +328,13 @@ def analyze_documents(project_id: int, user: dict = Depends(require_permission("
 # --------------------------------------------------------------------------- #
 @router.get("/studies/{project_id}/competitors")
 def list_competitors(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"competitors": competitors_store.competitor_overview(project_id)}
 
 
 @router.post("/studies/{project_id}/competitors")
 def add_competitor(project_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     payload = payload or {}
     if not str(payload.get("name") or "").strip():
         raise HTTPException(status_code=400, detail="A competitor name is required.")
@@ -335,7 +361,7 @@ async def import_competitors(
     enough to read and upsert inline rather than as a background job like
     document extraction below.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     raw = (await file.read()).decode("utf-8", errors="replace")
     if not raw.strip():
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
@@ -380,7 +406,7 @@ async def import_competitors(
 
 @router.put("/competitors/{competitor_id}")
 def update_competitor(competitor_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
-    competitor = _competitor_or_404(competitor_id)
+    competitor = _competitor_or_404(competitor_id, user)
     record = competitors_store.upsert_competitor(
         competitor["project_id"], {**competitor, **(payload or {})}
     )
@@ -396,7 +422,7 @@ def set_status(competitor_id: int, payload: dict, user: dict = Depends(require_p
     a study named from documents can surface companies that are mentioned but
     are not who the user is watching.
     """
-    _competitor_or_404(competitor_id)
+    _competitor_or_404(competitor_id, user)
     status = str((payload or {}).get("status") or "").strip().lower()
     record = competitors_store.set_competitor_status(competitor_id, status)
     if not record:
@@ -406,7 +432,7 @@ def set_status(competitor_id: int, payload: dict, user: dict = Depends(require_p
 
 @router.delete("/competitors/{competitor_id}")
 def remove_competitor(competitor_id: int, user: dict = Depends(require_permission("competitors.manage"))):
-    competitor = _competitor_or_404(competitor_id)
+    competitor = _competitor_or_404(competitor_id, user)
     competitors_store.delete_competitor(competitor_id)
     competitors_store.rerank_competitors(competitor["project_id"])
     return {"ok": True}
@@ -423,7 +449,7 @@ def analysis_scope(project_id: int, user: dict = Depends(require_permission("com
     """This study's documents annotated with approved-article counts and
     whether a completed run already analyzed each - what the run-analysis
     dialog renders its scope choices (and the hand-pick checklist) from."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"documents": analysis_runs_store.documents_with_scope(project_id)}
 
 
@@ -431,7 +457,7 @@ def analysis_scope(project_id: int, user: dict = Depends(require_permission("com
 def list_analysis_runs(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
     """This study's analysis-run history, newest first - the "Analysis run"
     filter's source, and what "Analysis #N" is numbered from."""
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {"runs": analysis_runs_store.list_runs(project_id)}
 
 
@@ -456,7 +482,7 @@ def analyze(
     everything slow moves into the job, and the UI polls
     GET .../analyze/{run_id} for live progress.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     payload = payload or {}
     scope = str(payload.get("scope") or "pending").strip().lower()
     if scope not in ANALYSIS_SCOPES:
@@ -492,7 +518,7 @@ def analyze_status(project_id: int, run_id: int, user: dict = Depends(require_pe
     new cards without a second round trip, matching what the old synchronous
     endpoint handed back.
     """
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     run = analysis_runs_store.get_run(run_id)
     if not run or run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Analysis run not found.")
@@ -507,7 +533,7 @@ def list_findings(project_id: int, impact: str | None = None, competitor_id: int
                   date_from: str | None = None, date_to: str | None = None,
                   pipeline_run_id: str | None = None, analysis_run_id: int | None = None,
                   user: dict = Depends(require_permission("competitors.view"))):
-    _project_or_404(project_id)
+    _project_or_404(project_id, user)
     return {
         "findings": competitor_analysis.list_findings(
             project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
@@ -523,6 +549,7 @@ def get_finding(finding_id: int, user: dict = Depends(require_permission("compet
     finding = competitor_analysis.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
+    ensure_project_visible(finding["project_id"], user)
     return {
         "finding": finding,
         "rejected_evidence": competitor_analysis.rejected_evidence(finding["competitor_id"]),
@@ -534,6 +561,11 @@ def get_finding(finding_id: int, user: dict = Depends(require_permission("compet
 
 @router.post("/findings/{finding_id}/validate")
 def validate_finding(finding_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
+    existing = competitor_analysis.get_finding(finding_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    ensure_project_visible(existing["project_id"], user)
+
     status = str((payload or {}).get("status") or "").strip().lower()
     finding = competitor_analysis.set_finding_validation(
         finding_id, status, str((payload or {}).get("notes") or "")

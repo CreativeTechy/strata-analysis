@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 STATUSES = ("active", "disabled")
 
+# Values that have shipped as the example ADMIN_BOOTSTRAP_PASSWORD (or are
+# otherwise the first thing anyone would guess) - bootstrapping with one of
+# these would make the very first admin account's credential a known value,
+# so bootstrap_admin() treats it the same as an unset password.
+WEAK_BOOTSTRAP_PASSWORDS = {"password", "admin", "changeme", "change_me_before_first_boot"}
+
 USER_SELECT = "u.id, u.username, u.email, u.role_id, r.name as role, u.status, u.last_login_at, u.created_at, u.updated_at"
 USER_FROM = "from users u left join roles r on r.id = u.role_id"
 
@@ -159,6 +165,12 @@ def bootstrap_admin() -> None:
             logger.warning(
                 "No users exist yet and ADMIN_BOOTSTRAP_USERNAME/ADMIN_BOOTSTRAP_PASSWORD "
                 "are not set - skipping admin bootstrap. Set them in backend/.env and restart."
+            )
+            return
+        if config.ADMIN_BOOTSTRAP_PASSWORD.strip().lower() in WEAK_BOOTSTRAP_PASSWORDS:
+            logger.warning(
+                "ADMIN_BOOTSTRAP_PASSWORD is a known default value - refusing to bootstrap an "
+                "admin account with it. Set a real password in backend/.env and restart."
             )
             return
         admin_role = permissions_store.get_role_by_name("admin")
