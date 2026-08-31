@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, FolderInput, X } from 'lucide-react';
+import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
+import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
 import ArticleDetailModal from './articles/ArticleDetailModal.jsx';
 import ArticleCard from './articles/ArticleCard.jsx';
@@ -71,6 +72,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [documentImportStatus, setDocumentImportStatus] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
     try {
       return window.localStorage.getItem('articles-view-mode') === 'list' ? 'list' : 'card';
@@ -552,6 +555,37 @@ export default function ArticlesPage({ project = null, projectId = null, project
           }}
         />
 
+        <ConfirmModal
+          open={showExportModal}
+          title="Export articles?"
+          message={`This will export ${total.toLocaleString()} article${total === 1 ? '' : 's'} matching your current filters as a JSONL file.`}
+          confirmLabel={exporting ? 'Exporting...' : 'Export'}
+          cancelLabel="Cancel"
+          onClose={() => {
+            if (!exporting) setShowExportModal(false);
+          }}
+          onConfirm={async () => {
+            if (exporting) return;
+            setShowExportModal(false);
+            await handleExportJsonl();
+          }}
+        />
+
+        <ImportOptionsModal
+          open={showImportModal}
+          hasProject={projectFilter !== 'all'}
+          disabled={importing}
+          onClose={() => setShowImportModal(false)}
+          onChooseFiles={() => {
+            setShowImportModal(false);
+            importInputRef.current?.click();
+          }}
+          onChooseFolder={() => {
+            setShowImportModal(false);
+            importFolderInputRef.current?.click();
+          }}
+        />
+
         <ArticleDetailModal
           open={detailArticleId != null}
           canReprocess={canReprocess}
@@ -705,9 +739,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 </option>
               ))}
             </select>
-            <button className="btn-secondary" onClick={handleExportJsonl} disabled={loading || exporting || deletingAll}>
-              <Download size={16} />
-              {exporting ? 'Exporting...' : 'Export JSONL'}
+            <button className="btn-secondary" onClick={() => setShowExportModal(true)} disabled={loading || exporting || deletingAll}>
+              <Upload size={16} />
+              {exporting ? 'Exporting...' : 'Export'}
             </button>
             {canImport && (
               <>
@@ -719,19 +753,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   onChange={handleImportFile}
                   style={{ display: 'none' }}
                 />
-                <button
-                  className="btn-secondary"
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={loading || importing || deletingAll}
-                  title={
-                    projectFilter === 'all'
-                      ? 'Import one or more JSONL exports. Articles are not linked to a project. Select a project to also import PDF, Word, Excel, CSV, image, or JSON documents.'
-                      : 'Import JSONL exports, or PDF/Word/Excel/CSV/image/JSON documents, into the project currently in scope.'
-                  }
-                >
-                  <Upload size={16} />
-                  {importing ? 'Importing...' : 'Import Files'}
-                </button>
                 <input
                   ref={importFolderInputRef}
                   type="file"
@@ -743,45 +764,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 />
                 <button
                   className="btn-secondary"
-                  onClick={() => importFolderInputRef.current?.click()}
+                  onClick={() => setShowImportModal(true)}
                   disabled={loading || importing || deletingAll}
-                  title={
-                    projectFilter === 'all'
-                      ? 'Import every JSONL export in a folder. Articles are not linked to a project. Select a project to also import PDF, Word, Excel, CSV, image, or JSON documents.'
-                      : 'Import every JSONL export, or PDF/Word/Excel/CSV/image/JSON document, in a folder into the project currently in scope.'
-                  }
                 >
-                  <FolderInput size={16} />
-                  {importing ? 'Importing...' : 'Import Folder'}
+                  <Download size={16} />
+                  {importing ? 'Importing...' : 'Import'}
                 </button>
               </>
             )}
-            <div className="articles-pagination" role="navigation" aria-label="Articles pagination">
-              <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
-                <ChevronLeft size={16} /> Previous
-              </button>
-              {pageNumbers.map((page, index) =>
-                page === '...' ? (
-                  <span key={`ellipsis-${index}`} className="articles-page-ellipsis">
-                    &hellip;
-                  </span>
-                ) : (
-                  <button
-                    key={page}
-                    type="button"
-                    className={`articles-page-btn ${page === currentPage ? 'active' : ''}`}
-                    onClick={() => goToPage(page)}
-                    disabled={loading}
-                    aria-current={page === currentPage ? 'page' : undefined}
-                  >
-                    {page}
-                  </button>
-                )
-              )}
-              <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
-                Next <ChevronRight size={16} />
-              </button>
-            </div>
           </div>
         </div>
 
@@ -877,6 +867,35 @@ export default function ArticlesPage({ project = null, projectId = null, project
               </div>
             )}
           </>
+        )}
+
+        {!isInitialLoading && articles.length > 0 && (
+          <div className="articles-pagination" role="navigation" aria-label="Articles pagination">
+            <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
+              <ChevronLeft size={16} /> Previous
+            </button>
+            {pageNumbers.map((page, index) =>
+              page === '...' ? (
+                <span key={`ellipsis-${index}`} className="articles-page-ellipsis">
+                  &hellip;
+                </span>
+              ) : (
+                <button
+                  key={page}
+                  type="button"
+                  className={`articles-page-btn ${page === currentPage ? 'active' : ''}`}
+                  onClick={() => goToPage(page)}
+                  disabled={loading}
+                  aria-current={page === currentPage ? 'page' : undefined}
+                >
+                  {page}
+                </button>
+              )
+            )}
+            <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
+              Next <ChevronRight size={16} />
+            </button>
+          </div>
         )}
       </div>
     </div>

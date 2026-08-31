@@ -147,8 +147,10 @@
 .articles-page-shell .articles-pagination {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   flex-wrap: wrap;
+  margin-top: 24px;
 }
 
 .articles-page-shell .articles-page-btn {
@@ -245,6 +247,66 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
   opacity: 0.65;
+}
+
+/* --- Import options modal: file vs. folder pick --- */
+.import-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.import-option-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.import-option-card:hover:not(:disabled) {
+  border-color: rgba(255, 107, 53, 0.35);
+  background: rgba(255, 107, 53, 0.06);
+}
+
+.import-option-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.import-option-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ff6b35, #ff8a5c);
+  color: #fff;
+}
+
+.import-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.import-option-copy strong {
+  font-size: 0.95rem;
+}
+
+.import-option-copy span {
+  color: var(--text-light);
+  font-size: 0.85rem;
 }
 
 .articles-page-shell .articles-import-headline {
