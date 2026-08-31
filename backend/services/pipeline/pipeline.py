@@ -30,6 +30,7 @@ provider.
 import logging
 import threading
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -38,6 +39,8 @@ import db
 from core.logging import reset_run_id, set_run_id
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
+    create_pipeline_run,
+    get_active_run_for_project,
     update_pipeline_run,
     upsert_pipeline_run_document_stats,
 )
@@ -98,6 +101,36 @@ def cancel_pipeline_run(run_id: str) -> bool:
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def start_or_reuse_analysis_run(project_id: int) -> dict:
+    """Start a tracked pipeline run over this project's pending articles, or
+    hand back whichever run is already active for it.
+
+    Every place that lands new articles in a project (a document approval, a
+    JSONL import) calls this so analysis always shows up as a real run on the
+    Analysis Runs page rather than loose untracked background work. Spawns its
+    own thread instead of relying on FastAPI's BackgroundTasks, so it can be
+    called from any background job - not just from inside a request handler.
+
+    One run at a time per project (same rule POST /api/analysis-runs
+    enforces): a second worker analyzing the same rows would write over the
+    first. A caller invoked while an earlier run is already past its
+    `prepare` stage won't have its rows picked up by that run - they stay
+    pending until the next run starts.
+    """
+    active = get_active_run_for_project(project_id)
+    if active:
+        return {"run_id": active["id"], "started": False}
+    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
+    run_id = run["id"] if run else uuid.uuid4().hex
+    threading.Thread(
+        target=run_analysis_pipeline,
+        args=(run_id, project_id, "pending"),
+        name=f"analysis-run-{run_id}",
+        daemon=True,
+    ).start()
+    return {"run_id": run_id, "started": True}
 
 
 # --------------------------------------------------------------------------- #
