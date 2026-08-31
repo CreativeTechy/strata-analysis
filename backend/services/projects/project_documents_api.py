@@ -5,7 +5,7 @@ services/competitors/competitor_api.py's document endpoints - same shape,
 same reasoning (upload/extraction is a distinct enough concern to keep out of
 main.py's growing route list), but writing to project_documents/
 project_document_articles instead of the competitor-study tables, and ending
-in a queued sentiment reanalysis rather than a competitor-findings run.
+in a tracked analysis run rather than a competitor-findings run.
 
 Extraction and article-splitting both run as FastAPI BackgroundTasks - OCR on
 a scanned PDF, and the LLM call that splits text into candidates, can both run
@@ -23,13 +23,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
-import uuid
-
-from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible
-from services.pipeline.pipeline import run_analysis_pipeline
-from services.pipeline.pipeline_runs import create_pipeline_run, get_active_run_for_project
+from services.pipeline.pipeline import start_or_reuse_analysis_run
 from services.projects import project_document_articles, project_documents_store
 from services.projects.projects_store import get_project
 
@@ -158,13 +154,14 @@ def list_document_articles(project_id: int, user: dict = Depends(require_permiss
 def set_document_article_status(
     candidate_id: int,
     payload: dict,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Approving materializes the candidate into a real `articles` row (see
-    project_document_articles._materialize) and queues sentiment analysis for
-    it; rejecting just marks it. Re-approving an already-approved candidate is
-    a no-op on the article itself - only a first approval queues analysis."""
+    project_document_articles._materialize) and starts a tracked analysis run
+    (or joins whichever one is already active) so it shows up on the Analysis
+    Runs page; rejecting just marks it. Re-approving an already-approved
+    candidate is a no-op on the article itself - only a first approval starts
+    a run."""
     status = str((payload or {}).get("status") or "").strip().lower()
     existing = project_document_articles.get_candidate(candidate_id)
     if not existing:
@@ -176,52 +173,41 @@ def set_document_article_status(
     if not candidate:
         raise HTTPException(status_code=400, detail="status must be pending, approved, or rejected.")
 
+    run_id = None
     if status == "approved" and not had_article_id and candidate.get("article_id"):
-        mark_processing(candidate["article_id"])
-        background_tasks.add_task(reanalyze_article, candidate["article_id"])
-    return {"article": candidate}
+        run_id = start_or_reuse_analysis_run(existing["project_id"])["run_id"]
+    return {"article": candidate, "run_id": run_id}
 
 
 @router.post("/{project_id}/document-articles/approve-all")
 def approve_all_document_articles(
     project_id: int,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     _project_or_404(project_id, user)
     approved = project_document_articles.approve_all(project_id)
-    for candidate in approved:
-        if candidate.get("article_id"):
-            mark_processing(candidate["article_id"])
-            background_tasks.add_task(reanalyze_article, candidate["article_id"])
-    return {"articles": approved}
+    run_id = None
+    if any(candidate.get("article_id") for candidate in approved):
+        run_id = start_or_reuse_analysis_run(project_id)["run_id"]
+    return {"articles": approved, "run_id": run_id}
 
 
 @router.post("/{project_id}/document-articles/reanalyze")
 def reanalyze_document_articles(
     project_id: int,
-    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Re-run analysis for the approved candidates whose articles haven't been
-    analyzed successfully - a manual retry for whichever ones failed.
-
-    Goes through the tracked analysis pipeline rather than firing loose
-    background tasks, so the retry shows up on the Analysis Runs page with the
-    same live counters, per-document breakdown and stop button as any other
-    run. Approving a single candidate still analyzes it inline (see
-    set_document_article_status): that is one article and the wizard wants the
-    answer immediately, not a run to go watch.
+    analyzed successfully - a manual retry for whichever ones failed. Same
+    tracked run as approving a candidate goes through (see
+    set_document_article_status / approve_all_document_articles) - this is
+    just the retry entry point for when nothing is left to approve.
     """
     _project_or_404(project_id, user)
     if not project_document_articles.approved_article_ids(project_id):
         return {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."}
 
-    active = get_active_run_for_project(project_id)
-    if active:
-        return {"run_id": active["id"], "queued": 0, "message": "An analysis run is already active for this project."}
-
-    run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
-    run_id = run["id"] if run else uuid.uuid4().hex
-    background_tasks.add_task(run_analysis_pipeline, run_id, project_id, "pending")
-    return {"run_id": run_id, "message": "Analysis run started."}
+    run_info = start_or_reuse_analysis_run(project_id)
+    if not run_info["started"]:
+        return {"run_id": run_info["run_id"], "queued": 0, "message": "An analysis run is already active for this project."}
+    return {"run_id": run_info["run_id"], "message": "Analysis run started."}

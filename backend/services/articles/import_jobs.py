@@ -23,6 +23,7 @@ import time
 
 from services.articles.store import ARTICLE_MUTABLE_FIELDS, save_articles
 from services.competitors.job_runs import JobRegistry
+from services.pipeline.pipeline import start_or_reuse_analysis_run
 
 # Rows per upsert batch. Deliberately smaller than the export's page size: each
 # saved article also writes its project link, story group and idea clusters, so
@@ -223,5 +224,14 @@ def run_import_job(run_id: str, path: str, project_id: int | None = None) -> Non
     )
     if skipped:
         summary += f" Skipped {skipped:,} unusable line{'' if skipped == 1 else 's'}."
+
+    # 'all' (unlinked) imports have no project to run analysis against - only
+    # a project-scoped import can start one.
+    analysis_run_id = None
+    if project_id is not None and saved > 0:
+        run_info = start_or_reuse_analysis_run(project_id)
+        analysis_run_id = run_info["run_id"]
+        summary += " Starting analysis." if run_info["started"] else " Joining the active analysis run."
+
     _import_runs.append_log(run_id, summary)
-    publish(status="success", stage="done", message=summary)
+    publish(status="success", stage="done", message=summary, analysis_run_id=analysis_run_id)
