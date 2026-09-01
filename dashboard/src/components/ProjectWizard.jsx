@@ -6,6 +6,7 @@ import TermChipsField from './project-wizard/TermChipsField.jsx';
 import UserAssignField from './project-wizard/UserAssignField.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import { emptyDraft, LOCATION_TYPE_OPTIONS, sanitizeTermArray, normalizeDraftForCompare, toDateInput } from '../lib/projectHelpers.js';
+import { getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/Projects.css';
 import {
   uploadDocuments as uploadProjectDocuments,
@@ -30,7 +31,13 @@ import {
   ListChecks,
   ScanText,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+
+// Article candidates are already fetched in full for the project, so review-step
+// pagination just slices the in-memory list - no extra API calls needed.
+const CANDIDATES_PAGE_SIZE = 10;
 
 // The project create/edit flow, extracted out of ProjectsPage.jsx: a project
 // is built from uploaded documents, so there is one wizard - describe it,
@@ -112,6 +119,31 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     });
     return Array.from(map.entries());
   }, [articleCandidates]);
+  // Grouped-by-document order (not raw articleCandidates order) so a page's
+  // slice never interleaves two documents' rows.
+  const orderedCandidates = useMemo(
+    () => candidatesByDocument.flatMap(([, candidates]) => candidates),
+    [candidatesByDocument]
+  );
+  const [candidatesPage, setCandidatesPage] = useState(1);
+  const totalCandidatePages = Math.max(1, Math.ceil(orderedCandidates.length / CANDIDATES_PAGE_SIZE));
+  useEffect(() => {
+    setCandidatesPage((prev) => Math.min(prev, totalCandidatePages));
+  }, [totalCandidatePages]);
+  const candidatePageNumbers = useMemo(
+    () => getPageNumbers(candidatesPage, totalCandidatePages),
+    [candidatesPage, totalCandidatePages]
+  );
+  const pagedCandidatesByDocument = useMemo(() => {
+    const start = (candidatesPage - 1) * CANDIDATES_PAGE_SIZE;
+    const pageCandidates = orderedCandidates.slice(start, start + CANDIDATES_PAGE_SIZE);
+    const map = new Map();
+    pageCandidates.forEach((candidate) => {
+      if (!map.has(candidate.document_id)) map.set(candidate.document_id, []);
+      map.get(candidate.document_id).push(candidate);
+    });
+    return Array.from(map.entries());
+  }, [orderedCandidates, candidatesPage]);
   const pendingCandidateCount = useMemo(
     () => articleCandidates.filter((candidate) => candidate.status === 'pending').length,
     [articleCandidates]
@@ -470,7 +502,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
   const stepMeta = {
     basics: { label: 'Project basics', detail: 'Name, description, and topics', complete: step1Complete },
     users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
-    upload: { label: 'Upload documents', detail: 'Add the files to analyze', complete: documents.length > 0 },
+    upload: { label: 'Upload documents', detail: 'Add the files to analyze', complete: true },
     review: { label: 'Review articles', detail: 'Approve what should be analyzed', complete: true },
     finish: { label: 'Finish', detail: 'Review analysis and open workspace', complete: true },
   };
@@ -886,7 +918,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 <Upload size={18} />
               </div>
               <strong>No documents yet</strong>
-              <span>Drop files above or click to browse.</span>
+              <span>Drop files above or click to browse. Uploading is optional — you can skip this and add articles to the project later.</span>
             </div>
           ) : null}
 
@@ -898,9 +930,9 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               type="button"
               className="btn-primary wizard-btn-continue"
               onClick={() => setWizardStep(STEP.review)}
-              disabled={!documents.length || uploadingDocs}
+              disabled={uploadingDocs}
             >
-              Continue to review articles
+              {documents.length ? 'Continue to review articles' : 'Skip for now'}
             </button>
           </div>
         </div>
@@ -937,7 +969,9 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               <span>
                 {documents.some((document) => document.articles_status === 'failed')
                   ? 'Splitting failed for at least one document — try re-uploading it.'
-                  : 'Go back and upload a document to get started.'}
+                  : documents.length
+                  ? 'Go back and upload a document to get started.'
+                  : 'No documents were uploaded. You can finish the project now and add articles later.'}
               </span>
             </div>
           ) : (
@@ -964,7 +998,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 </button>
               </div>
 
-              {candidatesByDocument.map(([documentId, candidates]) => (
+              {pagedCandidatesByDocument.map(([documentId, candidates]) => (
                 <div key={documentId} style={{ marginBottom: 14 }}>
                   <div
                     style={{
@@ -1030,6 +1064,44 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                   </div>
                 </div>
               ))}
+
+              {totalCandidatePages > 1 && (
+                <div className="proj-pagination" role="navigation" aria-label="Articles pagination">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setCandidatesPage((prev) => Math.max(1, prev - 1))}
+                    disabled={candidatesPage <= 1}
+                  >
+                    <ChevronLeft size={16} /> Previous
+                  </button>
+                  {candidatePageNumbers.map((page, index) =>
+                    page === '...' ? (
+                      <span key={`ellipsis-${index}`} className="proj-page-ellipsis">
+                        &hellip;
+                      </span>
+                    ) : (
+                      <button
+                        key={page}
+                        type="button"
+                        className={`proj-page-btn ${page === candidatesPage ? 'active' : ''}`}
+                        onClick={() => setCandidatesPage(page)}
+                        aria-current={page === candidatesPage ? 'page' : undefined}
+                      >
+                        {page}
+                      </button>
+                    )
+                  )}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setCandidatesPage((prev) => Math.min(totalCandidatePages, prev + 1))}
+                    disabled={candidatesPage >= totalCandidatePages}
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
             </>
           )}
 
