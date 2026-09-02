@@ -98,6 +98,34 @@ describe('ProjectsPage create wizard', () => {
     await waitFor(() => expect(screen.getByText('Step 2. Upload documents')).toBeInTheDocument())
     expect(onCreateProject).toHaveBeenCalled()
   })
+
+  it('lets the user choose an active project on the finish step', async () => {
+    useAuth.mockReturnValue({ hasPermission: () => true })
+    const onCreateProject = vi.fn(() => Promise.resolve({ project: { id: 99 } }))
+    const onUpdateProject = vi.fn(() => Promise.resolve({ project: { id: 99 } }))
+    renderAt('/projects/new', { onCreateProject, onUpdateProject })
+
+    fireEvent.change(screen.getByPlaceholderText('Project name'), { target: { value: 'New Study' } })
+    fireEvent.change(screen.getByPlaceholderText('Project description'), { target: { value: 'Some description' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    await waitFor(() => expect(screen.getByText('Step 3. Upload documents')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to finish' }))
+
+    const statusSelect = screen.getByRole('combobox', { name: 'Project status' })
+    expect(statusSelect).toHaveValue('draft')
+    expect(screen.getByText('Draft projects stay marked as unfinished until you activate them.')).toBeInTheDocument()
+
+    fireEvent.change(statusSelect, { target: { value: 'active' } })
+    expect(screen.getByText('Active projects are ready to use across monitoring, analysis, and reports.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Activate and open workspace' }))
+
+    await waitFor(() => {
+      expect(onUpdateProject).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'active' }))
+    })
+  })
 })
 
 describe('ProjectsPage edit wizard', () => {

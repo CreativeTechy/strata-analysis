@@ -1140,6 +1140,28 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
 
           <ErrorBanner message={metadataError} />
 
+          {!isEditRoute && (
+            <div className="project-status-choice">
+              <label className="project-status-choice-label" htmlFor="project-status-choice-select">Project status</label>
+              <select
+                id="project-status-choice-select"
+                className="filter-select project-status-choice-select"
+                value={draft.status}
+                onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
+                disabled={isSaving}
+                aria-describedby="project-status-choice-help"
+              >
+                <option value="draft">Draft — save for later</option>
+                <option value="active">Active — start monitoring</option>
+              </select>
+              <span id="project-status-choice-help" className="project-status-choice-help">
+                {draft.status === 'active'
+                  ? 'Active projects are ready to use across monitoring, analysis, and reports.'
+                  : 'Draft projects stay marked as unfinished until you activate them.'}
+              </span>
+            </div>
+          )}
+
           {failedAnalysisCandidateCount > 0 && (
             <button
               type="button"
@@ -1175,11 +1197,16 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                   <RefreshCw size={18} className="spin" />
                   Saving...
                 </>
-              ) : (
-                <>
-                  <Check size={18} /> Open workspace
-                </>
-              )}
+                ) : (
+                  <>
+                    <Check size={18} />
+                    {isEditRoute
+                      ? 'Open workspace'
+                      : draft.status === 'active'
+                        ? 'Activate and open workspace'
+                        : 'Save draft and open workspace'}
+                  </>
+                )}
             </button>
             <button className="btn-secondary wizard-btn-fixed" type="button" onClick={handleCancel}>
               <X size={18} /> Cancel

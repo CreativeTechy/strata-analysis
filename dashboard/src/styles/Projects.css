@@ -96,6 +96,33 @@
   min-width: 220px;
 }
 
+.project-status-choice {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+  padding: 16px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(46, 134, 222, 0.2);
+  border-radius: 14px;
+  background: rgba(46, 134, 222, 0.06);
+}
+
+.project-status-choice-label {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.project-status-choice-select {
+  width: 100%;
+}
+
+.project-status-choice-help {
+  color: var(--text-light);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 /* ---------- Data source mode cards (wizard step 1: online/offline) ---------- */
 
 .proj-mode-grid {
