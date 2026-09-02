@@ -99,7 +99,8 @@
 .project-status-choice {
   display: grid;
   gap: 8px;
-  max-width: 520px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 16px;
   margin-bottom: 18px;
   border: 1px solid rgba(46, 134, 222, 0.2);
