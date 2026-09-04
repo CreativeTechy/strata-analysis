@@ -13,16 +13,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  AlertTriangle, Check, CheckCircle2, ChevronRight, FileCheck, ListChecks, Loader2, ScanText, Trash2, Upload, X,
+  AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, FileCheck, ListChecks, Loader2, ScanText, Trash2, Upload, X,
 } from 'lucide-react';
 import {
   approveAllDocumentArticles, deleteDocument, getStudy, listDocumentArticles, listDocuments,
   pollArticleCandidates, pollDocumentExtraction, setDocumentArticleStatus, uploadDocuments,
 } from '../api/competitorApi.js';
+import { getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/Competitors.css';
 
 const DOCUMENT_ACTIVE_STATUSES = new Set(['uploaded', 'processing']);
 const ARTICLES_ACTIVE_STATUSES = new Set(['pending', 'generating']);
+
+// Article candidates are already fetched in full for the study, so review-step
+// pagination just slices the in-memory list - no extra API calls needed.
+const CANDIDATES_PAGE_SIZE = 10;
 
 export function DocumentsPanel({ studyId }) {
   const [error, setError] = useState('');
@@ -52,6 +57,31 @@ export function DocumentsPanel({ studyId }) {
     }
     return groups;
   }, [articleCandidates]);
+  // Grouped-by-document order (not raw articleCandidates order) so a page's
+  // slice never interleaves two documents' rows.
+  const orderedCandidates = useMemo(
+    () => [...candidatesByDocument.values()].flat(),
+    [candidatesByDocument],
+  );
+  const [candidatesPage, setCandidatesPage] = useState(1);
+  const totalCandidatePages = Math.max(1, Math.ceil(orderedCandidates.length / CANDIDATES_PAGE_SIZE));
+  useEffect(() => {
+    setCandidatesPage((prev) => Math.min(prev, totalCandidatePages));
+  }, [totalCandidatePages]);
+  const candidatePageNumbers = useMemo(
+    () => getPageNumbers(candidatesPage, totalCandidatePages),
+    [candidatesPage, totalCandidatePages],
+  );
+  const pagedCandidatesByDocument = useMemo(() => {
+    const start = (candidatesPage - 1) * CANDIDATES_PAGE_SIZE;
+    const pageCandidates = orderedCandidates.slice(start, start + CANDIDATES_PAGE_SIZE);
+    const groups = new Map();
+    for (const candidate of pageCandidates) {
+      if (!groups.has(candidate.document_id)) groups.set(candidate.document_id, []);
+      groups.get(candidate.document_id).push(candidate);
+    }
+    return groups;
+  }, [orderedCandidates, candidatesPage]);
   const pendingCandidateCount = useMemo(
     () => articleCandidates.filter((candidate) => candidate.status === 'pending').length,
     [articleCandidates],
@@ -372,7 +402,7 @@ export function DocumentsPanel({ studyId }) {
             </button>
           </div>
 
-          {[...candidatesByDocument.entries()].map(([documentId, candidates]) => (
+          {[...pagedCandidatesByDocument.entries()].map(([documentId, candidates]) => (
             <div key={documentId} style={{ marginBottom: 18 }}>
               <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 {documentById[documentId]?.original_filename || 'Document'}
@@ -417,6 +447,42 @@ export function DocumentsPanel({ studyId }) {
               </div>
             </div>
           ))}
+
+          {totalCandidatePages > 1 && (
+            <div className="cs-candidates-pager" role="navigation" aria-label="Articles pagination">
+              <button
+                type="button"
+                className="cs-btn cs-btn-ghost cs-btn-sm"
+                onClick={() => setCandidatesPage((prev) => Math.max(1, prev - 1))}
+                disabled={candidatesPage <= 1}
+              >
+                <ChevronLeft size={14} /> Previous
+              </button>
+              {candidatePageNumbers.map((page, index) =>
+                page === '...' ? (
+                  <span key={`ellipsis-${index}`} className="cs-candidates-pager-ellipsis">&hellip;</span>
+                ) : (
+                  <button
+                    type="button"
+                    key={page}
+                    className={`cs-candidates-pager-btn${page === candidatesPage ? ' active' : ''}`}
+                    onClick={() => setCandidatesPage(page)}
+                    aria-current={page === candidatesPage ? 'page' : undefined}
+                  >
+                    {page}
+                  </button>
+                ),
+              )}
+              <button
+                type="button"
+                className="cs-btn cs-btn-ghost cs-btn-sm"
+                onClick={() => setCandidatesPage((prev) => Math.min(totalCandidatePages, prev + 1))}
+                disabled={candidatesPage >= totalCandidatePages}
+              >
+                Next <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
 
