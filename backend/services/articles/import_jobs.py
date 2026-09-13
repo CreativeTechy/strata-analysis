@@ -21,6 +21,7 @@ import json
 import os
 import time
 
+from services.articles.analysis_defaults import DEFAULT_ENRICHMENT
 from services.articles.store import ARTICLE_MUTABLE_FIELDS, save_articles
 from services.competitors.job_runs import JobRegistry
 from services.pipeline.pipeline import start_or_reuse_analysis_run
@@ -178,7 +179,12 @@ def run_import_job(run_id: str, path: str, project_id: int | None = None) -> Non
                     note_error(lineno, "Missing url.")
                     continue
 
-                row = {key: value for key, value in entry.items() if key in allowed}
+                row = {
+                    **DEFAULT_ENRICHMENT,
+                    "analysis_status": "pending",
+                    "analysis_error": None,
+                    **{key: value for key, value in entry.items() if key in allowed},
+                }
                 row["url"] = url
                 received += 1
                 batch.append(row)
