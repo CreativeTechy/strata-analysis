@@ -26,7 +26,11 @@ Once extraction produces usable text, process_document also kicks off
 project_document_articles.generate_candidates() in the same background
 task - `articles_status` (pending -> generating -> ready/failed, or 'skipped'
 when extraction itself failed) is that step's own progress signal, tracked the
-same way status/extraction_error track extraction.
+same way status/extraction_error track extraction. Every candidate generated
+this way is then auto-approved (`_approve_all_and_queue_analysis`): there is
+no human-review gate between "split into candidates" and "materialized into
+`articles`" - a user who doesn't want one included deletes it from the
+Articles page afterward instead of rejecting it beforehand.
 
 A .json/.jsonl/.ndjson upload is already a list of articles, so it skips both
 OCR and the LLM split: _process_record_document() parses it with
@@ -38,6 +42,7 @@ file it came from.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -45,7 +50,10 @@ from pathlib import Path
 import db
 from services.documents import extraction as document_extraction
 from services.documents import records as document_records
+from services.pipeline.pipeline import start_or_reuse_analysis_run
 from services.projects import project_document_articles
+
+logger = logging.getLogger(__name__)
 
 # services/projects/project_documents_store.py -> services/projects ->
 # services -> backend/. Mirrors pipeline.py's STORAGE_DIR convention.
@@ -214,6 +222,9 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
             "update project_documents set articles_status = 'failed', articles_error = %s where id = %s",
             (str(exc), int(document_id)),
         )
+        return
+
+    _try_approve_all_and_queue_analysis(document["project_id"])
 
 
 def _process_record_document(document: dict, disk_path: Path, filename: str) -> None:
@@ -289,6 +300,30 @@ def _process_record_document(document: dict, disk_path: Path, filename: str) -> 
         "update project_documents set articles_status = 'ready', articles_error = %s where id = %s",
         (note, document_id),
     )
+    _try_approve_all_and_queue_analysis(document["project_id"])
+
+
+def _try_approve_all_and_queue_analysis(project_id: int) -> None:
+    """Extracted candidates start out approved rather than waiting for a human
+    review click - the review step is now "delete what you don't want" on the
+    materialized Articles page, not "pick what you do". Reuses set_status's own
+    materialize-then-analyze path (project_document_articles.approve_all), so
+    an auto-approved candidate is indistinguishable from a manually-approved
+    one downstream.
+
+    Failures here are logged rather than raised: process_document's caller
+    already recorded articles_status = 'ready' (splitting genuinely
+    succeeded), and letting an approval hiccup bubble up would have the outer
+    try/except in process_document overwrite that true state with 'failed' -
+    the candidates would still be there, just still 'pending' for someone to
+    approve by hand."""
+    try:
+        approved = project_document_articles.approve_all(project_id)
+    except Exception:
+        logger.exception("auto-approving extracted candidates failed for project %s", project_id)
+        return
+    if any(candidate.get("article_id") for candidate in approved):
+        start_or_reuse_analysis_run(project_id)
 
 
 def get_document_text(document_id: int) -> str | None:

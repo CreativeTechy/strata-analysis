@@ -528,8 +528,10 @@ export default function CompetitorDocumentsPage() {
           <h1>{study?.name || 'Competitor study'} — Documents</h1>
           <p>
             Upload files to give this study evidence to report on. Each one is extracted as soon as
-            it uploads — text where the file has any, OCR where it doesn&rsquo;t — and split into
-            candidate articles for you to approve; approving is what makes an article usable evidence.
+            it uploads — text where the file has any, OCR where it doesn&rsquo;t — split into
+            candidate articles, and approved automatically so they&rsquo;re usable evidence right
+            away. Don&rsquo;t want one included? Reject it here, or delete it from the Articles page
+            later.
           </p>
         </div>
       </div>

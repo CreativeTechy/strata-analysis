@@ -947,8 +947,9 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             </span>
           </div>
           <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
-            Strata read your documents into individual articles. Approve the ones worth
-            analyzing — approving queues sentiment analysis for it.
+            Strata read your documents into individual articles and approved them all for
+            analysis. Don&rsquo;t want one included? Reject it here, or delete it from the
+            Articles page later.
           </p>
 
           <ErrorBanner message={metadataError} />
