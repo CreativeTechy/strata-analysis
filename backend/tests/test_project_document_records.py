@@ -147,40 +147,44 @@ class ProcessRecordDocumentTests(unittest.TestCase):
         document = {"id": 5, "project_id": 9, "storage_path": path.name, "original_filename": filename}
         with patch.object(project_documents_store, "db") as mock_db, \
              patch.object(project_documents_store.project_document_articles,
-                          "generate_candidates_from_records") as mock_generate:
+                          "generate_candidates_from_records") as mock_generate, \
+             patch.object(project_documents_store, "_try_approve_all_and_queue_analysis") as mock_approve:
             project_documents_store._process_record_document(document, path, filename)
         updates = " ".join(str(call.args) for call in mock_db.execute.call_args_list)
-        return updates, mock_db, mock_generate
+        return updates, mock_db, mock_generate, mock_approve
 
     def test_usable_file_ends_processed_and_ready_with_candidates_written(self):
         text = '{"title": "A", "text": "one"}\n{"title": "B", "text": "two"}\n'
-        updates, mock_db, mock_generate = self._run("export.jsonl", text)
+        updates, mock_db, mock_generate, mock_approve = self._run("export.jsonl", text)
         self.assertIn("'processed'", updates)
         self.assertIn("articles_status = 'ready'", updates)
         document_id, project_id, parsed_records = mock_generate.call_args.args
         self.assertEqual((document_id, project_id), (5, 9))
         self.assertEqual([record["title"] for record in parsed_records], ["A", "B"])
+        mock_approve.assert_called_once_with(9)
 
     def test_extracted_text_is_article_text_not_raw_json(self):
-        _, mock_db, _ = self._run("export.jsonl", '{"title": "A", "text": "one"}\n')
+        _, mock_db, _, _ = self._run("export.jsonl", '{"title": "A", "text": "one"}\n')
         stored = [call.args[1] for call in mock_db.execute.call_args_list if call.args[1:]]
         self.assertIn("A\none", [param for params in stored for param in params if isinstance(param, str)])
 
     def test_file_with_no_usable_records_fails_and_skips_generation(self):
-        updates, _, mock_generate = self._run("export.jsonl", "not json\n")
+        updates, _, mock_generate, mock_approve = self._run("export.jsonl", "not json\n")
         self.assertIn("'failed'", updates)
         self.assertIn("articles_status = 'skipped'", updates)
         mock_generate.assert_not_called()
+        mock_approve.assert_not_called()
 
     def test_truncated_file_says_so_on_a_successful_document(self):
         text = "\n".join(json.dumps({"title": f"A{i}", "text": "x"}) for i in range(records.MAX_RECORDS + 2))
-        _, mock_db, _ = self._run("big.jsonl", text)
+        _, mock_db, _, mock_approve = self._run("big.jsonl", text)
         notes = [
             call.args[1][0]
             for call in mock_db.execute.call_args_list
             if "articles_status = 'ready'" in call.args[0] and call.args[1:]
         ]
         self.assertTrue(notes and notes[0] and "of 502 records" in notes[0])
+        mock_approve.assert_called_once_with(9)
 
 
 class ProcessDocumentFailureTests(unittest.TestCase):
@@ -277,6 +281,37 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
         candidate = {**self.CANDIDATE, "record_metadata": {"url": "https://x/1", "source_run_snapshot": snapshot}}
         _, article = self._materialize(candidate)
         self.assertEqual(article["source_run_snapshot"], snapshot)
+
+
+class AutoApproveAndQueueAnalysisTests(unittest.TestCase):
+    """Candidates are approved as soon as they're extracted - no human review
+    gate - so this is the function that makes that happen. Excluding one from
+    then on is a delete on the Articles page, not a pre-approval reject."""
+
+    def test_newly_materialized_candidates_start_an_analysis_run(self):
+        with patch.object(project_document_articles, "approve_all",
+                           return_value=[{"article_id": 42}]) as mock_approve, \
+             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+            project_documents_store._try_approve_all_and_queue_analysis(9)
+        mock_approve.assert_called_once_with(9)
+        mock_start.assert_called_once_with(9)
+
+    def test_nothing_materialized_does_not_start_a_run(self):
+        """Every candidate was already approved (e.g. a re-run) - approve_all
+        reports them but materialized nothing new, so there's nothing to analyze."""
+        with patch.object(project_document_articles, "approve_all", return_value=[]), \
+             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+            project_documents_store._try_approve_all_and_queue_analysis(9)
+        mock_start.assert_not_called()
+
+    def test_approval_failure_is_logged_not_raised(self):
+        """A failure here must not propagate: the caller already recorded
+        articles_status = 'ready', and process_document's outer guard would
+        otherwise overwrite that true state with 'failed'."""
+        with patch.object(project_document_articles, "approve_all", side_effect=RuntimeError("boom")), \
+             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+            project_documents_store._try_approve_all_and_queue_analysis(9)  # must not raise
+        mock_start.assert_not_called()
 
 
 class AllowedExtensionTests(unittest.TestCase):

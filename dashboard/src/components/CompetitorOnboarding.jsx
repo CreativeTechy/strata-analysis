@@ -748,8 +748,8 @@ export default function CompetitorOnboarding() {
           <p className="cs-panel-hint">
             Upload files to give your tracked competitors something to be reported on. Each one is
             extracted as soon as it uploads — text where the file has any, OCR where it doesn&rsquo;t —
-            and split into candidate articles for you to approve below. Skip this and add documents
-            later from the workspace if you&rsquo;d rather do that first.
+            split into candidate articles below, and approved automatically. Skip this and add
+            documents later from the workspace if you&rsquo;d rather do that first.
           </p>
 
           <div className="cs-field">

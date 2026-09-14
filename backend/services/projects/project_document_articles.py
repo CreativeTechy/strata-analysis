@@ -1,11 +1,17 @@
-"""Turns a project document's extracted text into reviewable "article"
-candidates, for offline opinion-monitor projects.
+"""Turns a project document's extracted text into "article" candidates, for
+offline opinion-monitor projects.
 
 project_documents_store produces raw text per document; this module asks the
 LLM to split that text into discrete, article-like items - a survey export
 might contain many separate respondents' feedback, a report might cover
-several distinct mentions - so each can be reviewed and approved on its own
-rather than the whole document becoming one undifferentiated blob.
+several distinct mentions - so each becomes its own row rather than the whole
+document turning into one undifferentiated blob. project_documents_store
+auto-approves every candidate right after it's generated (see
+`_approve_all_and_queue_analysis`), so in practice a candidate is materialized
+before anyone has looked at it; excluding one is a delete on the Articles page
+after the fact, not a reject beforehand. The pending/approved/rejected status
+and set_status()/approve_all() below still work exactly as they did when a
+human drove them - nothing here assumes the caller is the auto-approve path.
 
 A .json/.jsonl document arrives already split, so it skips the LLM entirely:
 generate_candidates_from_records() persists one candidate per record (parsed
