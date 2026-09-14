@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info, Trash2 } from 'lucide-react';
 import { computeOverallTone } from '../../lib/tone.js';
 import { prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches } from '../../lib/articleHelpers.jsx';
 
 // One row in the ("List") view mode - collapsed to a summary line by
 // default, expanding in place to the same detail an ArticleCard shows.
-export default function ArticleRow({ article, search, index, isExpanded, isRefreshing, onToggleExpanded, onShowDetails }) {
+export default function ArticleRow({ article, search, index, isExpanded, isRefreshing, canDelete, onToggleExpanded, onShowDetails, onDelete }) {
   return (
     <motion.div
       layout
@@ -117,6 +117,17 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
             >
               <Info size={13} /> Analysis details
             </button>
+            {canDelete && (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+                onClick={onDelete}
+                title="Delete article"
+              >
+                <Trash2 size={13} /> Delete
+              </button>
+            )}
           </div>
         </div>
       ) : null}

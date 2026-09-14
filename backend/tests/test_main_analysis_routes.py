@@ -221,6 +221,28 @@ class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("error", resp.json())
 
+    def test_deletes_one_article(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_article", return_value=True
+        ) as mock_delete:
+            resp = self.client.delete("/api/articles/42")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"ok": True})
+        mock_delete.assert_called_once_with(42)
+
+    def test_404s_when_article_not_found(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_article", return_value=False
+        ):
+            resp = self.client.delete("/api/articles/999")
+        self.assertEqual(resp.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
