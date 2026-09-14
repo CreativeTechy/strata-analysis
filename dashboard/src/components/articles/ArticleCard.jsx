@@ -1,10 +1,10 @@
 import { motion } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Info } from 'lucide-react';
+import { ExternalLink, Calendar, CarFront, Tag, Info, Trash2 } from 'lucide-react';
 import { computeOverallTone } from '../../lib/tone.js';
 import { prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches } from '../../lib/articleHelpers.jsx';
 
 // One card in the grid ("Cards") view mode.
-export default function ArticleCard({ article, search, index, isRefreshing, onShowDetails }) {
+export default function ArticleCard({ article, search, index, isRefreshing, canDelete, onShowDetails, onDelete }) {
   return (
     <motion.div
       layout
@@ -56,15 +56,28 @@ export default function ArticleCard({ article, search, index, isRefreshing, onSh
             <span className="badge score">Project match: {formatMatchScore(article.project_similarity_score)}</span>
           )}
         </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
-          onClick={onShowDetails}
-          title="View analysis details"
-        >
-          <Info size={13} /> Details
-        </button>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ padding: '4px 8px', fontSize: '0.72rem' }}
+            onClick={onShowDetails}
+            title="View analysis details"
+          >
+            <Info size={13} /> Details
+          </button>
+          {canDelete && (
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '4px 8px', fontSize: '0.72rem', color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+              onClick={onDelete}
+              title="Delete article"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+        </div>
       </div>
 
       <h3 className="article-title">

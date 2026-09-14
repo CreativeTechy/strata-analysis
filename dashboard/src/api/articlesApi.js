@@ -63,6 +63,7 @@ export const reprocessArticle = (articleId) => request(`/articles/${articleId}/r
  *  their current status. */
 export const analyzeArticles = (body) => request('/articles/analyze', { method: 'POST', body });
 export const deleteAllArticles = () => requestSoftError('/articles', { method: 'DELETE' });
+export const deleteArticle = (articleId) => request(`/articles/${articleId}`, { method: 'DELETE' });
 
 // --- analysis health (Performance Logs page) --------------------------------
 export const getAnalysisStatus = (params, signal) => request(`/analysis/status${query(params)}`, { signal });

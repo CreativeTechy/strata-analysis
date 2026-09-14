@@ -24,7 +24,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, getArticleAnalysis, reprocessArticle, deleteAllArticles,
+  listArticles, getArticleAnalysis, reprocessArticle, deleteAllArticles, deleteArticle,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
 import '../styles/Articles.css';
@@ -66,6 +66,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletingArticle, setDeletingArticle] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importRun, setImportRun] = useState(null);
@@ -284,6 +286,21 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setError(err?.message || 'Failed to delete articles.');
     } finally {
       setDeletingAll(false);
+    }
+  };
+
+  const handleDeleteArticle = async () => {
+    if (!deleteTarget || deletingArticle) return;
+    setDeletingArticle(true);
+    setError('');
+    try {
+      await deleteArticle(deleteTarget.id);
+      setDeleteTarget(null);
+      setReloadToken((value) => value + 1);
+    } catch (err) {
+      setError(err?.message || 'Failed to delete article.');
+    } finally {
+      setDeletingArticle(false);
     }
   };
 
@@ -553,6 +570,22 @@ export default function ArticlesPage({ project = null, projectId = null, project
             setShowDeleteAllModal(false);
             await handleDeleteAll();
           }}
+        />
+
+        <ConfirmModal
+          open={Boolean(deleteTarget)}
+          title="Delete this article?"
+          message={deleteTarget ? `"${deleteTarget.title || 'Untitled article'}" will be permanently removed and cannot be undone.` : ''}
+          confirmLabel={deletingArticle ? 'Deleting...' : 'Delete article'}
+          cancelLabel="Keep article"
+          confirmButtonStyle={{
+            background: 'linear-gradient(135deg, #ff4757, #e03131)',
+            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
+          }}
+          onClose={() => {
+            if (!deletingArticle) setDeleteTarget(null);
+          }}
+          onConfirm={handleDeleteArticle}
         />
 
         <ConfirmModal
@@ -832,8 +865,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       index={i}
                       isExpanded={expandedRows.has(article.id)}
                       isRefreshing={isRefreshing}
+                      canDelete={canDeleteAll}
                       onToggleExpanded={() => toggleRowExpanded(article.id)}
                       onShowDetails={() => setDetailArticleId(article.id)}
+                      onDelete={() => setDeleteTarget(article)}
                     />
                   ))}
                 </AnimatePresence>
@@ -848,7 +883,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       search={search}
                       index={i}
                       isRefreshing={isRefreshing}
+                      canDelete={canDeleteAll}
                       onShowDetails={() => setDetailArticleId(article.id)}
+                      onDelete={() => setDeleteTarget(article)}
                     />
                   ))}
                 </AnimatePresence>

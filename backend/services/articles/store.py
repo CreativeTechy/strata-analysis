@@ -652,3 +652,16 @@ def delete_all_articles():
     except Exception as e:
         _log_db_error("  article delete error", e)
         return 0
+
+
+def delete_article(article_id):
+    if not config.DATABASE_URL:
+        logger.warning("Database credentials not set, skipping article delete.")
+        return False
+
+    try:
+        row = db.execute("delete from articles where id = %s returning id", (article_id,))
+        return row is not None
+    except Exception as e:
+        _log_db_error("  article delete error", e)
+        return False

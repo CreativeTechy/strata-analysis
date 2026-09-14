@@ -1089,6 +1089,16 @@ def delete_articles(user: dict = Depends(require_permission("articles.delete")))
     return {"ok": True}
 
 
+@app.delete("/api/articles/{article_id}")
+def delete_article_endpoint(article_id: int, user: dict = Depends(require_permission("articles.delete"))):
+    """Delete a single stored article from Postgres."""
+    from services.articles.store import delete_article
+
+    if not delete_article(article_id):
+        raise HTTPException(status_code=404, detail="Article not found.")
+    return {"ok": True}
+
+
 @app.post("/api/chat")
 async def chat(payload: dict, user: dict = Depends(require_permission())):
     """Intelligence Copilot -> the configured LLM provider, over the filtered articles."""
