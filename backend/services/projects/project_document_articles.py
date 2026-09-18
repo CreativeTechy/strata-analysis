@@ -247,6 +247,7 @@ def _materialize(candidate: dict, cur) -> int | None:
         # upload. save_articles()/_upsert_article_row() keep whatever value is
         # already on the row once set, so re-approving never blanks it out.
         "source_run_snapshot": metadata.get("source_run_snapshot") or None,
+        "source_provenance": metadata.get("source_provenance") or None,
         "analysis_status": "pending",
         "analysis_error": None,
     }

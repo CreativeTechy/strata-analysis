@@ -33,7 +33,7 @@ ARTICLE_COLUMNS = (
     "source_language", "source_language_confidence", "embedding_dimensions",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at", "content_hash",
-    "pipeline_run_id", "source_run_snapshot",
+    "pipeline_run_id", "source_run_snapshot", "source_provenance",
 )
 
 ARTICLE_MUTABLE_FIELDS = (
@@ -95,6 +95,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "content_hash",
     "pipeline_run_id",
     "source_run_snapshot",
+    "source_provenance",
 )
 ARTICLE_JSON_FIELDS = {
     "insight_json",
@@ -327,8 +328,8 @@ def _article_row(article):
             # `article` (e.g. a cached enrichment written before this field
             # existed) can never silently mark something verified.
             value = is_trusted_domain(row.get("source_url") or row.get("url"))
-        elif field == "source_run_snapshot":
-            value = _jsonb_object_param(row.get("source_run_snapshot"))
+        elif field in ("source_run_snapshot", "source_provenance"):
+            value = _jsonb_object_param(row.get(field))
         params.append(value)
     return fields, tuple(params)
 
@@ -344,7 +345,7 @@ def _upsert_article_row(article):
     updates = [
         f"{field} = excluded.{field}"
         for field in fields
-        if field not in ("url", "pipeline_run_id", "source_run_snapshot")
+        if field not in ("url", "pipeline_run_id", "source_run_snapshot", "source_provenance")
     ]
     if "pipeline_run_id" in fields:
         # pipeline_run_id records which run *first* saved this article, not
@@ -363,6 +364,10 @@ def _upsert_article_row(article):
         # its own to offer, and must not blank out the one already recorded.
         updates.append(
             "source_run_snapshot = coalesce(articles.source_run_snapshot, excluded.source_run_snapshot)"
+        )
+    if "source_provenance" in fields:
+        updates.append(
+            "source_provenance = coalesce(articles.source_provenance, excluded.source_provenance)"
         )
     # Advanced only when the body actually differs, which is what makes
     # "this page changed" distinguishable from "we crawled this page again".

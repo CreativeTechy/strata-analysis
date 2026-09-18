@@ -45,6 +45,7 @@ from services.pipeline.pipeline_runs import (
     upsert_pipeline_run_document_stats,
 )
 from services.projects.projects_store import record_run_completion
+from services.evidence.workspace import capture_run_snapshot, generate_for_run
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,11 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         )
 
         rows = _select_articles(project_id, scope)
+        # Freeze the project's full eligible evidence set before analysis. This
+        # is intentionally broader than `rows` for a pending-only run: new
+        # claims may be checked against material analyzed by an earlier run,
+        # while later uploads cannot leak into this historical assessment.
+        capture_run_snapshot(run_id, project_id)
         document_stats = _initial_document_stats(rows)
         upsert_pipeline_run_document_stats(run_id, document_stats)
         update_pipeline_run(
@@ -252,6 +258,7 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         )
 
         if not rows:
+            evidence = generate_for_run(run_id, project_id)
             _finish_run(
                 run_id,
                 project_id,
@@ -261,7 +268,7 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
                     "Nothing to analyze - every article in this project has already been analyzed."
                     if scope != "all"
                     else "Nothing to analyze - this project has no articles yet."
-                ),
+                ) + f" Evidence workspace contains {evidence['claims']} claim(s).",
                 finished_at=_now(),
             )
             return
@@ -331,9 +338,11 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         upsert_pipeline_run_document_stats(run_id, document_stats)
         failed = counters["failed"]
         analyzed = counters["analyzed"]
+        evidence = generate_for_run(run_id, project_id)
         message = f"Analysis complete: {analyzed} analyzed"
         if failed:
             message += f", {failed} failed"
+        message += f"; {evidence['claims']} evidence claim(s) prepared"
         _finish_run(
             run_id,
             project_id,

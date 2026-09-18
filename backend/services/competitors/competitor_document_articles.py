@@ -216,6 +216,8 @@ def _materialize(candidate: dict, cur) -> int | None:
         # date-window filter keys off that, so a record's date must survive here.
         "author": metadata.get("author") or None,
         "published": metadata.get("published") or None,
+        "source_run_snapshot": metadata.get("source_run_snapshot") or None,
+        "source_provenance": metadata.get("source_provenance") or None,
         "analysis_status": "pending",
         "analysis_error": None,
     }

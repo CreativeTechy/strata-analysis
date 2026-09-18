@@ -144,7 +144,7 @@ export default function CompetitorReportPage() {
         ) : null}
 
         <div className="cs-report-meta">
-          <span><strong>{finding.story_count}</strong> independent source{finding.story_count === 1 ? '' : 's'}</span>
+          <span><strong>{finding.story_count}</strong> distinct stor{finding.story_count === 1 ? 'y' : 'ies'}</span>
           <span><strong>{finding.article_count}</strong> article{finding.article_count === 1 ? '' : 's'} used</span>
           {finding.period_start ? (
             <span>Period <strong>{formatDate(finding.period_start)}</strong> to <strong>{formatDate(finding.period_end)}</strong></span>
@@ -152,7 +152,7 @@ export default function CompetitorReportPage() {
           <span>Generated <strong>{relativeTime(finding.generated_at)}</strong></span>
           {finding.confidence != null ? (
             <span>Confidence <strong>{Math.round(Number(finding.confidence) * 100)}%</strong></span>
-          ) : null}
+          ) : <span>Confidence <strong>Not assessed</strong></span>}
         </div>
 
         {/* A bare percentage doesn't tell you whether to act on it. "Low

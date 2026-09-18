@@ -5,6 +5,7 @@ import DashboardOverview from './components/DashboardOverview';
 import ReportsView from './components/ReportsView';
 import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
+import EvidenceWorkspacePage from './components/EvidenceWorkspacePage';
 import TopicDetailPage from './components/TopicDetailPage';
 import IntelligencePage from './components/IntelligencePage';
 import CompetitorStudiesPage from './components/CompetitorStudiesPage';
@@ -443,6 +444,7 @@ export default function App() {
             )}
           />
           <Route path="/projects/:projectId/topics" element={<TopicDetailPage />} />
+          <Route path="/projects/:projectId/evidence" element={<EvidenceWorkspacePage projects={opinionMonitorProjects} />} />
           <Route
             path="/intelligence"
             element={

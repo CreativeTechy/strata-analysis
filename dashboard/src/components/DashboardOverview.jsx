@@ -117,7 +117,7 @@ function IdeaRow({ idea, maxFrequency, projectId }) {
       className={`intelligence-idea intelligence-idea-clickable ${idea.type || 'issue'}`}
       style={{ textDecoration: 'none', color: 'inherit' }}
       to={`/projects/${projectId}/topics`}
-      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), backTo: '/dashboard', backLabel: 'Back to Dashboard' }}
+      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), projectId, backTo: '/dashboard', backLabel: 'Back to Dashboard' }}
     >
       {body}
     </Link>;

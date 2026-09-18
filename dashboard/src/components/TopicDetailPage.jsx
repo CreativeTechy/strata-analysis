@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Workflow,
   FileText,
+  ShieldCheck,
 } from 'lucide-react';
 import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { getArticleAnalysis } from '../api/articlesApi.js';
@@ -185,6 +186,13 @@ export default function TopicDetailPage() {
           </p>
         </div>
         <div className="admin-page-toolbar">
+          {state.projectId ? <Link
+            to={`/projects/${state.projectId}/evidence?${new URLSearchParams({ ...(distinctRunIds[0] ? { run_id: distinctRunIds[0] } : {}), topic: state.idea }).toString()}`}
+            className="btn-secondary"
+            style={{ textDecoration: 'none' }}
+          >
+            <ShieldCheck size={16} /> Topic evidence
+          </Link> : null}
           <Link to={backTo} className="btn-secondary" style={{ textDecoration: 'none' }}>
             <ArrowLeft size={16} /> {backLabel}
           </Link>

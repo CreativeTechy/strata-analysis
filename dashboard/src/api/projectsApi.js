@@ -81,6 +81,18 @@ export const listIdeaClusters = (projectId, params, signal) =>
   request(`/${projectId}/idea-clusters${query(params)}`, { signal });
 export const listIdeaClusterArticles = (projectId, clusterId, params) =>
   request(`/${projectId}/idea-clusters/${clusterId}/articles${query(params)}`);
+export const getEvidenceWorkspace = (projectId, params, signal) =>
+  request(`/${projectId}/evidence${query(params)}`, { signal });
+export const getEvidenceClaim = (projectId, claimId, signal) =>
+  request(`/${projectId}/evidence/claims/${claimId}`, { signal });
+export const compareEvidenceRuns = (projectId, params, signal) =>
+  request(`/${projectId}/evidence/compare${query(params)}`, { signal });
+export const reviewEvidenceClaim = (projectId, claimId, body) =>
+  request(`/${projectId}/evidence/claims/${claimId}/review`, { method: 'POST', body });
+export const reviewEvidenceProvenance = (projectId, articleId, body) =>
+  request(`/${projectId}/evidence/articles/${articleId}/provenance-review`, { method: 'POST', body });
+export const retryEvidenceRun = (projectId, runId) =>
+  request(`/${projectId}/evidence/runs/${runId}/retry`, { method: 'POST' });
 
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic

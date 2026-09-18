@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  ShieldCheck,
   Lightbulb,
   Link2,
   Loader2,
@@ -188,6 +189,7 @@ export default function ProjectDetailPage({
           type: cluster.type,
           category: cluster.category,
           frequencyEstimate: cluster.frequency_estimate,
+          projectId: project.id,
           sources: clusterSources,
           backTo: '/dashboard',
           backLabel: 'Back to Dashboard',
@@ -294,6 +296,9 @@ export default function ProjectDetailPage({
             <span>Documents</span>
             <strong>{documents.length.toLocaleString()}</strong>
           </div>
+          <Link to={`/projects/${project.id}/evidence`} className="btn-secondary" style={{ textDecoration: 'none' }}>
+            <ShieldCheck size={16} /> Evidence
+          </Link>
           {canEdit && (
             <>
               <Link to={`/projects/${project.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
