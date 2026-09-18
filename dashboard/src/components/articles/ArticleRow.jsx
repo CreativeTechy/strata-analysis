@@ -1,11 +1,15 @@
 import { motion } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info, Trash2 } from 'lucide-react';
 import { computeOverallTone } from '../../lib/tone.js';
-import { prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches } from '../../lib/articleHelpers.jsx';
+import {
+  prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches,
+  articleSourceLink, articleSourceLabel,
+} from '../../lib/articleHelpers.jsx';
 
 // One row in the ("List") view mode - collapsed to a summary line by
 // default, expanding in place to the same detail an ArticleCard shows.
 export default function ArticleRow({ article, search, index, isExpanded, isRefreshing, canDelete, onToggleExpanded, onShowDetails, onDelete }) {
+  const sourceLink = articleSourceLink(article);
   return (
     <motion.div
       layout
@@ -26,7 +30,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
           {article.sentiment || 'Neutral'}
         </span>
         <span className="article-row-title">{highlightMatches(article.title || 'Untitled article', search)}</span>
-        <span className="article-row-source">{article.source || 'Unknown source'}</span>
+        <span className="article-row-source">{articleSourceLabel(article)}</span>
         <span className="article-row-date">
           <Calendar size={13} /> {articleDate(article.published)}
         </span>
@@ -106,9 +110,11 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
           )}
 
           <div className="article-row-details-actions">
-            <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: 'none' }}>
-              <ExternalLink size={13} /> Open original
-            </a>
+            {sourceLink ? (
+              <a href={sourceLink} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: 'none' }}>
+                <ExternalLink size={13} /> Open original
+              </a>
+            ) : null}
             <button
               type="button"
               className="btn-secondary"

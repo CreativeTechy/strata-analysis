@@ -81,6 +81,7 @@ export const listIdeaClusters = (projectId, params, signal) =>
   request(`/${projectId}/idea-clusters${query(params)}`, { signal });
 export const listIdeaClusterArticles = (projectId, clusterId, params) =>
   request(`/${projectId}/idea-clusters/${clusterId}/articles${query(params)}`);
+export const listProjectSources = (projectId) => request(`/${projectId}/sources`);
 
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic
