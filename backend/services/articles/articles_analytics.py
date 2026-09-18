@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 import config
+import db
 from services.articles.articles_query import (
     ARTICLES_SELECT,
     BULK_PAGE_SIZE,
@@ -498,6 +499,19 @@ def get_article_stats(search=None, category=None, project_id=None, date_from=Non
     else:
         rows = _fetch_rows_for_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
 
+    insights = _topic_summary(rows)
+    survey_observations = []
+    if project_id is not None:
+        try:
+            survey_observations = db.fetch_all(
+                """select so.*,a.source,a.title from survey_observations so
+                   left join articles a on a.id=so.article_id
+                   where so.project_id=%s order by so.study_key,so.cohort_dimension,so.cohort_value,so.answer""",
+                (int(project_id),),
+            ) or []
+        except Exception:
+            survey_observations = []
+    insights["survey_observations"] = survey_observations
     return {
         "total": total,
         "positive": positive,
@@ -505,5 +519,5 @@ def get_article_stats(search=None, category=None, project_id=None, date_from=Non
         "neutral": neutral,
         "mixed": mixed,
         "article_category_breakdown": _article_category_counts(rows),
-        "insights": _topic_summary(rows),
+        "insights": insights,
     }

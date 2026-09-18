@@ -79,6 +79,7 @@ def seed() -> dict:
     )
 
     ids = []
+    ids_by_url = {}
     by_publisher = Counter()
     for row in SOURCES:
         title, publisher, url, published, summary, sentiment, gender, age, region, segment, source_type, origin_group, points = row
@@ -121,6 +122,7 @@ def seed() -> dict:
         )
         article_id = int(article["id"])
         ids.append(article_id)
+        ids_by_url[url] = article_id
         by_publisher[publisher] += 1
         db.execute("insert into article_projects (article_id,project_id,similarity_score) values (%s,%s,1) on conflict (article_id,project_id) do update set similarity_score=1", (article_id, project_id))
         db.execute(
@@ -138,6 +140,31 @@ def seed() -> dict:
             """insert into pipeline_run_documents (run_id,document,selected,analyzed,failed,note)
                values (%s,%s,%s,%s,0,'Curated public-source summaries')""",
             (RUN_ID, publisher, count, count),
+        )
+    poll_url = "https://ygo-assets-websites-editorial-emea.yougov.net/documents/Internal_NorthSeaOilSC_260318.pdf"
+    observations = [
+        ("overall", "all adults", "Support ban", 37, 1217), ("overall", "all adults", "Oppose ban", 45, 1217),
+        ("gender", "male", "Support ban", 36, None), ("gender", "male", "Oppose ban", 56, None),
+        ("gender", "female", "Support ban", 39, None), ("gender", "female", "Oppose ban", 36, None),
+        ("age", "16-24", "Support ban", 48, None), ("age", "16-24", "Oppose ban", 34, None),
+        ("age", "25-49", "Support ban", 36, None), ("age", "25-49", "Oppose ban", 40, None),
+        ("age", "50-64", "Support ban", 38, None), ("age", "50-64", "Oppose ban", 49, None),
+        ("age", "65_plus", "Support ban", 34, None), ("age", "65_plus", "Oppose ban", 57, None),
+    ]
+    for dimension, cohort, answer, percentage, sample_size in observations:
+        article_url = f"{poll_url}#{'overall' if dimension == 'overall' else dimension + '-' + cohort.replace('_plus', '-plus')}"
+        db.execute(
+            """insert into survey_observations
+               (project_id,article_id,run_id,study_key,question,answer,percentage,population,
+                cohort_dimension,cohort_value,sample_size,fieldwork_start,fieldwork_end,source_url)
+               values (%s,%s,%s,'yougov-scotland-north-sea-2026',%s,%s,%s,'Scottish adults',%s,%s,%s,
+                       '2026-03-11','2026-03-18',%s)
+               on conflict (project_id,study_key,cohort_dimension,cohort_value,answer) do update set
+                 article_id=excluded.article_id,run_id=excluded.run_id,percentage=excluded.percentage,
+                 sample_size=excluded.sample_size,source_url=excluded.source_url""",
+            (project_id, ids_by_url.get(article_url), RUN_ID,
+             "Should new North Sea oil and gas developments be banned?", answer, percentage,
+             dimension, cohort, sample_size, poll_url),
         )
     db.execute("update projects set status='active',last_run_at=now(),last_run_status='success' where id=%s", (project_id,))
     captured = capture_run_snapshot(RUN_ID, project_id)

@@ -490,10 +490,22 @@ def project_evidence_workspace(
     project_id: int,
     run_id: str | None = None,
     topic: str | None = None,
+    search: str | None = None,
+    assessment: str | None = None,
+    claim_type: str | None = None,
+    publisher: str | None = None,
+    review_status: str | None = None,
+    provenance_status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
     user: dict = Depends(require_permission("projects.view")),
 ):
     _ensure_project_visible(project_id, user)
-    return list_evidence_workspace(project_id, run_id=run_id, topic=topic)
+    return list_evidence_workspace(
+        project_id, run_id=run_id, topic=topic, search=search, assessment=assessment,
+        claim_type=claim_type, publisher=publisher, review_status=review_status,
+        provenance_status=provenance_status, limit=limit, offset=offset,
+    )
 
 
 @app.get("/api/projects/{project_id}/evidence/claims/{claim_id}")
@@ -556,14 +568,19 @@ def review_project_evidence_provenance(
 
 @app.post("/api/projects/{project_id}/evidence/runs/{run_id}/retry")
 def retry_project_evidence(
-    project_id: int, run_id: str,
+    project_id: int, run_id: str, background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("pipeline.run")),
 ):
     _ensure_project_visible(project_id, user)
     run = get_pipeline_run(run_id)
     if not run or int(run.get("project_id") or 0) != int(project_id):
         raise HTTPException(status_code=404, detail="Analysis run not found.")
-    return {"result": generate_evidence_for_run(run_id, project_id)}
+    status = db.fetch_one("select status from evidence_run_status where run_id=%s", (str(run_id),)) or {}
+    if status.get("status") == "running":
+        return {"queued": False, "status": "running"}
+    db.execute("update evidence_run_status set status='pending',error=null where run_id=%s", (str(run_id),))
+    background_tasks.add_task(generate_evidence_for_run, run_id, project_id)
+    return {"queued": True, "status": "pending"}
 
 
 @app.put("/api/projects/{project_id}")

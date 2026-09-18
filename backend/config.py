@@ -243,6 +243,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+# Optional second-pass evidence adjudication. It only receives claims and exact
+# frozen-document passages; failures fall back to the conservative local rules.
+EVIDENCE_LLM_ASSESSMENT = _env_bool("EVIDENCE_LLM_ASSESSMENT", False)
+
+
 # --- Hugging Face Inference API (optional) -----------------------------------
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", os.environ.get("HF_TOKEN", "")).strip()
 # Leave unset (the default) to use HF's shared "hf-inference" provider

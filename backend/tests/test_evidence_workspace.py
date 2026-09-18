@@ -15,6 +15,19 @@ class EvidenceRuleTests(unittest.TestCase):
         negative = workspace._fingerprint("Oil", "Oil production decreased in August")
         self.assertEqual(positive, negative)
 
+    def test_fingerprint_keeps_time_scope_separate(self):
+        first = workspace._fingerprint("Oil", "Oil production increased in 2024")
+        second = workspace._fingerprint("Oil", "Oil production decreased in 2025")
+        self.assertNotEqual(first, second)
+
+    def test_fingerprint_keeps_quantities_separate(self):
+        first = workspace._fingerprint("Oil", "Oil production increased by 5 percent")
+        second = workspace._fingerprint("Oil", "Oil production decreased by 15 percent")
+        self.assertNotEqual(first, second)
+
+    def test_lower_is_direction_not_grammatical_negation(self):
+        self.assertEqual(workspace._direction("Production was lower in August"), "negative")
+
     def test_story_group_collapses_republished_hosts(self):
         first = {"story_id": 44, "url": "https://one.example/report"}
         second = {"story_id": 44, "url": "https://two.example/reprint"}

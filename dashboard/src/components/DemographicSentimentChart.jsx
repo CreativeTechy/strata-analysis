@@ -19,7 +19,7 @@ function ChartTooltip({ active, payload, label }) {
   return (
     <div className="demographic-chart-tooltip">
       <strong>{labelize(label)}</strong>
-      <span>{bucket?.total || 0} article{bucket?.total === 1 ? '' : 's'}</span>
+      <span>{bucket?.total || 0} analyzed record{bucket?.total === 1 ? '' : 's'}</span>
       <ul>
         {SENTIMENT_KEYS.map((key) => (
           <li key={key}>
@@ -56,6 +56,8 @@ export default function DemographicSentimentChart({ title, data, maxBuckets = 7 
     };
   });
   const droppedCount = nonEmpty.length - rows.length;
+  const allRecords = nonEmpty.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const unknownRecords = nonEmpty.find((item) => String(item.value).toLowerCase() === 'unknown')?.total || 0;
 
   if (rows.length < 2) {
     return (
@@ -82,6 +84,7 @@ export default function DemographicSentimentChart({ title, data, maxBuckets = 7 
           ))}
         </BarChart>
       </ResponsiveContainer>
+      <p className="demographic-chart-note">Share of sentiment labels among analyzed records. Known demographic coverage: {allRecords ? Math.round(((allRecords - unknownRecords) / allRecords) * 100) : 0}% ({allRecords - unknownRecords} of {allRecords} records).</p>
       {droppedCount > 0 && (
         <p className="demographic-chart-note">+{droppedCount} more value{droppedCount === 1 ? '' : 's'} not shown</p>
       )}
