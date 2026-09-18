@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 import config
 import db
 from core.logging import reset_run_id, set_run_id
+from services.articles.idea_comparisons import generate_idea_comparisons
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
     create_pipeline_run,
@@ -44,7 +45,7 @@ from services.pipeline.pipeline_runs import (
     update_pipeline_run,
     upsert_pipeline_run_document_stats,
 )
-from services.projects.projects_store import record_run_completion
+from services.projects.projects_store import get_project, record_run_completion
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,20 @@ def _finish_run(run_id, project_id, **fields):
     update_pipeline_run(run_id, **fields)
     if project_id is not None:
         record_run_completion(project_id, status=fields.get("status"), completed_at=datetime.now(timezone.utc))
+
+
+def _regenerate_idea_comparisons(project_id):
+    """Refresh cross-source idea comparisons after a run analyzed at least one
+    article - opinion-monitor projects only ('competitor' mode has its own
+    findings pipeline; see services/competitors/competitor_analysis.py).
+    Best-effort: a failure here (e.g. the LLM provider being down) must not
+    turn an otherwise-successful analysis run into a failed one."""
+    try:
+        project = get_project(project_id)
+        if project and project.get("mode") != "competitor":
+            generate_idea_comparisons(project_id)
+    except Exception:
+        logger.exception("run for project %s: idea comparison regeneration failed", project_id)
 
 
 def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str = "pending"):
@@ -350,6 +365,8 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             finished_at=_now(),
         )
         logger.info("run %s: %s.", run_id, message)
+        if analyzed:
+            _regenerate_idea_comparisons(project_id)
     except PipelineCancelled:
         _finish_run(
             run_id,

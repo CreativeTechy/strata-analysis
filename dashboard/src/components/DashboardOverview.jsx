@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, ChevronRight, FileText, Gauge, Network, Sparkles, TrendingDown, TrendingUp,
+  Activity, ChevronRight, FileText, Gauge, Loader2, Network, RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import { getIdeaComparisons } from '../api/projectsApi.js';
 
 const PERIODS = [
   { key: '7d', label: 'Last 7 days' },
@@ -173,6 +174,56 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
+
+  const [ideaComparisons, setIdeaComparisons] = useState([]);
+  const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
+  const [ideaComparisonsError, setIdeaComparisonsError] = useState('');
+  const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadIdeaComparisons() {
+      if (!selectedProjectId) {
+        setIdeaComparisons([]);
+        return;
+      }
+      setIdeaComparisonsLoading(true);
+      setIdeaComparisonsError('');
+      try {
+        const { ok, data } = await getIdeaComparisons(selectedProjectId, {}, controller.signal);
+        setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
+        if (!ok) setIdeaComparisonsError(data?.error || 'Failed to load idea comparisons.');
+      } catch (err) {
+        if (err?.name !== 'AbortError') {
+          setIdeaComparisons([]);
+          setIdeaComparisonsError(err?.message || 'Failed to load idea comparisons.');
+        }
+      } finally {
+        setIdeaComparisonsLoading(false);
+      }
+    }
+    loadIdeaComparisons();
+    return () => controller.abort();
+  }, [selectedProjectId]);
+
+  // Spends an LLM call per qualifying idea cluster (see
+  // services/articles/idea_comparisons.py), so this only runs on an explicit
+  // click - never automatically on a page view - the same restraint
+  // getTrendSummary()'s refresh button uses.
+  const regenerateIdeaComparisons = async () => {
+    if (!selectedProjectId) return;
+    setIdeaComparisonsRegenerating(true);
+    setIdeaComparisonsError('');
+    try {
+      const { ok, data } = await getIdeaComparisons(selectedProjectId, { regenerate: true });
+      setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
+      if (!ok) setIdeaComparisonsError(data?.error || 'Failed to regenerate idea comparisons.');
+    } catch (err) {
+      setIdeaComparisonsError(err?.message || 'Failed to regenerate idea comparisons.');
+    } finally {
+      setIdeaComparisonsRegenerating(false);
+    }
+  };
 
   return <div className="content-shell intelligence-page">
     <header className="intelligence-header">
@@ -403,6 +454,65 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
+
+        {selectedProject?.mode !== 'competitor' ? (
+          <section className="intelligence-idea-comparisons-grid">
+            <article className="glass-card intelligence-card">
+              <div className="intelligence-card-heading">
+                <h3>Idea comparisons across sources</h3>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={regenerateIdeaComparisons}
+                  disabled={ideaComparisonsRegenerating || !selectedProjectId}
+                  style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                  Regenerate
+                </button>
+              </div>
+              {ideaComparisonsError ? (
+                <p className="intelligence-empty">{ideaComparisonsError}</p>
+              ) : ideaComparisonsLoading ? (
+                <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
+              ) : ideaComparisons.length === 0 ? (
+                <p className="intelligence-empty">
+                  No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
+                </p>
+              ) : (
+                <div className="intelligence-idea-comparison-list">
+                  {ideaComparisons.map((comparison) => (
+                    <div key={comparison.idea_cluster_id} className="intelligence-idea-comparison-item">
+                      <div className="intelligence-idea-comparison-header">
+                        <strong>{comparison.idea}</strong>
+                        {comparison.diverges ? (
+                          <span className="admin-tag" style={{ background: '#fef3c7', color: '#92400e' }}><Scale size={12} /> Sources disagree</span>
+                        ) : (
+                          <span className="admin-tag muted">Sources agree</span>
+                        )}
+                      </div>
+                      {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                      <div className="intelligence-term-list intelligence-idea-comparison-sources">
+                        {(comparison.sources || []).map((source, index) => (
+                          <a
+                            key={`${comparison.idea_cluster_id}-${source.article_id ?? index}`}
+                            href={source.url || undefined}
+                            target={source.url ? '_blank' : undefined}
+                            rel={source.url ? 'noreferrer' : undefined}
+                            className="intelligence-term-link"
+                            title={source.title || source.source_label}
+                          >
+                            <b>{source.source_label}</b>{source.value ? <em>: {source.value}</em> : null}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </section>
+        ) : null}
 
         <section className="intelligence-bottom-grid">
           {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={`See articles mentioning ${term.term}`}><b>{term.term}</b> <em>{term.mentions}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article> : null}

@@ -82,6 +82,16 @@ export const listIdeaClusters = (projectId, params, signal) =>
 export const listIdeaClusterArticles = (projectId, clusterId, params) =>
   request(`/${projectId}/idea-clusters/${clusterId}/articles${query(params)}`);
 
+/** Cross-source idea comparison cards (see backend/services/articles/idea_comparisons.py).
+ *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`
+ *  (an LLM failure during `regenerate`) alongside whatever was already
+ *  cached - returns { ok, data } so the caller can show both. */
+export async function getIdeaComparisons(projectId, { regenerate } = {}, signal) {
+  const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate })}`, { signal });
+  const data = await response.json().catch(() => ({}));
+  return { ok: response.ok && !data?.error, data };
+}
+
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic
  *  status-code string rather than anything read from the response body (this
