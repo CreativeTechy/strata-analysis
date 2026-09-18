@@ -189,6 +189,21 @@ class ProjectIdeaClustersTests(AnalysisRoutesTestCase):
         self.assertEqual(resp.json(), page)
 
 
+class ProjectSourcesTests(AnalysisRoutesTestCase):
+    def test_404_when_project_not_found(self):
+        with patch("main.get_project", return_value=None):
+            resp = self.client.get("/api/projects/1/sources")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_returns_wrapped_sources(self):
+        sources = [{"key": "real:nytimes.com", "type": "real", "label": "nytimes.com", "article_count": 2}]
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_project_sources", return_value=sources) as mock_list:
+            resp = self.client.get("/api/projects/1/sources")
+        self.assertEqual(resp.json(), {"sources": sources})
+        mock_list.assert_called_once_with(1)
+
+
 class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
     """delete_articles() does a deferred `from services.articles.store
     import delete_all_articles` import inside the route body, not at module
