@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity, ChevronRight, FileText, Gauge, Loader2, Network, RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
@@ -179,50 +179,62 @@ export default function DashboardOverview({
   const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
   const [ideaComparisonsError, setIdeaComparisonsError] = useState('');
   const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
+  const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
+  // Set right before bumping ideaComparisonsNonce from the Regenerate button
+  // below, and consumed (and cleared) by the effect - the same
+  // forceRegenerateRef/nonce pattern StatsOverview.jsx's trend-summary
+  // refresh button uses. Routing the regenerate call through this effect
+  // (instead of a standalone async click handler) means a project switch
+  // while a regenerate call is still in flight aborts/ignores that response
+  // instead of letting it land on top of the now-selected project's data.
+  const forceIdeaComparisonsRegenerateRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
+    let cancelled = false;
     async function loadIdeaComparisons() {
       if (!selectedProjectId) {
         setIdeaComparisons([]);
         return;
       }
-      setIdeaComparisonsLoading(true);
+      const forceRegenerate = forceIdeaComparisonsRegenerateRef.current;
+      forceIdeaComparisonsRegenerateRef.current = false;
+      if (forceRegenerate) setIdeaComparisonsRegenerating(true);
+      else setIdeaComparisonsLoading(true);
       setIdeaComparisonsError('');
       try {
-        const { ok, data } = await getIdeaComparisons(selectedProjectId, {}, controller.signal);
+        const { ok, data } = await getIdeaComparisons(
+          selectedProjectId,
+          { regenerate: forceRegenerate || undefined },
+          controller.signal,
+        );
+        if (cancelled) return;
         setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
         if (!ok) setIdeaComparisonsError(data?.error || 'Failed to load idea comparisons.');
       } catch (err) {
-        if (err?.name !== 'AbortError') {
+        if (!cancelled && err?.name !== 'AbortError') {
           setIdeaComparisons([]);
           setIdeaComparisonsError(err?.message || 'Failed to load idea comparisons.');
         }
       } finally {
-        setIdeaComparisonsLoading(false);
+        if (!cancelled) {
+          setIdeaComparisonsLoading(false);
+          setIdeaComparisonsRegenerating(false);
+        }
       }
     }
     loadIdeaComparisons();
-    return () => controller.abort();
-  }, [selectedProjectId]);
+    return () => { cancelled = true; controller.abort(); };
+  }, [selectedProjectId, ideaComparisonsNonce]);
 
   // Spends an LLM call per qualifying idea cluster (see
   // services/articles/idea_comparisons.py), so this only runs on an explicit
   // click - never automatically on a page view - the same restraint
   // getTrendSummary()'s refresh button uses.
-  const regenerateIdeaComparisons = async () => {
+  const regenerateIdeaComparisons = () => {
     if (!selectedProjectId) return;
-    setIdeaComparisonsRegenerating(true);
-    setIdeaComparisonsError('');
-    try {
-      const { ok, data } = await getIdeaComparisons(selectedProjectId, { regenerate: true });
-      setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
-      if (!ok) setIdeaComparisonsError(data?.error || 'Failed to regenerate idea comparisons.');
-    } catch (err) {
-      setIdeaComparisonsError(err?.message || 'Failed to regenerate idea comparisons.');
-    } finally {
-      setIdeaComparisonsRegenerating(false);
-    }
+    forceIdeaComparisonsRegenerateRef.current = true;
+    setIdeaComparisonsNonce((n) => n + 1);
   };
 
   return <div className="content-shell intelligence-page">
