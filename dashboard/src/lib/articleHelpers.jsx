@@ -30,6 +30,38 @@ export const DOCUMENT_NAME_RE = /\.(pdf|docx?|xlsx?|csv|png|jpe?g|json)$/i;
 export const FULL_IMPORT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson';
 export const JSONL_ONLY_ACCEPT = '.jsonl,.ndjson,application/x-ndjson';
 
+// project_document_articles._materialize() (backend) writes this scheme onto
+// article.url whenever an article has no real one of its own (an LLM split
+// of an uploaded document) - article.source/source_url always point at the
+// document either way. These three helpers are the one place the dashboard
+// reconciles that into "the source" a human would actually want to see or
+// click through to.
+export const SYNTHETIC_SOURCE_PREFIX = 'document://';
+
+export function isSyntheticUrl(url) {
+  return !url || String(url).startsWith(SYNTHETIC_SOURCE_PREFIX);
+}
+
+// The article's own real URL, or null when it only has the synthetic
+// document:// one - callers use this to decide whether to render a link at
+// all rather than pointing one at an unnavigable custom scheme.
+export function articleSourceLink(article) {
+  const url = article?.url;
+  return isSyntheticUrl(url) ? null : url;
+}
+
+export function articleSourceLabel(article) {
+  const link = articleSourceLink(article);
+  if (link) {
+    try {
+      return new URL(link).hostname.replace(/^www\./, '');
+    } catch {
+      // Malformed url - fall through to the document-level label below.
+    }
+  }
+  return article?.source || 'Unknown source';
+}
+
 export function prettyLabel(value) {
   return String(value || '')
     .replace(/_/g, ' ')

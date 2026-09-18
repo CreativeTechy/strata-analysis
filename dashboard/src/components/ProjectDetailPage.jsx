@@ -417,7 +417,12 @@ export default function ProjectDetailPage({
         >
           <div className="panel-header-tight">
             <strong style={{ fontSize: '1rem' }}>Uploaded Documents</strong>
-            <span className="panel-chip">{documents.length} uploaded</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="panel-chip">{documents.length} uploaded</span>
+              <Link to={`/sources?project_id=${project.id}`} style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+                View sources →
+              </Link>
+            </span>
           </div>
 
           {documents.length === 0 ? (

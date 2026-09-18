@@ -46,6 +46,7 @@ from services.articles.articles_store import (
     list_articles,
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
+    list_project_sources,
 )
 from services.articles.import_jobs import (
     create_import_run,
@@ -989,6 +990,21 @@ def get_project_idea_clusters(
     if not get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found.")
     return list_idea_clusters_for_project(project_id, limit=limit, offset=offset)
+
+
+@app.get("/api/projects/{project_id}/sources")
+def get_project_sources(
+    project_id: int,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Every distinct source this project's articles came from - a real
+    outlet (grouped by hostname) for an article whose own `url` isn't the
+    document:// scheme project_document_articles.py writes for an LLM split,
+    a document otherwise. The Sources tab."""
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return {"sources": list_project_sources(project_id)}
 
 
 @app.get("/api/projects/{project_id}/idea-clusters/{cluster_id}/articles")

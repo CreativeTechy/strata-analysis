@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -59,6 +60,63 @@ class ListArticlesForIdeaClusterTests(unittest.TestCase):
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
             with patch("services.articles.articles_query.db.fetch_one", side_effect=RuntimeError("boom")):
                 self.assertIsNone(articles_query.list_articles_for_idea_cluster(1, 2))
+
+
+class ListProjectSourcesTests(unittest.TestCase):
+    def test_falsy_project_id_returns_empty_without_querying(self):
+        with patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_project_sources(None)
+        self.assertEqual(result, [])
+        mock_fetch_all.assert_not_called()
+
+    def test_no_database_configured_returns_empty(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", ""):
+            result = articles_query.list_project_sources(1)
+        self.assertEqual(result, [])
+
+    def test_query_error_returns_empty_instead_of_raising(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", side_effect=RuntimeError("boom")):
+                result = articles_query.list_project_sources(1)
+        self.assertEqual(result, [])
+
+    def test_groups_real_urls_by_hostname_and_document_urls_by_source_url(self):
+        rows = [
+            {"id": 1, "title": "A1", "url": "https://nytimes.com/a1", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 3)},
+            {"id": 2, "title": "A2", "url": "https://nytimes.com/a2", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 5)},
+            {"id": 3, "title": "D1", "url": "document://project-document/1/article/3", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": None},
+            {"id": 4, "title": "D2", "url": "document://project-document/1/article/4", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 1)},
+            {"id": 5, "title": "D3", "url": "document://project-document/1/article/5", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows) as mock_fetch_all:
+                result = articles_query.list_project_sources(1)
+
+        mock_fetch_all.assert_called_once()
+        self.assertEqual(len(result), 2)
+
+        # The document (3 articles) outranks the real outlet (2 articles).
+        document_source, real_source = result
+        self.assertEqual(document_source["type"], "document")
+        self.assertEqual(document_source["label"], "report.pdf")
+        self.assertEqual(document_source["url"], "document://project-document/1")
+        self.assertEqual(document_source["article_count"], 3)
+        self.assertEqual(document_source["latest_published_at"], datetime(2024, 1, 2))
+        self.assertEqual([a["id"] for a in document_source["articles"]], [5, 4, 3])
+        self.assertIsNone(document_source["articles"][0]["url"])
+
+        self.assertEqual(real_source["type"], "real")
+        self.assertEqual(real_source["label"], "nytimes.com")
+        self.assertEqual(real_source["url"], "https://nytimes.com")
+        self.assertEqual(real_source["article_count"], 2)
+        self.assertEqual(real_source["latest_published_at"], datetime(2024, 1, 5))
+        self.assertEqual([a["id"] for a in real_source["articles"]], [2, 1])
+        self.assertEqual(real_source["articles"][0]["url"], "https://nytimes.com/a2")
 
 
 class GetAnalysisStatusCountsTests(unittest.TestCase):

@@ -11,10 +11,18 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import lru_cache
+from urllib.parse import urlparse
 
 import config
 import db
 from services.projects.projects_store import list_article_ids_for_project
+
+# project_document_articles._materialize() writes this scheme onto every
+# article.url that has no real one (an LLM split of an uploaded document);
+# a JSONL-imported record's own url rides through unchanged instead. This is
+# the one place that turns that per-article distinction into "the source" a
+# human would recognize - see list_project_sources() below.
+SYNTHETIC_SOURCE_PREFIX = "document://"
 
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
@@ -376,6 +384,85 @@ def list_articles_for_idea_cluster(cluster_id, project_id, limit=10, offset=0):
     except Exception:
         return None
     return {"articles": rows, "total": int((count_row or {}).get("total") or 0), "limit": limit, "offset": offset}
+
+
+def list_project_sources(project_id):
+    """Every distinct place this project's articles came from, grouped the
+    way a human would recognize "source" rather than the way the schema
+    stores it: `articles.source`/`source_url` always point at the uploaded
+    document (see project_document_articles._materialize()'s own comment),
+    even for a JSONL-imported article whose `url` is a real, distinct page.
+    So a real source is grouped by that article's own `url` (by hostname -
+    the same real outlet publishes many articles, but each has its own
+    page), and a document-sourced article groups by its document's
+    synthetic source_url, same as every other document-scoped view
+    (ArticlesPage's source filter).
+
+    Each group carries a capped preview of its own articles (newest first)
+    rather than requiring a second request per source - project article
+    counts here are small enough that this stays cheap, and it sidesteps
+    needing a by-hostname filter that nothing else in the app has.
+
+    [] for a falsy project_id or a database that hasn't had schema.sql
+    re-run yet, same defensive style as the rest of this module.
+    """
+    ARTICLES_PER_SOURCE_PREVIEW = 20
+    if not project_id or not config.DATABASE_URL:
+        return []
+    try:
+        rows = db.fetch_all(
+            """
+            select a.id, a.title, a.url, a.source, a.source_url, a.published_at
+            from articles a
+            join article_projects ap on ap.article_id = a.id
+            where ap.project_id = %s
+            """,
+            (int(project_id),),
+        )
+    except Exception:
+        return []
+
+    groups: dict[str, dict] = {}
+    for row in rows:
+        url = str(row.get("url") or "")
+        is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
+        if is_real:
+            host = (urlparse(url).hostname or url).lower()
+            key = f"real:{host}"
+            label = host
+            link = f"https://{host}"
+        else:
+            source_url = row.get("source_url") or ""
+            key = f"document:{source_url}"
+            label = row.get("source") or "Uploaded document"
+            link = source_url or None
+
+        group = groups.setdefault(key, {
+            "key": key,
+            "type": "real" if is_real else "document",
+            "label": label,
+            "url": link,
+            "article_count": 0,
+            "latest_published_at": None,
+            "articles": [],
+        })
+        group["article_count"] += 1
+        published_at = row.get("published_at")
+        if published_at and (group["latest_published_at"] is None or published_at > group["latest_published_at"]):
+            group["latest_published_at"] = published_at
+        if len(group["articles"]) < ARTICLES_PER_SOURCE_PREVIEW:
+            group["articles"].append({
+                "id": row["id"],
+                "title": row.get("title"),
+                "url": url if is_real else None,
+                "published_at": published_at,
+            })
+
+    sources = list(groups.values())
+    for group in sources:
+        group["articles"].sort(key=lambda a: a["published_at"] or datetime.min, reverse=True)
+    sources.sort(key=lambda g: (-g["article_count"], g["label"] or ""))
+    return sources
 
 
 def get_analysis_status_counts(project_id=None):

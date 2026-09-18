@@ -12,11 +12,13 @@ import {
   ChevronsRight,
   ChevronDown,
   Filter,
+  ExternalLink,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { computeOverallTone } from '../lib/tone.js';
+import { articleSourceLink, articleSourceLabel } from '../lib/articleHelpers.jsx';
 import { listArticles, sendChatMessage } from '../api/articlesApi.js';
 
 const MATCHES_PAGE_SIZE = 4;
@@ -570,7 +572,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               }}
             >
               <div className="preview-meta">
-                <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{article.source}</span>
+                <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{articleSourceLabel(article)}</span>
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
                   {article.sentiment || 'Neutral'}
                 </span>
@@ -660,9 +662,14 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
               <h1 style={{ fontSize: '2rem', marginBottom: '10px' }}>{selectedArticle.title}</h1>
               <div className="article-byline">
-                <span>{selectedArticle.source}</span>
+                <span>{articleSourceLabel(selectedArticle)}</span>
                 {selectedArticle.published && <span>{new Date(selectedArticle.published).toLocaleDateString()}</span>}
                 {selectedArticle.author && <span>By {selectedArticle.author}</span>}
+                {articleSourceLink(selectedArticle) && (
+                  <a href={articleSourceLink(selectedArticle)} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    View original <ExternalLink size={12} />
+                  </a>
+                )}
               </div>
 
               <div
