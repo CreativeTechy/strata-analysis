@@ -18,6 +18,13 @@
 .intelligence-top-grid { display: grid; grid-template-columns: minmax(245px,.9fr) minmax(350px,1.8fr) minmax(235px,.9fr); gap: 16px; }
 .intelligence-middle-grid { display: grid; grid-template-columns: minmax(240px,.85fr) minmax(330px,1.15fr) minmax(250px,.7fr); gap: 16px; }
 .intelligence-bottom-grid { display: grid; grid-template-columns: minmax(280px,.8fr) minmax(380px,1.2fr); gap: 16px; }
+.intelligence-idea-comparisons-grid { display: grid; grid-template-columns: 1fr; }
+.intelligence-idea-comparison-list { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.intelligence-idea-comparison-item { border: 1px solid rgba(15,23,42,.08); border-radius: 12px; padding: 14px 16px; }
+.intelligence-idea-comparison-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.intelligence-idea-comparison-header strong { font-size: .88rem; }
+.intelligence-idea-comparison-summary { margin: 8px 0 0; color: var(--text-light); font-size: .82rem; line-height: 1.5; }
+.intelligence-idea-comparison-sources { margin-top: 10px; }
 .intelligence-pipeline-card-full { grid-column: 1 / -1; }
 .intelligence-card { padding: 22px; min-width: 0; }
 .intelligence-card:hover { transform: none; }

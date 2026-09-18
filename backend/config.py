@@ -396,6 +396,14 @@ IDEA_SIMILARITY_THRESHOLD = float(os.environ.get("IDEA_SIMILARITY_THRESHOLD", "0
 # the same thing - hence the slightly lower bar than IDEA_SIMILARITY_THRESHOLD.
 SEGMENT_SIMILARITY_THRESHOLD = float(os.environ.get("SEGMENT_SIMILARITY_THRESHOLD", "0.80") or 0.80)
 
+# services/articles/idea_comparisons.py: how many of a project's idea_clusters
+# (highest frequency_estimate first) get a comparison card per regeneration.
+# Each qualifying cluster costs one LLM call, so this bounds that the same way
+# competitor findings cap evidence per competitor - a project with hundreds of
+# clusters must not turn one "Regenerate" click into hundreds of calls against
+# a local model.
+IDEA_COMPARISON_MAX_CLUSTERS = int(os.environ.get("IDEA_COMPARISON_MAX_CLUSTERS", "20") or 20)
+
 # services/competitors/competitor_analysis.py's run_analysis_job(): one LLM
 # call per competitor, run through a small thread pool for the same reason
 # ANALYSIS_CONCURRENCY above is kept low - the ceiling is the provider's, and

@@ -76,6 +76,7 @@ from services.projects.projects_store import (
     update_project,
 )
 from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
+from services.articles.idea_comparisons import generate_idea_comparisons, list_idea_comparisons
 from services.intelligence.trend_summary import generate_trend_summary
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
@@ -725,6 +726,39 @@ def get_project_trend_summary_view(
             "error": "Something went wrong while generating the trend summary. Please try again.",
             "error_code": "llm_provider_error",
         }
+
+
+@app.get("/api/projects/{project_id}/idea-comparisons")
+def get_project_idea_comparisons_view(
+    project_id: int,
+    regenerate: bool = False,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Cross-source idea comparison cards - which of the project's recurring
+    ideas (see services/articles/idea_clustering.py) more than one distinct
+    source has talked about, and what each source specifically said.
+
+    Cached in `idea_comparisons`, refreshed automatically after each analysis
+    run and, on demand, by `regenerate=true` (the card's Regenerate button) -
+    the same cache-unless-asked shape as /trend-summary above."""
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    if regenerate:
+        try:
+            generate_idea_comparisons(project_id)
+        except LLMError as e:
+            logger.warning("Idea comparison generation failed (%s): %s", e.code, e.detail or e)
+            return {"comparisons": list_idea_comparisons(project_id), "error": e.user_message, "error_code": e.code}
+        except Exception:
+            logger.exception("Idea comparison generation failed unexpectedly")
+            return {
+                "comparisons": list_idea_comparisons(project_id),
+                "error": "Something went wrong while regenerating idea comparisons. Please try again.",
+                "error_code": "llm_provider_error",
+            }
+    return {"comparisons": list_idea_comparisons(project_id)}
 
 
 @app.get("/api/articles/export")

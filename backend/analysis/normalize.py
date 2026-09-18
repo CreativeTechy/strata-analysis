@@ -193,14 +193,20 @@ def normalize_frequent_ideas(value) -> list:
                 "type": type_value if type_value in _FREQUENT_IDEA_TYPES else "issue",
                 "category": as_text(item.get("category")),
                 "frequency_estimate": coerce_frequency_estimate(item.get("frequency_estimate", 1)),
+                "value": as_text(item.get("value")),
             })
         else:
             idea = as_text(item)
             if idea:
-                ideas.append({"idea": idea, "type": "issue", "category": "", "frequency_estimate": 1})
+                ideas.append({"idea": idea, "type": "issue", "category": "", "frequency_estimate": 1, "value": ""})
     deduped = []
     seen = set()
     for item in ideas:
+        # value is deliberately excluded from the key: two occurrences of the
+        # same idea with different stated values are still one idea for
+        # per-article dedup purposes (idea_clustering.py is where different
+        # values across different *articles* matter), so the first value seen
+        # on this article wins rather than spawning a near-duplicate entry.
         key = (item["idea"].lower(), item["type"], item["category"].lower())
         if key in seen:
             continue
