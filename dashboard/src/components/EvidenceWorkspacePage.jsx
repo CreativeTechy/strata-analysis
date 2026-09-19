@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, CheckCircle2, ChevronDown, ExternalLink, FileSearch, Filter, Quote, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { ArrowLeft, BarChart3, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Filter, Quote, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import {
   compareEvidenceRuns, getEvidenceClaim, getEvidenceWorkspace, retryEvidenceRun,
@@ -12,6 +12,16 @@ const LABELS = {
   supported: 'Supported', contradicted: 'Contradicted', mixed_evidence: 'Mixed evidence',
   insufficient_evidence: 'Insufficient evidence', not_yet_verifiable: 'Not yet verifiable',
   assessment_unavailable: 'Assessment unavailable',
+};
+
+const MATRIX_PAGE_SIZE = 5;
+
+const MATRIX_STATES = {
+  supporting: { symbol: '✓', label: 'Supports' },
+  contradicting: { symbol: '!', label: 'Conflicts' },
+  contextual: { symbol: '•', label: 'Context' },
+  review: { symbol: '?', label: 'Review' },
+  missing: { symbol: '—', label: 'No evidence' },
 };
 
 function formatDate(value) {
@@ -62,6 +72,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [provenanceReason, setProvenanceReason] = useState('');
   const [view, setView] = useState('review');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [matrixPage, setMatrixPage] = useState(0);
 
   const updateFilters = (changes) => {
     const next = new URLSearchParams(search);
@@ -70,6 +81,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       else next.set(key, String(value));
     });
     if (!Object.hasOwn(changes, 'offset')) next.delete('offset');
+    setMatrixPage(0);
     setSearch(next, { replace: true });
   };
 
@@ -79,7 +91,9 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       const result = await getEvidenceWorkspace(projectId, {
         run_id: runId, topic, search: searchText, assessment: assessmentFilter,
         claim_type: typeFilter, publisher: publisherFilter, review_status: reviewFilter,
-        provenance_status: provenanceFilter, limit: 50, offset,
+        provenance_status: provenanceFilter,
+        limit: view === 'matrix' ? MATRIX_PAGE_SIZE : 50,
+        offset: view === 'matrix' ? matrixPage * MATRIX_PAGE_SIZE : offset,
       }, signal);
       setData(result);
       if (!runId && result.selected_run_id) updateFilters({ run_id: result.selected_run_id });
@@ -94,7 +108,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load(controller.signal);
     return () => controller.abort();
-  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, offset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // This clears details that belong to the previous URL-scoped claim set.
@@ -169,6 +183,23 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const overview = data?.overview || {};
   const assessmentCards = useMemo(() => Object.entries(overview.assessment_counts || {}), [overview.assessment_counts]);
   const matrix = data?.source_matrix || { publishers: [], rows: [] };
+  const matrixTotal = Number(data?.total_filtered || 0);
+  const matrixPageCount = Math.max(1, Math.ceil(matrixTotal / MATRIX_PAGE_SIZE));
+  const matrixSafePage = Math.min(matrixPage, matrixPageCount - 1);
+  const matrixFirst = matrixTotal ? matrixSafePage * MATRIX_PAGE_SIZE + 1 : 0;
+  const matrixLast = Math.min(matrixFirst + matrix.rows.length - 1, matrixTotal);
+  const matrixCoverage = useMemo(() => Object.fromEntries(
+    (matrix.publishers || []).map((publisher) => [publisher, (matrix.rows || []).filter((row) => (
+      row.sources.some((item) => item.publisher === publisher && item.citation_valid && item.qualifies)
+    )).length]),
+  ), [matrix.publishers, matrix.rows]);
+  const matrixPresence = useMemo(() => Object.fromEntries(
+    (matrix.publishers || []).map((publisher) => [publisher, (matrix.rows || []).filter((row) => (
+      row.sources.some((item) => item.publisher === publisher)
+    )).length]),
+  ), [matrix.publishers, matrix.rows]);
+  const visibleMatrixPublishers = (matrix.publishers || []).filter((publisher) => matrixPresence[publisher] > 0);
+  const hiddenMatrixPublishers = Math.max(0, (matrix.publishers || []).length - visibleMatrixPublishers.length);
 
   return (
     <div className="admin-page-shell evidence-page">
@@ -249,19 +280,21 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
 
         <div className="evidence-view-switch" role="tablist" aria-label="Evidence view">
           <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}><Quote size={15} /> Review claims</button>
-          <button type="button" role="tab" aria-selected={view === 'matrix'} className={view === 'matrix' ? 'active' : ''} onClick={() => setView('matrix')}><BarChart3 size={15} /> Compare sources</button>
+          <button type="button" role="tab" aria-selected={view === 'matrix'} className={view === 'matrix' ? 'active' : ''} onClick={() => { setMatrixPage(0); setView('matrix'); }}><BarChart3 size={15} /> Compare sources</button>
         </div>
 
         {view === 'matrix' ? <div className="glass-card evidence-matrix-card">
-          <div className="evidence-matrix-heading"><div><strong>Claims by source</strong><span>See where independent sources agree, conflict, or only add context.</span></div><div className="evidence-matrix-legend"><span className="supporting">Supports</span><span className="contradicting">Conflicts</span><span className="contextual">Context</span><span className="missing">No evidence</span></div></div>
-          {matrix.publishers.length ? <div className="evidence-matrix-scroll"><table className="evidence-matrix"><thead><tr><th>Claim</th>{matrix.publishers.map((publisher) => <th key={publisher}>{publisher}</th>)}</tr></thead><tbody>
-            {matrix.rows.map((row) => <tr key={row.claim_id}><th><button type="button" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span>{row.claim_text}</button></th>{matrix.publishers.map((publisher) => {
+          <div className="evidence-matrix-heading"><div><div className="evidence-matrix-title"><strong>Claims by source</strong><span className="panel-chip">5 per page</span><span className="panel-chip muted">{visibleMatrixPublishers.length} active source{visibleMatrixPublishers.length === 1 ? '' : 's'}</span></div><span>Scan independent agreement, conflict, context, and citations that need review. Only sources connected to these five claims are shown{hiddenMatrixPublishers ? `; ${hiddenMatrixPublishers} empty source${hiddenMatrixPublishers === 1 ? '' : 's'} hidden` : ''}.</span></div><div className="evidence-matrix-legend">{Object.entries(MATRIX_STATES).map(([key, state]) => <span className={key} key={key}><b>{state.symbol}</b>{state.label}</span>)}</div></div>
+          {matrix.rows.length && visibleMatrixPublishers.length ? <><div className="evidence-matrix-scroll"><table className="evidence-matrix"><thead><tr><th><span>Claim</span><small>{matrixTotal} in this view</small></th>{visibleMatrixPublishers.map((publisher) => <th key={publisher} title={publisher}><span>{publisher}</span><small>{matrixCoverage[publisher] ? `${matrixCoverage[publisher]} qualified` : 'Needs review'}</small></th>)}</tr></thead><tbody>
+            {matrix.rows.map((row, rowIndex) => <tr key={row.claim_id}><th><button type="button" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className="evidence-matrix-claim-number">{matrixFirst + rowIndex}</span><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span><strong>{row.claim_text}</strong><small>{row.topic}</small></button></th>{visibleMatrixPublishers.map((publisher) => {
               const items = row.sources.filter((item) => item.publisher === publisher);
               const relationship = items.find((item) => item.relationship === 'contradicting')?.relationship || items.find((item) => item.relationship === 'supporting')?.relationship || items[0]?.relationship;
               const qualified = items.some((item) => item.citation_valid && item.qualifies);
-              return <td key={publisher}><span className={`evidence-matrix-cell ${qualified && relationship ? relationship : 'missing'}`} title={qualified && relationship ? `${publisher}: ${relationship}` : `${publisher}: no qualifying evidence`}>{qualified && relationship === 'supporting' ? '✓' : qualified && relationship === 'contradicting' ? '!' : qualified && relationship === 'contextual' ? '•' : '—'}</span></td>;
+              const stateKey = qualified && relationship ? relationship : items.length ? 'review' : 'missing';
+              const state = MATRIX_STATES[stateKey] || MATRIX_STATES.missing;
+              return <td key={publisher}><span className={`evidence-matrix-cell ${stateKey}`} aria-label={`${publisher}: ${state.label}`} title={`${publisher}: ${state.label}`}>{state.symbol}</span></td>;
             })}</tr>)}
-          </tbody></table></div> : <div className="evidence-empty"><FileSearch size={22} /><span>No source evidence matches these filters.</span></div>}
+          </tbody></table></div><div className="evidence-matrix-footer"><span>Showing <strong>{matrixFirst}–{matrixLast}</strong> of <strong>{matrixTotal}</strong> claims</span><nav className="evidence-matrix-pagination" aria-label="Claim matrix pagination"><button type="button" aria-label="Previous claim page" disabled={matrixSafePage === 0} onClick={() => setMatrixPage(Math.max(0, matrixSafePage - 1))}><ChevronLeft size={15} /> Previous</button><span>Page {matrixSafePage + 1} of {matrixPageCount}</span><button type="button" aria-label="Next claim page" disabled={matrixSafePage + 1 >= matrixPageCount} onClick={() => setMatrixPage(Math.min(matrixPageCount - 1, matrixSafePage + 1))}>Next <ChevronRight size={15} /></button></nav></div></> : <div className="evidence-empty"><FileSearch size={22} /><span>No source evidence matches these filters.</span></div>}
         </div> : <div className="evidence-layout">
           <div className="glass-card evidence-claims">
             <div className="panel-header-tight"><strong>Claims</strong><span className="panel-chip">{data?.total_filtered || 0}</span></div>
