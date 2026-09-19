@@ -66,9 +66,9 @@ def _scan_pattern() -> re.Pattern:
     return re.compile(r"(?<!\w)(" + "|".join(re.escape(form) for form in forms) + r")(?!\w)", re.IGNORECASE)
 
 
-def _name_fragment_tokens(entities, organizations) -> set:
-    """Lowercased individual words pulled out of any *multi-word* entity/
-    organization name (e.g. {"jordan", "peterson"} from "Jordan Peterson").
+def _name_fragment_tokens(entities) -> set:
+    """Lowercased individual words pulled out of any *multi-word* entity
+    (e.g. {"jordan", "peterson"} from "Jordan Peterson").
 
     A handful of country names/aliases (Jordan, Chad, Georgia, Turkey,
     Niger, ...) are also common personal names, so a bare word-level scan
@@ -76,11 +76,23 @@ def _name_fragment_tokens(entities, organizations) -> set:
     reference to the country. The pipeline's own entity extraction already
     tagged "Jordan Peterson" as one distinct name rather than two words -
     that's a real signal the word isn't standing alone as a place, so any
-    scan match on a fragment of a *multi-word* extracted name is suppressed
-    rather than counted as a region vote. A genuinely standalone
-    single-word entity (e.g. entities=["Turkey"]) is unaffected."""
+    scan match on a fragment of a *multi-word* extracted entity is
+    suppressed rather than counted as a region vote. A genuinely standalone
+    single-word entity (e.g. entities=["Turkey"]) is unaffected.
+
+    Deliberately only `entities`, not `organizations`: per
+    structured_extraction's prompt, `organizations` names businesses,
+    products, and models, where "X of <Country>" (Bank of America,
+    University of Georgia, Ford of Canada, ...) is the normal, expected
+    shape - treating every word in a multi-word org name as a suppressed
+    "person fragment" would silently drop a genuine, unrelated country
+    mention elsewhere in the same article just because an org happens to be
+    named after a place. `entities` is where a person's name actually shows
+    up, whether from the LLM's own output or from entity_extraction.py's
+    dedicated NER stage (which routes anything ORG-tagged into
+    `organizations`, never `entities`)."""
     tokens = set()
-    for value in list(entities or []) + list(organizations or []):
+    for value in entities or []:
         words = re.findall(r"[A-Za-z']+", str(value or ""))
         if len(words) >= 2:
             tokens.update(word.lower() for word in words)
@@ -152,7 +164,7 @@ def detect_region(
     entities/organizations empty) - the text scan alone still gives a real,
     if lower-confidence, answer.
     """
-    name_fragments = frozenset(_name_fragment_tokens(entities, organizations))
+    name_fragments = frozenset(_name_fragment_tokens(entities))
     signals = {
         "text": _text_scan_votes(title, text, exclude=name_fragments),
         "opinions": _opinion_votes(people_opinions),

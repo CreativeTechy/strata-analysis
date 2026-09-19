@@ -115,6 +115,24 @@ class DetectRegionTests(unittest.TestCase):
         self.assertEqual(result["region"], "United States")
         self.assertGreater(result["region_confidence"], 0.0)
 
+    def test_organization_named_after_a_country_does_not_suppress_a_real_mention(self):
+        """"Bank of America"/"University of Georgia"-style organization names
+        are the documented normal shape of `organizations` (see
+        structured_extraction's prompt: "organizations, products, or models
+        mentioned") - unlike a multi-word `entities` value, they must NOT be
+        treated as a suppressed person-name fragment, or a genuine,
+        unrelated mention of that same country elsewhere in the article
+        would be silently dropped."""
+        result = region_detection.detect_region(
+            title="Quarterly earnings roundup",
+            text="Sales in America grew steadily this quarter, according to dealers.",
+            people_opinions=[],
+            entities=[],
+            organizations=["Bank of America"],
+        )
+        self.assertEqual(result["region"], "United States")
+        self.assertGreaterEqual(result["region_confidence"], 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()
