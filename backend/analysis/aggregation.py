@@ -33,20 +33,21 @@ def compute_overall_tone(article_tone, writer_tone) -> str:
 
 
 def compute_dominant_demographics(people_opinions) -> dict:
-    """Deterministic per-article region/gender/age_range, majority-voted
-    across the article's own people_opinions (never guessed by the AI itself
-    - see structured_extraction.py's prompt). "unknown" votes are ignored so
-    one clearly-signaled person outweighs several with no signal; a
-    dimension with no non-unknown votes at all stays "unknown"."""
-    region_counts = Counter()
+    """Deterministic per-article gender/age_range, majority-voted across the
+    article's own people_opinions (never guessed by the AI itself - see
+    structured_extraction.py's prompt). "unknown" votes are ignored so one
+    clearly-signaled person outweighs several with no signal; a dimension
+    with no non-unknown votes at all stays "unknown".
+
+    Region is NOT computed here - see analysis/region_detection.py, an
+    independent stage that combines the per-quote region votes with a
+    text-scan and an entity/organization cross-check, rather than relying on
+    quoted-person tagging alone."""
     gender_counts = Counter()
     age_range_counts = Counter()
     for item in people_opinions or []:
         if not isinstance(item, dict):
             continue
-        region = normalize.as_text(item.get("region"))
-        if region and region.lower() != normalize.labels.DEFAULT_REGION:
-            region_counts[region] += 1
         gender = normalize.as_text(item.get("gender"))
         if gender and gender != normalize.labels.DEFAULT_GENDER:
             gender_counts[gender] += 1
@@ -58,7 +59,6 @@ def compute_dominant_demographics(people_opinions) -> dict:
         return counts.most_common(1)[0][0] if counts else default
 
     return {
-        "region": _top(region_counts, normalize.labels.DEFAULT_REGION),
         "gender": _top(gender_counts, normalize.labels.DEFAULT_GENDER),
         "age_range": _top(age_range_counts, normalize.labels.DEFAULT_AGE_RANGE),
     }

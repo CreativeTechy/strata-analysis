@@ -27,7 +27,7 @@ import logging
 from datetime import datetime, timezone
 
 import config
-from analysis import article_prep, classification, entity_extraction, language, structured_extraction
+from analysis import article_prep, classification, entity_extraction, language, region_detection, structured_extraction
 from analysis.aggregation import compute_dominant_demographics, compute_overall_tone
 from analysis.sentiment import classify_article_sentiment
 from embeddings import build_article_embedding_text, get_embedding
@@ -134,6 +134,18 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
     article_tone = article_tone_result["label"]
     overall_tone = compute_overall_tone(article_tone, writer_tone)
     dominant_demographics = compute_dominant_demographics(extracted.get("people_opinions"))
+    region_result = region_detection.detect_region(
+        title=model_title,
+        text=model_text,
+        people_opinions=extracted.get("people_opinions"),
+        entities=entities,
+        organizations=organizations,
+    )
+    if region_result.get("region_low_confidence"):
+        logger.info(
+            "Low-confidence region for '%s...': region=%r (confidence=%.3f)",
+            title[:50], region_result.get("region"), region_result.get("region_confidence", 0.0),
+        )
 
     insight_json = {
         "topic": extracted.get("topic", ""),
@@ -142,7 +154,8 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
         "writer_tone": writer_tone,
         "article_tone": article_tone,
         "overall_tone": overall_tone,
-        "region": dominant_demographics["region"],
+        "region": region_result["region"],
+        "region_confidence": region_result["region_confidence"],
         "gender": dominant_demographics["gender"],
         "age_range": dominant_demographics["age_range"],
         "summary": extracted.get("summary", ""),

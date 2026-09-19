@@ -530,13 +530,14 @@ def list_analysis_errors(project_id=None, limit=24, offset=0):
 
 _ARTICLE_ANALYSIS_BASE_COLUMNS = (
     "id", "url", "title", "source", "published", "sentiment", "article_category",
-    "writer_tone", "article_tone", "insight_json", "analyzed_at", "analysis_model",
+    "writer_tone", "article_tone", "region", "insight_json", "analyzed_at", "analysis_model",
     "analysis_prompt_version",
 )
 
 _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "sentiment_score", "sentiment_low_confidence", "sentiment_model",
     "category_confidence", "writer_tone_confidence", "article_tone_confidence",
+    "region_confidence",
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
@@ -587,6 +588,7 @@ def _shape_article_analysis(row: dict) -> dict:
         "writer_tone": writer_tone,
         "article_tone": article_tone,
         "overall_tone": compute_overall_tone(article_tone, writer_tone),
+        "region": row.get("region") or "unknown",
         "summary": _normalize_text(insight.get("summary")),
         "insight_json": insight,
         "analysis_status": row.get("analysis_status") or "success",
@@ -600,6 +602,7 @@ def _shape_article_analysis(row: dict) -> dict:
             "category": row.get("category_confidence"),
             "writer_tone": row.get("writer_tone_confidence"),
             "article_tone": row.get("article_tone_confidence"),
+            "region": row.get("region_confidence"),
         },
         "source_language": row.get("source_language"),
         "source_language_confidence": row.get("source_language_confidence"),

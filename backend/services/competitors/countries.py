@@ -61,6 +61,42 @@ COUNTRIES: dict[str, str] = {
 }
 
 
+# Common abbreviations/demonyms/informal names that don't match a COUNTRIES
+# name or code exactly, mapped to the code they mean. Not exhaustive - just
+# the forms an LLM (or a human writer) actually uses in running text, so
+# normalize_region/region_detection stop fragmenting "US"/"USA"/"American"
+# into three different stored values. Keys are lowercase.
+COUNTRY_ALIASES: dict[str, str] = {
+    "us": "US", "usa": "US", "u.s.": "US", "u.s.a.": "US", "america": "US", "american": "US", "americans": "US",
+    "uk": "GB", "u.k.": "GB", "britain": "GB", "british": "GB", "great britain": "GB",
+    "england": "GB", "english": "GB", "scotland": "GB", "scottish": "GB", "wales": "GB", "welsh": "GB",
+    "uae": "AE", "emirati": "AE", "emiratis": "AE", "emirates": "AE",
+    "ksa": "SA", "saudi": "SA", "saudis": "SA", "saudi arabian": "SA",
+    "germany": "DE", "german": "DE", "germans": "DE",
+    "france": "FR", "french": "FR",
+    "japan": "JP", "japanese": "JP",
+    "china": "CN", "chinese": "CN", "prc": "CN",
+    "south korea": "KR", "south korean": "KR", "korean": "KR", "koreans": "KR",
+    "russia": "RU", "russian": "RU", "russians": "RU",
+    "india": "IN", "indian": "IN", "indians": "IN",
+    "brazil": "BR", "brazilian": "BR",
+    "canada": "CA", "canadian": "CA", "canadians": "CA",
+    "australia": "AU", "australian": "AU", "aussie": "AU", "aussies": "AU",
+    "spain": "ES", "spanish": "ES",
+    "italy": "IT", "italian": "IT",
+    "mexico": "MX", "mexican": "MX",
+    "egypt": "EG", "egyptian": "EG",
+    "turkey": "TR", "turkish": "TR",
+    "netherlands": "NL", "dutch": "NL", "holland": "NL",
+}
+
+
+def resolve_country_alias(text: str) -> str | None:
+    """Look up an abbreviation/demonym against COUNTRY_ALIASES. Returns the
+    matching country code, or None when `text` isn't a known alias."""
+    return COUNTRY_ALIASES.get(str(text or "").strip().lower())
+
+
 def validate_countries(values) -> list[str]:
     """Clean a list of country codes down to known, deduped, upper-case ISO codes."""
     if not isinstance(values, list):
