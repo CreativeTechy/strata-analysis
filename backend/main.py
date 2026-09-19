@@ -496,6 +496,7 @@ def project_evidence_workspace(
     publisher: str | None = None,
     review_status: str | None = None,
     provenance_status: str | None = None,
+    coverage: str | None = None,
     limit: int = 50,
     offset: int = 0,
     user: dict = Depends(require_permission("projects.view")),
@@ -504,7 +505,7 @@ def project_evidence_workspace(
     return list_evidence_workspace(
         project_id, run_id=run_id, topic=topic, search=search, assessment=assessment,
         claim_type=claim_type, publisher=publisher, review_status=review_status,
-        provenance_status=provenance_status, limit=limit, offset=offset,
+        provenance_status=provenance_status, coverage=coverage, limit=limit, offset=offset,
     )
 
 

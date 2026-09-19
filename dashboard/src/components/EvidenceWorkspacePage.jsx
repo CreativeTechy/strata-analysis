@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Filter, Quote, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BarChart3, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileSearch, Filter, Minus, PanelRightClose, Quote, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import {
   compareEvidenceRuns, getEvidenceClaim, getEvidenceWorkspace, retryEvidenceRun,
@@ -17,12 +17,49 @@ const LABELS = {
 const MATRIX_PAGE_SIZE = 5;
 
 const MATRIX_STATES = {
-  supporting: { symbol: '✓', label: 'Supports' },
-  contradicting: { symbol: '!', label: 'Conflicts' },
-  contextual: { symbol: '•', label: 'Context' },
-  review: { symbol: '?', label: 'Review' },
-  missing: { symbol: '—', label: 'No evidence' },
+  supporting: { label: 'Supports' },
+  contradicting: { label: 'Conflicts' },
+  contextual: { label: 'Context' },
+  review: { label: 'Review' },
+  missing: { label: 'None' },
 };
+
+function MatrixStateIcon({ stateKey, size = 14 }) {
+  if (stateKey === 'supporting') return <CheckCircle2 size={size} />;
+  if (stateKey === 'contradicting') return <XCircle size={size} />;
+  if (stateKey === 'contextual') return <Quote size={size} />;
+  if (stateKey === 'review') return <AlertTriangle size={size} />;
+  return <Minus size={size} />;
+}
+
+function shortSourceName(value) {
+  const source = String(value || 'Unknown source');
+  const known = {
+    'UK Department for Energy Security and Net Zero': 'UK Energy Department',
+    'UK Parliament - Scottish Affairs Committee': 'Scottish Affairs Committee',
+    'House of Commons Library': 'Commons Library',
+    'Society of Motor Manufacturers and Traders': 'SMMT',
+    'Climate Change Committee': 'Climate Committee',
+  };
+  if (known[source]) return known[source];
+  return source.length > 28 ? `${source.slice(0, 26).trim()}…` : source;
+}
+
+function evidencePublisher(item) {
+  const meta = sourceMeta(item);
+  const provenance = item?.current_provenance || meta.provenance || {};
+  return provenance.publisher || meta.source || 'Unknown source';
+}
+
+function matrixCellState(row, publisher) {
+  const items = row.sources.filter((item) => item.publisher === publisher);
+  const relationship = items.find((item) => item.relationship === 'contradicting')?.relationship
+    || items.find((item) => item.relationship === 'supporting')?.relationship
+    || items[0]?.relationship;
+  const qualified = items.some((item) => item.citation_valid && item.qualifies);
+  const stateKey = qualified && relationship ? relationship : items.length ? 'review' : 'missing';
+  return { items, stateKey, state: MATRIX_STATES[stateKey] || MATRIX_STATES.missing };
+}
 
 function formatDate(value) {
   if (!value) return 'Unknown date';
@@ -55,6 +92,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const publisherFilter = search.get('publisher') || '';
   const reviewFilter = search.get('review_status') || '';
   const provenanceFilter = search.get('provenance_status') || '';
+  const coverageFilter = search.get('coverage') || '';
   const offset = Number(search.get('offset') || 0);
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -73,6 +111,9 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [view, setView] = useState('review');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [matrixPage, setMatrixPage] = useState(0);
+  const [matrixSourceMode, setMatrixSourceMode] = useState('active');
+  const [matrixDetail, setMatrixDetail] = useState(null);
+  const [matrixDetailLoading, setMatrixDetailLoading] = useState(false);
 
   const updateFilters = (changes) => {
     const next = new URLSearchParams(search);
@@ -82,6 +123,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     });
     if (!Object.hasOwn(changes, 'offset')) next.delete('offset');
     setMatrixPage(0);
+    setMatrixDetail(null);
     setSearch(next, { replace: true });
   };
 
@@ -91,7 +133,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       const result = await getEvidenceWorkspace(projectId, {
         run_id: runId, topic, search: searchText, assessment: assessmentFilter,
         claim_type: typeFilter, publisher: publisherFilter, review_status: reviewFilter,
-        provenance_status: provenanceFilter,
+        provenance_status: provenanceFilter, coverage: coverageFilter,
         limit: view === 'matrix' ? MATRIX_PAGE_SIZE : 50,
         offset: view === 'matrix' ? matrixPage * MATRIX_PAGE_SIZE : offset,
       }, signal);
@@ -108,13 +150,13 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load(controller.signal);
     return () => controller.abort();
-  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // This clears details that belong to the previous URL-scoped claim set.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelected(null); setComparison(null); setProvenanceTarget(null);
-  }, [runId, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter]);
+    setSelected(null); setComparison(null); setProvenanceTarget(null); setMatrixDetail(null);
+  }, [runId, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter]);
 
   useEffect(() => {
     const current = data?.runs?.find((item) => String(item.id) === String(data?.selected_run_id));
@@ -129,6 +171,20 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       const result = await getEvidenceClaim(projectId, id);
       setSelected(result.claim); setDecision(result.claim.reviews?.[0]?.decision || result.claim.assessment); setReason('');
     } catch (err) { setError(err?.message || 'Failed to open the claim.'); }
+  };
+
+  const openMatrixDetail = async (row, publisher) => {
+    setMatrixDetail({ claim: row, publisher, evidence: [] });
+    setMatrixDetailLoading(true); setError('');
+    try {
+      const result = await getEvidenceClaim(projectId, row.claim_id);
+      setMatrixDetail({
+        claim: result.claim,
+        publisher,
+        evidence: (result.claim?.evidence || []).filter((item) => evidencePublisher(item) === publisher),
+      });
+    } catch (err) { setError(err?.message || 'Failed to open the source evidence.'); }
+    finally { setMatrixDetailLoading(false); }
   };
 
   const saveReview = async () => {
@@ -198,8 +254,30 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       row.sources.some((item) => item.publisher === publisher)
     )).length]),
   ), [matrix.publishers, matrix.rows]);
-  const visibleMatrixPublishers = (matrix.publishers || []).filter((publisher) => matrixPresence[publisher] > 0);
-  const hiddenMatrixPublishers = Math.max(0, (matrix.publishers || []).length - visibleMatrixPublishers.length);
+  const activeMatrixPublishers = (matrix.publishers || []).filter((publisher) => matrixPresence[publisher] > 0);
+  const visibleMatrixPublishers = matrixSourceMode === 'all' ? (matrix.publishers || []) : activeMatrixPublishers;
+  const hiddenMatrixPublishers = Math.max(0, (matrix.publishers || []).length - activeMatrixPublishers.length);
+  const matrixQuickFilter = coverageFilter === 'single_source' ? 'single_source'
+    : coverageFilter === 'conflicting' ? 'conflicting'
+      : reviewFilter === 'needs_attention' ? 'needs_review'
+        : assessmentFilter === 'supported' ? 'supported' : 'all';
+  const setMatrixQuickFilter = (key) => {
+    const next = { assessment: '', review_status: '', coverage: '' };
+    if (key === 'supported') next.assessment = 'supported';
+    if (key === 'conflicting') next.coverage = 'conflicting';
+    if (key === 'needs_review') next.review_status = 'needs_attention';
+    if (key === 'single_source') next.coverage = 'single_source';
+    updateFilters(next);
+  };
+  const changeMatrixPage = (page) => {
+    setMatrixDetail(null);
+    setMatrixPage(Math.max(0, Math.min(matrixPageCount - 1, page)));
+  };
+  const matrixPagination = (position) => <nav className="evidence-matrix-pagination" aria-label={`${position} claim matrix pagination`}>
+    <button type="button" aria-label="Previous claim page" disabled={matrixSafePage === 0 || loading} onClick={() => changeMatrixPage(matrixSafePage - 1)}><ChevronLeft size={15} /> Previous</button>
+    <span>Page {matrixSafePage + 1} of {matrixPageCount}</span>
+    <button type="button" aria-label="Next claim page" disabled={matrixSafePage + 1 >= matrixPageCount || loading} onClick={() => changeMatrixPage(matrixSafePage + 1)}>Next <ChevronRight size={15} /></button>
+  </nav>;
 
   return (
     <div className="admin-page-shell evidence-page">
@@ -250,10 +328,10 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       {data?.runs?.find((run) => String(run.id) === String(data.selected_run_id))?.evidence_status === 'failed'
         ? <div className="evidence-error">Evidence processing failed: {data.runs.find((run) => String(run.id) === String(data.selected_run_id))?.evidence_error || 'Unknown error'}. Use Rebuild evidence to retry safely.</div>
         : null}
-      {loading ? <div className="glass-card evidence-empty">Loading evidence…</div> : null}
+      {loading && !data ? <div className="glass-card evidence-empty">Loading evidence…</div> : null}
       {!loading && !(data?.runs || []).length ? <div className="glass-card evidence-empty"><FileSearch size={24} /><strong>No evidence run yet</strong><span>Complete an analysis run to freeze the project evidence and extract claims.</span></div> : null}
 
-      {!loading && (data?.runs || []).length ? <>
+      {(data?.runs || []).length ? <>
         <div className="evidence-overview">
           <div className="glass-card evidence-stat"><span>Total claims</span><strong>{overview.total_claims || 0}</strong><small>Extracted from this run</small></div>
           <div className="glass-card evidence-stat positive"><span>Corroborated</span><strong>{overview.corroborated_claims || 0}</strong><small>Two or more independent origins</small></div>
@@ -283,18 +361,42 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
           <button type="button" role="tab" aria-selected={view === 'matrix'} className={view === 'matrix' ? 'active' : ''} onClick={() => { setMatrixPage(0); setView('matrix'); }}><BarChart3 size={15} /> Compare sources</button>
         </div>
 
-        {view === 'matrix' ? <div className="glass-card evidence-matrix-card">
-          <div className="evidence-matrix-heading"><div><div className="evidence-matrix-title"><strong>Claims by source</strong><span className="panel-chip">5 per page</span><span className="panel-chip muted">{visibleMatrixPublishers.length} active source{visibleMatrixPublishers.length === 1 ? '' : 's'}</span></div><span>Scan independent agreement, conflict, context, and citations that need review. Only sources connected to these five claims are shown{hiddenMatrixPublishers ? `; ${hiddenMatrixPublishers} empty source${hiddenMatrixPublishers === 1 ? '' : 's'} hidden` : ''}.</span></div><div className="evidence-matrix-legend">{Object.entries(MATRIX_STATES).map(([key, state]) => <span className={key} key={key}><b>{state.symbol}</b>{state.label}</span>)}</div></div>
-          {matrix.rows.length && visibleMatrixPublishers.length ? <><div className="evidence-matrix-scroll"><table className="evidence-matrix"><thead><tr><th><span>Claim</span><small>{matrixTotal} in this view</small></th>{visibleMatrixPublishers.map((publisher) => <th key={publisher} title={publisher}><span>{publisher}</span><small>{matrixCoverage[publisher] ? `${matrixCoverage[publisher]} qualified` : 'Needs review'}</small></th>)}</tr></thead><tbody>
-            {matrix.rows.map((row, rowIndex) => <tr key={row.claim_id}><th><button type="button" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className="evidence-matrix-claim-number">{matrixFirst + rowIndex}</span><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span><strong>{row.claim_text}</strong><small>{row.topic}</small></button></th>{visibleMatrixPublishers.map((publisher) => {
-              const items = row.sources.filter((item) => item.publisher === publisher);
-              const relationship = items.find((item) => item.relationship === 'contradicting')?.relationship || items.find((item) => item.relationship === 'supporting')?.relationship || items[0]?.relationship;
-              const qualified = items.some((item) => item.citation_valid && item.qualifies);
-              const stateKey = qualified && relationship ? relationship : items.length ? 'review' : 'missing';
-              const state = MATRIX_STATES[stateKey] || MATRIX_STATES.missing;
-              return <td key={publisher}><span className={`evidence-matrix-cell ${stateKey}`} aria-label={`${publisher}: ${state.label}`} title={`${publisher}: ${state.label}`}>{state.symbol}</span></td>;
-            })}</tr>)}
-          </tbody></table></div><div className="evidence-matrix-footer"><span>Showing <strong>{matrixFirst}–{matrixLast}</strong> of <strong>{matrixTotal}</strong> claims</span><nav className="evidence-matrix-pagination" aria-label="Claim matrix pagination"><button type="button" aria-label="Previous claim page" disabled={matrixSafePage === 0} onClick={() => setMatrixPage(Math.max(0, matrixSafePage - 1))}><ChevronLeft size={15} /> Previous</button><span>Page {matrixSafePage + 1} of {matrixPageCount}</span><button type="button" aria-label="Next claim page" disabled={matrixSafePage + 1 >= matrixPageCount} onClick={() => setMatrixPage(Math.min(matrixPageCount - 1, matrixSafePage + 1))}>Next <ChevronRight size={15} /></button></nav></div></> : <div className="evidence-empty"><FileSearch size={22} /><span>No source evidence matches these filters.</span></div>}
+        {view === 'matrix' ? <div className={`glass-card evidence-matrix-card ${matrixDetail ? 'has-detail' : ''}`}>
+          <div className="evidence-matrix-heading">
+            <div><div className="evidence-matrix-title"><strong>Claims by source</strong><span className="panel-chip">5 per page</span><span className="panel-chip muted">{activeMatrixPublishers.length} on this page</span>{loading ? <span className="panel-chip loading">Updating…</span> : null}</div><span>Compare source agreement and open any filled cell to inspect its exact saved passage.</span></div>
+            <div className="evidence-matrix-legend">{Object.entries(MATRIX_STATES).map(([key, state]) => <span className={key} key={key}><b><MatrixStateIcon stateKey={key} size={13} /></b>{state.label}</span>)}</div>
+          </div>
+          <div className="evidence-matrix-controls">
+            <div className="evidence-matrix-quick-filters" aria-label="Quick claim filters">
+              {[['all', 'All claims'], ['supported', 'Supported'], ['conflicting', 'Conflicting'], ['needs_review', 'Needs review'], ['single_source', 'Single source']].map(([key, label]) => <button type="button" key={key} aria-pressed={matrixQuickFilter === key} className={matrixQuickFilter === key ? 'active' : ''} onClick={() => setMatrixQuickFilter(key)}>{label}</button>)}
+            </div>
+            <div className="evidence-source-toggle" aria-label="Source columns"><button type="button" className={matrixSourceMode === 'active' ? 'active' : ''} aria-pressed={matrixSourceMode === 'active'} onClick={() => setMatrixSourceMode('active')}>Sources on page</button><button type="button" className={matrixSourceMode === 'all' ? 'active' : ''} aria-pressed={matrixSourceMode === 'all'} onClick={() => setMatrixSourceMode('all')}>All sources</button></div>
+          </div>
+          <div className="evidence-matrix-truth-note"><ShieldCheck size={15} /><span><strong>“Supported” means supported by qualifying passages in the saved documents.</strong> It does not independently prove the claim is true in the real world.</span></div>
+          {matrix.rows.length && visibleMatrixPublishers.length ? <>
+            <div className="evidence-matrix-topline"><span>Showing <strong>{matrixFirst}–{matrixLast}</strong> of <strong>{matrixTotal}</strong> claims{matrixSourceMode === 'active' && hiddenMatrixPublishers ? ` · ${hiddenMatrixPublishers} unrelated source${hiddenMatrixPublishers === 1 ? '' : 's'} hidden` : ''}</span>{matrixPagination('Top')}</div>
+            <div className="evidence-matrix-scroll"><table className="evidence-matrix"><thead><tr><th><span>Claim</span><small>{matrixTotal} in this view</small></th>{visibleMatrixPublishers.map((publisher) => <th key={publisher} title={publisher}><span>{shortSourceName(publisher)}</span><small>{matrixCoverage[publisher] ? `${matrixCoverage[publisher]} qualified` : 'No qualifying passage'}</small></th>)}</tr></thead><tbody>
+              {matrix.rows.map((row, rowIndex) => <tr key={row.claim_id}><th><button type="button" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className="evidence-matrix-claim-number">{matrixFirst + rowIndex}</span><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span><strong>{row.claim_text}</strong><small>{row.topic}</small></button></th>{visibleMatrixPublishers.map((publisher) => {
+                const { items, stateKey, state } = matrixCellState(row, publisher);
+                return <td key={publisher}><button type="button" disabled={!items.length} onClick={() => openMatrixDetail(row, publisher)} className={`evidence-matrix-cell ${stateKey}`} aria-label={`${publisher}: ${state.label}${items.length ? '. Open evidence.' : ''}`} title={`${publisher}: ${state.label}`}><MatrixStateIcon stateKey={stateKey} /><span>{state.label}</span></button></td>;
+              })}</tr>)}
+            </tbody></table></div>
+            <div className="evidence-matrix-mobile">{matrix.rows.map((row, rowIndex) => <article key={row.claim_id} className="evidence-matrix-mobile-card"><button type="button" className="evidence-matrix-mobile-claim" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className="evidence-matrix-claim-number">{matrixFirst + rowIndex}</span><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span><strong>{row.claim_text}</strong><small>{row.topic}</small></button><div>{activeMatrixPublishers.map((publisher) => {
+              const { items, stateKey, state } = matrixCellState(row, publisher);
+              if (!items.length) return null;
+              return <button type="button" key={publisher} className={`evidence-matrix-mobile-source ${stateKey}`} onClick={() => openMatrixDetail(row, publisher)}><span title={publisher}>{shortSourceName(publisher)}</span><b><MatrixStateIcon stateKey={stateKey} /> {state.label}</b></button>;
+            })}</div></article>)}</div>
+            <div className="evidence-matrix-footer"><span>Showing <strong>{matrixFirst}–{matrixLast}</strong> of <strong>{matrixTotal}</strong> claims</span>{matrixPagination('Bottom')}</div>
+          </> : <div className="evidence-empty"><FileSearch size={22} /><span>No source evidence matches these filters.</span></div>}
+          {matrixDetail ? <aside className="evidence-matrix-detail" aria-label="Source evidence detail">
+            <header><div><span>Evidence detail</span><strong title={matrixDetail.publisher}>{shortSourceName(matrixDetail.publisher)}</strong></div><button type="button" aria-label="Close evidence detail" onClick={() => setMatrixDetail(null)}><PanelRightClose size={18} /></button></header>
+            <div className="evidence-matrix-detail-claim"><span className={`evidence-status ${matrixDetail.claim.assessment}`}>{LABELS[matrixDetail.claim.assessment] || matrixDetail.claim.assessment}</span><strong>{matrixDetail.claim.claim_text}</strong></div>
+            {matrixDetailLoading ? <div className="evidence-empty">Loading exact passages…</div> : <div className="evidence-matrix-detail-items">{matrixDetail.evidence.map((item) => {
+              const meta = sourceMeta(item); const provenance = item.current_provenance || meta.provenance || {}; const stateKey = item.citation_valid && item.qualifies ? item.relationship : 'review';
+              return <article key={item.id}><div><span className={`evidence-matrix-cell ${stateKey}`}><MatrixStateIcon stateKey={stateKey} /><span>{MATRIX_STATES[stateKey]?.label || 'Review'}</span></span>{!item.qualifies ? <span className="panel-chip warning">Does not qualify</span> : null}</div><blockquote>{item.passage}</blockquote><dl><div><dt>Publisher</dt><dd>{provenance.publisher || meta.source || matrixDetail.publisher}</dd></div><div><dt>Published</dt><dd>{formatDate(meta.published_at)}</dd></div><div><dt>Locator</dt><dd>{item.passage_locator || 'Unavailable'}</dd></div></dl>{meta.qualification_reason ? <p className={`evidence-qualification ${item.qualifies ? 'qualified' : 'unqualified'}`}>{meta.qualification_reason}</p> : null}{(provenance.original_url || meta.url)?.startsWith('http') ? <a href={provenance.original_url || meta.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={12} /></a> : null}</article>;
+            })}{!matrixDetail.evidence.length ? <div className="evidence-empty">No saved passage is available for this source.</div> : null}</div>}
+            <button type="button" className="btn-primary evidence-matrix-open-review" onClick={() => { setSelected(matrixDetail.claim); setMatrixDetail(null); setView('review'); }}>Open full claim review</button>
+          </aside> : null}
         </div> : <div className="evidence-layout">
           <div className="glass-card evidence-claims">
             <div className="panel-header-tight"><strong>Claims</strong><span className="panel-chip">{data?.total_filtered || 0}</span></div>

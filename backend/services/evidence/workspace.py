@@ -587,6 +587,7 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
                    search: str | None = None, assessment: str | None = None,
                    claim_type: str | None = None, publisher: str | None = None,
                    review_status: str | None = None, provenance_status: str | None = None,
+                   coverage: str | None = None,
                    limit: int = 50, offset: int = 0) -> dict:
     runs = db.fetch_all(
         """with ranked as (
@@ -633,6 +634,12 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
     if provenance_status:
         conditions.append("exists (select 1 from evidence_items ei where ei.claim_id=ec.id and coalesce((select epr.status from evidence_provenance_reviews epr where epr.project_id=ec.project_id and epr.article_id=ei.article_id order by epr.created_at desc limit 1),ei.source_snapshot->'provenance'->>'verification_status','unassessed')=%s)")
         params.append(provenance_status)
+    if coverage == "single_source":
+        conditions.append("ec.independent_origin_count=1")
+    elif coverage == "corroborated":
+        conditions.append("ec.independent_origin_count>=2")
+    elif coverage == "conflicting":
+        conditions.append("coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('contradicted','mixed_evidence')")
     filtered_where = " and ".join(conditions)
     total_row = db.fetch_one(f"select count(*)::int as count from evidence_claims ec where {filtered_where}", tuple(params)) or {}
     page_params = [*params, max(1, min(int(limit), 200)), max(0, int(offset))]
