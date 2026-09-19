@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { listProjectSources } from '../api/projectsApi.js';
-import { articleDate } from '../lib/articleHelpers.jsx';
+import { articleDate, getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/IntelligenceDashboard.css';
+import '../styles/Articles.css';
+
+const SOURCES_PAGE_SIZES = [10, 20, 50, 100];
 
 // Mirrors backend list_project_sources(): a "real" source is an article's
 // own url grouped by hostname (a JSONL import that carried a genuine url),
@@ -45,34 +48,67 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
   );
 
   const [sources, setSources] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalArticles, setTotalArticles] = useState(0);
+  const [limit, setLimit] = useState(20);
+  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedKey, setExpandedKey] = useState(null);
 
+  // A new project or page size invalidates whatever page we were on. Reset
+  // and fetch live in the same effect so a project/limit change never fires
+  // a request with the offset left over from the previous project/page
+  // size - it resets first (skipping the fetch this render) and fetches
+  // exactly once, on the next render, at the corrected offset.
+  const prevPageKeyRef = useRef(`${selectedProjectId}|${limit}`);
   useEffect(() => {
+    const pageKey = `${selectedProjectId}|${limit}`;
+    const pageKeyChanged = prevPageKeyRef.current !== pageKey;
+    prevPageKeyRef.current = pageKey;
+
+    if (pageKeyChanged && offset !== 0) {
+      setOffset(0);
+      return undefined;
+    }
+
     if (!selectedProjectId) {
       setSources([]);
+      setTotal(0);
+      setTotalArticles(0);
       return undefined;
     }
     let cancelled = false;
     setLoading(true);
     setError('');
-    listProjectSources(selectedProjectId)
-      .then((data) => { if (!cancelled) setSources(Array.isArray(data?.sources) ? data.sources : []); })
+    listProjectSources(selectedProjectId, { limit, offset })
+      .then((data) => {
+        if (cancelled) return;
+        setSources(Array.isArray(data?.sources) ? data.sources : []);
+        setTotal(Number(data?.total) || 0);
+        setTotalArticles(Number(data?.total_articles) || 0);
+      })
       .catch((err) => {
         if (!cancelled) {
           setSources([]);
+          setTotal(0);
+          setTotalArticles(0);
           setError(err?.message || 'Failed to load sources.');
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, limit, offset]);
 
-  const totalArticles = sources.reduce((sum, source) => sum + (source.article_count || 0), 0);
+  const hasPrev = offset > 0;
+  const hasNext = offset + limit < total;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const currentPage = Math.min(totalPages, Math.floor(offset / limit) + 1);
+  const pageNumbers = useMemo(() => getPageNumbers(currentPage, totalPages), [currentPage, totalPages]);
+  const goToPage = (page) => setOffset((page - 1) * limit);
 
   return (
-    <div className="admin-page-shell">
+    <div className="admin-page-shell articles-page-shell">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker"><Globe2 size={14} /> Sources</div>
@@ -89,7 +125,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
         </div>
       </div>
 
-      <div className="glass-card" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className="glass-card" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <label htmlFor="sources-project-select" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-light)' }}>
           Project
         </label>
@@ -103,6 +139,17 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
           {projects.length === 0 && <option value="">No projects yet</option>}
           {projects.map((item) => (
             <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+        <select
+          value={limit}
+          onChange={(event) => setLimit(Number(event.target.value))}
+          className="filter-select"
+          aria-label="Sources per page"
+          style={{ marginLeft: 'auto' }}
+        >
+          {SOURCES_PAGE_SIZES.map((size) => (
+            <option key={size} value={size}>{size} per page</option>
           ))}
         </select>
       </div>
@@ -130,7 +177,8 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
       ) : (
         <>
           <p style={{ margin: '0 0 12px', fontSize: '0.82rem', color: 'var(--text-light)' }}>
-            {sources.length} source{sources.length === 1 ? '' : 's'} · {totalArticles.toLocaleString()} article{totalArticles === 1 ? '' : 's'}
+            Showing {offset + 1}–{Math.min(offset + sources.length, total)} of {total.toLocaleString()} source{total === 1 ? '' : 's'}
+            {' '}· {totalArticles.toLocaleString()} article{totalArticles === 1 ? '' : 's'} total
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {sources.map((source) => {
@@ -216,6 +264,35 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
               );
             })}
           </div>
+
+          {totalPages > 1 ? (
+            <div className="articles-pagination" role="navigation" aria-label="Sources pagination">
+              <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
+                <ChevronLeft size={16} /> Previous
+              </button>
+              {pageNumbers.map((page, index) =>
+                page === '...' ? (
+                  <span key={`ellipsis-${index}`} className="articles-page-ellipsis">
+                    &hellip;
+                  </span>
+                ) : (
+                  <button
+                    key={page}
+                    type="button"
+                    className={`articles-page-btn ${page === currentPage ? 'active' : ''}`}
+                    onClick={() => goToPage(page)}
+                    disabled={loading}
+                    aria-current={page === currentPage ? 'page' : undefined}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+              <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
+          ) : null}
         </>
       )}
     </div>

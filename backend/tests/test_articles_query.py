@@ -66,19 +66,19 @@ class ListProjectSourcesTests(unittest.TestCase):
     def test_falsy_project_id_returns_empty_without_querying(self):
         with patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
             result = articles_query.list_project_sources(None)
-        self.assertEqual(result, [])
+        self.assertEqual(result, {"sources": [], "total": 0, "total_articles": 0, "limit": 20, "offset": 0})
         mock_fetch_all.assert_not_called()
 
     def test_no_database_configured_returns_empty(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", ""):
             result = articles_query.list_project_sources(1)
-        self.assertEqual(result, [])
+        self.assertEqual(result, {"sources": [], "total": 0, "total_articles": 0, "limit": 20, "offset": 0})
 
     def test_query_error_returns_empty_instead_of_raising(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
             with patch("services.articles.articles_query.db.fetch_all", side_effect=RuntimeError("boom")):
                 result = articles_query.list_project_sources(1)
-        self.assertEqual(result, [])
+        self.assertEqual(result, {"sources": [], "total": 0, "total_articles": 0, "limit": 20, "offset": 0})
 
     def test_groups_real_urls_by_hostname_and_document_urls_by_source_url(self):
         rows = [
@@ -98,10 +98,14 @@ class ListProjectSourcesTests(unittest.TestCase):
                 result = articles_query.list_project_sources(1)
 
         mock_fetch_all.assert_called_once()
-        self.assertEqual(len(result), 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["total_articles"], 5)
+        self.assertEqual(result["limit"], 20)
+        self.assertEqual(result["offset"], 0)
+        self.assertEqual(len(result["sources"]), 2)
 
         # The document (3 articles) outranks the real outlet (2 articles).
-        document_source, real_source = result
+        document_source, real_source = result["sources"]
         self.assertEqual(document_source["type"], "document")
         self.assertEqual(document_source["label"], "report.pdf")
         self.assertEqual(document_source["url"], "document://project-document/1")
@@ -117,6 +121,53 @@ class ListProjectSourcesTests(unittest.TestCase):
         self.assertEqual(real_source["latest_published_at"], datetime(2024, 1, 5))
         self.assertEqual([a["id"] for a in real_source["articles"]], [2, 1])
         self.assertEqual(real_source["articles"][0]["url"], "https://nytimes.com/a2")
+
+    def test_limit_and_offset_page_the_source_groups(self):
+        rows = [
+            {"id": 1, "title": "A1", "url": "https://nytimes.com/a1", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 3)},
+            {"id": 2, "title": "A2", "url": "https://nytimes.com/a2", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 5)},
+            {"id": 3, "title": "D1", "url": "document://project-document/1/article/3", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": None},
+            {"id": 4, "title": "D2", "url": "document://project-document/1/article/4", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 1)},
+            {"id": 5, "title": "D3", "url": "document://project-document/1/article/5", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+                result = articles_query.list_project_sources(1, limit=1, offset=1)
+
+        # Same two groups as above (document first, then the real outlet),
+        # but only the second page of one source group is returned.
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(result["offset"], 1)
+        self.assertEqual(len(result["sources"]), 1)
+        self.assertEqual(result["sources"][0]["type"], "real")
+
+    def test_tied_groups_sort_deterministically_regardless_of_row_order(self):
+        # Two different documents ("report.pdf" uploaded twice) tie on both
+        # article_count and label, so only their distinct source_url (via
+        # group["key"]) can break the tie deterministically.
+        rows_forward = [
+            {"id": 1, "title": "D1", "url": "document://project-document/1/article/1", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 1)},
+            {"id": 2, "title": "D2", "url": "document://project-document/2/article/2", "source": "report.pdf",
+             "source_url": "document://project-document/2", "published_at": datetime(2024, 1, 2)},
+        ]
+        rows_reversed = list(reversed(rows_forward))
+
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows_forward):
+                forward = articles_query.list_project_sources(1)
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows_reversed):
+                reversed_result = articles_query.list_project_sources(1)
+
+        forward_keys = [group["key"] for group in forward["sources"]]
+        reversed_keys = [group["key"] for group in reversed_result["sources"]]
+        self.assertEqual(forward_keys, reversed_keys)
 
 
 class GetAnalysisStatusCountsTests(unittest.TestCase):

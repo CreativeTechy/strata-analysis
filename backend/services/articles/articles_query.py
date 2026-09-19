@@ -386,7 +386,7 @@ def list_articles_for_idea_cluster(cluster_id, project_id, limit=10, offset=0):
     return {"articles": rows, "total": int((count_row or {}).get("total") or 0), "limit": limit, "offset": offset}
 
 
-def list_project_sources(project_id):
+def list_project_sources(project_id, limit=20, offset=0):
     """Every distinct place this project's articles came from, grouped the
     way a human would recognize "source" rather than the way the schema
     stores it: `articles.source`/`source_url` always point at the uploaded
@@ -403,12 +403,20 @@ def list_project_sources(project_id):
     counts here are small enough that this stays cheap, and it sidesteps
     needing a by-hostname filter that nothing else in the app has.
 
-    [] for a falsy project_id or a database that hasn't had schema.sql
-    re-run yet, same defensive style as the rest of this module.
+    Grouping needs every one of the project's articles regardless of page,
+    so `limit`/`offset` page the resulting *source groups*, not the article
+    query - the Sources tab's pagination, not a per-article one.
+
+    Returns {"sources": [], "total": 0, "limit": limit, "offset": offset}
+    for a falsy project_id or a database that hasn't had schema.sql re-run
+    yet, same defensive style as the rest of this module.
     """
     ARTICLES_PER_SOURCE_PREVIEW = 20
+    limit = _normalize_limit(limit, default=20, max_limit=200)
+    offset = _normalize_offset(offset)
+    empty_page = {"sources": [], "total": 0, "total_articles": 0, "limit": limit, "offset": offset}
     if not project_id or not config.DATABASE_URL:
-        return []
+        return empty_page
     try:
         rows = db.fetch_all(
             """
@@ -420,7 +428,7 @@ def list_project_sources(project_id):
             (int(project_id),),
         )
     except Exception:
-        return []
+        return empty_page
 
     groups: dict[str, dict] = {}
     for row in rows:
@@ -461,8 +469,11 @@ def list_project_sources(project_id):
     sources = list(groups.values())
     for group in sources:
         group["articles"].sort(key=lambda a: a["published_at"] or datetime.min, reverse=True)
-    sources.sort(key=lambda g: (-g["article_count"], g["label"] or ""))
-    return sources
+    sources.sort(key=lambda g: (-g["article_count"], g["label"] or "", g["key"]))
+    total = len(sources)
+    total_articles = len(rows)
+    page = sources[offset:offset + limit]
+    return {"sources": page, "total": total, "total_articles": total_articles, "limit": limit, "offset": offset}
 
 
 def get_analysis_status_counts(project_id=None):

@@ -1029,16 +1029,19 @@ def get_project_idea_clusters(
 @app.get("/api/projects/{project_id}/sources")
 def get_project_sources(
     project_id: int,
+    limit: int = 20,
+    offset: int = 0,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """Every distinct source this project's articles came from - a real
     outlet (grouped by hostname) for an article whose own `url` isn't the
     document:// scheme project_document_articles.py writes for an LLM split,
-    a document otherwise. The Sources tab."""
+    a document otherwise. The Sources tab. `limit`/`offset` page the source
+    groups themselves (see list_project_sources()), not the articles."""
     _ensure_project_visible(project_id, user)
     if not get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found.")
-    return {"sources": list_project_sources(project_id)}
+    return list_project_sources(project_id, limit=limit, offset=offset)
 
 
 @app.get("/api/projects/{project_id}/idea-clusters/{cluster_id}/articles")

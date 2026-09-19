@@ -81,7 +81,9 @@ export const listIdeaClusters = (projectId, params, signal) =>
   request(`/${projectId}/idea-clusters${query(params)}`, { signal });
 export const listIdeaClusterArticles = (projectId, clusterId, params) =>
   request(`/${projectId}/idea-clusters/${clusterId}/articles${query(params)}`);
-export const listProjectSources = (projectId) => request(`/${projectId}/sources`);
+export const listProjectSources = (projectId, { limit, offset } = {}) => (
+  request(`/${projectId}/sources${query({ limit, offset })}`)
+);
 
 /** Cross-source idea comparison cards (see backend/services/articles/idea_comparisons.py).
  *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`

@@ -196,12 +196,25 @@ class ProjectSourcesTests(AnalysisRoutesTestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_returns_wrapped_sources(self):
-        sources = [{"key": "real:nytimes.com", "type": "real", "label": "nytimes.com", "article_count": 2}]
+        page = {
+            "sources": [{"key": "real:nytimes.com", "type": "real", "label": "nytimes.com", "article_count": 2}],
+            "total": 1,
+            "limit": 20,
+            "offset": 0,
+        }
         with patch("main.get_project", return_value={"id": 1}), \
-             patch("main.list_project_sources", return_value=sources) as mock_list:
+             patch("main.list_project_sources", return_value=page) as mock_list:
             resp = self.client.get("/api/projects/1/sources")
-        self.assertEqual(resp.json(), {"sources": sources})
-        mock_list.assert_called_once_with(1)
+        self.assertEqual(resp.json(), page)
+        mock_list.assert_called_once_with(1, limit=20, offset=0)
+
+    def test_passes_through_limit_and_offset(self):
+        page = {"sources": [], "total": 0, "limit": 5, "offset": 10}
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_project_sources", return_value=page) as mock_list:
+            resp = self.client.get("/api/projects/1/sources?limit=5&offset=10")
+        self.assertEqual(resp.json(), page)
+        mock_list.assert_called_once_with(1, limit=5, offset=10)
 
 
 class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
