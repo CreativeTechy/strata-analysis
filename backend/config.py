@@ -321,6 +321,14 @@ ENTITY_EXTRACTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("ENTITY_EXTRACTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
 
+# Region detection (analysis/region_detection.py) is a deterministic local
+# stage, not a model - this threshold only controls the region_low_confidence
+# flag used for logging/observability. The raw region/region_confidence are
+# always stored regardless of this threshold.
+REGION_DETECTION_CONFIDENCE_THRESHOLD = float(
+    os.environ.get("REGION_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
+)
+
 # Chunking for long article text: applied uniformly by article_prep.py before
 # handing text to any model with a limited context window.
 ANALYSIS_CHUNK_SIZE_CHARS = int(os.environ.get("ANALYSIS_CHUNK_SIZE_CHARS", "2000") or 2000)
