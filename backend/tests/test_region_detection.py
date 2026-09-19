@@ -69,6 +69,52 @@ class DetectRegionTests(unittest.TestCase):
         self.assertEqual(result["region"], "Brazil")
         self.assertGreater(result["region_confidence"], 0.0)
 
+    def test_person_named_after_a_country_is_not_mistaken_for_a_region(self):
+        """"Jordan"/"Chad"/"Georgia"/"Turkey"/"Niger" are also common personal
+        names. When entity extraction already tagged the full multi-word
+        name ("Jordan Peterson"), a bare word match on "Jordan" elsewhere -
+        in the body text or in the same entity string - is someone's name,
+        not a place, and must not be counted as a region signal."""
+        result = region_detection.detect_region(
+            title="Owner review: new SUV",
+            text="Jordan said the ride quality impressed him but the infotainment lagged.",
+            people_opinions=[{"opinion": "ride quality impressed him", "region": None}],
+            entities=["Jordan Peterson"],
+            organizations=[],
+        )
+        self.assertEqual(result["region"], "unknown")
+        self.assertEqual(result["region_confidence"], 0.0)
+
+    def test_standalone_country_entity_still_counts(self):
+        """The name-collision guard only suppresses a word that's part of a
+        longer extracted name - a country appearing as its own standalone
+        entity (no collision risk) must still vote normally."""
+        result = region_detection.detect_region(
+            title="",
+            text="",
+            people_opinions=[],
+            entities=["Turkey"],
+            organizations=[],
+        )
+        self.assertEqual(result["region"], "Turkey")
+        self.assertGreater(result["region_confidence"], 0.0)
+
+    def test_abbreviation_with_trailing_periods_matches_as_a_standalone_word(self):
+        """"U.S."/"U.K." (COUNTRY_ALIASES) end in a literal period - the most
+        common way they appear in running news text is followed immediately
+        by whitespace or another period, which must still count as a
+        standalone match rather than being swallowed by a boundary check
+        that never fires between two non-word characters."""
+        result = region_detection.detect_region(
+            title="",
+            text="The U.S. economy grew again this quarter.",
+            people_opinions=[],
+            entities=[],
+            organizations=[],
+        )
+        self.assertEqual(result["region"], "United States")
+        self.assertGreater(result["region_confidence"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

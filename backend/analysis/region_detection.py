@@ -55,29 +55,59 @@ def _surface_form_lookup() -> dict:
 @lru_cache(maxsize=1)
 def _scan_pattern() -> re.Pattern:
     # Longest-first so "united states" matches whole rather than a shorter
-    # form pre-empting it inside the alternation.
+    # form pre-empting it inside the alternation. Boundaries are lookarounds
+    # rather than \b: several aliases (COUNTRY_ALIASES's "u.s.", "u.s.a.",
+    # "u.k.") end in a literal period, and \b never matches between two
+    # non-word characters - so "U.S." followed by a space or another period
+    # would never satisfy a trailing \b even though it's a clean standalone
+    # mention. (?!\w) only asserts the next character isn't a word
+    # character, which is what "standalone" actually means here.
     forms = sorted(_surface_form_lookup().keys(), key=len, reverse=True)
-    return re.compile(r"\b(" + "|".join(re.escape(form) for form in forms) + r")\b", re.IGNORECASE)
+    return re.compile(r"(?<!\w)(" + "|".join(re.escape(form) for form in forms) + r")(?!\w)", re.IGNORECASE)
 
 
-def _scan_text(text: str) -> Counter:
+def _name_fragment_tokens(entities, organizations) -> set:
+    """Lowercased individual words pulled out of any *multi-word* entity/
+    organization name (e.g. {"jordan", "peterson"} from "Jordan Peterson").
+
+    A handful of country names/aliases (Jordan, Chad, Georgia, Turkey,
+    Niger, ...) are also common personal names, so a bare word-level scan
+    can't tell "Jordan said the ride felt cramped" (a person) from an actual
+    reference to the country. The pipeline's own entity extraction already
+    tagged "Jordan Peterson" as one distinct name rather than two words -
+    that's a real signal the word isn't standing alone as a place, so any
+    scan match on a fragment of a *multi-word* extracted name is suppressed
+    rather than counted as a region vote. A genuinely standalone
+    single-word entity (e.g. entities=["Turkey"]) is unaffected."""
+    tokens = set()
+    for value in list(entities or []) + list(organizations or []):
+        words = re.findall(r"[A-Za-z']+", str(value or ""))
+        if len(words) >= 2:
+            tokens.update(word.lower() for word in words)
+    return tokens
+
+
+def _scan_text(text: str, *, exclude: frozenset = frozenset()) -> Counter:
     counts = Counter()
     text = (text or "").strip()
     if not text:
         return counts
     lookup = _surface_form_lookup()
     for match in _scan_pattern().finditer(text):
-        region = lookup.get(match.group(0).lower())
+        form = match.group(0).lower()
+        if form in exclude:
+            continue
+        region = lookup.get(form)
         if region:
             counts[region] += 1
     return counts
 
 
-def _text_scan_votes(title: str, text: str) -> Counter:
+def _text_scan_votes(title: str, text: str, *, exclude: frozenset = frozenset()) -> Counter:
     votes = Counter()
-    for region, count in _scan_text(title).items():
+    for region, count in _scan_text(title, exclude=exclude).items():
         votes[region] += count * _WEIGHT_TITLE_MATCH
-    for region, count in _scan_text(text).items():
+    for region, count in _scan_text(text, exclude=exclude).items():
         votes[region] += count * _WEIGHT_TEXT_MATCH
     return votes
 
@@ -93,10 +123,10 @@ def _opinion_votes(people_opinions) -> Counter:
     return votes
 
 
-def _entity_votes(entities, organizations) -> Counter:
+def _entity_votes(entities, organizations, *, exclude: frozenset = frozenset()) -> Counter:
     blob = ", ".join(str(v) for v in (list(entities or []) + list(organizations or [])) if v)
     votes = Counter()
-    for region, count in _scan_text(blob).items():
+    for region, count in _scan_text(blob, exclude=exclude).items():
         votes[region] += count * _WEIGHT_ENTITY_MATCH
     return votes
 
@@ -122,10 +152,11 @@ def detect_region(
     entities/organizations empty) - the text scan alone still gives a real,
     if lower-confidence, answer.
     """
+    name_fragments = frozenset(_name_fragment_tokens(entities, organizations))
     signals = {
-        "text": _text_scan_votes(title, text),
+        "text": _text_scan_votes(title, text, exclude=name_fragments),
         "opinions": _opinion_votes(people_opinions),
-        "entities": _entity_votes(entities, organizations),
+        "entities": _entity_votes(entities, organizations, exclude=name_fragments),
     }
 
     scores: defaultdict = defaultdict(float)
