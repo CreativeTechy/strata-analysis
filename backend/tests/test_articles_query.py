@@ -147,6 +147,28 @@ class ListProjectSourcesTests(unittest.TestCase):
         self.assertEqual(len(result["sources"]), 1)
         self.assertEqual(result["sources"][0]["type"], "real")
 
+    def test_tied_groups_sort_deterministically_regardless_of_row_order(self):
+        # Two different documents ("report.pdf" uploaded twice) tie on both
+        # article_count and label, so only their distinct source_url (via
+        # group["key"]) can break the tie deterministically.
+        rows_forward = [
+            {"id": 1, "title": "D1", "url": "document://project-document/1/article/1", "source": "report.pdf",
+             "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 1)},
+            {"id": 2, "title": "D2", "url": "document://project-document/2/article/2", "source": "report.pdf",
+             "source_url": "document://project-document/2", "published_at": datetime(2024, 1, 2)},
+        ]
+        rows_reversed = list(reversed(rows_forward))
+
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows_forward):
+                forward = articles_query.list_project_sources(1)
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows_reversed):
+                reversed_result = articles_query.list_project_sources(1)
+
+        forward_keys = [group["key"] for group in forward["sources"]]
+        reversed_keys = [group["key"] for group in reversed_result["sources"]]
+        self.assertEqual(forward_keys, reversed_keys)
+
 
 class GetAnalysisStatusCountsTests(unittest.TestCase):
     def test_no_database_configured_returns_empty(self):

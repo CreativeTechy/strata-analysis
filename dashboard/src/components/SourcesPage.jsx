@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { listProjectSources } from '../api/projectsApi.js';
@@ -56,12 +56,22 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
   const [error, setError] = useState('');
   const [expandedKey, setExpandedKey] = useState(null);
 
-  // A new project or page size invalidates whatever page we were on.
+  // A new project or page size invalidates whatever page we were on. Reset
+  // and fetch live in the same effect so a project/limit change never fires
+  // a request with the offset left over from the previous project/page
+  // size - it resets first (skipping the fetch this render) and fetches
+  // exactly once, on the next render, at the corrected offset.
+  const prevPageKeyRef = useRef(`${selectedProjectId}|${limit}`);
   useEffect(() => {
-    setOffset(0);
-  }, [selectedProjectId, limit]);
+    const pageKey = `${selectedProjectId}|${limit}`;
+    const pageKeyChanged = prevPageKeyRef.current !== pageKey;
+    prevPageKeyRef.current = pageKey;
 
-  useEffect(() => {
+    if (pageKeyChanged && offset !== 0) {
+      setOffset(0);
+      return undefined;
+    }
+
     if (!selectedProjectId) {
       setSources([]);
       setTotal(0);

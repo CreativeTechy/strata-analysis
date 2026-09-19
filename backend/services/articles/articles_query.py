@@ -469,7 +469,7 @@ def list_project_sources(project_id, limit=20, offset=0):
     sources = list(groups.values())
     for group in sources:
         group["articles"].sort(key=lambda a: a["published_at"] or datetime.min, reverse=True)
-    sources.sort(key=lambda g: (-g["article_count"], g["label"] or ""))
+    sources.sort(key=lambda g: (-g["article_count"], g["label"] or "", g["key"]))
     total = len(sources)
     total_articles = len(rows)
     page = sources[offset:offset + limit]
