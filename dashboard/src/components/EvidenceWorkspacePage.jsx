@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, ExternalLink, FileSearch, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { ArrowLeft, BarChart3, CheckCircle2, ChevronDown, ExternalLink, FileSearch, Filter, Quote, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import {
   compareEvidenceRuns, getEvidenceClaim, getEvidenceWorkspace, retryEvidenceRun,
@@ -60,6 +60,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [provenanceTarget, setProvenanceTarget] = useState(null);
   const [provenanceDecision, setProvenanceDecision] = useState('verified');
   const [provenanceReason, setProvenanceReason] = useState('');
+  const [view, setView] = useState('review');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const updateFilters = (changes) => {
     const next = new URLSearchParams(search);
@@ -166,6 +168,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
 
   const overview = data?.overview || {};
   const assessmentCards = useMemo(() => Object.entries(overview.assessment_counts || {}), [overview.assessment_counts]);
+  const matrix = data?.source_matrix || { publishers: [], rows: [] };
 
   return (
     <div className="admin-page-shell evidence-page">
@@ -181,6 +184,11 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </div>
       </div>
 
+      <div className="evidence-scope-note">
+        <ShieldCheck size={18} />
+        <div><strong>Evidence from this run’s saved documents</strong><span>Assessments use the frozen text captured for this run. No website is fetched while you review this page.</span></div>
+      </div>
+
       <div className="glass-card evidence-filters">
         <label>Analysis run<select value={data?.selected_run_id || runId} onChange={(event) => updateFilters({ run_id: event.target.value, topic: '' })}>
           {(data?.runs || []).map((run) => <option key={run.id} value={run.id}>Run {run.run_number} · {formatDateTime(run.created_at)} · {run.claim_count} claims · {run.document_count} documents</option>)}
@@ -192,7 +200,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         <label>Assessment<select value={assessmentFilter} onChange={(event) => updateFilters({ assessment: event.target.value })}>
           <option value="">All assessments</option>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
-        <label>Claim type<select value={typeFilter} onChange={(event) => updateFilters({ claim_type: event.target.value })}>
+        <button type="button" className="evidence-more-filters" onClick={() => setShowAdvanced((current) => !current)}><Filter size={14} /> {showAdvanced ? 'Hide filters' : 'More filters'} <ChevronDown size={14} className={showAdvanced ? 'open' : ''} /></button>
+        {showAdvanced ? <div className="evidence-advanced-filters"><label>Claim type<select value={typeFilter} onChange={(event) => updateFilters({ claim_type: event.target.value })}>
           <option value="">All types</option>{['factual_assertion', 'attributed_statement', 'forecast', 'opinion', 'causal_explanation'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
         </select></label>
         <label>Publisher<select value={publisherFilter} onChange={(event) => updateFilters({ publisher: event.target.value })}>
@@ -203,7 +212,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </select></label>
         <label>Origin review<select value={provenanceFilter} onChange={(event) => updateFilters({ provenance_status: event.target.value })}>
           <option value="">Any status</option><option value="unassessed">Unassessed</option><option value="verified">Verified</option><option value="rejected">Rejected</option>
-        </select></label>
+        </select></label></div> : null}
       </div>
 
       {error ? <div className="evidence-error">{error}</div> : null}
@@ -215,9 +224,10 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
 
       {!loading && (data?.runs || []).length ? <>
         <div className="evidence-overview">
-          <div className="glass-card"><span>Claims</span><strong>{overview.total_claims || 0}</strong></div>
-          <div className="glass-card"><span>Recorded origins</span><strong>{overview.known_origins || 0}</strong></div>
-          <div className="glass-card"><span>Unassessed citations</span><strong>{overview.unassessed_items || 0}</strong></div>
+          <div className="glass-card evidence-stat"><span>Total claims</span><strong>{overview.total_claims || 0}</strong><small>Extracted from this run</small></div>
+          <div className="glass-card evidence-stat positive"><span>Corroborated</span><strong>{overview.corroborated_claims || 0}</strong><small>Two or more independent origins</small></div>
+          <div className="glass-card evidence-stat"><span>Single source</span><strong>{overview.single_source_claims || 0}</strong><small>Useful, but not independently confirmed</small></div>
+          <div className={`glass-card evidence-stat ${(overview.needs_review_claims || 0) ? 'attention' : ''}`}><span>Needs review</span><strong>{overview.needs_review_claims || 0}</strong><small>Quotation or source needs attention</small></div>
           {assessmentCards.map(([key, value]) => <button type="button" className={`glass-card ${assessmentFilter === key ? 'active' : ''}`} key={key} onClick={() => updateFilters({ assessment: assessmentFilter === key ? '' : key })}><span>{LABELS[key] || key}</span><strong>{value}</strong></button>)}
         </div>
 
@@ -237,7 +247,22 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
           </div> : null}
         </div> : null}
 
-        <div className="evidence-layout">
+        <div className="evidence-view-switch" role="tablist" aria-label="Evidence view">
+          <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}><Quote size={15} /> Review claims</button>
+          <button type="button" role="tab" aria-selected={view === 'matrix'} className={view === 'matrix' ? 'active' : ''} onClick={() => setView('matrix')}><BarChart3 size={15} /> Compare sources</button>
+        </div>
+
+        {view === 'matrix' ? <div className="glass-card evidence-matrix-card">
+          <div className="evidence-matrix-heading"><div><strong>Claims by source</strong><span>See where independent sources agree, conflict, or only add context.</span></div><div className="evidence-matrix-legend"><span className="supporting">Supports</span><span className="contradicting">Conflicts</span><span className="contextual">Context</span><span className="missing">No evidence</span></div></div>
+          {matrix.publishers.length ? <div className="evidence-matrix-scroll"><table className="evidence-matrix"><thead><tr><th>Claim</th>{matrix.publishers.map((publisher) => <th key={publisher}>{publisher}</th>)}</tr></thead><tbody>
+            {matrix.rows.map((row) => <tr key={row.claim_id}><th><button type="button" onClick={() => { openClaim(row.claim_id); setView('review'); }}><span className={`evidence-status ${row.assessment}`}>{LABELS[row.assessment] || row.assessment}</span>{row.claim_text}</button></th>{matrix.publishers.map((publisher) => {
+              const items = row.sources.filter((item) => item.publisher === publisher);
+              const relationship = items.find((item) => item.relationship === 'contradicting')?.relationship || items.find((item) => item.relationship === 'supporting')?.relationship || items[0]?.relationship;
+              const qualified = items.some((item) => item.citation_valid && item.qualifies);
+              return <td key={publisher}><span className={`evidence-matrix-cell ${qualified && relationship ? relationship : 'missing'}`} title={qualified && relationship ? `${publisher}: ${relationship}` : `${publisher}: no qualifying evidence`}>{qualified && relationship === 'supporting' ? '✓' : qualified && relationship === 'contradicting' ? '!' : qualified && relationship === 'contextual' ? '•' : '—'}</span></td>;
+            })}</tr>)}
+          </tbody></table></div> : <div className="evidence-empty"><FileSearch size={22} /><span>No source evidence matches these filters.</span></div>}
+        </div> : <div className="evidence-layout">
           <div className="glass-card evidence-claims">
             <div className="panel-header-tight"><strong>Claims</strong><span className="panel-chip">{data?.total_filtered || 0}</span></div>
             {(data?.claims || []).map((claim) => {
@@ -264,7 +289,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
                 return <article key={item.id} className={`evidence-item ${item.relationship}`}>
                   <div><span className={`evidence-status ${item.relationship}`}>{item.relationship}</span>{item.citation_valid ? <span title="Exact passage found in frozen document"><CheckCircle2 size={14} /> exact quotation</span> : <span title="No exact document passage"><XCircle size={14} /> quotation unavailable</span>}{!item.qualifies ? <span className="panel-chip warning">Does not qualify</span> : null}</div>
                   <blockquote>{item.passage}</blockquote>
-                  <div className="evidence-source"><strong>{provenance.publisher || meta.source || 'Unknown source'}</strong><span>Published: {formatDate(meta.published_at)}</span><span>Locator: {item.passage_locator || 'Unavailable'}</span><span>Content type: {item.quote_source || provenance.source_type || 'Unknown'}</span><span>Analysis: {meta.analysis_source === 'run' ? 'Produced in this run' : 'Reused frozen analysis'}</span><span>Origin review: {item.provenance_review?.status || provenance.verification_status || 'unassessed'}</span>{item.provenance_review ? <span>{item.provenance_review.reviewer_name}: {item.provenance_review.reason}</span> : null}</div>
+                  <div className="evidence-source"><strong>{provenance.publisher || meta.source || 'Unknown source'}</strong><span>Published: {formatDate(meta.published_at)}</span><span>Locator: {item.passage_locator || 'Unavailable'}</span><span>Content type: {item.quote_source || provenance.source_type || 'Unknown'}</span><span>Analysis: {meta.analysis_source === 'run' ? 'Produced in this run' : 'Reused frozen analysis'}</span><span>Origin review: {item.provenance_review?.status || provenance.verification_status || 'unassessed'}</span>{Number.isFinite(Number(meta.passage_match_score)) ? <span>Passage match: {Math.round(Number(meta.passage_match_score) * 100)}%</span> : null}{item.provenance_review ? <span>{item.provenance_review.reviewer_name}: {item.provenance_review.reason}</span> : null}</div>
+                  {meta.qualification_reason ? <p className={`evidence-qualification ${item.qualifies ? 'qualified' : 'unqualified'}`}>{meta.qualification_reason}</p> : null}
                   <div className="evidence-item-actions">{(provenance.original_url || meta.url)?.startsWith('http') ? <a href={provenance.original_url || meta.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={12} /></a> : <span>Stored article #{item.article_id}</span>}{canReview ? <button onClick={() => { setProvenanceTarget(item); setProvenanceDecision('verified'); setProvenanceReason(''); }}>Review origin</button> : null}</div>
                   {provenanceTarget?.id === item.id ? <div className="evidence-provenance-form"><label>Origin decision<select value={provenanceDecision} onChange={(event) => setProvenanceDecision(event.target.value)}><option value="verified">Verified</option><option value="rejected">Rejected</option><option value="unassessed">Return to unassessed</option></select></label><label>Reason<textarea rows="2" value={provenanceReason} onChange={(event) => setProvenanceReason(event.target.value)} placeholder="Record what you checked and why…" /></label><div><button className="btn-primary" onClick={saveProvenanceReview} disabled={!provenanceReason.trim()}>Save origin review</button><button className="btn-secondary" onClick={() => setProvenanceTarget(null)}>Cancel</button></div></div> : null}
                 </article>;
@@ -273,7 +299,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
               {selected.reviews?.length ? <div><h3>Review history</h3>{selected.reviews.map((review) => <div className="evidence-history" key={review.id}><strong>{LABELS[review.decision]}</strong><span>{review.reviewer_name || 'Reviewer'} · {formatDate(review.created_at)}</span><p>{review.reason}</p></div>)}</div> : null}
             </>}
           </div>
-        </div>
+        </div>}
       </> : null}
     </div>
   );

@@ -56,6 +56,66 @@ class EvidenceRuleTests(unittest.TestCase):
         second = {"source_provenance": {"origin_group": "announcement-17"}, "url": "https://two.example"}
         self.assertEqual(workspace._origin(first), workspace._origin(second))
 
+    def test_semantic_match_groups_paraphrases_across_topics(self):
+        first = {"claim": "More than two million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        second = {"claim": "The number of EVs on British roads passed two million", "embedding": [0.99, 0.01]}
+        self.assertTrue(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_different_time_scopes(self):
+        first = {"claim": "Electric car sales reached 20 percent in 2024", "embedding": [1.0, 0.0]}
+        second = {"claim": "Electric car sales reached 20 percent in 2025", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_different_quantities(self):
+        first = {"claim": "Electric car sales reached 20 percent", "embedding": [1.0, 0.0]}
+        second = {"claim": "Electric car sales reached 35 percent", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_missing_quantitative_scope(self):
+        quantified = {"claim": "Over 2 million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        unquantified = {"claim": "Electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(quantified, unquantified))
+
+    def test_quantity_scope_reads_percentages_and_comma_numbers(self):
+        _, percentages = workspace._normalized_scopes("Sales reached 3% and then 19 percent")
+        _, registrations = workspace._normalized_scopes("There were 43,106 registrations")
+        self.assertEqual(percentages, {"3%", "19%"})
+        self.assertEqual(registrations, {"43106"})
+
+    def test_quantity_scope_matches_number_words(self):
+        self.assertTrue(workspace._scope_compatible(
+            "More than 2 million electric vehicles are registered",
+            "Electric vehicle registrations passed two million",
+        ))
+
+    def test_passage_qualification_rejects_conflicting_quantity(self):
+        qualified, _, reason = workspace._passage_qualification(
+            "Electric car sales increased by 45 percent in July 2025",
+            "Electric car sales increased by 12 percent in July 2025.",
+        )
+        self.assertFalse(qualified)
+        self.assertIn("incompatible", reason)
+
+    def test_passage_qualification_allows_additional_context(self):
+        qualified, _, _ = workspace._passage_qualification(
+            "Over 2 million electric vehicles are registered on UK roads",
+            "Sales rose 45% in July 2025, and more than two million electric vehicles were registered on UK roads.",
+        )
+        self.assertTrue(qualified)
+
+    def test_group_claim_candidates_preserves_independent_rows(self):
+        first = {
+            "row": {"id": 1}, "topic": "Policy", "claim": "More than two million electric vehicles are registered on UK roads",
+            "type": "factual_assertion", "direction": "neutral", "fingerprint": "one", "embedding": [1.0, 0.0],
+        }
+        second = {
+            "row": {"id": 2}, "topic": "Climate", "claim": "The number of EVs on British roads passed two million",
+            "type": "factual_assertion", "direction": "neutral", "fingerprint": "two", "embedding": [0.99, 0.01],
+        }
+        groups = workspace._group_claim_candidates([first, second])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual([item["row"]["id"] for item in groups[0]["items"]], [1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

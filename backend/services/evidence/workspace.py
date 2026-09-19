@@ -16,10 +16,11 @@ from urllib.parse import urlparse
 
 import db
 import config
+from embeddings import cosine_similarity, get_embedding
 from llm_client import LLMError, chat_completion
 from psycopg.types.json import Jsonb
 
-RULES_VERSION = "evidence-v2"
+RULES_VERSION = "evidence-v3"
 ASSESSMENTS = {
     "supported", "contradicted", "mixed_evidence", "insufficient_evidence", "not_yet_verifiable",
     "assessment_unavailable",
@@ -36,11 +37,122 @@ _NEGATION = re.compile(r"\b(no|not|never|didn't|doesn't|won't|without)\b", re.I)
 _UP = re.compile(r"\b(increase[ds]?|increasing|rose|risen|higher|grew|growth|support(?:s|ed)?)\b", re.I)
 _DOWN = re.compile(r"\b(decrease[ds]?|decreasing|fell|fallen|lower|decline[ds]?|declining|oppose[ds]?|ban)\b", re.I)
 _DATE = re.compile(r"\b(?:20\d{2}(?:-\d{2}(?:-\d{2})?)?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:20\d{2}|\d{1,2}(?:,?\s+20\d{2})?))\b", re.I)
-_QUANTITY = re.compile(r"(?:[$£€]\s?\d[\d,.]*|\b\d+(?:\.\d+)?\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?)\b)", re.I)
+_QUANTITY = re.compile(
+    r"(?:[$£€]\s?\d[\d,.]*|\b\d[\d,.]*(?:\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?))?"
+    r"|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:million|billion|trillion)\b)",
+    re.I,
+)
+
+_CLAIM_EQUIVALENTS = {
+    "ev": "vehicle", "evs": "vehicle", "electric": "vehicle", "vehicles": "vehicle",
+    "cars": "car", "automobiles": "car", "charging": "charge", "chargers": "charge",
+    "registrations": "registered", "registration": "registered", "sales": "sold",
+    "costs": "cost", "prices": "price", "publicly": "public", "approximately": "about",
+}
+_GENERIC_CLAIM_WORDS = {
+    "according", "report", "reported", "reports", "says", "source", "uk", "united", "kingdom",
+}
 
 
 def _words(value: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", str(value or "").lower()) if (len(w) > 2 or w.isdigit()) and w not in _STOP]
+
+
+def _claim_words(value: str) -> set[str]:
+    """Content words used as a transparent fallback around semantic matching."""
+    words = []
+    for word in _words(value):
+        word = _CLAIM_EQUIVALENTS.get(word, word)
+        if word not in _GENERIC_CLAIM_WORDS:
+            words.append(word)
+    return set(words)
+
+
+def _normalized_scopes(value: str) -> tuple[set[str], set[str]]:
+    structured = _structured_claim("", value)
+    dates = {re.sub(r"\s+", " ", item.lower()).strip() for item in structured["dates"]}
+    number_words = {
+        "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+        "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    }
+    quantities = {
+        re.sub(
+            r"[^a-z0-9.%]+", "",
+            re.sub(
+                r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\b",
+                lambda match: number_words[match.group(1).lower()],
+                item.lower().replace("percent", "%"),
+            ),
+        )
+        for item in structured["quantities"]
+    }
+    return dates, quantities
+
+
+def _scope_compatible(left: str, right: str) -> bool:
+    """Reject similar-sounding claims that describe different measured facts."""
+    left_dates, left_quantities = _normalized_scopes(left)
+    right_dates, right_quantities = _normalized_scopes(right)
+    if bool(left_dates) != bool(right_dates):
+        return False
+    if left_dates and right_dates and left_dates.isdisjoint(right_dates):
+        return False
+    if bool(left_quantities) != bool(right_quantities):
+        return False
+    if left_quantities and right_quantities and left_quantities.isdisjoint(right_quantities):
+        return False
+    return True
+
+
+def _passage_covers_scope(claim: str, passage: str) -> bool:
+    """A passage may add context, but it must contain every claim scope value."""
+    claim_dates, claim_quantities = _normalized_scopes(claim)
+    passage_dates, passage_quantities = _normalized_scopes(passage)
+    return claim_dates.issubset(passage_dates) and claim_quantities.issubset(passage_quantities)
+
+
+def _lexical_similarity(left: str, right: str) -> float:
+    left_words, right_words = _claim_words(left), _claim_words(right)
+    if not left_words or not right_words:
+        return 0.0
+    overlap = len(left_words & right_words)
+    return max(
+        overlap / len(left_words | right_words),
+        overlap / min(len(left_words), len(right_words)),
+    )
+
+
+def _claims_match(left: dict, right: dict, threshold: float | None = None) -> bool:
+    """Hybrid paraphrase match with hard safeguards for dates and quantities."""
+    if not _scope_compatible(left["claim"], right["claim"]):
+        return False
+    overlap = len(_claim_words(left["claim"]) & _claim_words(right["claim"]))
+    if overlap < 2:
+        return False
+    lexical = _lexical_similarity(left["claim"], right["claim"])
+    semantic = cosine_similarity(left.get("embedding") or [], right.get("embedding") or [])
+    minimum = config.EVIDENCE_CLAIM_SIMILARITY_THRESHOLD if threshold is None else threshold
+    return lexical >= 0.72 or semantic >= minimum
+
+
+def _group_claim_candidates(candidates: list[dict]) -> list[dict]:
+    """Cluster exact claims and cautious semantic paraphrases across topics."""
+    groups: list[dict] = []
+    for candidate in candidates:
+        exact = next((group for group in groups if group["fingerprint"] == candidate["fingerprint"]), None)
+        if exact:
+            exact["items"].append(candidate)
+            continue
+        match = next((group for group in groups if _claims_match(group["canonical"], candidate)), None)
+        if match:
+            match["items"].append(candidate)
+            continue
+        groups.append({
+            "fingerprint": candidate["fingerprint"],
+            "canonical": candidate,
+            "items": [candidate],
+        })
+    return groups
 
 
 def _direction(value: str) -> str:
@@ -124,6 +236,24 @@ def _best_passage(row: dict, claim: str) -> str:
     return max(choices, key=lambda text: len(wanted.intersection(_words(text))))[:1200]
 
 
+def _passage_qualification(claim: str, passage: str) -> tuple[bool, float, str]:
+    """Check that an exact quote is also a plausible citation for the claim.
+
+    This is deliberately conservative. It does not call word overlap proof of
+    entailment; it only lets the passage proceed to the relationship assessor.
+    """
+    if not passage:
+        return False, 0.0, "No exact passage was found in the stored document."
+    claim_words, passage_words = _claim_words(claim), _claim_words(passage)
+    overlap = len(claim_words & passage_words)
+    score = overlap / max(1, min(len(claim_words), len(passage_words)))
+    if overlap < 2 or score < 0.35:
+        return False, score, "The quotation does not share enough specific meaning with the extracted claim."
+    if not _passage_covers_scope(claim, passage):
+        return False, score, "The quotation and claim use incompatible dates or quantities."
+    return True, score, "The quotation matches the claim scope and contains the claim's key terms."
+
+
 def _passage_locator(row: dict, passage: str) -> str | None:
     if not passage:
         return None
@@ -170,7 +300,7 @@ def _grounded_model_assessment(claim_text: str, claim_type: str, prepared: list[
         return None
     passages = [
         {"article_id": int(row["id"]), "passage": passage}
-        for row, _relationship, passage, valid, qualifies, _source_type in prepared
+        for row, _relationship, passage, valid, qualifies, _source_type, _score, _reason in prepared
         if valid and qualifies
     ]
     if not passages:
@@ -286,62 +416,75 @@ def _snapshot_rows(run_id: str) -> list[dict]:
 def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
     """Rebuild claims from frozen content plus this run's analysis snapshot."""
     rows = _snapshot_rows(run_id)
-    grouped: dict[str, dict] = {}
+    candidates = []
+    embedding_cache: dict[str, list[float]] = {}
     for row in rows:
         if row.get("provenance_status") == "rejected":
             continue
         for topic, claim_text in _claim_candidates(row):
             fingerprint = _fingerprint(topic, claim_text)
-            group = grouped.setdefault(
-                fingerprint,
-                {"topic": topic, "claim": claim_text, "type": _claim_type(claim_text), "items": []},
-            )
-            group["items"].append((row, _direction(claim_text)))
+            cache_key = claim_text.strip().lower()
+            if cache_key not in embedding_cache:
+                embedded = get_embedding(claim_text)
+                embedding_cache[cache_key] = embedded.get("embedding_json") or []
+            candidates.append({
+                "row": row,
+                "topic": topic,
+                "claim": claim_text,
+                "type": _claim_type(claim_text),
+                "direction": _direction(claim_text),
+                "fingerprint": fingerprint,
+                "embedding": embedding_cache[cache_key],
+            })
+    grouped = _group_claim_candidates(candidates)
 
     db.execute("update evidence_claims set active=false where run_id=%s", (str(run_id),))
     created = 0
-    for fingerprint, group in grouped.items():
+    for group in grouped:
+        canonical = group["canonical"]
+        fingerprint = group["fingerprint"]
         items = group["items"]
-        focal_direction = items[0][1]
+        focal_direction = canonical["direction"]
         prepared = []
-        for row, direction in items:
-            if direction == focal_direction:
-                relationship = "supporting"
-            elif {direction, focal_direction} == {"positive", "negative"}:
+        for candidate in items:
+            row, direction = candidate["row"], candidate["direction"]
+            if {direction, focal_direction} == {"positive", "negative"}:
                 relationship = "contradicting"
             else:
-                relationship = "contextual"
-            passage = _best_passage(row, group["claim"])
+                relationship = "supporting"
+            passage = _best_passage(row, candidate["claim"])
             valid = bool(passage and passage in str(row.get("text") or ""))
+            aligned, match_score, qualification_reason = _passage_qualification(candidate["claim"], passage)
             source_type = str((row.get("source_provenance") or {}).get("source_type") or "original document").lower()
             is_summary = "summary" in source_type or "synthetic" in source_type
-            qualifies = bool(valid and not is_summary and row.get("provenance_status") != "rejected")
-            prepared.append((row, relationship, passage, valid, qualifies, source_type))
+            qualifies = bool(valid and aligned and not is_summary and row.get("provenance_status") != "rejected")
+            prepared.append((row, relationship, passage, valid, qualifies, source_type, match_score, qualification_reason))
 
         model_result = None
-        if group["type"] not in {"forecast", "opinion"}:
-            model_result = _grounded_model_assessment(group["claim"], group["type"], prepared)
+        if canonical["type"] not in {"forecast", "opinion"}:
+            model_result = _grounded_model_assessment(canonical["claim"], canonical["type"], prepared)
         if model_result:
             prepared = [
                 (row, model_result["relationships"].get(int(row["id"]), relationship) if qualifies else relationship,
-                 passage, valid, qualifies, source_type)
-                for row, relationship, passage, valid, qualifies, source_type in prepared
+                 passage, valid, qualifies, source_type, match_score, qualification_reason)
+                for row, relationship, passage, valid, qualifies, source_type, match_score, qualification_reason in prepared
             ]
 
-        support = {_origin(row) for row, rel, _p, _v, ok, _s in prepared if rel == "supporting" and ok}
-        conflict = {_origin(row) for row, rel, _p, _v, ok, _s in prepared if rel == "contradicting" and ok}
-        context = {_origin(row) for row, rel, _p, _v, ok, _s in prepared if rel == "contextual" and ok}
-        all_origins = {_origin(row) for row, _rel, _p, _v, _ok, _s in prepared}
+        support = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "supporting" and ok}
+        conflict = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contradicting" and ok}
+        context = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contextual" and ok}
+        all_origins = {_origin(row) for row, _rel, _p, _v, _ok, _s, _m, _q in prepared}
         if model_result:
             assessment, explanation = model_result["assessment"], model_result["explanation"]
         elif not support and not conflict:
             assessment = "assessment_unavailable"
             explanation = "No qualifying original-document passage is available for an automated assessment."
         else:
-            assessment, explanation = _assessment(group["type"], support, conflict)
+            assessment, explanation = _assessment(canonical["type"], support, conflict)
 
-        source_row = items[0][0]
-        structured = _structured_claim(group["topic"], group["claim"])
+        source_row = canonical["row"]
+        structured = _structured_claim(canonical["topic"], canonical["claim"])
+        structured["matched_claims"] = [item["claim"] for item in items]
         dates, quantities = structured["dates"], structured["quantities"]
         claim = db.execute(
             """insert into evidence_claims
@@ -365,23 +508,25 @@ def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
                  model=excluded.model, rules_version=excluded.rules_version, active=true,
                  processing_status='success', processing_error=null
                returning id""",
-            (int(project_id), str(run_id), int(source_row["id"]), fingerprint, group["claim"], group["type"],
-             group["topic"], Jsonb((source_row.get("entities") or []) + (source_row.get("organizations") or [])),
+            (int(project_id), str(run_id), int(source_row["id"]), fingerprint, canonical["claim"], canonical["type"],
+             canonical["topic"], Jsonb((source_row.get("entities") or []) + (source_row.get("organizations") or [])),
              dates[0] if dates else None, Jsonb(dates), Jsonb(quantities), Jsonb(structured), assessment,
              explanation, "Limited to frozen source material and qualifying exact passages available to this run.",
              len(support), len(conflict), len(context), len(all_origins), len(support | conflict | context),
-             sum(1 for _r, _rel, _p, valid, _ok, _s in prepared if valid),
+             sum(1 for _r, _rel, _p, valid, _ok, _s, _m, _q in prepared if valid),
              config.LLM_CHAT_MODEL if model_result else None, RULES_VERSION),
         )
         claim_id = int(claim["id"])
         db.execute("delete from evidence_items where claim_id=%s", (claim_id,))
-        for row, relationship, passage, valid, qualifies, source_type in prepared:
+        for row, relationship, passage, valid, qualifies, source_type, match_score, qualification_reason in prepared:
             snapshot = {
                 "title": row.get("title"), "source": row.get("source"), "url": row.get("url"),
                 "source_url": row.get("source_url"), "author": row.get("author"),
                 "published_at": row.get("published_at").isoformat() if hasattr(row.get("published_at"), "isoformat") else row.get("published_at"),
                 "provenance": row.get("source_provenance") or {},
                 "analysis_source": row.get("analysis_source"), "analysis_status": row.get("analysis_status"),
+                "passage_match_score": round(float(match_score), 3),
+                "qualification_reason": qualification_reason,
             }
             db.execute(
                 """insert into evidence_items
@@ -501,7 +646,13 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
              order by needs_review desc, ec.topic, ec.created_at desc limit %s offset %s""", tuple(page_params),
     ) or []
     topics = db.fetch_all("select topic,count(*)::int as count from evidence_claims where project_id=%s and run_id=%s and active group by topic order by topic", (int(project_id), selected)) or []
-    summary_rows = db.fetch_all(f"""select ec.assessment,coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'') as review_decision from evidence_claims ec where {overview_where}""", tuple(base_params)) or []
+    summary_rows = db.fetch_all(
+        f"""select ec.assessment, ec.independent_origin_count, ec.citation_checked_count,
+                   coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'') as review_decision,
+                   exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)) as needs_review
+              from evidence_claims ec where {overview_where}""",
+        tuple(base_params),
+    ) or []
     counts = Counter(row.get("review_decision") or row["assessment"] for row in summary_rows)
     origins = db.fetch_one(
         f"""select count(distinct ei.origin_key)::int as known_origins,
@@ -510,7 +661,8 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
                         where epr.project_id=ec.project_id and epr.article_id=ei.article_id
                         order by epr.created_at desc limit 1),
                       ei.source_snapshot->'provenance'->>'verification_status',
-                      'unassessed')='unassessed')::int as unassessed_items
+                      'unassessed')='unassessed')::int as unassessed_items,
+                  count(*) filter (where not ei.citation_valid or not ei.qualifies)::int as unqualified_items
              from evidence_items ei join evidence_claims ec on ec.id=ei.claim_id
             where {overview_where}""", tuple(base_params),
     ) or {}
@@ -520,9 +672,44 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
            where ec.project_id=%s and ec.run_id=%s and ec.active order by publisher""",
         (int(project_id), selected),
     ) or []
+
+    claim_ids = [int(claim["id"]) for claim in claims]
+    matrix_items = db.fetch_all(
+        """select ei.claim_id, ei.relationship,
+                  coalesce(ei.source_snapshot->'provenance'->>'publisher',ei.source_snapshot->>'source','Unknown source') as publisher,
+                  ei.citation_valid, ei.qualifies
+             from evidence_items ei
+            where ei.claim_id = any(%s)
+            order by ei.claim_id, publisher""",
+        (claim_ids,),
+    ) if claim_ids else []
+    matrix_by_claim: dict[int, list[dict]] = defaultdict(list)
+    for item in matrix_items or []:
+        matrix_by_claim[int(item["claim_id"])].append(item)
+    source_matrix = {
+        "publishers": [row["publisher"] for row in publishers if row.get("publisher")],
+        "rows": [
+            {
+                "claim_id": int(claim["id"]),
+                "claim_text": claim["claim_text"],
+                "topic": claim["topic"],
+                "assessment": claim.get("review_decision") or claim["assessment"],
+                "sources": matrix_by_claim.get(int(claim["id"]), []),
+            }
+            for claim in claims
+        ],
+    }
     return {"runs": runs, "selected_run_id": selected, "topics": topics,
-            "overview": {"total_claims": len(summary_rows), "assessment_counts": dict(counts), **origins},
+            "overview": {
+                "total_claims": len(summary_rows),
+                "corroborated_claims": sum(1 for row in summary_rows if int(row.get("independent_origin_count") or 0) >= 2),
+                "single_source_claims": sum(1 for row in summary_rows if int(row.get("independent_origin_count") or 0) == 1),
+                "needs_review_claims": sum(1 for row in summary_rows if row.get("needs_review")),
+                "exact_quotes": sum(int(row.get("citation_checked_count") or 0) for row in summary_rows),
+                "assessment_counts": dict(counts), **origins,
+            },
             "filter_options": {"publishers": [row["publisher"] for row in publishers if row.get("publisher")]},
+            "source_matrix": source_matrix,
             "claims": claims, "total_filtered": int(total_row.get("count") or 0),
             "limit": page_params[-2], "offset": page_params[-1]}
 
