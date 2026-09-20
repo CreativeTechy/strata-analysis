@@ -375,11 +375,14 @@ class AnalysisJobTests(unittest.TestCase):
              patch.object(analysis_runs_store, "mark_success") as mark_success, \
              patch.object(analysis_runs_store, "mark_failed") as mark_failed, \
              patch.object(analysis_runs_store, "record_covered_documents") as record_covered, \
+             patch.object(competitor_analysis, "extract_frequent_ideas_for_documents") as extract_ideas, \
+             patch.object(competitor_analysis, "_regenerate_idea_comparisons") as regenerate_ideas, \
              patch.object(competitor_analysis, "generate_findings", **generate_kwargs) as generate:
             competitor_analysis.run_analysis_job(99, project_id, scope, document_ids)
         return {
             "mark_running": mark_running, "resolve_scope": resolve, "mark_success": mark_success,
             "mark_failed": mark_failed, "record_covered_documents": record_covered, "generate": generate,
+            "extract_ideas": extract_ideas, "regenerate_ideas": regenerate_ideas,
         }
 
     def test_successful_job_resolves_scope_and_records_covered_documents(self):
@@ -396,6 +399,11 @@ class AnalysisJobTests(unittest.TestCase):
         calls["record_covered_documents"].assert_called_once_with(99, [1, 2])
         calls["mark_success"].assert_called_once_with(99, 2, [], {"scanned": 5})
         calls["mark_failed"].assert_not_called()
+        # Idea-comparison support: extraction runs over the resolved scope
+        # before findings generation, and comparisons only regenerate once
+        # the run actually succeeds.
+        calls["extract_ideas"].assert_called_once_with(11, [1, 2], log=calls["generate"].call_args.kwargs["log"])
+        calls["regenerate_ideas"].assert_called_once_with(11)
 
     def test_provider_failure_is_a_failed_run_not_zero_reports(self):
         """Same distinction generate_findings itself draws: a quota/outage error
@@ -409,6 +417,7 @@ class AnalysisJobTests(unittest.TestCase):
         # A failed run's evidence is not durable coverage - nothing should be
         # recorded as analyzed.
         calls["record_covered_documents"].assert_not_called()
+        calls["regenerate_ideas"].assert_not_called()
 
     def test_unexpected_exception_becomes_a_failed_run_with_a_reason(self):
         """The job runs after the response is sent, so an exception raised here

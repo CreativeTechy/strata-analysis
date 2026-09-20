@@ -467,64 +467,62 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
 
-        {selectedProject?.mode !== 'competitor' ? (
-          <section className="intelligence-idea-comparisons-grid">
-            <article className="glass-card intelligence-card">
-              <div className="intelligence-card-heading">
-                <h3>Idea comparisons across sources</h3>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={regenerateIdeaComparisons}
-                  disabled={ideaComparisonsRegenerating || !selectedProjectId}
-                  style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                  Regenerate
-                </button>
-              </div>
-              {ideaComparisonsError ? (
-                <p className="intelligence-empty">{ideaComparisonsError}</p>
-              ) : ideaComparisonsLoading ? (
-                <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
-              ) : ideaComparisons.length === 0 ? (
-                <p className="intelligence-empty">
-                  No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
-                </p>
-              ) : (
-                <div className="intelligence-idea-comparison-list">
-                  {ideaComparisons.map((comparison) => (
-                    <div key={comparison.idea_cluster_id} className="intelligence-idea-comparison-item">
-                      <div className="intelligence-idea-comparison-header">
-                        <strong>{comparison.idea}</strong>
-                        {comparison.diverges ? (
-                          <span className="admin-tag" style={{ background: '#fef3c7', color: '#92400e' }}><Scale size={12} /> Sources disagree</span>
-                        ) : (
-                          <span className="admin-tag muted">Sources agree</span>
-                        )}
-                      </div>
-                      {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
-                      <div className="intelligence-term-list intelligence-idea-comparison-sources">
-                        {(comparison.sources || []).map((source, index) => (
-                          <a
-                            key={`${comparison.idea_cluster_id}-${source.article_id ?? index}`}
-                            href={source.url || undefined}
-                            target={source.url ? '_blank' : undefined}
-                            rel={source.url ? 'noreferrer' : undefined}
-                            className="intelligence-term-link"
-                            title={source.title || source.source_label}
-                          >
-                            <b>{source.source_label}</b>{source.value ? <em>: {source.value}</em> : null}
-                          </a>
-                        ))}
-                      </div>
+        <section className="intelligence-idea-comparisons-grid">
+          <article className="glass-card intelligence-card">
+            <div className="intelligence-card-heading">
+              <h3>Idea comparisons across sources</h3>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={regenerateIdeaComparisons}
+                disabled={ideaComparisonsRegenerating || !selectedProjectId}
+                style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                Regenerate
+              </button>
+            </div>
+            {ideaComparisonsError ? (
+              <p className="intelligence-empty">{ideaComparisonsError}</p>
+            ) : ideaComparisonsLoading ? (
+              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
+            ) : ideaComparisons.length === 0 ? (
+              <p className="intelligence-empty">
+                No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
+              </p>
+            ) : (
+              <div className="intelligence-idea-comparison-list">
+                {ideaComparisons.map((comparison) => (
+                  <div key={comparison.idea_cluster_id} className="intelligence-idea-comparison-item">
+                    <div className="intelligence-idea-comparison-header">
+                      <strong>{comparison.idea}</strong>
+                      {comparison.diverges ? (
+                        <span className="admin-tag" style={{ background: '#fef3c7', color: '#92400e' }}><Scale size={12} /> Sources disagree</span>
+                      ) : (
+                        <span className="admin-tag muted">Sources agree</span>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          </section>
-        ) : null}
+                    {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                    <div className="intelligence-term-list intelligence-idea-comparison-sources">
+                      {(comparison.sources || []).map((source, index) => (
+                        <a
+                          key={`${comparison.idea_cluster_id}-${source.article_id ?? index}`}
+                          href={source.url || undefined}
+                          target={source.url ? '_blank' : undefined}
+                          rel={source.url ? 'noreferrer' : undefined}
+                          className="intelligence-term-link"
+                          title={source.title || source.source_label}
+                        >
+                          <b>{source.source_label}</b>{source.value ? <em>: {source.value}</em> : null}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
 
         <section className="intelligence-bottom-grid">
           {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={`See articles mentioning ${term.term}`}><b>{term.term}</b> <em>{term.mentions}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article> : null}

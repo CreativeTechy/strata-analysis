@@ -37,6 +37,7 @@ from llm_client import chat_completion
 from prompt_loader import load_prompt
 from services.competitors import competitor_analysis, competitors_store
 from services.competitors.business_profile_store import get_profile
+from services.competitors.idea_extraction import extract_frequent_ideas_for_documents
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,11 @@ def analyze_documents(project_id: int) -> dict:
     rather than raised over the top of a report that may still be fine.
     """
     derived = derive_competitors(project_id)
+    # No document_ids here (unlike competitor_analysis.run_analysis_job) - this
+    # path has no document-scope picker of its own, so it reads every approved
+    # article in the project, the same reach generate_findings(project_id,
+    # period_days=None) below has.
+    extract_frequent_ideas_for_documents(project_id)
     result = competitor_analysis.generate_findings(project_id, period_days=None)
 
     # generate_findings' own "No tracked competitors" message is written for the
@@ -198,6 +204,9 @@ def analyze_documents(project_id: int) -> dict:
             **result,
             "error": derived["error"] or "No competitor names could be read out of your approved articles.",
         }
+
+    if not result.get("error"):
+        competitor_analysis._regenerate_idea_comparisons(project_id)
 
     return {
         **result,
