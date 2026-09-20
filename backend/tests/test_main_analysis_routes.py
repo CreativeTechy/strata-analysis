@@ -189,6 +189,73 @@ class ProjectIdeaClustersTests(AnalysisRoutesTestCase):
         self.assertEqual(resp.json(), page)
 
 
+class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
+    """get_project_idea_comparisons_view()'s cache-unless-asked shape: a plain
+    GET reads whatever is cached; `regenerate=true` always resynthesizes; a
+    `run_id` scope generates lazily the first time it's viewed, gated on
+    has_run_generation_attempt rather than "nothing cached yet" (a run whose
+    articles genuinely have fewer than two cross-source ideas caches as zero
+    rows too - see services/articles/idea_comparisons.py)."""
+
+    def test_404_when_project_not_found(self):
+        with patch("main.get_project", return_value=None):
+            resp = self.client.get("/api/projects/1/idea-comparisons")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_plain_get_returns_cached_comparisons_without_regenerating(self):
+        cached = [{"idea_cluster_id": 1, "idea": "petrol price"}]
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=cached), \
+             patch("main.generate_idea_comparisons") as mock_generate:
+            resp = self.client.get("/api/projects/1/idea-comparisons")
+        self.assertEqual(resp.json(), {"comparisons": cached})
+        mock_generate.assert_not_called()
+
+    def test_regenerate_flag_always_resynthesizes_project_wide(self):
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=[]), \
+             patch("main.generate_idea_comparisons") as mock_generate:
+            resp = self.client.get("/api/projects/1/idea-comparisons?regenerate=true")
+        self.assertEqual(resp.status_code, 200)
+        mock_generate.assert_called_once_with(1, run_id=None)
+
+    def test_run_scoped_first_view_generates_when_never_attempted(self):
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=[]), \
+             patch("main.has_run_generation_attempt", return_value=False), \
+             patch("main.generate_idea_comparisons") as mock_generate:
+            resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
+        self.assertEqual(resp.status_code, 200)
+        mock_generate.assert_called_once_with(1, run_id="run-123")
+
+    def test_run_scoped_repeat_view_does_not_regenerate_once_attempted(self):
+        """The regression this covers: before has_run_generation_attempt, a
+        run with zero qualifying cross-source ideas cached as an empty list
+        indistinguishable from "never generated", so every view re-triggered
+        generate_idea_comparisons (and, during a provider outage, re-failed)
+        instead of caching that outcome after the first attempt."""
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=[]), \
+             patch("main.has_run_generation_attempt", return_value=True), \
+             patch("main.generate_idea_comparisons") as mock_generate:
+            resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
+        self.assertEqual(resp.json(), {"comparisons": []})
+        mock_generate.assert_not_called()
+
+    def test_llm_error_during_lazy_run_scoped_generation_is_a_soft_error(self):
+        from llm_client import LLMConnectionError
+
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=[]), \
+             patch("main.has_run_generation_attempt", return_value=False), \
+             patch("main.generate_idea_comparisons", side_effect=LLMConnectionError("down")):
+            resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["comparisons"], [])
+        self.assertEqual(body["error_code"], "llm_connection_error")
+
+
 class ProjectSourcesTests(AnalysisRoutesTestCase):
     def test_404_when_project_not_found(self):
         with patch("main.get_project", return_value=None):

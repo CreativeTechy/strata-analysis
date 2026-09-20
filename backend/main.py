@@ -76,7 +76,9 @@ from services.projects.projects_store import (
     update_project,
 )
 from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
-from services.articles.idea_comparisons import generate_idea_comparisons, list_idea_comparisons
+from services.articles.idea_comparisons import (
+    generate_idea_comparisons, has_run_generation_attempt, list_idea_comparisons,
+)
 from services.intelligence.trend_summary import generate_trend_summary
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
@@ -746,13 +748,17 @@ def get_project_idea_comparisons_view(
     asked shape as /trend-summary above. A specific run's scope has no such
     automatic refresh (that would double the LLM calls spent per run for a
     view most runs never get opened for), so it's instead generated lazily
-    the first time it's requested with nothing cached yet."""
+    the first time it's requested - gated on has_run_generation_attempt
+    rather than "nothing cached yet", since a run whose articles genuinely
+    have fewer than two cross-source ideas caches as zero rows too, and would
+    otherwise regenerate (and, during a provider outage, re-fail) on every
+    single view instead of just the first."""
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     cached = list_idea_comparisons(project_id, run_id=run_id)
-    if regenerate or (run_id and not cached):
+    if regenerate or (run_id and not has_run_generation_attempt(project_id, run_id)):
         try:
             generate_idea_comparisons(project_id, run_id=run_id)
             cached = list_idea_comparisons(project_id, run_id=run_id)

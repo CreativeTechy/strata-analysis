@@ -35,6 +35,7 @@ import config
 import db
 from llm_client import chat_completion
 from prompt_loader import load_prompt
+from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
 from services.competitors import competitor_analysis, competitors_store
 from services.competitors.business_profile_store import get_profile
 from services.competitors.idea_extraction import extract_frequent_ideas_for_documents
@@ -193,7 +194,26 @@ def analyze_documents(project_id: int) -> dict:
     # path has no document-scope picker of its own, so it reads every approved
     # article in the project, the same reach generate_findings(project_id,
     # period_days=None) below has.
-    extract_frequent_ideas_for_documents(project_id)
+    #
+    # Unlike run_analysis_job (which has a top-level try/except turning a
+    # FATAL_ANALYSIS_ERRORS failure into a failed run), this function is called
+    # synchronously from a route with no such wrapper - so a provider outage
+    # here has to be turned into the same {error, error_code} shape
+    # generate_findings itself produces below, rather than escaping uncaught
+    # into a generic 500.
+    try:
+        extract_frequent_ideas_for_documents(project_id)
+    except FATAL_ANALYSIS_ERRORS as exc:
+        return {
+            "generated": 0,
+            "skipped": [],
+            "validation": {},
+            "error": exc.user_message,
+            "error_code": exc.code,
+            "derived_competitors": derived["competitors"],
+            "articles_considered": derived["considered"],
+            "derivation_error": derived["error"],
+        }
     result = competitor_analysis.generate_findings(project_id, period_days=None)
 
     # generate_findings' own "No tracked competitors" message is written for the

@@ -232,6 +232,38 @@ def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id
     )
 
 
+def _mark_run_generation_attempt(project_id: int, run_id: str) -> None:
+    db.execute(
+        """
+        insert into idea_comparisons_generation_attempts (project_id, run_id, generated_at)
+        values (%s, %s, now())
+        on conflict (project_id, run_id) do update set generated_at = now()
+        """,
+        (int(project_id), str(run_id)),
+    )
+
+
+def has_run_generation_attempt(project_id: int, run_id: str) -> bool:
+    """Whether generate_idea_comparisons has already completed (successfully,
+    even with zero qualifying clusters) for this run scope.
+
+    idea_comparisons itself can't tell "generated, nothing qualified" apart
+    from "never generated" - both read back empty - so without this,
+    get_project_idea_comparisons_view would regenerate (and, during a
+    provider outage, re-fail) on every single view of a run that genuinely
+    has fewer than two cross-source ideas. Only meaningful for a run scope:
+    the project-wide view (run_id='') already regenerates only on an
+    explicit request, never as a side effect of a plain GET.
+    """
+    if not config.DATABASE_URL or not run_id:
+        return False
+    row = db.fetch_one(
+        "select 1 from idea_comparisons_generation_attempts where project_id = %s and run_id = %s",
+        (int(project_id), str(run_id)),
+    )
+    return bool(row)
+
+
 def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int:
     """(Re)build the comparison cards for a project's qualifying idea
     clusters, either across the whole project (run_id=None) or scoped to one
@@ -242,7 +274,11 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
     competitor_analysis.generate_findings does, since it means the provider
     call itself never produced an answer, not "this one cluster had nothing
     to say". Whatever was already written to idea_comparisons in this call
-    stays, since each cluster is saved as soon as it is synthesized.
+    stays, since each cluster is saved as soon as it is synthesized. Note
+    that the run-scoped "already attempted" marker below is only reached once
+    every cluster has synthesized successfully - a provider failure partway
+    through leaves it unmarked, so the next view retries rather than caching
+    a transient outage as "nothing to show".
     """
     if not config.DATABASE_URL:
         return 0
@@ -255,6 +291,9 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
         summary = _synthesize_summary(cluster)
         _save_comparison(project_id, cluster, summary, run_id)
         written += 1
+
+    if run_id:
+        _mark_run_generation_attempt(project_id, run_id)
     return written
 
 
