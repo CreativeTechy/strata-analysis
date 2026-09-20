@@ -630,7 +630,7 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
     elif review_status == "unreviewed":
         conditions.append("not exists (select 1 from evidence_reviews er where er.claim_id=ec.id)")
     elif review_status == "needs_attention":
-        conditions.append("(ec.assessment in ('mixed_evidence','assessment_unavailable') or exists (select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)))")
+        conditions.append("(coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable') or exists (select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)))")
     if provenance_status:
         conditions.append("exists (select 1 from evidence_items ei where ei.claim_id=ec.id and coalesce((select epr.status from evidence_provenance_reviews epr where epr.project_id=ec.project_id and epr.article_id=ei.article_id order by epr.created_at desc limit 1),ei.source_snapshot->'provenance'->>'verification_status','unassessed')=%s)")
         params.append(provenance_status)
@@ -647,7 +647,8 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
         f"""select ec.*, a.title as source_title,
                    coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1), '') as review_decision,
                    (select count(*)::int from evidence_reviews er where er.claim_id=ec.id) as review_count,
-                   exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)) as needs_review
+                   (coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable')
+                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))) as needs_review
               from evidence_claims ec left join articles a on a.id=ec.source_article_id
              where {filtered_where}
              order by needs_review desc, ec.topic, ec.created_at desc limit %s offset %s""", tuple(page_params),
@@ -656,7 +657,8 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
     summary_rows = db.fetch_all(
         f"""select ec.assessment, ec.independent_origin_count, ec.citation_checked_count,
                    coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'') as review_decision,
-                   exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)) as needs_review
+                   (coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable')
+                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))) as needs_review
               from evidence_claims ec where {overview_where}""",
         tuple(base_params),
     ) or []

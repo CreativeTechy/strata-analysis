@@ -15,6 +15,18 @@ const LABELS = {
 };
 
 const MATRIX_PAGE_SIZE = 5;
+const CLAIM_PAGE_SIZE = 5;
+
+const CLAIM_TABS = [
+  { key: 'all', label: 'All claims' },
+  { key: 'needs_review', label: 'Needs review' },
+  { key: 'supported', label: 'Supported', assessment: 'supported' },
+  { key: 'contradicted', label: 'Contradicted', assessment: 'contradicted' },
+  { key: 'mixed_evidence', label: 'Mixed', assessment: 'mixed_evidence' },
+  { key: 'insufficient_evidence', label: 'Insufficient', assessment: 'insufficient_evidence' },
+  { key: 'not_yet_verifiable', label: 'Not yet verifiable', assessment: 'not_yet_verifiable' },
+  { key: 'assessment_unavailable', label: 'Unavailable', assessment: 'assessment_unavailable' },
+];
 
 const MATRIX_STATES = {
   supporting: { label: 'Supports' },
@@ -134,7 +146,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         run_id: runId, topic, search: searchText, assessment: assessmentFilter,
         claim_type: typeFilter, publisher: publisherFilter, review_status: reviewFilter,
         provenance_status: provenanceFilter, coverage: coverageFilter,
-        limit: view === 'matrix' ? MATRIX_PAGE_SIZE : 50,
+        limit: view === 'matrix' ? MATRIX_PAGE_SIZE : CLAIM_PAGE_SIZE,
         offset: view === 'matrix' ? matrixPage * MATRIX_PAGE_SIZE : offset,
       }, signal);
       setData(result);
@@ -278,6 +290,29 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     <span>Page {matrixSafePage + 1} of {matrixPageCount}</span>
     <button type="button" aria-label="Next claim page" disabled={matrixSafePage + 1 >= matrixPageCount || loading} onClick={() => changeMatrixPage(matrixSafePage + 1)}>Next <ChevronRight size={15} /></button>
   </nav>;
+  const selectedClaimTab = reviewFilter === 'needs_attention' ? 'needs_review'
+    : CLAIM_TABS.find((item) => item.assessment === assessmentFilter)?.key || 'all';
+  const claimTabCount = (tab) => {
+    if (tab.key === 'all') return overview.total_claims || 0;
+    if (tab.key === 'needs_review') return overview.needs_review_claims || 0;
+    return overview.assessment_counts?.[tab.assessment] || 0;
+  };
+  const setClaimTab = (tab) => updateFilters({
+    assessment: tab.assessment || '',
+    review_status: tab.key === 'needs_review' ? 'needs_attention' : '',
+    coverage: '',
+  });
+  const claimTotal = Number(data?.total_filtered || 0);
+  const claimPage = Math.floor(offset / CLAIM_PAGE_SIZE);
+  const claimPageCount = Math.max(1, Math.ceil(claimTotal / CLAIM_PAGE_SIZE));
+  const claimFirst = claimTotal ? offset + 1 : 0;
+  const claimLast = Math.min(offset + (data?.claims?.length || 0), claimTotal);
+  const changeClaimPage = (page) => updateFilters({ offset: Math.max(0, Math.min(claimPageCount - 1, page)) * CLAIM_PAGE_SIZE });
+  const claimPagination = (position) => <nav className="evidence-claim-pagination" aria-label={`${position} claims pagination`}>
+    <button type="button" disabled={claimPage === 0 || loading} onClick={() => changeClaimPage(claimPage - 1)}><ChevronLeft size={15} /> Previous</button>
+    <span>Page <strong>{claimPage + 1}</strong> of <strong>{claimPageCount}</strong></span>
+    <button type="button" disabled={claimPage + 1 >= claimPageCount || loading} onClick={() => changeClaimPage(claimPage + 1)}>Next <ChevronRight size={15} /></button>
+  </nav>;
 
   return (
     <div className="admin-page-shell evidence-page">
@@ -357,7 +392,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </div> : null}
 
         <div className="evidence-view-switch" role="tablist" aria-label="Evidence view">
-          <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}><Quote size={15} /> Review claims</button>
+          <button type="button" role="tab" aria-selected={view === 'review'} className={view === 'review' ? 'active' : ''} onClick={() => { if (coverageFilter) updateFilters({ coverage: '' }); setView('review'); }}><Quote size={15} /> Review claims</button>
           <button type="button" role="tab" aria-selected={view === 'matrix'} className={view === 'matrix' ? 'active' : ''} onClick={() => { setMatrixPage(0); setView('matrix'); }}><BarChart3 size={15} /> Compare sources</button>
         </div>
 
@@ -399,7 +434,11 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
           </aside> : null}
         </div> : <div className="evidence-layout">
           <div className="glass-card evidence-claims">
-            <div className="panel-header-tight"><strong>Claims</strong><span className="panel-chip">{data?.total_filtered || 0}</span></div>
+            <div className="evidence-claims-heading"><div><strong>Claims</strong><span className="panel-chip">{claimTotal}</span></div><small>Choose a status to focus the review queue.</small></div>
+            <div className="evidence-claim-tabs" role="tablist" aria-label="Claim status">
+              {CLAIM_TABS.map((tab) => <button type="button" role="tab" aria-selected={selectedClaimTab === tab.key} className={selectedClaimTab === tab.key ? 'active' : ''} key={tab.key} onClick={() => setClaimTab(tab)}><span>{tab.label}</span><b>{claimTabCount(tab)}</b></button>)}
+            </div>
+            <div className="evidence-claim-page-summary"><span>Showing <strong>{claimFirst}–{claimLast}</strong> of <strong>{claimTotal}</strong></span>{claimPagination('Top')}</div>
             {(data?.claims || []).map((claim) => {
               const effective = claim.review_decision || claim.assessment;
               return <button type="button" className={`evidence-claim ${selected?.id === claim.id ? 'active' : ''}`} key={claim.id} onClick={() => openClaim(claim.id)}>
@@ -409,7 +448,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
               </button>;
             })}
             {!(data?.claims || []).length ? <div className="evidence-empty">No claims match this topic.</div> : null}
-            {(data?.total_filtered || 0) > (data?.limit || 50) ? <div className="evidence-pagination"><button disabled={offset === 0} onClick={() => updateFilters({ offset: Math.max(0, offset - (data?.limit || 50)) })}>Previous</button><span>{offset + 1}–{Math.min(offset + (data?.claims?.length || 0), data.total_filtered)} of {data.total_filtered}</span><button disabled={offset + (data?.limit || 50) >= data.total_filtered} onClick={() => updateFilters({ offset: offset + (data?.limit || 50) })}>Next</button></div> : null}
+            <div className="evidence-claim-page-summary bottom"><span>Showing <strong>{claimFirst}–{claimLast}</strong> of <strong>{claimTotal}</strong></span>{claimPagination('Bottom')}</div>
           </div>
 
           <div className="glass-card evidence-detail">
