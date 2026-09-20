@@ -205,7 +205,7 @@ export default function DashboardOverview({
       try {
         const { ok, data } = await getIdeaComparisons(
           selectedProjectId,
-          { regenerate: forceRegenerate || undefined },
+          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined },
           controller.signal,
         );
         if (cancelled) return;
@@ -225,7 +225,7 @@ export default function DashboardOverview({
     }
     loadIdeaComparisons();
     return () => { cancelled = true; controller.abort(); };
-  }, [selectedProjectId, ideaComparisonsNonce]);
+  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
 
   // Spends an LLM call per qualifying idea cluster (see
   // services/articles/idea_comparisons.py), so this only runs on an explicit

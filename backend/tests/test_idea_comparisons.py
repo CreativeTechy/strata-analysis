@@ -75,9 +75,10 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
         mock_execute.assert_called_once()
         sql, params = mock_execute.call_args[0]
         self.assertIn("insert into idea_comparisons", sql)
-        self.assertEqual(params[2], "petrol price")
-        self.assertTrue(params[4])  # diverges
-        self.assertEqual(params[6], "eia.gov says $98, Twitter says $120.")
+        self.assertEqual(params[2], "")  # run_id: '' for the project-wide (unscoped) view
+        self.assertEqual(params[3], "petrol price")
+        self.assertTrue(params[5])  # diverges
+        self.assertEqual(params[7], "eia.gov says $98, Twitter says $120.")
 
     def test_unparsable_llm_response_still_saves_the_card_without_a_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
@@ -88,7 +89,18 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
             written = idea_comparisons.generate_idea_comparisons(project_id=1)
         self.assertEqual(written, 1)
         params = mock_execute.call_args[0][1]
-        self.assertIsNone(params[6])
+        self.assertIsNone(params[7])
+
+    def test_run_scoped_generation_passes_run_id_through_and_tags_rows(self):
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows) as mock_candidates, \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "x"}'), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            idea_comparisons.generate_idea_comparisons(project_id=1, run_id="run-123")
+        mock_candidates.assert_called_once_with(1, idea_comparisons.config.IDEA_COMPARISON_MAX_CLUSTERS, run_id="run-123")
+        params = mock_execute.call_args[0][1]
+        self.assertEqual(params[2], "run-123")
 
     def test_noop_without_database(self):
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", ""), \

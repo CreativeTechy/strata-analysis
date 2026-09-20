@@ -89,8 +89,8 @@ export const listProjectSources = (projectId, { limit, offset } = {}) => (
  *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`
  *  (an LLM failure during `regenerate`) alongside whatever was already
  *  cached - returns { ok, data } so the caller can show both. */
-export async function getIdeaComparisons(projectId, { regenerate } = {}, signal) {
-  const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate })}`, { signal });
+export async function getIdeaComparisons(projectId, { regenerate, run_id } = {}, signal) {
+  const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate, run_id })}`, { signal });
   const data = await response.json().catch(() => ({}));
   return { ok: response.ok && !data?.error, data };
 }
