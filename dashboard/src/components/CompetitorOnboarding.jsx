@@ -157,7 +157,7 @@ export function ListEditor({ label, hint, values, onChange, placeholder }) {
   );
 }
 
-export default function CompetitorOnboarding() {
+export default function CompetitorOnboarding({ onStudyCreated }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
@@ -247,6 +247,11 @@ export default function CompetitorOnboarding() {
     if (studyId) return studyId;
     const created = await createStudy({ name: studyName.trim() || 'Untitled competitor study' });
     setStudyId(created.study.id);
+    // A study is a competitor-mode project, but this wizard creates it through
+    // its own API rather than App's project CRUD, so App's shared `projects`
+    // list (which the Opinion Monitor picker, /pipeline-runs, etc. all read
+    // from) never learns about it on its own — refresh it here instead.
+    onStudyCreated?.();
     return created.study.id;
   };
 

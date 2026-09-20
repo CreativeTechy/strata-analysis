@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, ChevronRight, FileText, Gauge, Loader2, Network, RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
+  Activity, CheckCircle2, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -468,15 +469,18 @@ export default function DashboardOverview({
         </section>
 
         <section className="intelligence-idea-comparisons-grid">
-          <article className="glass-card intelligence-card">
+          <article className="glass-card intelligence-card intelligence-idea-comparisons-card">
             <div className="intelligence-card-heading">
-              <h3>Idea comparisons across sources</h3>
+              <div>
+                <h3>Idea comparisons across sources</h3>
+                <span>Where two or more sources cover the same idea, side by side</span>
+              </div>
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={regenerateIdeaComparisons}
                 disabled={ideaComparisonsRegenerating || !selectedProjectId}
-                style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+                style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
               >
                 {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
                 Regenerate
@@ -487,35 +491,62 @@ export default function DashboardOverview({
             ) : ideaComparisonsLoading ? (
               <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
             ) : ideaComparisons.length === 0 ? (
-              <p className="intelligence-empty">
-                No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
-              </p>
+              <div className="intelligence-idea-comparison-empty">
+                <Lightbulb size={20} />
+                <p>
+                  No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
+                </p>
+              </div>
             ) : (
               <div className="intelligence-idea-comparison-list">
                 {ideaComparisons.map((comparison) => (
-                  <div key={comparison.idea_cluster_id} className="intelligence-idea-comparison-item">
+                  <div
+                    key={comparison.idea_cluster_id}
+                    className={`intelligence-idea-comparison-item ${comparison.diverges ? 'diverges' : 'agrees'}`}
+                  >
                     <div className="intelligence-idea-comparison-header">
-                      <strong>{comparison.idea}</strong>
+                      <div className="intelligence-idea-comparison-title">
+                        <Lightbulb size={14} className="intelligence-idea-comparison-icon" />
+                        <strong>{comparison.idea}</strong>
+                      </div>
                       {comparison.diverges ? (
-                        <span className="admin-tag" style={{ background: '#fef3c7', color: '#92400e' }}><Scale size={12} /> Sources disagree</span>
+                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
                       ) : (
-                        <span className="admin-tag muted">Sources agree</span>
+                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
                       )}
                     </div>
                     {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
-                    <div className="intelligence-term-list intelligence-idea-comparison-sources">
-                      {(comparison.sources || []).map((source, index) => (
-                        <a
-                          key={`${comparison.idea_cluster_id}-${source.article_id ?? index}`}
-                          href={source.url || undefined}
-                          target={source.url ? '_blank' : undefined}
-                          rel={source.url ? 'noreferrer' : undefined}
-                          className="intelligence-term-link"
-                          title={source.title || source.source_label}
-                        >
-                          <b>{source.source_label}</b>{source.value ? <em>: {source.value}</em> : null}
-                        </a>
-                      ))}
+                    <div className="intelligence-idea-comparison-sources">
+                      {(comparison.sources || []).map((source, index) => {
+                        const content = (
+                          <>
+                            <span className="intelligence-idea-comparison-source-label">{source.source_label}</span>
+                            {source.value ? (
+                              <span className="intelligence-idea-comparison-source-value">{source.value}</span>
+                            ) : (
+                              <span className="intelligence-idea-comparison-source-novalue">no figure stated</span>
+                            )}
+                            {source.url ? <ExternalLink size={12} className="intelligence-idea-comparison-source-link-icon" /> : null}
+                          </>
+                        );
+                        const key = `${comparison.idea_cluster_id}-${source.article_id ?? index}`;
+                        return source.url ? (
+                          <a
+                            key={key}
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="intelligence-idea-comparison-source"
+                            title={source.title || source.source_label}
+                          >
+                            {content}
+                          </a>
+                        ) : (
+                          <span key={key} className="intelligence-idea-comparison-source" title={source.title || source.source_label}>
+                            {content}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
