@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
+from llm_client import LLMConnectionError
 from services.articles import idea_comparisons
 
 
@@ -75,9 +76,10 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
         mock_execute.assert_called_once()
         sql, params = mock_execute.call_args[0]
         self.assertIn("insert into idea_comparisons", sql)
-        self.assertEqual(params[2], "petrol price")
-        self.assertTrue(params[4])  # diverges
-        self.assertEqual(params[6], "eia.gov says $98, Twitter says $120.")
+        self.assertEqual(params[2], "")  # run_id: '' for the project-wide (unscoped) view
+        self.assertEqual(params[3], "petrol price")
+        self.assertTrue(params[5])  # diverges
+        self.assertEqual(params[7], "eia.gov says $98, Twitter says $120.")
 
     def test_unparsable_llm_response_still_saves_the_card_without_a_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
@@ -88,7 +90,58 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
             written = idea_comparisons.generate_idea_comparisons(project_id=1)
         self.assertEqual(written, 1)
         params = mock_execute.call_args[0][1]
-        self.assertIsNone(params[6])
+        self.assertIsNone(params[7])
+
+    def test_run_scoped_generation_passes_run_id_through_and_tags_rows(self):
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows) as mock_candidates, \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "x"}'), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            idea_comparisons.generate_idea_comparisons(project_id=1, run_id="run-123")
+        mock_candidates.assert_called_once_with(1, idea_comparisons.config.IDEA_COMPARISON_MAX_CLUSTERS, run_id="run-123")
+        # First call is the comparison row insert; a run-scoped generation also
+        # marks the run as attempted afterward (see the attempt-marker tests
+        # below), so the insert can't be asserted via the (now second) last call.
+        insert_sql, insert_params = mock_execute.call_args_list[0][0]
+        self.assertIn("insert into idea_comparisons", insert_sql)
+        self.assertEqual(insert_params[2], "run-123")
+
+    def test_run_scoped_generation_marks_the_run_as_attempted(self):
+        """The attempt marker is what stops get_project_idea_comparisons_view
+        from regenerating (and, during an outage, re-failing) on every single
+        view of a run whose articles genuinely have nothing to show - see
+        has_run_generation_attempt."""
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=[]), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            written = idea_comparisons.generate_idea_comparisons(project_id=1, run_id="run-123")
+        self.assertEqual(written, 0)
+        mock_execute.assert_called_once()
+        sql, params = mock_execute.call_args[0]
+        self.assertIn("insert into idea_comparisons_generation_attempts", sql)
+        self.assertEqual(params, (1, "run-123"))
+
+    def test_project_wide_generation_does_not_write_an_attempt_marker(self):
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=[]), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            idea_comparisons.generate_idea_comparisons(project_id=1)
+        mock_execute.assert_not_called()
+
+    def test_a_provider_failure_partway_through_leaves_the_run_unmarked(self):
+        """An LLMError propagates out of generate_idea_comparisons before the
+        marker is written, so a transient outage is retried on the next view
+        instead of being cached as "nothing to show"."""
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows), \
+             patch("services.articles.idea_comparisons.chat_completion", side_effect=LLMConnectionError("down")), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            with self.assertRaises(LLMConnectionError):
+                idea_comparisons.generate_idea_comparisons(project_id=1, run_id="run-123")
+        for sql, _params in (call[0] for call in mock_execute.call_args_list):
+            self.assertNotIn("idea_comparisons_generation_attempts", sql)
 
     def test_noop_without_database(self):
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", ""), \
@@ -96,6 +149,30 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
             written = idea_comparisons.generate_idea_comparisons(project_id=1)
         self.assertEqual(written, 0)
         mock_execute.assert_not_called()
+
+
+class HasRunGenerationAttemptTests(unittest.TestCase):
+    def test_false_without_a_run_id(self):
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons.db.fetch_one") as mock_fetch_one:
+            self.assertFalse(idea_comparisons.has_run_generation_attempt(1, None))
+        mock_fetch_one.assert_not_called()
+
+    def test_false_without_a_database(self):
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", ""), \
+             patch("services.articles.idea_comparisons.db.fetch_one") as mock_fetch_one:
+            self.assertFalse(idea_comparisons.has_run_generation_attempt(1, "run-123"))
+        mock_fetch_one.assert_not_called()
+
+    def test_true_when_a_marker_row_exists(self):
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons.db.fetch_one", return_value={"?column?": 1}):
+            self.assertTrue(idea_comparisons.has_run_generation_attempt(1, "run-123"))
+
+    def test_false_when_no_marker_row_exists(self):
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons.db.fetch_one", return_value=None):
+            self.assertFalse(idea_comparisons.has_run_generation_attempt(1, "run-123"))
 
 
 if __name__ == "__main__":

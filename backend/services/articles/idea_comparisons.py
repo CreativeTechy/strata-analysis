@@ -51,24 +51,61 @@ def _source_label(row: dict) -> str:
     return source or "Unknown source"
 
 
-def _cluster_candidates(project_id: int, limit: int) -> list[dict]:
+def _cluster_candidates(project_id: int, limit: int, run_id: str | None = None) -> list[dict]:
     # Two steps rather than one join-then-LIMIT query: capping the joined
     # rows directly would truncate a single high-frequency cluster's own
     # articles before ever reaching the next cluster. Picking the top cluster
     # ids first, then fetching every one of *their* articles with no further
     # limit, is what actually bounds this to "at most `limit` clusters".
-    cluster_ids = db.fetch_all(
-        """
-        select id from idea_clusters
-        where project_id = %s and frequency_estimate >= 2
-        order by frequency_estimate desc, id desc
-        limit %s
-        """,
-        (int(project_id), int(limit)),
-    )
+    #
+    # idea_cluster_articles has no run history of its own - each article's row
+    # is fully replaced on every (re)analysis (idea_clustering.py's
+    # _replace_idea_clusters_for_article), so it only ever reflects whichever
+    # run last touched that article, exactly like articles.pipeline_run_id.
+    # A run-scoped comparison therefore restricts candidate articles to that
+    # column rather than filtering idea_clusters' own (global, cross-run)
+    # frequency_estimate.
+    if run_id:
+        cluster_ids = db.fetch_all(
+            """
+            select ic.id as id, count(distinct ica.article_id) as run_count
+            from idea_clusters ic
+            join idea_cluster_articles ica on ica.idea_cluster_id = ic.id
+            join articles a on a.id = ica.article_id
+            where ic.project_id = %s and a.pipeline_run_id = %s
+            group by ic.id
+            having count(distinct ica.article_id) >= 2
+            order by run_count desc, ic.id desc
+            limit %s
+            """,
+            (int(project_id), str(run_id), int(limit)),
+        )
+    else:
+        cluster_ids = db.fetch_all(
+            """
+            select id from idea_clusters
+            where project_id = %s and frequency_estimate >= 2
+            order by frequency_estimate desc, id desc
+            limit %s
+            """,
+            (int(project_id), int(limit)),
+        )
     ids = [row["id"] for row in cluster_ids or []]
     if not ids:
         return []
+    if run_id:
+        return db.fetch_all(
+            """
+            select ic.id as idea_cluster_id, ic.idea, ic.type, ic.frequency_estimate,
+                   a.id as article_id, a.title, a.url, a.source, a.source_url, a.published,
+                   a.summary, ica.value
+            from idea_clusters ic
+            join idea_cluster_articles ica on ica.idea_cluster_id = ic.id
+            join articles a on a.id = ica.article_id
+            where ic.id = any(%s) and a.pipeline_run_id = %s
+            """,
+            (ids, str(run_id)),
+        )
     return db.fetch_all(
         """
         select ic.id as idea_cluster_id, ic.idea, ic.type, ic.frequency_estimate,
@@ -160,15 +197,15 @@ def _synthesize_summary(cluster: dict) -> str | None:
     return summary or None
 
 
-def _save_comparison(project_id: int, cluster: dict, summary: str | None) -> None:
+def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id: str | None) -> None:
     db.execute(
         """
         insert into idea_comparisons (
-            project_id, idea_cluster_id, idea, type, diverges, sources, summary,
+            project_id, idea_cluster_id, run_id, idea, type, diverges, sources, summary,
             article_count, analysis_model, prompt_version, generated_at
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
-        on conflict (project_id, idea_cluster_id) do update set
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+        on conflict (project_id, idea_cluster_id, run_id) do update set
             idea = excluded.idea,
             type = excluded.type,
             diverges = excluded.diverges,
@@ -182,6 +219,7 @@ def _save_comparison(project_id: int, cluster: dict, summary: str | None) -> Non
         (
             int(project_id),
             cluster["idea_cluster_id"],
+            str(run_id or ""),
             cluster["idea"],
             cluster["type"],
             cluster["diverges"],
@@ -194,32 +232,72 @@ def _save_comparison(project_id: int, cluster: dict, summary: str | None) -> Non
     )
 
 
-def generate_idea_comparisons(project_id: int) -> int:
+def _mark_run_generation_attempt(project_id: int, run_id: str) -> None:
+    db.execute(
+        """
+        insert into idea_comparisons_generation_attempts (project_id, run_id, generated_at)
+        values (%s, %s, now())
+        on conflict (project_id, run_id) do update set generated_at = now()
+        """,
+        (int(project_id), str(run_id)),
+    )
+
+
+def has_run_generation_attempt(project_id: int, run_id: str) -> bool:
+    """Whether generate_idea_comparisons has already completed (successfully,
+    even with zero qualifying clusters) for this run scope.
+
+    idea_comparisons itself can't tell "generated, nothing qualified" apart
+    from "never generated" - both read back empty - so without this,
+    get_project_idea_comparisons_view would regenerate (and, during a
+    provider outage, re-fail) on every single view of a run that genuinely
+    has fewer than two cross-source ideas. Only meaningful for a run scope:
+    the project-wide view (run_id='') already regenerates only on an
+    explicit request, never as a side effect of a plain GET.
+    """
+    if not config.DATABASE_URL or not run_id:
+        return False
+    row = db.fetch_one(
+        "select 1 from idea_comparisons_generation_attempts where project_id = %s and run_id = %s",
+        (int(project_id), str(run_id)),
+    )
+    return bool(row)
+
+
+def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int:
     """(Re)build the comparison cards for a project's qualifying idea
-    clusters. Returns how many were written.
+    clusters, either across the whole project (run_id=None) or scoped to one
+    analysis run's articles (run_id set). Returns how many were written.
 
     An LLMError (bad key, provider unreachable, ...) is deliberately NOT
     caught here - it propagates to the caller exactly like
     competitor_analysis.generate_findings does, since it means the provider
     call itself never produced an answer, not "this one cluster had nothing
     to say". Whatever was already written to idea_comparisons in this call
-    stays, since each cluster is saved as soon as it is synthesized.
+    stays, since each cluster is saved as soon as it is synthesized. Note
+    that the run-scoped "already attempted" marker below is only reached once
+    every cluster has synthesized successfully - a provider failure partway
+    through leaves it unmarked, so the next view retries rather than caching
+    a transient outage as "nothing to show".
     """
     if not config.DATABASE_URL:
         return 0
 
-    rows = _cluster_candidates(project_id, config.IDEA_COMPARISON_MAX_CLUSTERS)
+    rows = _cluster_candidates(project_id, config.IDEA_COMPARISON_MAX_CLUSTERS, run_id=run_id)
     clusters = _qualifying_clusters(_group_clusters(rows), config.IDEA_COMPARISON_MAX_CLUSTERS)
 
     written = 0
     for cluster in clusters:
         summary = _synthesize_summary(cluster)
-        _save_comparison(project_id, cluster, summary)
+        _save_comparison(project_id, cluster, summary, run_id)
         written += 1
+
+    if run_id:
+        _mark_run_generation_attempt(project_id, run_id)
     return written
 
 
-def list_idea_comparisons(project_id: int) -> list[dict]:
+def list_idea_comparisons(project_id: int, run_id: str | None = None) -> list[dict]:
     if not config.DATABASE_URL:
         return []
     rows = db.fetch_all(
@@ -227,10 +305,10 @@ def list_idea_comparisons(project_id: int) -> list[dict]:
         select idea_cluster_id, idea, type, diverges, sources, summary,
                article_count, generated_at
         from idea_comparisons
-        where project_id = %s
+        where project_id = %s and run_id = %s
         order by diverges desc, article_count desc, generated_at desc
         """,
-        (int(project_id),),
+        (int(project_id), str(run_id or "")),
     )
     return [
         {

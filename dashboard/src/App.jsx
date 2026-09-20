@@ -471,7 +471,7 @@ export default function App() {
             path="/competitors/new"
             element={(
               <RequirePermission permissions={['competitors.manage']}>
-                <CompetitorOnboarding />
+                <CompetitorOnboarding onStudyCreated={refreshProjects} />
               </RequirePermission>
             )}
           />

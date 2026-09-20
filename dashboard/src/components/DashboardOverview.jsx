@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, ChevronRight, FileText, Gauge, Loader2, Network, RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
+  Activity, CheckCircle2, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -205,7 +206,7 @@ export default function DashboardOverview({
       try {
         const { ok, data } = await getIdeaComparisons(
           selectedProjectId,
-          { regenerate: forceRegenerate || undefined },
+          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined },
           controller.signal,
         );
         if (cancelled) return;
@@ -225,7 +226,7 @@ export default function DashboardOverview({
     }
     loadIdeaComparisons();
     return () => { cancelled = true; controller.abort(); };
-  }, [selectedProjectId, ideaComparisonsNonce]);
+  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
 
   // Spends an LLM call per qualifying idea cluster (see
   // services/articles/idea_comparisons.py), so this only runs on an explicit
@@ -467,64 +468,92 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
 
-        {selectedProject?.mode !== 'competitor' ? (
-          <section className="intelligence-idea-comparisons-grid">
-            <article className="glass-card intelligence-card">
-              <div className="intelligence-card-heading">
+        <section className="intelligence-idea-comparisons-grid">
+          <article className="glass-card intelligence-card intelligence-idea-comparisons-card">
+            <div className="intelligence-card-heading">
+              <div>
                 <h3>Idea comparisons across sources</h3>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={regenerateIdeaComparisons}
-                  disabled={ideaComparisonsRegenerating || !selectedProjectId}
-                  style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                  Regenerate
-                </button>
+                <span>Where two or more sources cover the same idea, side by side</span>
               </div>
-              {ideaComparisonsError ? (
-                <p className="intelligence-empty">{ideaComparisonsError}</p>
-              ) : ideaComparisonsLoading ? (
-                <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
-              ) : ideaComparisons.length === 0 ? (
-                <p className="intelligence-empty">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={regenerateIdeaComparisons}
+                disabled={ideaComparisonsRegenerating || !selectedProjectId}
+                style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+              >
+                {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                Regenerate
+              </button>
+            </div>
+            {ideaComparisonsError ? (
+              <p className="intelligence-empty">{ideaComparisonsError}</p>
+            ) : ideaComparisonsLoading ? (
+              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
+            ) : ideaComparisons.length === 0 ? (
+              <div className="intelligence-idea-comparison-empty">
+                <Lightbulb size={20} />
+                <p>
                   No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
                 </p>
-              ) : (
-                <div className="intelligence-idea-comparison-list">
-                  {ideaComparisons.map((comparison) => (
-                    <div key={comparison.idea_cluster_id} className="intelligence-idea-comparison-item">
-                      <div className="intelligence-idea-comparison-header">
+              </div>
+            ) : (
+              <div className="intelligence-idea-comparison-list">
+                {ideaComparisons.map((comparison) => (
+                  <div
+                    key={comparison.idea_cluster_id}
+                    className={`intelligence-idea-comparison-item ${comparison.diverges ? 'diverges' : 'agrees'}`}
+                  >
+                    <div className="intelligence-idea-comparison-header">
+                      <div className="intelligence-idea-comparison-title">
+                        <Lightbulb size={14} className="intelligence-idea-comparison-icon" />
                         <strong>{comparison.idea}</strong>
-                        {comparison.diverges ? (
-                          <span className="admin-tag" style={{ background: '#fef3c7', color: '#92400e' }}><Scale size={12} /> Sources disagree</span>
-                        ) : (
-                          <span className="admin-tag muted">Sources agree</span>
-                        )}
                       </div>
-                      {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
-                      <div className="intelligence-term-list intelligence-idea-comparison-sources">
-                        {(comparison.sources || []).map((source, index) => (
+                      {comparison.diverges ? (
+                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
+                      ) : (
+                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
+                      )}
+                    </div>
+                    {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                    <div className="intelligence-idea-comparison-sources">
+                      {(comparison.sources || []).map((source, index) => {
+                        const content = (
+                          <>
+                            <span className="intelligence-idea-comparison-source-label">{source.source_label}</span>
+                            {source.value ? (
+                              <span className="intelligence-idea-comparison-source-value">{source.value}</span>
+                            ) : (
+                              <span className="intelligence-idea-comparison-source-novalue">no figure stated</span>
+                            )}
+                            {source.url ? <ExternalLink size={12} className="intelligence-idea-comparison-source-link-icon" /> : null}
+                          </>
+                        );
+                        const key = `${comparison.idea_cluster_id}-${source.article_id ?? index}`;
+                        return source.url ? (
                           <a
-                            key={`${comparison.idea_cluster_id}-${source.article_id ?? index}`}
-                            href={source.url || undefined}
-                            target={source.url ? '_blank' : undefined}
-                            rel={source.url ? 'noreferrer' : undefined}
-                            className="intelligence-term-link"
+                            key={key}
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="intelligence-idea-comparison-source"
                             title={source.title || source.source_label}
                           >
-                            <b>{source.source_label}</b>{source.value ? <em>: {source.value}</em> : null}
+                            {content}
                           </a>
-                        ))}
-                      </div>
+                        ) : (
+                          <span key={key} className="intelligence-idea-comparison-source" title={source.title || source.source_label}>
+                            {content}
+                          </span>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          </section>
-        ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
 
         <section className="intelligence-bottom-grid">
           {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={`See articles mentioning ${term.term}`}><b>{term.term}</b> <em>{term.mentions}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article> : null}
