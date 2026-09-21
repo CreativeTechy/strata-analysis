@@ -44,6 +44,9 @@ a.intelligence-idea-comparison-source:hover, a.intelligence-idea-comparison-sour
 .intelligence-idea-comparison-source-link-icon { flex-shrink: 0; color: var(--text-light); }
 .intelligence-idea-comparison-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 16px; padding: 26px 16px; text-align: center; color: #cbd5e1; }
 .intelligence-idea-comparison-empty p { max-width: 420px; margin: 0; color: var(--text-light); font-size: .82rem; line-height: 1.5; }
+.intelligence-idea-comparison-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 16px; }
+.intelligence-idea-comparison-pagination button { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: .78rem; }
+.intelligence-idea-comparison-pagination-status { font-size: .8rem; color: var(--text-light); }
 .intelligence-pipeline-card-full { grid-column: 1 / -1; }
 .intelligence-card { padding: 22px; min-width: 0; }
 .intelligence-card:hover { transform: none; }
