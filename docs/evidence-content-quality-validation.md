@@ -55,7 +55,8 @@ frozen corpus, embedding model cache state, and provider state for both runs. Th
 collected during rollout; they must not be inferred from the earlier 34-second reused-analysis run or
 from this deterministic fixture.
 
-Recommended rollout is observe and review first: rebuild a non-published generation, label a balanced
-sample across score bands and languages, calculate precision and recall including false exclusions,
-then publish only after the result meets the team's agreed target. Existing published evidence remains
-available if processing fails.
+Recommended rollout is to apply the migration and rebuild a copied or staging snapshot first, then label
+a balanced sample across score bands and languages and calculate precision and recall including false
+exclusions. A successful production rebuild publishes atomically; it is not a draft mode. Existing
+published evidence remains available if processing fails, and a previously successful generation can be
+republished if the new result is rejected during review.
