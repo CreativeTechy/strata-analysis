@@ -207,6 +207,25 @@ class EvidenceRuleTests(unittest.TestCase):
         self.assertEqual(result["claim-1"]["relevance"], "uncertain")
         self.assertEqual(result["claim-1"]["status"], "failed")
 
+    def test_failed_relevance_batch_is_split_to_isolate_transient_failure(self):
+        groups = [{"fingerprint": key} for key in ("one", "two")]
+        failed = {
+            key: {"relevance": "uncertain", "explanation": "failed", "score": 0, "status": "failed"}
+            for key in ("one", "two")
+        }
+        successful = lambda key: {
+            key: {"relevance": "direct", "explanation": "matches", "score": 1, "status": "success"}
+        }
+        with patch.object(
+            workspace, "_classify_relevance_batch",
+            side_effect=[failed, successful("one"), successful("two")],
+        ) as classify:
+            result = workspace._classify_relevance_resilient({"name": "Fuel"}, groups)
+        self.assertEqual({key: value["status"] for key, value in result.items()}, {
+            "one": "success", "two": "success",
+        })
+        self.assertEqual(classify.call_count, 3)
+
     def test_failed_relevance_does_not_replace_published_generation(self):
         row = {"id": 7, "text": "Fuel prices increased today.", "source_provenance": {}}
         candidate = {
