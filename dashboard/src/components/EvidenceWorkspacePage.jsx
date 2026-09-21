@@ -252,6 +252,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const selectedRunRecord = (data?.runs || []).find(
     (run) => String(run.id) === String(data?.selected_run_id),
   );
+  const selectedRunActive = ['queued', 'running'].includes(selectedRunRecord?.status);
   const evidenceButtonLabel = selectedRunRecord?.evidence_status ? 'Rebuild evidence' : 'Build evidence';
   const assessmentCards = useMemo(() => Object.entries(overview.assessment_counts || {}), [overview.assessment_counts]);
   const matrix = data?.source_matrix || { publishers: [], rows: [] };
@@ -328,7 +329,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </div>
         <div className="admin-page-toolbar">
           <Link className="btn-secondary" to={`/projects/${projectId}`}><ArrowLeft size={15} /> Project</Link>
-          {canRetry && data?.selected_run_id ? <button className="btn-secondary" onClick={retry} disabled={retrying}><RefreshCw size={15} className={retrying ? 'spin' : ''} /> {retrying ? 'Starting…' : evidenceButtonLabel}</button> : null}
+          {canRetry && data?.selected_run_id ? <button className="btn-secondary" onClick={retry} disabled={retrying || selectedRunActive} title={selectedRunActive ? 'Wait for this analysis run to finish.' : undefined}><RefreshCw size={15} className={retrying ? 'spin' : ''} /> {retrying ? 'Starting…' : selectedRunActive ? 'Analysis running…' : evidenceButtonLabel}</button> : null}
         </div>
       </div>
 
