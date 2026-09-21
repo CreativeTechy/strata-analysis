@@ -33,7 +33,11 @@ save_articles() has returned and both writes have landed.
 
 from __future__ import annotations
 
+import logging
+
 import db
+
+logger = logging.getLogger(__name__)
 
 
 # Copied verbatim from the `articles` row. Article-intrinsic columns (url,
@@ -86,18 +90,40 @@ SNAPSHOT_COLUMNS = (
 # ever holds the latest run's view. Folding the run's opinions into the snapshot
 # as JSON keeps the per-run demographic breakdown without versioning that table
 # (and article_tags and article_feedback_items alongside it).
-_PEOPLE_OPINIONS_SQL = """
+_PEOPLE_OPINIONS_KEYS = (
+    ("opinion", "po.opinion"),
+    ("sentiment", "po.sentiment"),
+    ("category", "po.category"),
+    ("gender", "po.gender"),
+    # Added by migration 0019, so it is the one key here that a database may
+    # legitimately not have yet - see _people_opinions_sql().
+    ("gender_evidence", "po.gender_evidence"),
+    ("age_range", "po.age_range"),
+    ("region", "po.region"),
+    ("segment", "po.segment"),
+)
+
+
+def _people_opinions_sql() -> str:
+    """The people-opinions jsonb sub-select, built from the columns this
+    database actually has.
+
+    gender_evidence arrived in migration 0019. Naming it unconditionally would
+    make the whole snapshot insert fail on a database that hasn't applied that
+    migration yet (MIGRATE_ON_STARTUP=false, or a replica mid-rollout) - and
+    because record_analysis_snapshot() swallows failures by design, that would
+    silently produce no article_analyses rows at all for every article in the
+    run rather than a snapshot missing one key. Dropping the key keeps the
+    run comparable; the same reasoning guards the write side in
+    store._replace_article_children()."""
+    pairs = [
+        (key, source) for key, source in _PEOPLE_OPINIONS_KEYS
+        if key != "gender_evidence" or _table_has_column("article_people_opinions", "gender_evidence")
+    ]
+    fields = ", ".join(f"'{key}', {source}" for key, source in pairs)
+    return f"""
     coalesce((
-        select jsonb_agg(jsonb_build_object(
-                   'opinion',   po.opinion,
-                   'sentiment', po.sentiment,
-                   'category',  po.category,
-                   'gender',    po.gender,
-                   'gender_evidence', po.gender_evidence,
-                   'age_range', po.age_range,
-                   'region',    po.region,
-                   'segment',   po.segment
-               ) order by po.id)
+        select jsonb_agg(jsonb_build_object({fields}) order by po.id)
         from article_people_opinions po
         where po.article_id = a.id
     ), '[]'::jsonb)
@@ -110,6 +136,32 @@ def _table_exists(name: str) -> bool:
     except Exception:
         return False
     return bool(row and row.get("name"))
+
+
+def _table_has_column(table: str, column: str) -> bool:
+    """Whether one column exists, for code that has to run against a database
+    a migration hasn't reached yet.
+
+    Deliberately not memoized: the answer only ever flips false->true (a column
+    is added, never dropped), and caching a false would keep this process
+    writing the degraded shape until it restarts even after the migration
+    lands. One information_schema lookup per article is nothing beside the
+    model call that produced the article's analysis."""
+    try:
+        row = db.fetch_one(
+            """
+            select exists (
+                select 1 from information_schema.columns
+                where table_schema = 'public'
+                  and table_name = %s
+                  and column_name = %s
+            ) as exists
+            """,
+            (table, column),
+        )
+    except Exception:
+        return False
+    return bool(row and row.get("exists"))
 
 
 def record_analysis_snapshot(run_id: str, article_id: int) -> bool:
@@ -134,7 +186,7 @@ def record_analysis_snapshot(run_id: str, article_id: int) -> bool:
         db.execute(
             f"""
             insert into article_analyses (run_id, article_id, {columns}, people_opinions)
-            select %s, a.id, {selected}, {_PEOPLE_OPINIONS_SQL}
+            select %s, a.id, {selected}, {_people_opinions_sql()}
             from articles a
             where a.id = %s
             on conflict (run_id, article_id) do update
@@ -145,7 +197,12 @@ def record_analysis_snapshot(run_id: str, article_id: int) -> bool:
             (str(run_id), int(article_id)),
         )
         return True
-    except Exception:
+    except Exception as exc:
+        # Still swallowed - a lost comparison point must not fail an article the
+        # run analyzed - but not silently: the caller discards this return value,
+        # so without a line here a snapshot that never writes for any article
+        # leaves no trace anywhere.
+        logger.warning("analysis snapshot not recorded for article %s in run %s: %s", article_id, run_id, exc)
         return False
 
 

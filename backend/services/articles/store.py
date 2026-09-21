@@ -519,6 +519,15 @@ def _replace_article_children(article_id, article):
         # including article_tags below (the deletes above have already
         # committed by then - see _table_exists's docstring on db.execute).
         has_gender_evidence = "gender_evidence" in _table_columns("article_people_opinions")
+        if not has_gender_evidence:
+            # _table_columns is memoized for the life of the process, which is
+            # right for the steady state but wrong for a "not there yet"
+            # answer: the column is only ever added, never dropped, so a
+            # cached False would keep this process writing no evidence even
+            # after the migration lands - until someone restarts it. Drop the
+            # memo so the next article re-checks. Safe to clear wholesale:
+            # this is the only caller.
+            _table_columns.cache_clear()
         opinion_columns = (
             "article_id", "opinion", "sentiment", "category", "gender",
         ) + (("gender_evidence",) if has_gender_evidence else ()) + (

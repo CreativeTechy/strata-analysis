@@ -102,6 +102,21 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
                 return call
         return None
 
+    def _opinion_row(self, mock_execute):
+        """The single inserted row as ordered (column, value) pairs.
+
+        Membership assertions (`assertIn(value, params)`) cannot see a row
+        tuple built in a different order from the column list, which is
+        exactly the mistake that would silently write age_range into
+        gender_evidence and the evidence string into segment. Pairing the
+        two up is what pins that."""
+        call = self._opinions_insert_call(mock_execute)
+        self.assertIsNotNone(call)
+        sql, params = call.args
+        columns = [c.strip() for c in sql[sql.index("(") + 1:sql.index(")")].split(",")]
+        self.assertEqual(len(params), len(columns), "column/parameter count mismatch")
+        return list(zip(columns, params))
+
     def test_noop_when_table_does_not_exist(self):
         with patch("services.articles.store._table_exists", return_value=False):
             with patch("services.articles.store.db.execute") as mock_execute:
@@ -140,13 +155,18 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
              patch("services.articles.store._table_columns", return_value={"gender_evidence"}), \
              patch("services.articles.store.db.execute") as mock_execute:
             store._replace_article_children(1, article)
-        call = self._opinions_insert_call(mock_execute)
-        self.assertIsNotNone(call)
-        sql, params = call.args
-        self.assertIn("gender_evidence", sql)
-        self.assertEqual(sql.count("%s"), 10)
-        self.assertIn("she said", params)
-        self.assertIn("female", params)
+        self.assertEqual(self._opinion_row(mock_execute), [
+            ("article_id", 1),
+            ("opinion", "Loves it"),
+            ("sentiment", "positive"),
+            ("category", "overall"),
+            ("gender", "female"),
+            ("gender_evidence", "she said"),
+            ("age_range", "unknown"),
+            ("region", "unknown"),
+            ("segment_raw", "unknown"),
+            ("segment", "unknown"),
+        ])
 
     def test_gender_evidence_is_forced_empty_when_gender_is_unknown(self):
         article = {
@@ -160,10 +180,9 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
              patch("services.articles.store._table_columns", return_value={"gender_evidence"}), \
              patch("services.articles.store.db.execute") as mock_execute:
             store._replace_article_children(1, article)
-        call = self._opinions_insert_call(mock_execute)
-        sql, params = call.args
-        self.assertNotIn("she said", params)
-        self.assertIn("", params)
+        row = dict(self._opinion_row(mock_execute))
+        self.assertEqual(row["gender"], "unknown")
+        self.assertEqual(row["gender_evidence"], "")
 
     def test_gender_evidence_is_dropped_from_the_insert_when_the_column_is_missing(self):
         """A database that hasn't had migration 0019 applied yet still has
@@ -182,16 +201,51 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
              patch("services.articles.store._table_columns", return_value=set()), \
              patch("services.articles.store.db.execute") as mock_execute:
             store._replace_article_children(1, article)
-        call = self._opinions_insert_call(mock_execute)
-        self.assertIsNotNone(call)
-        sql, params = call.args
+        self.assertEqual(self._opinion_row(mock_execute), [
+            ("article_id", 1),
+            ("opinion", "Loves it"),
+            ("sentiment", "positive"),
+            ("category", "overall"),
+            ("gender", "female"),
+            ("age_range", "unknown"),
+            ("region", "unknown"),
+            ("segment_raw", "unknown"),
+            ("segment", "unknown"),
+        ])
+        sql = self._opinions_insert_call(mock_execute).args[0]
         self.assertNotIn("gender_evidence", sql)
-        self.assertEqual(sql.count("%s"), 9)
-        self.assertNotIn("she said", params)
         # the tags insert (previously lost when the opinions insert raised)
         # still runs
         tag_calls = [c for c in mock_execute.call_args_list if c.args[0].strip().startswith("insert into article_tags")]
         self.assertTrue(tag_calls)
+
+    def test_a_missing_column_is_rechecked_rather_than_cached_for_the_process(self):
+        """The column is only ever added, never dropped. A memoized "absent"
+        would keep this process writing no evidence after the migration lands,
+        until someone restarts it."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender": "female", "gender_evidence": "she said",
+            }],
+        }
+        # first article: the migration hasn't landed
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.store.db.fetch_all", return_value=[{"column_name": "gender"}]), \
+             patch("services.articles.store.db.execute") as first_execute:
+            store._replace_article_children(1, article)
+        self.assertNotIn("gender_evidence", self._opinions_insert_call(first_execute).args[0])
+
+        # migration lands; the very next article must pick it up without a restart
+        migrated = [{"column_name": "gender"}, {"column_name": "gender_evidence"}]
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.store.db.fetch_all", return_value=migrated), \
+             patch("services.articles.store.db.execute") as second_execute:
+            store._replace_article_children(2, article)
+        self.assertEqual(dict(self._opinion_row(second_execute))["gender_evidence"], "she said")
 
 
 class ArticleRowFieldHandlingTests(unittest.TestCase):
