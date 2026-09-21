@@ -71,8 +71,7 @@ async function requestForm(path, formData) {
  *  `processed_chunks` are progress while active. `extraction_error` is a
  *  summary of every chunk that failed and is set whenever any did, even if
  *  status ends up 'processed' from the chunks that succeeded — always show it,
- *  a partial failure shouldn't hide behind a plain success pill. Raw extracted
- *  text isn't in this list — use getDocumentText/getDocumentChunks.
+ *  a partial failure shouldn't hide behind a plain success pill.
  *
  *  A .json/.jsonl/.ndjson upload moves through the same states, but its
  *  "extraction" is a parse (extraction_method 'records', always one chunk) and
@@ -87,8 +86,6 @@ export const uploadDocuments = (projectId, files) => {
   return requestForm(`/${projectId}/documents`, formData);
 };
 export const deleteDocument = (documentId) => request(`/documents/${documentId}`, { method: 'DELETE' });
-export const getDocumentText = (documentId) => request(`/documents/${documentId}/text`);
-export const getDocumentChunks = (documentId) => request(`/documents/${documentId}/chunks`);
 
 // --- document articles (candidates split out of extracted text) -----------
 /** A document's extracted text is split into one or more candidate "articles"

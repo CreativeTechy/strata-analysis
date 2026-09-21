@@ -60,24 +60,6 @@ def _domain(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def normalize_source_url(url: str) -> str | None:
-    """Shape-check a manually entered source URL, defaulting to https://.
-
-    No network call - this only rejects input that could not possibly be a
-    URL (no dotted host), so a bad manual entry is caught before anything is
-    written rather than saved as an unreachable source.
-    """
-    url = str(url or "").strip()
-    if not url:
-        return None
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-    netloc = urlparse(url).netloc.lower()
-    if not netloc or "." not in netloc:
-        return None
-    return url
-
-
 def _columns(spec: str) -> list[str]:
     """Column names from one of the multi-line SELECT specs above."""
     return [name.strip() for name in spec.replace("\n", " ").split(",") if name.strip()]

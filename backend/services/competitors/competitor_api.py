@@ -24,7 +24,6 @@ from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
-from services.competitors.countries import validate_countries
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible, visible_project_ids_or_none
 from services.projects.projects_store import delete_project, project_has_articles

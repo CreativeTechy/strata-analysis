@@ -66,7 +66,6 @@ from services.projects.projects_store import (
     delete_project,
     diagnose_project_setup,
     get_project,
-    list_project_ids_for_user,
     list_projects,
     list_projects_page,
     persist_project_embedding_for_id,

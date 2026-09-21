@@ -38,13 +38,3 @@ def resolve_device_index(device_setting: str) -> int:
     if len(parts) == 2 and parts[1].isdigit():
         return int(parts[1])
     return 0
-
-
-def resolve_torch_device(device_setting: str) -> str:
-    """Map a device string to the "cpu"/"cuda"/"cuda:N" string torch/.to() expects."""
-    device = (device_setting or "cpu").strip().lower()
-    if device == "auto":
-        return "cuda:0" if _cuda_available() else "cpu"
-    if device.startswith("cuda"):
-        return device
-    return "cpu"

@@ -73,10 +73,6 @@ export const listStudyFindings = (id, { limit = 10, offset = 0 } = {}) =>
   request(`/studies/${id}/findings/recent?limit=${limit}&offset=${offset}`);
 
 // --- business profile ------------------------------------------------------
-export const getProfile = (id) => request(`/studies/${id}/profile`);
-/** Derives structured market context from what the user typed about their
- *  business — one LLM call, so expect it to take a few seconds. */
-export const buildProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'POST', body });
 export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'PUT', body });
 
 // --- documents (offline studies) --------------------------------------------
@@ -86,8 +82,7 @@ export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { met
  *  `processed_chunks` are progress while active. `extraction_error` is a
  *  summary of every chunk that failed and is set whenever any did, even if
  *  status ends up 'processed' from the chunks that succeeded — always show it,
- *  a partial failure shouldn't hide behind a plain success pill. Raw extracted
- *  text isn't in this list — use getDocumentText/getDocumentChunks. */
+ *  a partial failure shouldn't hide behind a plain success pill. */
 export const listDocuments = (id) => request(`/studies/${id}/documents`);
 export const uploadDocuments = (id, files) => {
   const formData = new FormData();
@@ -95,10 +90,6 @@ export const uploadDocuments = (id, files) => {
   return requestForm(`/studies/${id}/documents`, formData);
 };
 export const deleteDocument = (documentId) => request(`/documents/${documentId}`, { method: 'DELETE' });
-export const getDocumentText = (documentId) => request(`/documents/${documentId}/text`);
-/** Per-page/sheet detail behind a document's rolled-up status — which part
- *  failed and why, not just that something did. */
-export const getDocumentChunks = (documentId) => request(`/documents/${documentId}/chunks`);
 
 // --- document articles (candidates split out of extracted text) -----------
 /** A document's extracted text is split into one or more candidate "articles"
@@ -115,8 +106,7 @@ export const approveAllDocumentArticles = (id) =>
 
 // --- competitors -----------------------------------------------------------
 /** Competitors are named by the backend from a study's approved document
- *  articles (see analyzeDocuments below); these cover reviewing and correcting
- *  that set by hand. */
+ *  articles; these cover reviewing and correcting that set by hand. */
 export const listCompetitors = (id) => request(`/studies/${id}/competitors`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>
@@ -129,9 +119,9 @@ export const deleteCompetitor = (competitorId) =>
   request(`/competitors/${competitorId}`, { method: 'DELETE' });
 /** Imports the tracked-competitors JSONL produced by the scraper app's
  *  `GET /api/competitors/export` (a companion to that app's article export)
- *  so a competitor list already confirmed there doesn't have to be re-guessed
- *  by analyzeDocuments() or re-typed by hand. Runs synchronously — a study's
- *  tracked-competitor list is at most a few dozen rows. */
+ *  so a competitor list already confirmed there doesn't have to be re-typed
+ *  by hand. Runs synchronously — a study's tracked-competitor list is at
+ *  most a few dozen rows. */
 export const importCompetitors = (id, file) => {
   const formData = new FormData();
   formData.append('file', file);
@@ -144,10 +134,6 @@ export const importCompetitors = (id, file) => {
  *  competitor runs for minutes against a local model. */
 export const analyze = (id, body) => request(`/studies/${id}/analyze`, { method: 'POST', body });
 export const getAnalysisStatus = (id, runId) => request(`/studies/${id}/analyze/${runId}`);
-/** Names the competitors a study's approved document articles are actually
- *  about, tracks them, then runs the same finding generation `analyze()`
- *  triggers. This is how a study gets its competitor set. */
-export const analyzeDocuments = (id) => request(`/studies/${id}/analyze-documents`, { method: 'POST' });
 /** This study's documents annotated with approved-article counts and whether
  *  a completed run already analyzed each - what the run-analysis dialog's
  *  scope choices (and its hand-pick checklist) render from. */
@@ -179,21 +165,6 @@ export const IMPACT_LABELS = { high: 'High impact', medium: 'Medium impact', low
 export const URGENCY_LABELS = { now: 'Now', this_quarter: 'This quarter', watch: 'Watch' };
 
 export const EFFORT_LABELS = { low: 'Low effort', medium: 'Medium effort', high: 'High effort' };
-
-/** Shape-only check mirroring the backend's _normalize_website — enough to
- *  catch an obviously-broken business/competitor website before it round-trips
- *  to the server. Nothing is ever fetched from it. */
-export function isPlausibleUrl(value) {
-  const text = String(value || '').trim();
-  if (!text) return false;
-  const withScheme = /^https?:\/\//i.test(text) ? text : `https://${text}`;
-  try {
-    const { hostname } = new URL(withScheme);
-    return hostname.includes('.');
-  } catch {
-    return false;
-  }
-}
 
 const RUN_POLL_MS = 2500;
 
