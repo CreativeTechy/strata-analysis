@@ -482,8 +482,8 @@ def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
         )
     grouped = _group_claim_candidates(candidates)
 
-    db.execute("update evidence_claims set active=false where run_id=%s", (str(run_id),))
     created = 0
+    generated_fingerprints = []
     for group in grouped:
         canonical = group["canonical"]
         fingerprint = group["fingerprint"]
@@ -595,6 +595,14 @@ def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
              len(all_origins), RULES_VERSION),
         )
         created += 1
+        generated_fingerprints.append(fingerprint)
+    # Keep the last complete claim set visible until its replacement finishes.
+    # If generation is interrupted, this final cleanup never runs.
+    db.execute(
+        """update evidence_claims set active=false
+             where run_id=%s and not (fingerprint = any(%s))""",
+        (str(run_id), generated_fingerprints),
+    )
     return {"claims": created, "articles": len(rows)}
 
 

@@ -580,6 +580,11 @@ def retry_project_evidence(
     run = get_pipeline_run(run_id)
     if not run or int(run.get("project_id") or 0) != int(project_id):
         raise HTTPException(status_code=404, detail="Analysis run not found.")
+    if run.get("status") in {"queued", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Wait for the analysis run to finish before rebuilding its evidence.",
+        )
     status = db.fetch_one("select status from evidence_run_status where run_id=%s", (str(run_id),)) or {}
     if status.get("status") == "running":
         return {"queued": False, "status": "running"}

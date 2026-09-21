@@ -157,6 +157,33 @@ class EvidenceRuleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no frozen evidence snapshot"):
                 workspace._generate_for_run("old-run", 3, 1)
 
+    def test_interrupted_rebuild_does_not_deactivate_existing_claims(self):
+        row = {
+            "id": 7,
+            "text": "Fuel prices increased today.",
+            "source_provenance": {},
+            "provenance_status": "unassessed",
+        }
+        candidate = {
+            "row": row,
+            "topic": "Fuel",
+            "claim": "Fuel prices increased today",
+            "type": "factual_assertion",
+            "direction": "positive",
+            "fingerprint": "fuel-price",
+            "embedding": [1.0],
+        }
+        with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
+             patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0]}), \
+             patch.object(workspace, "_group_claim_candidates", return_value=[{"canonical": candidate, "fingerprint": "fuel-price", "items": [candidate]}]), \
+             patch.object(workspace, "_grounded_model_assessment", side_effect=RuntimeError("interrupted")), \
+             patch.object(workspace.db, "execute") as execute:
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                workspace._generate_for_run("run-1", 3, 2)
+
+        self.assertFalse(any("active=false" in call.args[0] for call in execute.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()
