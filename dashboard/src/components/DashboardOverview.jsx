@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, CheckCircle2, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  Activity, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
@@ -12,6 +12,7 @@ import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 
+const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PERIODS = [
   { key: '7d', label: 'Last 7 days' },
   { key: '30d', label: 'Last 30 days' },
@@ -181,6 +182,7 @@ export default function DashboardOverview({
   const [ideaComparisonsError, setIdeaComparisonsError] = useState('');
   const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
+  const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   // Set right before bumping ideaComparisonsNonce from the Regenerate button
   // below, and consumed (and cleared) by the effect - the same
   // forceRegenerateRef/nonce pattern StatsOverview.jsx's trend-summary
@@ -196,6 +198,7 @@ export default function DashboardOverview({
     async function loadIdeaComparisons() {
       if (!selectedProjectId) {
         setIdeaComparisons([]);
+        setIdeaComparisonsPage(0);
         return;
       }
       const forceRegenerate = forceIdeaComparisonsRegenerateRef.current;
@@ -211,6 +214,7 @@ export default function DashboardOverview({
         );
         if (cancelled) return;
         setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
+        setIdeaComparisonsPage(0);
         if (!ok) setIdeaComparisonsError(data?.error || 'Failed to load idea comparisons.');
       } catch (err) {
         if (!cancelled && err?.name !== 'AbortError') {
@@ -237,6 +241,12 @@ export default function DashboardOverview({
     forceIdeaComparisonsRegenerateRef.current = true;
     setIdeaComparisonsNonce((n) => n + 1);
   };
+
+  const ideaComparisonsTotalPages = Math.max(1, Math.ceil(ideaComparisons.length / IDEA_COMPARISONS_PAGE_SIZE));
+  const pagedIdeaComparisons = ideaComparisons.slice(
+    ideaComparisonsPage * IDEA_COMPARISONS_PAGE_SIZE,
+    (ideaComparisonsPage + 1) * IDEA_COMPARISONS_PAGE_SIZE,
+  );
 
   return <div className="content-shell intelligence-page">
     <header className="intelligence-header">
@@ -498,8 +508,9 @@ export default function DashboardOverview({
                 </p>
               </div>
             ) : (
+              <>
               <div className="intelligence-idea-comparison-list">
-                {ideaComparisons.map((comparison) => (
+                {pagedIdeaComparisons.map((comparison) => (
                   <div
                     key={comparison.idea_cluster_id}
                     className={`intelligence-idea-comparison-item ${comparison.diverges ? 'diverges' : 'agrees'}`}
@@ -551,6 +562,30 @@ export default function DashboardOverview({
                   </div>
                 ))}
               </div>
+              {ideaComparisonsTotalPages > 1 ? (
+                <div className="intelligence-idea-comparison-pagination">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setIdeaComparisonsPage((current) => Math.max(0, current - 1))}
+                    disabled={ideaComparisonsPage === 0}
+                  >
+                    <ChevronLeft size={14} /> Prev
+                  </button>
+                  <span className="intelligence-idea-comparison-pagination-status">
+                    Page {ideaComparisonsPage + 1} of {ideaComparisonsTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setIdeaComparisonsPage((current) => Math.min(ideaComparisonsTotalPages - 1, current + 1))}
+                    disabled={ideaComparisonsPage >= ideaComparisonsTotalPages - 1}
+                  >
+                    Next <ChevronRight size={14} />
+                  </button>
+                </div>
+              ) : null}
+              </>
             )}
           </article>
         </section>
