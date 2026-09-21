@@ -844,9 +844,10 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
         impact_level = "medium"
 
     try:
-        confidence = max(0.0, min(float(parsed.get("confidence", 0.5)), 1.0))
+        raw_confidence = parsed.get("confidence")
+        confidence = max(0.0, min(float(raw_confidence), 1.0)) if raw_confidence is not None else None
     except (TypeError, ValueError):
-        confidence = 0.5
+        confidence = None
 
     # Left null rather than defaulted to a placeholder: a card whose model
     # didn't explain its score should show no explanation, not a fabricated

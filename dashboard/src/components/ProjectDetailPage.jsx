@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import ConfirmModal from './ConfirmModal';
 import DemographicSentimentChart from './DemographicSentimentChart';
+import SurveyObservationsChart from './SurveyObservationsChart';
 import { useAuth } from '../auth/useAuth.js';
 import {
   ArrowLeft,
@@ -11,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  ShieldCheck,
   Lightbulb,
   Link2,
   Loader2,
@@ -87,7 +89,6 @@ export default function ProjectDetailPage({
   const [analysisError, setAnalysisError] = useState('');
   const [articleStats, setArticleStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
-  const [seenProjectId, setSeenProjectId] = useState(null);
   const [ideaClusters, setIdeaClusters] = useState({ clusters: [], total: 0, limit: 10, offset: 0 });
   const [ideaClustersLoading, setIdeaClustersLoading] = useState(false);
   const [ideaClustersError, setIdeaClustersError] = useState('');
@@ -100,17 +101,16 @@ export default function ProjectDetailPage({
     [projects, params.projectId]
   );
 
-  // Reset source pagination/tab when navigating to a different project. Adjusting state
-  // during render (rather than in an effect) avoids an extra render on every navigation.
-  if (project?.id !== seenProjectId) {
-    setSeenProjectId(project?.id ?? null);
+  // Reset project-scoped controls after navigation. React 19 can reject
+  // render-phase state updates as a render loop, so this belongs in an effect.
+  useEffect(() => {
     setDocumentsPage(1);
     setAnalysisNotice('');
     setAnalysisError('');
     setIdeaOffset(0);
     setOpeningClusterId(null);
     setClusterOpenErrors({});
-  }
+  }, [project?.id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -188,6 +188,7 @@ export default function ProjectDetailPage({
           type: cluster.type,
           category: cluster.category,
           frequencyEstimate: cluster.frequency_estimate,
+          projectId: project.id,
           sources: clusterSources,
           backTo: '/dashboard',
           backLabel: 'Back to Dashboard',
@@ -294,6 +295,9 @@ export default function ProjectDetailPage({
             <span>Documents</span>
             <strong>{documents.length.toLocaleString()}</strong>
           </div>
+          <Link to={`/projects/${project.id}/evidence`} className="btn-secondary" style={{ textDecoration: 'none' }}>
+            <ShieldCheck size={16} /> Evidence
+          </Link>
           {canEdit && (
             <>
               <Link to={`/projects/${project.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
@@ -563,6 +567,11 @@ export default function ProjectDetailPage({
           </div>
         ) : (
           <>
+            {(articleStats?.insights?.survey_observations || []).length ? (
+              <div className="admin-item-card" style={{ margin: 0, gridColumn: '1 / -1' }}>
+                <SurveyObservationsChart observations={articleStats.insights.survey_observations} />
+              </div>
+            ) : null}
             <div className="project-detail-summary-grid">
               <div className="admin-item-card" style={{ margin: 0 }}>
                 <div className="admin-item-meta" style={{ marginBottom: 8 }}>
@@ -611,28 +620,28 @@ export default function ProjectDetailPage({
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Region</strong>
+                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by region</strong>
               </div>
               <DemographicSentimentChart title="Sentiment by region" data={articleStats?.insights?.region_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Gender</strong>
+                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by gender</strong>
               </div>
               <DemographicSentimentChart title="Sentiment by gender" data={articleStats?.insights?.gender_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Age Range</strong>
+                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by age range</strong>
               </div>
               <DemographicSentimentChart title="Sentiment by age range" data={articleStats?.insights?.age_range_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Sentiment by Segment</strong>
+                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by segment</strong>
               </div>
               <DemographicSentimentChart title="Sentiment by segment" data={articleStats?.insights?.segment_breakdown} />
             </div>

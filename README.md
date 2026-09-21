@@ -39,6 +39,28 @@ leave the operator's machine.
 A JSONL import (`Articles → Import`) is the other way in, for moving data
 between deployments or bringing in an export from elsewhere.
 
+## Evidence workspace and offline collection
+
+Each opinion-monitor project has an **Evidence** workspace. An analysis run
+freezes the full project evidence available when it starts, extracts claims
+from the locally analyzed records, validates exact cited passages, collapses
+declared shared origins, and shows supported, contradicted, mixed, insufficient,
+or not-yet-verifiable assessments. Analyst decisions and origin checks are
+stored as separate audit events. Run comparison distinguishes changes in the
+captured evidence from rule-only reprocessing.
+
+Web collection stays outside Strata. Export the collector's results as JSON or
+JSONL, upload the file as a project document, review its records, and approve
+them for local analysis. One JSONL record can use this contract:
+
+```json
+{"original_record_id":"reuters-2026-08-17-oil-1","title":"Oil output update","text":"The full original report text.","url":"https://example.org/report","publisher":"Example News","author":"A. Reporter","published_at":"2026-08-17T09:00:00Z","collected_at":"2026-08-17T09:15:00Z","source_type":"news_report","original_attribution":"Energy minister","relationship_to_subject":"third_party_reporting","shared_origin_id":"ministry-announcement-2026-08-17"}
+```
+
+Missing fields remain visibly unknown. Import never marks an origin verified.
+`shared_origin_id` is optional, but supplying it prevents several copies of the
+same announcement from being counted as separate corroboration.
+
 ## Analysis runs
 
 An analysis run is this product's unit of work, replacing the crawler's scrape

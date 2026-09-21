@@ -63,6 +63,14 @@ SUMMARY_KEYS = ("summary", "description", "excerpt", "snippet")
 URL_KEYS = ("url", "link", "permalink")
 AUTHOR_KEYS = ("author", "byline", "writer")
 PUBLISHED_KEYS = ("published", "published_at", "date", "published_date", "created_at")
+PUBLISHER_KEYS = ("publisher", "source", "outlet", "publication")
+COLLECTED_KEYS = ("collected_at", "fetched_at", "scraped_at", "retrieved_at")
+RECORD_ID_KEYS = ("original_record_id", "record_id", "external_id", "id")
+CONTENT_HASH_KEYS = ("content_hash", "original_content_hash", "body_hash")
+SOURCE_TYPE_KEYS = ("source_type", "document_type", "content_type")
+ATTRIBUTION_KEYS = ("original_attribution", "attribution", "speaker")
+RELATIONSHIP_KEYS = ("relationship_to_subject", "source_relationship", "relationship")
+ORIGIN_GROUP_KEYS = ("shared_origin_id", "origin_group", "canonical_story_id")
 SOURCE_RUN_SNAPSHOT_KEY = "source_run_snapshot"
 
 # The keys an envelope object may hide the actual list behind.
@@ -155,6 +163,21 @@ def _to_record(item: dict) -> dict | None:
         "author": _first_string(item, AUTHOR_KEYS),
         "published": _first_string(item, PUBLISHED_KEYS),
         "source_run_snapshot": _source_run_snapshot(item),
+        "source_provenance": {
+            "publisher": _first_string(item, PUBLISHER_KEYS) or None,
+            "collected_at": _first_string(item, COLLECTED_KEYS) or None,
+            "original_record_id": _first_string(item, RECORD_ID_KEYS) or None,
+            "original_content_hash": _first_string(item, CONTENT_HASH_KEYS) or None,
+            "source_type": _first_string(item, SOURCE_TYPE_KEYS) or None,
+            "original_attribution": _first_string(item, ATTRIBUTION_KEYS) or None,
+            "relationship_to_subject": _first_string(item, RELATIONSHIP_KEYS) or None,
+            "origin_group": _first_string(item, ORIGIN_GROUP_KEYS) or None,
+            "original_url": _first_string(item, URL_KEYS) or None,
+            "verification_status": "unassessed",
+        },
+    }
+    metadata["source_provenance"] = {
+        key: value for key, value in metadata["source_provenance"].items() if value is not None
     }
     return {
         "title": title[:TITLE_MAX_CHARS],

@@ -36,6 +36,8 @@ class RunAnalysisPipelineTests(unittest.TestCase):
             patch.object(pipeline, "record_run_completion",
                          side_effect=lambda pid, **kw: self.completions.append(kw)),
             patch.object(pipeline, "mark_processing"),
+            patch.object(pipeline, "capture_run_snapshot", return_value=3),
+            patch.object(pipeline, "generate_for_run", return_value={"claims": 2, "articles": 3}),
             # Serial execution: these assert on ordering and on cancellation
             # landing at a specific article, neither of which is meaningful
             # against a pool that has already dispatched the next one.
@@ -66,6 +68,8 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(self.documents["survey.pdf"]["analyzed"], 2)
         self.assertEqual(self.documents["interviews.docx"]["analyzed"], 1)
         self.assertEqual(self.completions[-1]["status"], "success")
+        pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5)
+        pipeline.generate_for_run.assert_called_once_with("run-1", 5)
 
     def test_articles_without_a_document_are_grouped_rather_than_dropped(self):
         """A JSONL import has no document behind it, but its articles still have

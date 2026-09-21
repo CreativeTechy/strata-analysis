@@ -1,0 +1,121 @@
+import unittest
+
+from services.evidence import workspace
+
+
+class EvidenceRuleTests(unittest.TestCase):
+    def test_forecast_is_classified_separately(self):
+        self.assertEqual(workspace._claim_type("Production will recover next quarter."), "forecast")
+
+    def test_causal_claim_is_classified_separately(self):
+        self.assertEqual(workspace._claim_type("Lower supply caused prices to rise."), "causal_explanation")
+
+    def test_fingerprint_groups_positive_and_negative_forms(self):
+        positive = workspace._fingerprint("Oil", "Oil production increased in August")
+        negative = workspace._fingerprint("Oil", "Oil production decreased in August")
+        self.assertEqual(positive, negative)
+
+    def test_fingerprint_keeps_time_scope_separate(self):
+        first = workspace._fingerprint("Oil", "Oil production increased in 2024")
+        second = workspace._fingerprint("Oil", "Oil production decreased in 2025")
+        self.assertNotEqual(first, second)
+
+    def test_fingerprint_keeps_quantities_separate(self):
+        first = workspace._fingerprint("Oil", "Oil production increased by 5 percent")
+        second = workspace._fingerprint("Oil", "Oil production decreased by 15 percent")
+        self.assertNotEqual(first, second)
+
+    def test_lower_is_direction_not_grammatical_negation(self):
+        self.assertEqual(workspace._direction("Production was lower in August"), "negative")
+
+    def test_story_group_collapses_republished_hosts(self):
+        first = {"story_id": 44, "url": "https://one.example/report"}
+        second = {"story_id": 44, "url": "https://two.example/reprint"}
+        self.assertEqual(workspace._origin(first), workspace._origin(second))
+
+    def test_best_passage_is_exact_stored_text(self):
+        row = {
+            "title": "Market update",
+            "summary": "",
+            "text": "Inventories remained stable. Oil production increased by five percent in August.",
+        }
+        passage = workspace._best_passage(row, "Oil production increased in August")
+        self.assertIn(passage, row["text"])
+        self.assertIn("production increased", passage)
+
+    def test_two_opposing_origins_can_contradict_single_source_claim(self):
+        assessment, _ = workspace._assessment("factual_assertion", {"source"}, {"origin-a", "origin-b"})
+        self.assertEqual(assessment, "contradicted")
+
+    def test_rule_change_is_not_needed_to_explain_mixed_evidence(self):
+        assessment, _ = workspace._assessment("factual_assertion", {"origin-a", "origin-b"}, {"origin-c"})
+        self.assertEqual(assessment, "mixed_evidence")
+
+    def test_declared_origin_group_collapses_copied_records(self):
+        first = {"source_provenance": {"origin_group": "announcement-17"}, "url": "https://one.example"}
+        second = {"source_provenance": {"origin_group": "announcement-17"}, "url": "https://two.example"}
+        self.assertEqual(workspace._origin(first), workspace._origin(second))
+
+    def test_semantic_match_groups_paraphrases_across_topics(self):
+        first = {"claim": "More than two million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        second = {"claim": "The number of EVs on British roads passed two million", "embedding": [0.99, 0.01]}
+        self.assertTrue(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_different_time_scopes(self):
+        first = {"claim": "Electric car sales reached 20 percent in 2024", "embedding": [1.0, 0.0]}
+        second = {"claim": "Electric car sales reached 20 percent in 2025", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_different_quantities(self):
+        first = {"claim": "Electric car sales reached 20 percent", "embedding": [1.0, 0.0]}
+        second = {"claim": "Electric car sales reached 35 percent", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_missing_quantitative_scope(self):
+        quantified = {"claim": "Over 2 million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        unquantified = {"claim": "Electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(quantified, unquantified))
+
+    def test_quantity_scope_reads_percentages_and_comma_numbers(self):
+        _, percentages = workspace._normalized_scopes("Sales reached 3% and then 19 percent")
+        _, registrations = workspace._normalized_scopes("There were 43,106 registrations")
+        self.assertEqual(percentages, {"3%", "19%"})
+        self.assertEqual(registrations, {"43106"})
+
+    def test_quantity_scope_matches_number_words(self):
+        self.assertTrue(workspace._scope_compatible(
+            "More than 2 million electric vehicles are registered",
+            "Electric vehicle registrations passed two million",
+        ))
+
+    def test_passage_qualification_rejects_conflicting_quantity(self):
+        qualified, _, reason = workspace._passage_qualification(
+            "Electric car sales increased by 45 percent in July 2025",
+            "Electric car sales increased by 12 percent in July 2025.",
+        )
+        self.assertFalse(qualified)
+        self.assertIn("incompatible", reason)
+
+    def test_passage_qualification_allows_additional_context(self):
+        qualified, _, _ = workspace._passage_qualification(
+            "Over 2 million electric vehicles are registered on UK roads",
+            "Sales rose 45% in July 2025, and more than two million electric vehicles were registered on UK roads.",
+        )
+        self.assertTrue(qualified)
+
+    def test_group_claim_candidates_preserves_independent_rows(self):
+        first = {
+            "row": {"id": 1}, "topic": "Policy", "claim": "More than two million electric vehicles are registered on UK roads",
+            "type": "factual_assertion", "direction": "neutral", "fingerprint": "one", "embedding": [1.0, 0.0],
+        }
+        second = {
+            "row": {"id": 2}, "topic": "Climate", "claim": "The number of EVs on British roads passed two million",
+            "type": "factual_assertion", "direction": "neutral", "fingerprint": "two", "embedding": [0.99, 0.01],
+        }
+        groups = workspace._group_claim_candidates([first, second])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual([item["row"]["id"] for item in groups[0]["items"]], [1, 2])
+
+
+if __name__ == "__main__":
+    unittest.main()

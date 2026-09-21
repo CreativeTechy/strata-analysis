@@ -124,6 +124,21 @@ class ParseRecordsTests(unittest.TestCase):
         parsed = records.parse_records(_write("export.jsonl", text), "export.jsonl")
         self.assertEqual(parsed.records[0]["metadata"]["source_run_snapshot"], snapshot)
 
+    def test_external_collection_provenance_is_preserved(self):
+        text = json.dumps({
+            "title": "Oil update", "text": "Production increased.",
+            "url": "https://example.test/oil", "publisher": "Example News",
+            "collected_at": "2026-09-18T10:00:00Z", "source_type": "news_report",
+            "original_record_id": "news-17", "content_hash": "sha256:abc123",
+            "speaker": "Energy minister",
+        })
+        parsed = records.parse_records(_write("export.jsonl", text), "export.jsonl")
+        provenance = parsed.records[0]["metadata"]["source_provenance"]
+        self.assertEqual(provenance["publisher"], "Example News")
+        self.assertEqual(provenance["original_record_id"], "news-17")
+        self.assertEqual(provenance["original_content_hash"], "sha256:abc123")
+        self.assertEqual(provenance["verification_status"], "unassessed")
+
     def test_source_run_snapshot_missing_id_is_dropped(self):
         """Not scraper-app's shape - e.g. a hand-made file that happens to use
         the same key for something else - so it must not ride through."""

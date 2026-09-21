@@ -91,6 +91,14 @@ from services.pipeline.pipeline_runs import (
     list_pipeline_runs,
     update_pipeline_run,
 )
+from services.evidence.workspace import (
+    compare_runs as compare_evidence_runs,
+    generate_for_run as generate_evidence_for_run,
+    get_claim as get_evidence_claim,
+    list_workspace as list_evidence_workspace,
+    review_claim as save_evidence_review,
+    review_provenance as save_provenance_review,
+)
 
 configure_logging()
 
@@ -479,6 +487,105 @@ def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = D
         }
     background_tasks.add_task(persist_project_embedding_for_id, project.get("id"))
     return {"project": project}
+
+
+@app.get("/api/projects/{project_id}/evidence")
+def project_evidence_workspace(
+    project_id: int,
+    run_id: str | None = None,
+    topic: str | None = None,
+    search: str | None = None,
+    assessment: str | None = None,
+    claim_type: str | None = None,
+    publisher: str | None = None,
+    review_status: str | None = None,
+    provenance_status: str | None = None,
+    coverage: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(require_permission("projects.view")),
+):
+    _ensure_project_visible(project_id, user)
+    return list_evidence_workspace(
+        project_id, run_id=run_id, topic=topic, search=search, assessment=assessment,
+        claim_type=claim_type, publisher=publisher, review_status=review_status,
+        provenance_status=provenance_status, coverage=coverage, limit=limit, offset=offset,
+    )
+
+
+@app.get("/api/projects/{project_id}/evidence/claims/{claim_id}")
+def project_evidence_claim(
+    project_id: int, claim_id: int,
+    user: dict = Depends(require_permission("projects.view")),
+):
+    _ensure_project_visible(project_id, user)
+    claim = get_evidence_claim(project_id, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Evidence claim not found.")
+    return {"claim": claim}
+
+
+@app.get("/api/projects/{project_id}/evidence/compare")
+def compare_project_evidence_runs(
+    project_id: int, base_run_id: str, target_run_id: str,
+    user: dict = Depends(require_permission("projects.view")),
+):
+    _ensure_project_visible(project_id, user)
+    comparison = compare_evidence_runs(project_id, base_run_id, target_run_id)
+    if comparison is None:
+        raise HTTPException(status_code=404, detail="One or both analysis runs were not found in this project.")
+    return {"comparison": comparison}
+
+
+@app.post("/api/projects/{project_id}/evidence/claims/{claim_id}/review")
+def review_project_evidence_claim(
+    project_id: int, claim_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        claim = save_evidence_review(
+            project_id, claim_id, str(payload.get("decision") or ""), str(payload.get("reason") or ""), user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not claim:
+        raise HTTPException(status_code=404, detail="Evidence claim not found.")
+    return {"claim": claim}
+
+
+@app.post("/api/projects/{project_id}/evidence/articles/{article_id}/provenance-review")
+def review_project_evidence_provenance(
+    project_id: int, article_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        result = save_provenance_review(
+            project_id, article_id, str(payload.get("status") or ""), str(payload.get("reason") or ""), user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=404, detail="Evidence article not found.")
+    return {"article": result}
+
+
+@app.post("/api/projects/{project_id}/evidence/runs/{run_id}/retry")
+def retry_project_evidence(
+    project_id: int, run_id: str, background_tasks: BackgroundTasks,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    _ensure_project_visible(project_id, user)
+    run = get_pipeline_run(run_id)
+    if not run or int(run.get("project_id") or 0) != int(project_id):
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+    status = db.fetch_one("select status from evidence_run_status where run_id=%s", (str(run_id),)) or {}
+    if status.get("status") == "running":
+        return {"queued": False, "status": "running"}
+    db.execute("update evidence_run_status set status='pending',error=null where run_id=%s", (str(run_id),))
+    background_tasks.add_task(generate_evidence_for_run, run_id, project_id)
+    return {"queued": True, "status": "pending"}
 
 
 @app.put("/api/projects/{project_id}")

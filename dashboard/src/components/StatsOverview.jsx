@@ -43,7 +43,7 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
       <Link
         className="feedback-topic-link"
         to={`/projects/${projectId}/topics`}
-        state={{ idea: label, type: item.type, category: item.category, frequencyEstimate: item.frequency_estimate || item.count, sources: mapTopicSources(item.sources), backTo: '/reports', backLabel: 'Back to Reports' }}
+        state={{ idea: label, type: item.type, category: item.category, frequencyEstimate: item.frequency_estimate || item.count, sources: mapTopicSources(item.sources), projectId, backTo: '/reports', backLabel: 'Back to Reports' }}
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, width: '100%', color: 'inherit', textDecoration: 'none' }}
       >
         {label}<strong>{count}</strong>
