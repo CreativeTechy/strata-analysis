@@ -204,6 +204,26 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
         )
         self.assertNotIn("source_run_snapshot = excluded.source_run_snapshot", captured["sql"])
 
+    def test_uploaded_document_source_survives_later_url_upserts(self):
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 7, "source_url": "document://project-document/5"}
+
+        article = {
+            "url": "https://example.com/article",
+            "source": "Website",
+            "source_url": "https://example.com",
+        }
+        with patch("services.articles.store._article_write_fields", return_value=["url", "source", "source_url"]):
+            with patch("services.articles.store._article_columns", return_value={"url", "source", "source_url"}):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn("articles.source_url like 'document://project-document/%'", captured["sql"])
+        self.assertNotIn("source_url = excluded.source_url", captured["sql"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
@@ -168,6 +168,18 @@ class ListProjectSourcesTests(unittest.TestCase):
         forward_keys = [group["key"] for group in forward["sources"]]
         reversed_keys = [group["key"] for group in reversed_result["sources"]]
         self.assertEqual(forward_keys, reversed_keys)
+
+    def test_mixed_timezone_timestamps_do_not_crash_source_sorting(self):
+        rows = [
+            {"id": 1, "title": "naive", "url": "https://example.com/1", "source": "Example",
+             "source_url": "https://example.com", "published_at": datetime(2026, 9, 18, 9, 0)},
+            {"id": 2, "title": "aware", "url": "https://example.com/2", "source": "Example",
+             "source_url": "https://example.com", "published_at": datetime(2026, 9, 18, 10, 0, tzinfo=timezone.utc)},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            result = articles_query.list_project_sources(1)
+        self.assertEqual([item["id"] for item in result["sources"][0]["articles"]], [2, 1])
 
 
 class GetAnalysisStatusCountsTests(unittest.TestCase):

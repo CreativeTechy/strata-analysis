@@ -346,8 +346,23 @@ def _upsert_article_row(article):
     updates = [
         f"{field} = excluded.{field}"
         for field in fields
-        if field not in ("url", "pipeline_run_id", "source_run_snapshot", "source_provenance")
+        if field not in (
+            "url", "source", "source_url", "pipeline_run_id", "source_run_snapshot", "source_provenance",
+        )
     ]
+    if "source_url" in fields:
+        # An approved uploaded-document record may carry a real per-article URL,
+        # so a later import or reanalysis can collide on `url`. Keep the document
+        # provenance used by the Articles document filter and Evidence snapshot.
+        updates.append(
+            "source_url = case when articles.source_url like 'document://project-document/%' "
+            "then articles.source_url else excluded.source_url end"
+        )
+    if "source" in fields:
+        updates.append(
+            "source = case when articles.source_url like 'document://project-document/%' "
+            "then articles.source else excluded.source end"
+        )
     if "pipeline_run_id" in fields:
         # pipeline_run_id records which run *first* saved this article, not
         # whichever run touched it most recently - every run re-crawls all of
