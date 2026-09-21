@@ -12,7 +12,6 @@ from collections import Counter, defaultdict
 import config
 import db
 from services.articles.articles_query import (
-    ARTICLES_SELECT,
     BULK_PAGE_SIZE,
     _fetch_articles,
     _normalize_article_category,

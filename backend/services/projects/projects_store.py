@@ -42,8 +42,6 @@ PROJECT_MUTABLE_FIELDS = (
     "end_date",
 )
 PROJECT_EMBEDDING_FIELDS = ("embedding_json", "embedding_model", "embedding_source", "embedded_at")
-# Written by the analysis pipeline (record_run_completion), never by a user edit.
-PROJECT_RUN_FIELDS = ("last_run_at", "last_run_status")
 
 LOCATION_TYPES = ("on_site", "remote", "hybrid")
 

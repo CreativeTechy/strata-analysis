@@ -56,16 +56,6 @@ def count_users() -> int:
     return int((row or {}).get("total") or 0)
 
 
-def get_user_by_username(username: str):
-    if not username:
-        return None
-    row = db.fetch_one(
-        f"select {USER_SELECT}, u.password_hash {USER_FROM} where lower(u.username) = lower(%s) limit 1",
-        (username,),
-    )
-    return row
-
-
 def get_user_by_login(identifier: str):
     """Look up a user by username OR email - login accepts either."""
     if not identifier:

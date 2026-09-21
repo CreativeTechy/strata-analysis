@@ -60,7 +60,7 @@ class ResolveIdeaClusterIdTests(unittest.TestCase):
     small enough to pin its exact-match/embedding-fallback branches directly."""
 
     def test_exact_normalized_match_reuses_the_existing_cluster(self):
-        with patch("services.articles.idea_clustering.db.fetch_one", return_value={"id": 7}) as mock_fetch_one, \
+        with patch("services.articles.idea_clustering.db.fetch_one", return_value={"id": 7}), \
              patch("services.articles.idea_clustering.db.execute") as mock_execute:
             result = idea_clustering._resolve_idea_cluster_id(1, "charging is slow", "complaint", "charging")
         self.assertEqual(result, 7)
