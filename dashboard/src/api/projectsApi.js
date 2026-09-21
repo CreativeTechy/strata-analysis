@@ -89,10 +89,14 @@ export const compareEvidenceRuns = (projectId, params, signal) =>
   request(`/${projectId}/evidence/compare${query(params)}`, { signal });
 export const reviewEvidenceClaim = (projectId, claimId, body) =>
   request(`/${projectId}/evidence/claims/${claimId}/review`, { method: 'POST', body });
+export const reviewEvidenceRelevance = (projectId, claimId, body) =>
+  request(`/${projectId}/evidence/claims/${claimId}/relevance-review`, { method: 'POST', body });
 export const reviewEvidenceProvenance = (projectId, articleId, body) =>
   request(`/${projectId}/evidence/articles/${articleId}/provenance-review`, { method: 'POST', body });
 export const retryEvidenceRun = (projectId, runId) =>
   request(`/${projectId}/evidence/runs/${runId}/retry`, { method: 'POST' });
+export const updateEvidenceScope = (projectId, runId, body) =>
+  request(`/${projectId}/evidence/runs/${runId}/scope`, { method: 'PUT', body });
 export const listProjectSources = (projectId, { limit, offset } = {}) => (
   request(`/${projectId}/sources${query({ limit, offset })}`)
 );

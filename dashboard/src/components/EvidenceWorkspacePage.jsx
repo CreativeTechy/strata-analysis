@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, BarChart3, CheckCircle2, ChevronDown, Chevron
 import { useAuth } from '../auth/useAuth.js';
 import {
   compareEvidenceRuns, getEvidenceClaim, getEvidenceWorkspace, retryEvidenceRun,
-  reviewEvidenceClaim, reviewEvidenceProvenance,
+  reviewEvidenceClaim, reviewEvidenceProvenance, reviewEvidenceRelevance, updateEvidenceScope,
 } from '../api/projectsApi.js';
 import '../styles/Evidence.css';
 
@@ -12,6 +12,11 @@ const LABELS = {
   supported: 'Supported', contradicted: 'Contradicted', mixed_evidence: 'Mixed evidence',
   insufficient_evidence: 'Insufficient evidence', not_yet_verifiable: 'Not yet verifiable',
   assessment_unavailable: 'Assessment unavailable',
+};
+
+const RELEVANCE_LABELS = {
+  direct: 'Directly relevant', contextual: 'Relevant context', unrelated: 'Unrelated',
+  uncertain: 'Uncertain', unclassified: 'Legacy / unclassified',
 };
 
 const MATRIX_PAGE_SIZE = 5;
@@ -105,6 +110,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const reviewFilter = search.get('review_status') || '';
   const provenanceFilter = search.get('provenance_status') || '';
   const coverageFilter = search.get('coverage') || '';
+  const relevanceFilter = search.get('relevance') || 'focused';
   const offset = Number(search.get('offset') || 0);
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -120,6 +126,12 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [provenanceTarget, setProvenanceTarget] = useState(null);
   const [provenanceDecision, setProvenanceDecision] = useState('verified');
   const [provenanceReason, setProvenanceReason] = useState('');
+  const [scopeDraft, setScopeDraft] = useState(null);
+  const [editingScope, setEditingScope] = useState(false);
+  const [savingScope, setSavingScope] = useState(false);
+  const [relevanceDecision, setRelevanceDecision] = useState('direct');
+  const [relevanceReason, setRelevanceReason] = useState('');
+  const [savingRelevance, setSavingRelevance] = useState(false);
   const [view, setView] = useState('review');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [matrixPage, setMatrixPage] = useState(0);
@@ -146,6 +158,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         run_id: runId, topic, search: searchText, assessment: assessmentFilter,
         claim_type: typeFilter, publisher: publisherFilter, review_status: reviewFilter,
         provenance_status: provenanceFilter, coverage: coverageFilter,
+        relevance: relevanceFilter,
         limit: view === 'matrix' ? MATRIX_PAGE_SIZE : CLAIM_PAGE_SIZE,
         offset: view === 'matrix' ? matrixPage * MATRIX_PAGE_SIZE : offset,
       }, signal);
@@ -162,13 +175,20 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load(controller.signal);
     return () => controller.abort();
-  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // This clears details that belong to the previous URL-scoped claim set.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected(null); setComparison(null); setProvenanceTarget(null); setMatrixDetail(null);
-  }, [runId, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter]);
+  }, [runId, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter]);
+
+  useEffect(() => {
+    if (!data?.scope || editingScope) return;
+    // Keep the form aligned with the selected run's frozen scope.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setScopeDraft({ ...data.scope, keywords: (data.scope.keywords || []).join(', ') });
+  }, [data?.scope, editingScope]);
 
   useEffect(() => {
     const current = data?.runs?.find((item) => String(item.id) === String(data?.selected_run_id));
@@ -182,6 +202,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     try {
       const result = await getEvidenceClaim(projectId, id);
       setSelected(result.claim); setDecision(result.claim.reviews?.[0]?.decision || result.claim.assessment); setReason('');
+      setRelevanceDecision(result.claim.effective_relevance === 'unclassified' ? 'uncertain' : (result.claim.effective_relevance || 'uncertain'));
+      setRelevanceReason('');
     } catch (err) { setError(err?.message || 'Failed to open the claim.'); }
   };
 
@@ -207,6 +229,29 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       setSelected(result.claim); setReason(''); await load();
     } catch (err) { setError(err?.message || 'Failed to save the review.'); }
     finally { setSaving(false); }
+  };
+
+  const saveRelevanceReview = async () => {
+    if (!selected || !relevanceReason.trim()) return;
+    setSavingRelevance(true);
+    try {
+      const result = await reviewEvidenceRelevance(projectId, selected.id, { decision: relevanceDecision, reason: relevanceReason });
+      setSelected(result.claim); setRelevanceReason(''); await load();
+    } catch (err) { setError(err?.message || 'Failed to save relevance review.'); }
+    finally { setSavingRelevance(false); }
+  };
+
+  const saveScope = async () => {
+    if (!data?.selected_run_id || !scopeDraft) return;
+    setSavingScope(true); setError('');
+    try {
+      await updateEvidenceScope(projectId, data.selected_run_id, {
+        ...scopeDraft,
+        keywords: String(scopeDraft.keywords || '').split(',').map((item) => item.trim()).filter(Boolean),
+      });
+      setEditingScope(false); await load();
+    } catch (err) { setError(err?.message || 'Failed to save the research scope.'); }
+    finally { setSavingScope(false); }
   };
 
   const saveProvenanceReview = async () => {
@@ -335,8 +380,22 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
 
       <div className="evidence-scope-note">
         <ShieldCheck size={18} />
-        <div><strong>Evidence from this run’s saved documents</strong><span>Assessments use the frozen text captured for this run. No website is fetched while you review this page.</span></div>
+        <div><strong>Evidence from this run’s saved documents</strong><span>Claims are screened against the frozen research scope. Relevance and evidential support are assessed separately. No website is fetched while you review this page.</span></div>
       </div>
+
+      {data?.scope ? <section className="glass-card evidence-research-scope">
+        <header><div><strong>Frozen research scope</strong><span>{data.scope.source === 'explicit_override' ? 'Edited for this evidence run' : 'Captured from project settings'}</span></div>{canReview ? <button type="button" className="btn-secondary" onClick={() => setEditingScope((value) => !value)}>{editingScope ? 'Cancel' : 'Edit scope'}</button> : null}</header>
+        {editingScope && scopeDraft ? <div className="evidence-scope-form">
+          <label>Research question<input value={scopeDraft.name || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, name: event.target.value })} /></label>
+          <label>Description<textarea rows="2" value={scopeDraft.description || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, description: event.target.value })} /></label>
+          <label>Geographic focus<input value={scopeDraft.location || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, location: event.target.value })} /></label>
+          <label>Keywords<input value={scopeDraft.keywords || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, keywords: event.target.value })} placeholder="Comma-separated guidance" /></label>
+          <label>Direct relevance<textarea rows="2" value={scopeDraft.direct_relevance || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, direct_relevance: event.target.value })} /></label>
+          <label>Allowed context<textarea rows="2" value={scopeDraft.contextual_relevance || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, contextual_relevance: event.target.value })} /></label>
+          <label>Exclusions<textarea rows="2" value={scopeDraft.exclusions || ''} onChange={(event) => setScopeDraft({ ...scopeDraft, exclusions: event.target.value })} /></label>
+          <div><button type="button" className="btn-primary" onClick={saveScope} disabled={savingScope}>{savingScope ? 'Saving…' : 'Save scope'}</button><span>Save, then rebuild evidence to create a new staged generation.</span></div>
+        </div> : <div className="evidence-scope-summary"><strong>{data.scope.name}</strong>{data.scope.description ? <p>{data.scope.description}</p> : null}<dl><div><dt>Geography</dt><dd>{data.scope.location || 'No explicit geographic limit'}</dd></div><div><dt>Keywords</dt><dd>{(data.scope.keywords || []).join(', ') || 'No keyword guidance'}</dd></div><div><dt>Relevant context</dt><dd>{data.scope.contextual_relevance}</dd></div><div><dt>Exclude</dt><dd>{data.scope.exclusions}</dd></div></dl></div>}
+      </section> : null}
 
       <div className="glass-card evidence-filters">
         <label>Analysis run<select value={data?.selected_run_id || runId} onChange={(event) => updateFilters({ run_id: event.target.value, topic: '' })}>
@@ -361,6 +420,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </select></label>
         <label>Origin review<select value={provenanceFilter} onChange={(event) => updateFilters({ provenance_status: event.target.value })}>
           <option value="">Any status</option><option value="unassessed">Unassessed</option><option value="verified">Verified</option><option value="rejected">Rejected</option>
+        </select></label><label>Project relevance<select value={relevanceFilter} onChange={(event) => updateFilters({ relevance: event.target.value })}>
+          <option value="focused">Relevant and legacy claims</option><option value="direct">Directly relevant</option><option value="contextual">Relevant context</option><option value="uncertain">Uncertain</option><option value="unrelated">Excluded as unrelated</option><option value="unclassified">Legacy / unclassified</option><option value="all">All candidates</option>
         </select></label></div> : null}
       </div>
 
@@ -378,6 +439,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       {!loading && !(data?.runs || []).length ? <div className="glass-card evidence-empty"><FileSearch size={24} /><strong>No evidence run yet</strong><span>Complete an analysis run to freeze the project evidence and extract claims.</span></div> : null}
 
       {(data?.runs || []).length ? <>
+        <div className="evidence-relevance-summary"><span><strong>{(data.relevance_counts?.direct || 0) + (data.relevance_counts?.contextual || 0)}</strong> relevant</span><span><strong>{data.relevance_counts?.uncertain || 0}</strong> uncertain</span><span><strong>{data.relevance_counts?.unrelated || 0}</strong> excluded</span><span><strong>{data.relevance_counts?.unclassified || 0}</strong> legacy</span></div>
         <div className="evidence-overview">
           <div className="glass-card evidence-stat"><span>Total claims</span><strong>{overview.total_claims || 0}</strong><small>Extracted from this run</small></div>
           <div className="glass-card evidence-stat positive"><span>Corroborated</span><strong>{overview.corroborated_claims || 0}</strong><small>Two or more independent origins</small></div>
@@ -453,7 +515,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
             {(data?.claims || []).map((claim) => {
               const effective = claim.review_decision || claim.assessment;
               return <button type="button" className={`evidence-claim ${selected?.id === claim.id ? 'active' : ''}`} key={claim.id} onClick={() => openClaim(claim.id)}>
-                <div><span className={`evidence-status ${effective}`}>{LABELS[effective] || effective}</span><span className="panel-chip muted">{claim.topic}</span>{claim.needs_review ? <span className="panel-chip warning">Needs review</span> : null}</div>
+                <div><span className={`evidence-status ${effective}`}>{LABELS[effective] || effective}</span><span className={`evidence-relevance ${claim.effective_relevance || claim.relevance}`}>{RELEVANCE_LABELS[claim.effective_relevance || claim.relevance] || 'Unclassified'}</span><span className="panel-chip muted">{claim.topic}</span>{claim.needs_review ? <span className="panel-chip warning">Needs review</span> : null}</div>
                 <strong>{claim.claim_text}</strong>
                 <small>{claim.distinct_origins} origin{claim.distinct_origins === 1 ? '' : 's'} · {claim.supporting_count} supporting · {claim.contradicting_count} conflicting{claim.review_count ? ` · reviewed` : ''}</small>
               </button>;
@@ -464,8 +526,9 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
 
           <div className="glass-card evidence-detail">
             {!selected ? <div className="evidence-empty"><FileSearch size={22} /><span>Select a claim to inspect its evidence.</span></div> : <>
-              <div><span className={`evidence-status ${selected.assessment}`}>Automated: {LABELS[selected.assessment]}</span>{selected.reviews?.[0] ? <span className={`evidence-status ${selected.reviews[0].decision}`}>Analyst: {LABELS[selected.reviews[0].decision]}</span> : null}<span className="panel-chip muted">{selected.claim_type?.replaceAll('_', ' ')}</span></div>
+              <div><span className={`evidence-status ${selected.assessment}`}>Automated: {LABELS[selected.assessment]}</span>{selected.reviews?.[0] ? <span className={`evidence-status ${selected.reviews[0].decision}`}>Analyst: {LABELS[selected.reviews[0].decision]}</span> : null}<span className={`evidence-relevance ${selected.effective_relevance || selected.relevance}`}>{RELEVANCE_LABELS[selected.effective_relevance || selected.relevance] || 'Unclassified'}</span><span className="panel-chip muted">{selected.claim_type?.replaceAll('_', ' ')}</span></div>
               <h2>{selected.claim_text}</h2>
+              <div className="evidence-relevance-reason"><strong>Why it matches the project</strong><p>{selected.relevance_reviews?.[0]?.reason || selected.relevance_explanation || 'This legacy claim has not been classified against a project scope.'}</p></div>
               <p>{selected.explanation}</p><p className="evidence-limit">{selected.limitations}</p>
               <div className="evidence-method"><span>Assessment method: {selected.rules_version || 'Unknown'}</span><span>Independent qualifying origins: {selected.independent_origin_count || 0}</span><span>Exact quotations checked: {selected.citation_checked_count || 0}</span>{selected.time_scope ? <span>Time scope: {selected.time_scope}</span> : null}{selected.quantities?.length ? <span>Quantities: {selected.quantities.join(', ')}</span> : null}</div>
               <h3>Evidence passages</h3>
@@ -481,6 +544,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
                 </article>;
               })}</div>
               {canReview ? <div className="evidence-review"><h3>Analyst review</h3><select value={decision} onChange={(event) => setDecision(event.target.value)}>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain the evidence and the limits of this decision…"/><button className="btn-primary" onClick={saveReview} disabled={saving || !reason.trim()}>{saving ? 'Saving…' : 'Save review'}</button></div> : null}
+              {canReview ? <div className="evidence-review"><h3>Project relevance override</h3><select value={relevanceDecision} onChange={(event) => setRelevanceDecision(event.target.value)}>{Object.entries(RELEVANCE_LABELS).filter(([key]) => key !== 'unclassified').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={relevanceReason} onChange={(event) => setRelevanceReason(event.target.value)} placeholder="Explain why this claim belongs in or outside the project…"/><button className="btn-primary" onClick={saveRelevanceReview} disabled={savingRelevance || !relevanceReason.trim()}>{savingRelevance ? 'Saving…' : 'Save relevance override'}</button></div> : null}
               {selected.reviews?.length ? <div><h3>Review history</h3>{selected.reviews.map((review) => <div className="evidence-history" key={review.id}><strong>{LABELS[review.decision]}</strong><span>{review.reviewer_name || 'Reviewer'} · {formatDate(review.created_at)}</span><p>{review.reason}</p></div>)}</div> : null}
             </>}
           </div>

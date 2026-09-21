@@ -177,9 +177,57 @@ class EvidenceRuleTests(unittest.TestCase):
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
              patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0]}), \
              patch.object(workspace, "_group_claim_candidates", return_value=[{"canonical": candidate, "fingerprint": "fuel-price", "items": [candidate]}]), \
+             patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
+             patch.object(workspace, "_classify_relevance", return_value={"fuel-price": {"relevance": "direct", "explanation": "Directly addresses fuel prices.", "score": 0.99, "status": "success"}}), \
              patch.object(workspace, "_grounded_model_assessment", side_effect=RuntimeError("interrupted")), \
              patch.object(workspace.db, "execute") as execute:
             with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                workspace._generate_for_run("run-1", 3, 2)
+
+        self.assertFalse(any("active=false" in call.args[0] for call in execute.call_args_list))
+
+    def test_relevance_response_requires_every_candidate(self):
+        parsed = workspace._validate_relevance_result({"results": [
+            {"id": "arabic", "relevance": "direct", "score": 0.92, "explanation": "يتعلق مباشرة بأزمة الوقود"},
+            {"id": "sport", "relevance": "unrelated", "score": 0.98, "explanation": "Sports news"},
+        ]}, {"arabic", "sport"})
+        self.assertEqual(parsed["arabic"]["relevance"], "direct")
+        self.assertEqual(parsed["sport"]["relevance"], "unrelated")
+        self.assertIsNone(workspace._validate_relevance_result(
+            {"results": [{"id": "arabic", "relevance": "direct"}]}, {"arabic", "sport"},
+        ))
+
+    def test_failed_relevance_provider_returns_uncertain_for_review(self):
+        group = {"fingerprint": "claim-1", "canonical": {
+            "claim": "ارتفع سعر البنزين في لبنان", "topic": "Fuel prices",
+            "row": {"text": "ارتفع سعر البنزين في لبنان هذا الأسبوع.", "title": "أسعار المحروقات"},
+        }}
+        with patch.object(workspace, "chat_completion", side_effect=workspace.LLMError("down")):
+            result = workspace._classify_relevance_batch({"name": "Lebanon Fuel Crisis Monitor"}, [group])
+        self.assertEqual(result["claim-1"]["relevance"], "uncertain")
+        self.assertEqual(result["claim-1"]["status"], "failed")
+
+    def test_failed_relevance_does_not_replace_published_generation(self):
+        row = {"id": 7, "text": "Fuel prices increased today.", "source_provenance": {}}
+        candidate = {
+            "row": row, "topic": "Fuel", "claim": "Fuel prices increased today",
+            "type": "factual_assertion", "direction": "positive",
+            "fingerprint": "fuel-price", "embedding": [1.0],
+        }
+        failed = {"fuel-price": {
+            "relevance": "uncertain", "explanation": "Provider unavailable.",
+            "score": 0.0, "status": "failed",
+        }}
+        with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
+             patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0]}), \
+             patch.object(workspace, "_group_claim_candidates", return_value=[{
+                 "canonical": candidate, "fingerprint": "fuel-price", "items": [candidate],
+             }]), \
+             patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
+             patch.object(workspace, "_classify_relevance", return_value=failed), \
+             patch.object(workspace.db, "execute") as execute:
+            with self.assertRaisesRegex(RuntimeError, "previously published evidence generation remains visible"):
                 workspace._generate_for_run("run-1", 3, 2)
 
         self.assertFalse(any("active=false" in call.args[0] for call in execute.call_args_list))

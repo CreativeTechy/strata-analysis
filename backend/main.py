@@ -95,9 +95,13 @@ from services.evidence.workspace import (
     compare_runs as compare_evidence_runs,
     generate_for_run as generate_evidence_for_run,
     get_claim as get_evidence_claim,
+    get_run_scope as get_evidence_run_scope,
     list_workspace as list_evidence_workspace,
+    publish_generation as publish_evidence_generation,
     review_claim as save_evidence_review,
+    review_relevance as save_evidence_relevance_review,
     review_provenance as save_provenance_review,
+    update_run_scope as update_evidence_run_scope,
 )
 
 configure_logging()
@@ -501,6 +505,7 @@ def project_evidence_workspace(
     review_status: str | None = None,
     provenance_status: str | None = None,
     coverage: str | None = None,
+    relevance: str | None = None,
     limit: int = 50,
     offset: int = 0,
     user: dict = Depends(require_permission("projects.view")),
@@ -509,7 +514,8 @@ def project_evidence_workspace(
     return list_evidence_workspace(
         project_id, run_id=run_id, topic=topic, search=search, assessment=assessment,
         claim_type=claim_type, publisher=publisher, review_status=review_status,
-        provenance_status=provenance_status, coverage=coverage, limit=limit, offset=offset,
+        provenance_status=provenance_status, coverage=coverage, relevance_filter=relevance,
+        limit=limit, offset=offset,
     )
 
 
@@ -552,6 +558,62 @@ def review_project_evidence_claim(
     if not claim:
         raise HTTPException(status_code=404, detail="Evidence claim not found.")
     return {"claim": claim}
+
+
+@app.post("/api/projects/{project_id}/evidence/claims/{claim_id}/relevance-review")
+def review_project_evidence_claim_relevance(
+    project_id: int, claim_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        claim = save_evidence_relevance_review(
+            project_id, claim_id, str(payload.get("decision") or ""), str(payload.get("reason") or ""), user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not claim:
+        raise HTTPException(status_code=404, detail="Evidence claim not found.")
+    return {"claim": claim}
+
+
+@app.put("/api/projects/{project_id}/evidence/runs/{run_id}/scope")
+def edit_project_evidence_scope(
+    project_id: int, run_id: str, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    run = get_pipeline_run(run_id)
+    if not run or int(run.get("project_id") or 0) != int(project_id):
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+    try:
+        return update_evidence_run_scope(run_id, project_id, payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/api/projects/{project_id}/evidence/runs/{run_id}/scope")
+def project_evidence_scope(
+    project_id: int, run_id: str,
+    user: dict = Depends(require_permission("projects.view")),
+):
+    _ensure_project_visible(project_id, user)
+    run = get_pipeline_run(run_id)
+    if not run or int(run.get("project_id") or 0) != int(project_id):
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+    return get_evidence_run_scope(run_id, project_id)
+
+
+@app.post("/api/projects/{project_id}/evidence/runs/{run_id}/generations/{generation}/publish")
+def publish_project_evidence_generation(
+    project_id: int, run_id: str, generation: int,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        return publish_evidence_generation(run_id, project_id, generation)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.post("/api/projects/{project_id}/evidence/articles/{article_id}/provenance-review")
