@@ -60,6 +60,7 @@ from services.articles.reanalyze import (
     reanalyze_article,
     reanalyze_articles,
 )
+from services.articles.relevance_screening import set_relevance_override
 from llm_client import LLMError, chat_completion
 from services.projects.projects_store import (
     create_project,
@@ -87,6 +88,7 @@ from services.pipeline.pipeline_runs import (
     get_active_run_for_project,
     get_pipeline_run,
     get_pipeline_run_documents,
+    get_pipeline_run_screenings,
     list_pipeline_runs,
     update_pipeline_run,
 )
@@ -723,7 +725,35 @@ def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission
         raise HTTPException(status_code=404, detail="Analysis run not found.")
     if run.get("project_id") is not None:
         _ensure_project_visible(run["project_id"], user)
-    return {"run": run, "documents": get_pipeline_run_documents(run_id) if run.get("has_detail") else []}
+    return {
+        "run": run,
+        "documents": get_pipeline_run_documents(run_id) if run.get("has_detail") else [],
+        "screenings": get_pipeline_run_screenings(run_id),
+    }
+
+
+@app.post("/api/projects/{project_id}/articles/{article_id}/relevance-override")
+def save_article_relevance_override(
+    project_id: int,
+    article_id: int,
+    payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    """Include or exclude one project article on subsequent analysis runs."""
+    _ensure_project_visible(project_id, user)
+    try:
+        saved = set_relevance_override(
+            project_id,
+            article_id,
+            payload.get("decision"),
+            payload.get("reason"),
+            user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not saved:
+        raise HTTPException(status_code=404, detail="Article is not linked to this project.")
+    return {"override": saved}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")

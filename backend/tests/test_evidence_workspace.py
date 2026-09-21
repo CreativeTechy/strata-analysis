@@ -138,6 +138,27 @@ class EvidenceRuleTests(unittest.TestCase):
         words = workspace._claim_words("ارتفع سعر صفيحة البنزين في لبنان")
         self.assertTrue({"ارتفع", "سعر", "صفيحة", "البنزين", "لبنان"}.issubset(words))
 
+
+class EvidenceSnapshotTests(unittest.TestCase):
+    def test_snapshot_is_limited_to_screened_article_ids(self):
+        with patch.object(workspace.db, "execute", return_value=None) as execute, \
+             patch.object(workspace.db, "fetch_one", return_value={"count": 2}):
+            count = workspace.capture_run_snapshot("run-1", 7, article_ids=[11, 12])
+
+        insert_query, insert_params = execute.call_args_list[0].args
+        self.assertIn("a.id = any", insert_query)
+        self.assertEqual(insert_params, ("run-1", 7, 7, [11, 12]))
+        self.assertEqual(count, 2)
+
+    def test_empty_admitted_corpus_captures_no_source_rows(self):
+        with patch.object(workspace.db, "execute", return_value=None) as execute, \
+             patch.object(workspace.db, "fetch_one", return_value={"count": 0}):
+            workspace.capture_run_snapshot("run-2", 7, article_ids=[])
+
+        insert_query, insert_params = execute.call_args_list[0].args
+        self.assertIn("and false", insert_query)
+        self.assertEqual(insert_params, ("run-2", 7, 7))
+
     def test_arabic_passage_can_qualify_exact_claim(self):
         qualified, score, _ = workspace._passage_qualification(
             "ارتفع سعر صفيحة البنزين ٥٠٠٠٠ ليرة لبنانية",

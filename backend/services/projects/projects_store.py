@@ -229,7 +229,7 @@ def _persist_project_embedding(project):
     if not text:
         return {}
 
-    embedding = get_embedding(text)
+    embedding = get_embedding(text, role="query")
     if not embedding:
         return {}
 

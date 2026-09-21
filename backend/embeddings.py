@@ -195,7 +195,7 @@ def get_embedding(text: str, *, role: str = "passage") -> dict:
         return {
             "embedding_json": embedding,
             "embedding_model": config.EMBEDDING_MODEL,
-            "embedding_source": "sentence-transformers",
+            "embedding_source": f"sentence-transformers:{role}",
             "embedded_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
@@ -205,6 +205,44 @@ def get_embedding(text: str, *, role: str = "passage") -> dict:
             role,
         )
         return {}
+
+
+def get_embeddings(texts: list[str], *, role: str = "passage") -> list[dict]:
+    """Embed many texts in one model call while preserving input positions."""
+    cleaned = [_clean_text(text) for text in texts]
+    results = [{} for _ in cleaned]
+    positions = [index for index, text in enumerate(cleaned) if text]
+    if not positions:
+        return results
+    try:
+        model = _load_model()
+        if model is None:
+            return results
+        prepared = [cleaned[index] for index in positions]
+        model_name = (config.EMBEDDING_MODEL or "").lower()
+        if "e5" in model_name:
+            prefix = "query" if role == "query" else "passage"
+            prepared = [text if text.lower().startswith(("query:", "passage:")) else f"{prefix}: {text}" for text in prepared]
+        vectors = model.encode(
+            prepared,
+            batch_size=min(32, len(prepared)),
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        embedded_at = datetime.now(timezone.utc).isoformat()
+        for position, vector in zip(positions, vectors):
+            normalized = _normalize_vector(vector.tolist() if hasattr(vector, "tolist") else vector)
+            if normalized:
+                results[position] = {
+                    "embedding_json": normalized,
+                    "embedding_model": config.EMBEDDING_MODEL,
+                    "embedding_source": f"sentence-transformers:{role}",
+                    "embedded_at": embedded_at,
+                }
+    except Exception:
+        logger.exception("Batch embedding generation failed for model '%s' and role '%s'", config.EMBEDDING_MODEL, role)
+    return results
 
 
 def cosine_similarity(a, b) -> float:

@@ -2166,6 +2166,70 @@ h1, h2, h3 {
   background: rgba(0, 0, 0, 0.025);
 }
 
+.run-detail-relevance-header,
+.run-detail-override-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-detail-relevance-header {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.run-detail-relevance-copy {
+  margin: -4px 0 0;
+  color: var(--text-light);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.run-detail-mode-badge,
+.run-detail-decision {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.run-detail-mode-badge { background: rgba(46, 134, 222, 0.12); color: #1f6fba; }
+.run-detail-decision-accepted { background: rgba(46, 213, 115, 0.14); color: #168b49; }
+.run-detail-decision-excluded { background: rgba(255, 71, 87, 0.12); color: #c22f3d; }
+.run-detail-decision-needs_review { background: rgba(255, 177, 59, 0.17); color: #9b6200; }
+
+.run-detail-relevance-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.run-detail-screening-scroll { max-height: 430px; }
+.run-detail-screening-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.run-detail-screening-table th,
+.run-detail-screening-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-top: 1px solid rgba(0, 0, 0, 0.06); }
+.run-detail-screening-table td:first-child { min-width: 190px; max-width: 300px; }
+.run-detail-screening-table td small { display: block; color: var(--text-light); margin-top: 3px; }
+.run-detail-override-actions .btn-secondary { padding: 5px 8px; font-size: 0.72rem; }
+.run-detail-override-message { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: rgba(46, 213, 115, 0.11); color: #167842; font-size: 0.82rem; }
+.run-detail-override-label { display: block; margin: 14px 0 6px; font-size: 0.78rem; font-weight: 700; }
+.confirm-modal textarea { width: 100%; resize: vertical; box-sizing: border-box; padding: 10px; border: 1px solid rgba(0, 0, 0, 0.16); border-radius: 9px; font: inherit; }
+
+@media (max-width: 720px) {
+  .run-detail-relevance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .run-detail-relevance-header { flex-direction: column; }
+}
+
 .project-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);

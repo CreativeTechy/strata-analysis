@@ -599,10 +599,21 @@ def _grounded_model_assessment(claim_text: str, claim_type: str, prepared: list[
     return {"assessment": result["assessment"], "explanation": str(result.get("explanation") or "")[:2000], "relationships": relationships}
 
 
-def capture_run_snapshot(run_id: str, project_id: int) -> int:
+def capture_run_snapshot(run_id: str, project_id: int, article_ids: list[int] | None = None) -> int:
     """Freeze source content and the pre-run analysis as separate records."""
+    relevance_filter = ""
+    params: list = [str(run_id), int(project_id), int(project_id)]
+    if article_ids is not None:
+        article_ids = [int(article_id) for article_id in article_ids]
+        if not article_ids:
+            # Keep status creation below deterministic while inserting no
+            # source rows for a fully excluded corpus.
+            relevance_filter = "and false"
+        else:
+            relevance_filter = "and a.id = any(%s)"
+            params.append(article_ids)
     row = db.execute(
-        """
+        f"""
         insert into evidence_run_articles
             (run_id, project_id, article_id, content_hash, source_snapshot,
              analysis_snapshot, analysis_source, analysis_status)
@@ -624,10 +635,11 @@ def capture_run_snapshot(run_id: str, project_id: int) -> int:
                coalesce(a.analysis_status, 'pending')
         from articles a join article_projects ap on ap.article_id = a.id
         where ap.project_id = %s
+          {relevance_filter}
         on conflict (run_id, article_id) do nothing
         returning article_id
         """,
-        (str(run_id), int(project_id), int(project_id)),
+        tuple(params),
     )
     # execute returns one row at most; the actual count is read to make retries deterministic.
     count = db.fetch_one("select count(*)::int as count from evidence_run_articles where run_id = %s", (str(run_id),))

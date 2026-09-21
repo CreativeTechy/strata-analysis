@@ -229,6 +229,39 @@ EMBEDDING_MODEL = os.environ.get(
 ).strip()
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
+# Article-to-project relevance screening runs before the expensive analysis and
+# evidence stages. "observe" records what would be excluded without skipping
+# it; switch to "enforce" after reviewing real project results. "off" bypasses
+# screening entirely. Cosine similarity is not a probability, so these values
+# are deliberately configurable rather than presented as confidence percent.
+ARTICLE_RELEVANCE_SCREENING_MODE = os.environ.get(
+    "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"
+).strip().lower()
+if ARTICLE_RELEVANCE_SCREENING_MODE not in {"off", "observe", "enforce"}:
+    ARTICLE_RELEVANCE_SCREENING_MODE = "observe"
+try:
+    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = float(
+        os.environ.get("ARTICLE_RELEVANCE_ACCEPT_THRESHOLD", "0.60")
+    )
+except ValueError:
+    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = 0.60
+ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_ACCEPT_THRESHOLD))
+try:
+    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = float(
+        os.environ.get("ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD", "0.30")
+    )
+except ValueError:
+    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = 0.30
+ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD))
+if ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD > ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:
+    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = ARTICLE_RELEVANCE_ACCEPT_THRESHOLD
+try:
+    ARTICLE_RELEVANCE_BATCH_SIZE = max(
+        1, int(os.environ.get("ARTICLE_RELEVANCE_BATCH_SIZE", "20") or 20)
+    )
+except ValueError:
+    ARTICLE_RELEVANCE_BATCH_SIZE = 20
+
 # How long an analysis run may sit in queued/running before a new run for the
 # same project is allowed to start anyway. Without this, a backend that died
 # mid-run would block that project's analysis forever.
