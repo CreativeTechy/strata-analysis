@@ -18,6 +18,12 @@ from services.intelligence.intelligence import (
 
 
 class IntelligenceHelpersTests(unittest.TestCase):
+    def test_dashboard_history_requires_saved_analysis_results(self):
+        with patch.object(intelligence, "_database_ready", return_value=True), \
+             patch("db.fetch_all", return_value=[]) as fetch:
+            intelligence._fetch_pipeline_runs(3)
+        self.assertIn("exists (select 1 from article_analyses", fetch.call_args.args[0])
+
     def test_net_sentiment_is_positive_percentage_minus_negative_percentage(self):
         self.assertEqual(net_sentiment(Counter(positive=58, negative=15, neutral=27), 100), 43)
         self.assertEqual(net_sentiment(Counter(), 0), 0)

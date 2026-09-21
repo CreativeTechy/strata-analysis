@@ -14,6 +14,7 @@ function prettyStage(stage) {
   if (stage === 'done') return 'completed';
   if (stage === 'prepare') return 'selecting articles';
   if (stage === 'analyze') return 'analyzing';
+  if (stage === 'no_work') return 'no analysis required';
   return stage;
 }
 
@@ -282,6 +283,9 @@ export default function PipelineRunsPage({ projects = [] }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   {run.pipeline === 'competitor-analysis' ? (
                     <span className="panel-chip">Competitor analysis</span>
+                  ) : null}
+                  {run.pipeline === 'analysis' && run.finished_at && !run.analytics_eligible ? (
+                    <span className="panel-chip muted">No analytical dataset</span>
                   ) : null}
                   <span style={{ color: stageColor(run.status), fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 700 }}>
                     {run.status}

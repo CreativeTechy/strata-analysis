@@ -29,7 +29,10 @@ RUN_COLUMNS = (
 )
 # INSERT/UPDATE ... RETURNING can only reference the table being written, so those
 # statements use RUN_COLUMNS unqualified; anything reading via a join uses RUN_SELECT.
-RUN_SELECT = ",".join(f"pr.{column}" for column in RUN_COLUMNS.split(",")) + ",p.name as project_name"
+RUN_SELECT = ",".join(f"pr.{column}" for column in RUN_COLUMNS.split(",")) + (
+    ",p.name as project_name,"
+    "(select count(*)::int from article_analyses an where an.run_id=pr.id) as analysis_result_count"
+)
 
 # Runs in these statuses are still in flight; anything else (success, failed,
 # cancelled) is terminal and must not block a new run for the same project.
@@ -64,6 +67,11 @@ def _normalize(row):
         "analysis_finished_at": row.get("analysis_finished_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "analysis_result_count": int(row.get("analysis_result_count") or 0),
+        "analytics_eligible": bool(
+            (row.get("pipeline") or ANALYSIS_PIPELINE) == ANALYSIS_PIPELINE
+            and int(row.get("analysis_result_count") or 0) > 0
+        ),
         # This project's Nth analysis run ever, oldest = 1 - stable regardless
         # of how the caller filters/limits/sorts the result set, so the
         # dashboard's "Analysis #N" labels don't shift as older runs age out of

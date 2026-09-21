@@ -21,6 +21,7 @@ function prettyStage(stage) {
   if (stage === 'done') return 'completed';
   if (stage === 'prepare') return 'selecting articles';
   if (stage === 'analyze') return 'analyzing';
+  if (stage === 'no_work') return 'no analysis required';
   return stage;
 }
 
@@ -264,6 +265,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                 <StatusBadge status={run.status} />
               </SummaryField>
               <SummaryField label="Current stage">{prettyStage(run.stage)}</SummaryField>
+              <SummaryField label="Dashboard dataset">{run.analytics_eligible ? `${run.analysis_result_count} saved article result(s)` : 'Not used for analytics'}</SummaryField>
               <SummaryField label="Started at">{formatDateTime(run.started_at)}</SummaryField>
               <SummaryField label="Finished at">{formatDateTime(run.finished_at)}</SummaryField>
               <SummaryField label="Total duration">

@@ -439,6 +439,18 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       {!loading && !(data?.runs || []).length ? <div className="glass-card evidence-empty"><FileSearch size={24} /><strong>No evidence run yet</strong><span>Complete an analysis run to freeze the project evidence and extract claims.</span></div> : null}
 
       {(data?.runs || []).length ? <>
+        {(data?.generations || []).length ? <details className="glass-card evidence-generation-history">
+          <summary>Evidence processing history · {data.generations.length} attempt{data.generations.length === 1 ? '' : 's'}</summary>
+          <div>
+            {data.generations.map((generation) => <article key={generation.generation}>
+              <span className={`evidence-generation-status ${generation.status}`}>{generation.status}</span>
+              <strong>Generation {generation.generation}</strong>
+              <small>{formatDateTime(generation.started_at || generation.created_at)} · {generation.candidate_count ? `${generation.classified_count || 0}/${generation.candidate_count} classified · ${(generation.direct_count || 0) + (generation.contextual_count || 0)} relevant · ${generation.unrelated_count || 0} excluded` : 'Preparing claim candidates'}</small>
+              {generation.published_at ? <small>Published {formatDateTime(generation.published_at)}</small> : null}
+              {generation.error ? <p>{generation.error}</p> : null}
+            </article>)}
+          </div>
+        </details> : null}
         <div className="evidence-relevance-summary"><span><strong>{(data.relevance_counts?.direct || 0) + (data.relevance_counts?.contextual || 0)}</strong> relevant</span><span><strong>{data.relevance_counts?.uncertain || 0}</strong> uncertain</span><span><strong>{data.relevance_counts?.unrelated || 0}</strong> excluded</span><span><strong>{data.relevance_counts?.unclassified || 0}</strong> legacy</span></div>
         <div className="evidence-overview">
           <div className="glass-card evidence-stat"><span>Total claims</span><strong>{overview.total_claims || 0}</strong><small>Extracted from this run</small></div>

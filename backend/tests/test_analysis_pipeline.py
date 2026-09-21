@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from services.pipeline import pipeline
+from services.pipeline import pipeline_runs
 
 
 def _rows(*specs):
@@ -38,6 +39,7 @@ class RunAnalysisPipelineTests(unittest.TestCase):
             patch.object(pipeline, "mark_processing"),
             patch.object(pipeline, "capture_run_snapshot", return_value=3),
             patch.object(pipeline, "generate_for_run", return_value={"claims": 2, "articles": 3}),
+            patch.object(pipeline, "_queue_evidence_after_analysis"),
             # Serial execution: these assert on ordering and on cancellation
             # landing at a specific article, neither of which is meaningful
             # against a pool that has already dispatched the next one.
@@ -69,7 +71,8 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(self.documents["interviews.docx"]["analyzed"], 1)
         self.assertEqual(self.completions[-1]["status"], "success")
         pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5)
-        pipeline.generate_for_run.assert_called_once_with("run-1", 5)
+        pipeline.generate_for_run.assert_not_called()
+        pipeline._queue_evidence_after_analysis.assert_called_once_with("run-1", 5)
 
     def test_articles_without_a_document_are_grouped_rather_than_dropped(self):
         """A JSONL import has no document behind it, but its articles still have
@@ -121,7 +124,17 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         analyze.assert_not_called()
         final = self._final()
         self.assertEqual(final["status"], "success")
-        self.assertIn("Nothing to analyze", final["message"])
+        self.assertEqual(final["stage"], "no_work")
+        self.assertIn("No articles require analysis", final["message"])
+        pipeline.generate_for_run.assert_not_called()
+        pipeline._queue_evidence_after_analysis.assert_not_called()
+
+    def test_evidence_failure_cannot_change_completed_analysis_status(self):
+        with patch.object(pipeline, "generate_for_run", side_effect=RuntimeError("evidence failed")), \
+             patch.object(pipeline.logger, "exception") as logged:
+            pipeline._generate_evidence_after_analysis("run-1", 5)
+        logged.assert_called_once()
+        self.assertFalse(any(update.get("status") == "failed" for update in self.updates))
 
     def test_a_stop_lands_at_the_next_article_boundary(self):
         """Cancellation can't interrupt an in-flight model call, so the contract
@@ -198,6 +211,17 @@ class SelectArticlesTests(unittest.TestCase):
         query, params = self._query_for("all")
         self.assertNotIn("analysis_status", query)
         self.assertEqual(params, (5,))
+
+
+class PipelineRunEligibilityTests(unittest.TestCase):
+    def test_zero_result_run_is_not_eligible_for_dashboard_analytics(self):
+        run = pipeline_runs._normalize({"id": "run-1", "pipeline": "analysis", "analysis_result_count": 0})
+        self.assertFalse(run["analytics_eligible"])
+
+    def test_saved_analysis_results_make_run_eligible(self):
+        run = pipeline_runs._normalize({"id": "run-2", "pipeline": "analysis", "analysis_result_count": 12})
+        self.assertTrue(run["analytics_eligible"])
+        self.assertEqual(run["analysis_result_count"], 12)
 
 
 if __name__ == "__main__":

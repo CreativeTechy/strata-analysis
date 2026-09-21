@@ -207,6 +207,27 @@ def _regenerate_idea_comparisons(project_id):
         logger.exception("run for project %s: idea comparison regeneration failed", project_id)
 
 
+def _generate_evidence_after_analysis(run_id: str, project_id: int) -> None:
+    """Build evidence after the analysis run has reached its terminal state.
+
+    Evidence owns its status and errors in evidence_run_status/evidence_generations.
+    A failure here must never rewrite a completed analytical result as failed.
+    """
+    try:
+        generate_for_run(run_id, project_id)
+    except Exception:
+        logger.exception("run %s: post-analysis evidence generation failed", run_id)
+
+
+def _queue_evidence_after_analysis(run_id: str, project_id: int) -> None:
+    threading.Thread(
+        target=_generate_evidence_after_analysis,
+        args=(run_id, project_id),
+        name=f"evidence-run-{run_id}",
+        daemon=True,
+    ).start()
+
+
 def run_analysis_pipeline(run_id: str, project_id: int | None = None, scope: str = "pending"):
     """Analyze this project's articles, recording progress into `pipeline_runs`.
 
@@ -273,17 +294,20 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         )
 
         if not rows:
-            evidence = generate_for_run(run_id, project_id)
             _finish_run(
                 run_id,
                 project_id,
                 status="success",
-                stage="done",
+                stage="no_work",
                 message=(
-                    "Nothing to analyze - every article in this project has already been analyzed."
+                    "No articles require analysis; existing analytical results remain unchanged."
                     if scope != "all"
-                    else "Nothing to analyze - this project has no articles yet."
-                ) + f" Evidence workspace contains {evidence['claims']} claim(s).",
+                    else "No articles are available to analyze."
+                ),
+                articles_selected=0,
+                articles_analyzed=0,
+                articles_failed=0,
+                analysis_finished_at=_now(),
                 finished_at=_now(),
             )
             return
@@ -353,21 +377,20 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         upsert_pipeline_run_document_stats(run_id, document_stats)
         failed = counters["failed"]
         analyzed = counters["analyzed"]
-        evidence = generate_for_run(run_id, project_id)
         message = f"Analysis complete: {analyzed} analyzed"
         if failed:
             message += f", {failed} failed"
-        message += f"; {evidence['claims']} evidence claim(s) prepared"
+        successful = not (failed and not analyzed)
         _finish_run(
             run_id,
             project_id,
             # A run that analyzed nothing successfully while every article
             # failed is a failed run, not a run with a footnote - that is what
             # a misconfigured or unreachable local model looks like from here.
-            status="failed" if failed and not analyzed else "success",
-            stage="error" if failed and not analyzed else "done",
+            status="success" if successful else "failed",
+            stage="done" if successful else "error",
             message=message + ".",
-            error="Every article failed to analyze." if failed and not analyzed else None,
+            error=None if successful else "Every article failed to analyze.",
             articles_analyzed=analyzed,
             articles_failed=failed,
             analysis_finished_at=_now(),
@@ -376,6 +399,7 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         logger.info("run %s: %s.", run_id, message)
         if analyzed:
             _regenerate_idea_comparisons(project_id)
+            _queue_evidence_after_analysis(run_id, project_id)
     except PipelineCancelled:
         _finish_run(
             run_id,

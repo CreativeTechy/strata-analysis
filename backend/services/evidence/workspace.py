@@ -888,9 +888,12 @@ def generate_for_run(run_id: str, project_id: int) -> dict:
            on conflict (run_id) do update set status='running', error=null,
                rules_version=excluded.rules_version, started_at=now(), finished_at=null,
                generation=evidence_run_status.generation+1
+           where evidence_run_status.status <> 'running'
            returning generation""",
         (str(run_id), int(project_id), RULES_VERSION),
     )
+    if not status_row:
+        raise RuntimeError("Evidence generation is already running for this analysis snapshot.")
     generation = int((status_row or {}).get("generation") or 0)
     scope_record = get_run_scope(run_id, project_id)
     scope, scope_digest = scope_record["scope"], scope_record["scope_hash"]
@@ -960,6 +963,9 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
                      from evidence_generations eg where eg.run_id=pr.id
                      order by eg.generation desc limit 1) as latest_generation
            from ranked pr left join evidence_run_status ers on ers.run_id=pr.id
+           where exists (select 1 from article_analyses an where an.run_id=pr.id)
+              or exists (select 1 from evidence_generations eg where eg.run_id=pr.id)
+              or exists (select 1 from evidence_claims ec where ec.run_id=pr.id and ec.active)
            order by pr.created_at desc""", (int(project_id),),
     ) or []
     selected = str(run_id) if run_id else (str(runs[0]["id"]) if runs else None)
@@ -1061,6 +1067,15 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
               from evidence_claims ec where ec.project_id=%s and ec.run_id=%s and ec.active
              group by {effective_relevance}""", (int(project_id), selected),
     ) or []
+    generations = db.fetch_all(
+        """select generation,status,candidate_count,classified_count,direct_count,
+                  contextual_count,unrelated_count,uncertain_count,error,
+                  started_at,finished_at,published_at,created_at
+             from evidence_generations
+            where run_id=%s and project_id=%s
+            order by generation desc limit 20""",
+        (selected, int(project_id)),
+    ) or []
     selected_run = next((run for run in runs if str(run["id"]) == selected), {})
 
     claim_ids = [int(claim["id"]) for claim in claims]
@@ -1101,6 +1116,7 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
                 "assessment_counts": dict(counts), **origins,
             },
             "relevance_counts": {row["relevance"]: row["count"] for row in relevance_rows},
+            "generations": generations,
             "filter_options": {"publishers": [row["publisher"] for row in publishers if row.get("publisher")]},
             "source_matrix": source_matrix,
             "claims": claims, "total_filtered": int(total_row.get("count") or 0),

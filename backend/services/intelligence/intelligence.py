@@ -294,6 +294,7 @@ def _fetch_pipeline_runs(project_id: int) -> list[dict]:
                 where project_id = %s and pipeline = 'analysis'
             ) numbered
             where status = 'success' and finished_at is not null
+              and exists (select 1 from article_analyses an where an.run_id=numbered.id)
             order by finished_at desc
             limit 12
         ) latest

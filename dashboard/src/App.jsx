@@ -133,7 +133,7 @@ export default function App() {
       const data = await listPipelineRuns({ projectId: scopedProjectId, limit: 500 });
       const runs = Array.isArray(data?.runs) ? data.runs : [];
       const completed = runs
-        .filter((run) => run?.finished_at)
+        .filter((run) => run?.finished_at && run?.pipeline === 'analysis' && run?.analytics_eligible)
         .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime());
       setProjectRuns(completed);
 
@@ -145,6 +145,11 @@ export default function App() {
       // usual 'Last 30 days' default is switched to 'All time' instead of
       // implying a narrower time window would ever surface something.
       if (page) {
+        const selectedRun = page === 'dashboard' ? dashboardRunId : reportRunId;
+        if (selectedRun && !completed.some((run) => run.id === selectedRun)) {
+          if (page === 'dashboard') setDashboardRunId(completed[0]?.id || null);
+          else setReportRunId(completed[0]?.id || null);
+        }
         const defaultedRef = page === 'dashboard' ? dashboardRunDefaultedRef : reportRunDefaultedRef;
         if (!defaultedRef.current.has(scopedProjectId)) {
           defaultedRef.current.add(scopedProjectId);
