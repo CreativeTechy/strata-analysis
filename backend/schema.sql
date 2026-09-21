@@ -564,7 +564,12 @@ create table if not exists public.article_people_opinions (
     opinion     text not null,
     sentiment   text not null default 'neutral',
     category    text not null default '',
-    gender      text not null default 'unknown',
+    gender          text not null default 'unknown',
+    -- The exact word/phrase the model says signaled `gender` (e.g. "she
+    -- said", a title like "Mrs.") - empty whenever gender is 'unknown', kept
+    -- as an audit trail so a male/female call can be checked against real
+    -- wording rather than trusted blind. See normalize.normalize_gender_evidence.
+    gender_evidence text not null default '',
     age_range   text not null default 'unknown',
     region      text not null default 'unknown',
     segment_raw text not null default 'unknown',

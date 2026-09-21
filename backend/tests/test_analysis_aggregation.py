@@ -23,6 +23,44 @@ class ComputeOverallToneTests(unittest.TestCase):
         self.assertEqual(aggregation.compute_overall_tone("neutral", "neutral"), "neutral")
 
 
+class ComputeDominantDemographicsTests(unittest.TestCase):
+    def test_majority_gender_wins(self):
+        result = aggregation.compute_dominant_demographics([
+            {"gender": "female"}, {"gender": "female"}, {"gender": "male"},
+        ])
+        self.assertEqual(result["gender"], "female")
+
+    def test_unknown_votes_are_ignored(self):
+        result = aggregation.compute_dominant_demographics([
+            {"gender": "unknown"}, {"gender": "unknown"}, {"gender": "male"},
+        ])
+        self.assertEqual(result["gender"], "male")
+
+    def test_tied_vote_falls_back_to_unknown_rather_than_first_seen(self):
+        """A 2-2 split has no majority - most_common(1) alone would silently
+        pick whichever gender was voted first (quote order), which reads as
+        a real answer but isn't one."""
+        result = aggregation.compute_dominant_demographics([
+            {"gender": "male"}, {"gender": "female"},
+            {"gender": "male"}, {"gender": "female"},
+        ])
+        self.assertEqual(result["gender"], "unknown")
+
+    def test_no_opinions_stays_unknown(self):
+        result = aggregation.compute_dominant_demographics([])
+        self.assertEqual(result["gender"], "unknown")
+        self.assertEqual(result["age_range"], "unknown")
+
+    def test_age_range_majority_independent_of_gender(self):
+        result = aggregation.compute_dominant_demographics([
+            {"gender": "male", "age_range": "25-34"},
+            {"gender": "female", "age_range": "25-34"},
+            {"gender": "female", "age_range": "35-44"},
+        ])
+        self.assertEqual(result["gender"], "female")
+        self.assertEqual(result["age_range"], "25-34")
+
+
 class BuildTopicInsightTests(unittest.TestCase):
     def test_empty_articles_returns_neutral_defaults(self):
         result = aggregation.build_topic_insight([], topic_name="my project")

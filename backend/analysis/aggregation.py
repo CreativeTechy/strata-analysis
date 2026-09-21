@@ -37,7 +37,8 @@ def compute_dominant_demographics(people_opinions) -> dict:
     article's own people_opinions (never guessed by the AI itself - see
     structured_extraction.py's prompt). "unknown" votes are ignored so one
     clearly-signaled person outweighs several with no signal; a dimension
-    with no non-unknown votes at all stays "unknown".
+    with no non-unknown votes at all, or with a tied vote (no single most
+    common value), stays "unknown".
 
     Region is NOT computed here - see analysis/region_detection.py, an
     independent stage that combines the per-quote region votes with a
@@ -56,7 +57,16 @@ def compute_dominant_demographics(people_opinions) -> dict:
             age_range_counts[age_range] += 1
 
     def _top(counts, default):
-        return counts.most_common(1)[0][0] if counts else default
+        # most_common(1) alone breaks ties by insertion order (quote order in
+        # the article), which reads as a real answer but isn't one - a 2-2
+        # split has no majority, so it falls back to `default` rather than
+        # arbitrarily picking whichever value happened to be voted first.
+        if not counts:
+            return default
+        ranked = counts.most_common()
+        top_count = ranked[0][1]
+        tied = [value for value, count in ranked if count == top_count]
+        return tied[0] if len(tied) == 1 else default
 
     return {
         "gender": _top(gender_counts, normalize.labels.DEFAULT_GENDER),

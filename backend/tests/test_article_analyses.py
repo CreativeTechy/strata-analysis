@@ -138,5 +138,54 @@ class RunScopedReadTests(unittest.TestCase):
             self.assertEqual(article_analyses.run_article_count("run-2"), 0)
 
 
+class SnapshotGenderEvidenceColumnTests(unittest.TestCase):
+    """gender_evidence arrived in migration 0019, so the snapshot insert has to
+    survive a database that hasn't applied it yet. Naming the column
+    unconditionally made the whole INSERT fail, and because
+    record_analysis_snapshot() swallows failures the run then produced *no*
+    article_analyses rows at all - silently, for every article."""
+
+    def _snapshot_sql(self, column_present):
+        executed = []
+        with patch.object(article_analyses, "_table_has_column", return_value=column_present),              patch.object(article_analyses.db, "execute", side_effect=lambda sql, params: executed.append(sql)):
+            ok = article_analyses.record_analysis_snapshot("run-1", 7)
+        self.assertTrue(ok)
+        self.assertEqual(len(executed), 1)
+        return executed[0]
+
+    def test_evidence_key_is_selected_when_the_column_exists(self):
+        sql = self._snapshot_sql(True)
+        self.assertIn("'gender_evidence', po.gender_evidence", sql)
+
+    def test_evidence_key_is_omitted_when_the_column_is_missing(self):
+        sql = self._snapshot_sql(False)
+        self.assertNotIn("gender_evidence", sql)
+        # the rest of the snapshot is untouched - a missing key must not cost
+        # the run its whole comparison row
+        for key in ("'opinion', po.opinion", "'gender', po.gender", "'segment', po.segment"):
+            self.assertIn(key, sql)
+        self.assertIn("insert into article_analyses", sql)
+
+    def test_column_check_failure_degrades_instead_of_raising(self):
+        with patch.object(article_analyses.db, "fetch_one", side_effect=RuntimeError("boom")):
+            self.assertFalse(article_analyses._table_has_column("article_people_opinions", "gender_evidence"))
+
+    def test_column_presence_is_not_memoized_across_calls(self):
+        """A cached False would keep this process emitting the degraded shape
+        after the migration lands, until it restarts."""
+        answers = [{"exists": False}, {"exists": True}]
+        with patch.object(article_analyses.db, "fetch_one", side_effect=answers):
+            first = article_analyses._table_has_column("article_people_opinions", "gender_evidence")
+            second = article_analyses._table_has_column("article_people_opinions", "gender_evidence")
+        self.assertFalse(first)
+        self.assertTrue(second)
+
+    def test_failure_is_logged_rather_than_vanishing(self):
+        with patch.object(article_analyses.db, "execute", side_effect=RuntimeError("boom")):
+            with self.assertLogs("services.articles.article_analyses", level="WARNING") as logged:
+                self.assertFalse(article_analyses.record_analysis_snapshot("run-1", 7))
+        self.assertTrue(any("snapshot not recorded" in line for line in logged.output))
+
+
 if __name__ == "__main__":
     unittest.main()
