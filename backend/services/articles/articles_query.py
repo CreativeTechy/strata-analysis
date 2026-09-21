@@ -9,7 +9,7 @@ articles_store.py is what composes all three back into one browsing API.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -430,6 +430,21 @@ def list_project_sources(project_id, limit=20, offset=0):
     except Exception:
         return empty_page
 
+    def published_sort_key(article):
+        value = article.get("published_at")
+        if value is None:
+            return float("-inf")
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return float("-inf")
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.timestamp()
+        return float("-inf")
+
     groups: dict[str, dict] = {}
     for row in rows:
         url = str(row.get("url") or "")
@@ -456,7 +471,9 @@ def list_project_sources(project_id, limit=20, offset=0):
         })
         group["article_count"] += 1
         published_at = row.get("published_at")
-        if published_at and (group["latest_published_at"] is None or published_at > group["latest_published_at"]):
+        if published_at and published_sort_key({"published_at": published_at}) > published_sort_key(
+            {"published_at": group["latest_published_at"]}
+        ):
             group["latest_published_at"] = published_at
         if len(group["articles"]) < ARTICLES_PER_SOURCE_PREVIEW:
             group["articles"].append({
@@ -468,7 +485,7 @@ def list_project_sources(project_id, limit=20, offset=0):
 
     sources = list(groups.values())
     for group in sources:
-        group["articles"].sort(key=lambda a: a["published_at"] or datetime.min, reverse=True)
+        group["articles"].sort(key=published_sort_key, reverse=True)
     sources.sort(key=lambda g: (-g["article_count"], g["label"] or "", g["key"]))
     total = len(sources)
     total_articles = len(rows)

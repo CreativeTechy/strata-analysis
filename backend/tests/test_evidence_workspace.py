@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from services.evidence import workspace
 
@@ -115,6 +116,46 @@ class EvidenceRuleTests(unittest.TestCase):
         groups = workspace._group_claim_candidates([first, second])
         self.assertEqual(len(groups), 1)
         self.assertEqual([item["row"]["id"] for item in groups[0]["items"]], [1, 2])
+
+    def test_arabic_claim_words_are_preserved(self):
+        words = workspace._claim_words("ارتفع سعر صفيحة البنزين في لبنان")
+        self.assertTrue({"ارتفع", "سعر", "صفيحة", "البنزين", "لبنان"}.issubset(words))
+
+    def test_arabic_passage_can_qualify_exact_claim(self):
+        qualified, score, _ = workspace._passage_qualification(
+            "ارتفع سعر صفيحة البنزين ٥٠٠٠٠ ليرة لبنانية",
+            "ارتفع صباح اليوم سعر صفيحة البنزين 50000 ليرة لبنانية بسبب تغير الأسعار العالمية.",
+        )
+        self.assertTrue(qualified)
+        self.assertGreaterEqual(score, 0.35)
+
+    def test_arabic_direction_and_claim_types(self):
+        self.assertEqual(workspace._direction("انخفض سعر المازوت اليوم"), "negative")
+        self.assertEqual(workspace._direction("ارتفع سعر البنزين اليوم"), "positive")
+        self.assertEqual(workspace._claim_type("من المتوقع أن يرتفع السعر غداً"), "forecast")
+        self.assertEqual(workspace._claim_type("ارتفع السعر بسبب زيادة النفط عالمياً"), "causal_explanation")
+
+    def test_arabic_dates_and_digits_are_normalized(self):
+        structured = workspace._structured_claim("المحروقات", "ارتفع السعر ٥٠٠٠٠ ليرة في ١٨ أيلول ٢٠٢٦")
+        self.assertIn("18 أيلول 2026", structured["dates"])
+        self.assertIn("50000", structured["quantities"])
+
+    def test_claim_candidates_accept_common_object_shapes_and_json_strings(self):
+        row = {
+            "topics": ["المحروقات"],
+            "key_points": '[{"claim":"ارتفع سعر البنزين خمسين ألف ليرة لبنانية"}]',
+            "summary": "",
+            "title": "",
+        }
+        self.assertEqual(
+            workspace._claim_candidates(row),
+            [("المحروقات", "ارتفع سعر البنزين خمسين ألف ليرة لبنانية")],
+        )
+
+    def test_generation_fails_clearly_without_frozen_snapshot(self):
+        with patch.object(workspace, "_snapshot_rows", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "no frozen evidence snapshot"):
+                workspace._generate_for_run("old-run", 3, 1)
 
 
 if __name__ == "__main__":

@@ -249,6 +249,10 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   };
 
   const overview = data?.overview || {};
+  const selectedRunRecord = (data?.runs || []).find(
+    (run) => String(run.id) === String(data?.selected_run_id),
+  );
+  const evidenceButtonLabel = selectedRunRecord?.evidence_status ? 'Rebuild evidence' : 'Build evidence';
   const assessmentCards = useMemo(() => Object.entries(overview.assessment_counts || {}), [overview.assessment_counts]);
   const matrix = data?.source_matrix || { publishers: [], rows: [] };
   const matrixTotal = Number(data?.total_filtered || 0);
@@ -324,7 +328,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </div>
         <div className="admin-page-toolbar">
           <Link className="btn-secondary" to={`/projects/${projectId}`}><ArrowLeft size={15} /> Project</Link>
-          {canRetry && data?.selected_run_id ? <button className="btn-secondary" onClick={retry} disabled={retrying}><RefreshCw size={15} className={retrying ? 'spin' : ''} /> Rebuild evidence</button> : null}
+          {canRetry && data?.selected_run_id ? <button className="btn-secondary" onClick={retry} disabled={retrying}><RefreshCw size={15} className={retrying ? 'spin' : ''} /> {retrying ? 'Starting…' : evidenceButtonLabel}</button> : null}
         </div>
       </div>
 
@@ -360,8 +364,14 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       </div>
 
       {error ? <div className="evidence-error">{error}</div> : null}
-      {data?.runs?.find((run) => String(run.id) === String(data.selected_run_id))?.evidence_status === 'failed'
-        ? <div className="evidence-error">Evidence processing failed: {data.runs.find((run) => String(run.id) === String(data.selected_run_id))?.evidence_error || 'Unknown error'}. Use Rebuild evidence to retry safely.</div>
+      {selectedRunRecord && !selectedRunRecord.evidence_status
+        ? <div className="glass-card evidence-empty"><FileSearch size={22} /><strong>Evidence has not been built for this run</strong><span>Build it from the run’s frozen article snapshot. If this is a legacy run without a snapshot, start a new analysis run.</span></div>
+        : null}
+      {selectedRunRecord?.evidence_status === 'failed'
+        ? <div className="evidence-error">Evidence processing failed: {selectedRunRecord.evidence_error || 'Unknown error'}. Use Rebuild evidence to retry safely.</div>
+        : null}
+      {selectedRunRecord?.evidence_status === 'success' && Number(selectedRunRecord.article_count || 0) > 0 && Number(selectedRunRecord.claim_count || 0) === 0
+        ? <div className="evidence-error">Evidence processed {selectedRunRecord.article_count} saved article(s), but extracted no claims. Check that this run contains analysis summaries or key points before rebuilding.</div>
         : null}
       {loading && !data ? <div className="glass-card evidence-empty">Loading evidence…</div> : null}
       {!loading && !(data?.runs || []).length ? <div className="glass-card evidence-empty"><FileSearch size={24} /><strong>No evidence run yet</strong><span>Complete an analysis run to freeze the project evidence and extract claims.</span></div> : null}

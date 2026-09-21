@@ -20,7 +20,7 @@ from embeddings import cosine_similarity, get_embedding
 from llm_client import LLMError, chat_completion
 from psycopg.types.json import Jsonb
 
-RULES_VERSION = "evidence-v3"
+RULES_VERSION = "evidence-v4"
 ASSESSMENTS = {
     "supported", "contradicted", "mixed_evidence", "insufficient_evidence", "not_yet_verifiable",
     "assessment_unavailable",
@@ -36,7 +36,18 @@ _ATTRIBUTED = re.compile(r"\b(said|stated|announced|according to|reported|claime
 _NEGATION = re.compile(r"\b(no|not|never|didn't|doesn't|won't|without)\b", re.I)
 _UP = re.compile(r"\b(increase[ds]?|increasing|rose|risen|higher|grew|growth|support(?:s|ed)?)\b", re.I)
 _DOWN = re.compile(r"\b(decrease[ds]?|decreasing|fell|fallen|lower|decline[ds]?|declining|oppose[ds]?|ban)\b", re.I)
+_AR_FORECAST = re.compile(r"(?:\bسوف\b|\bمن المتوقع\b|\bيتوقع\b|\bمتوقع\b|\bسي(?=[\u0621-\u064a]))")
+_AR_OPINION = re.compile(r"\b(?:يرى|تعتقد|يعتقد|برأي|ينبغي)\b")
+_AR_CAUSAL = re.compile(r"\b(?:بسبب|نتيجة|أدى|ادت|أدّت|جراء)\b")
+_AR_ATTRIBUTED = re.compile(r"\b(?:قال|صرح|صرّح|أعلن|اعلن|أفاد|افاد|بحسب|وفقاً|وفقا)\b")
+_AR_UP = re.compile(r"\b(?:ارتفع|ارتفعت|ارتفاع|زاد|زادت|زيادة|صعد|صعود)\b")
+_AR_DOWN = re.compile(r"\b(?:انخفض|انخفضت|انخفاض|تراجع|تراجعت|هبط|هبوط|انخفضت)\b")
 _DATE = re.compile(r"\b(?:20\d{2}(?:-\d{2}(?:-\d{2})?)?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:20\d{2}|\d{1,2}(?:,?\s+20\d{2})?))\b", re.I)
+_AR_DATE = re.compile(
+    r"\b\d{1,2}\s+(?:كانون\s+الثاني|شباط|آذار|اذار|نيسان|أيار|ايار|حزيران|تموز|آب|اب|"
+    r"أيلول|ايلول|تشرين\s+الأول|تشرين\s+الاول|تشرين\s+الثاني|كانون\s+الأول|كانون\s+الاول)\s+\d{4}\b"
+)
+_NUMERIC_DATE = re.compile(r"\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b")
 _QUANTITY = re.compile(
     r"(?:[$£€]\s?\d[\d,.]*|\b\d[\d,.]*(?:\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?))?"
     r"|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:million|billion|trillion)\b)",
@@ -53,9 +64,19 @@ _GENERIC_CLAIM_WORDS = {
     "according", "report", "reported", "reports", "says", "source", "uk", "united", "kingdom",
 }
 
+_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+
+def _normalize_digits(value: str) -> str:
+    return str(value or "").translate(_ARABIC_DIGITS)
+
 
 def _words(value: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z0-9]+", str(value or "").lower()) if (len(w) > 2 or w.isdigit()) and w not in _STOP]
+    normalized = _normalize_digits(value).lower()
+    return [
+        word for word in re.findall(r"[^\W_]+", normalized, flags=re.UNICODE)
+        if (len(word) > 2 or word.isdigit()) and word not in _STOP
+    ]
 
 
 def _claim_words(value: str) -> set[str]:
@@ -81,7 +102,7 @@ def _normalized_scopes(value: str) -> tuple[set[str], set[str]]:
             re.sub(
                 r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\b",
                 lambda match: number_words[match.group(1).lower()],
-                item.lower().replace("percent", "%"),
+                _normalize_digits(item).lower().replace("percent", "%").replace("بالمئة", "%").replace("في المئة", "%"),
             ),
         )
         for item in structured["quantities"]
@@ -156,8 +177,8 @@ def _group_claim_candidates(candidates: list[dict]) -> list[dict]:
 
 
 def _direction(value: str) -> str:
-    negative = bool(_NEGATION.search(value) or _DOWN.search(value))
-    positive = bool(_UP.search(value))
+    negative = bool(_NEGATION.search(value) or _DOWN.search(value) or _AR_DOWN.search(value))
+    positive = bool(_UP.search(value) or _AR_UP.search(value))
     if negative and positive:
         return "mixed"
     if negative:
@@ -168,8 +189,11 @@ def _direction(value: str) -> str:
 
 
 def _structured_claim(topic: str, claim: str) -> dict:
-    dates = list(dict.fromkeys(_DATE.findall(claim)))
-    quantities = list(dict.fromkeys(_QUANTITY.findall(claim)))
+    normalized = _normalize_digits(claim)
+    dates = list(dict.fromkeys([
+        *_DATE.findall(normalized), *_AR_DATE.findall(normalized), *_NUMERIC_DATE.findall(normalized),
+    ]))
+    quantities = list(dict.fromkeys(_QUANTITY.findall(normalized)))
     return {
         "topic": topic,
         "assertion": claim,
@@ -188,6 +212,8 @@ def _fingerprint(topic: str, claim: str) -> str:
         "not", "never", "without", "lower", "higher", "decline", "declined", "decreasing", "decreased",
         "fell", "fallen", "increase", "increased", "increasing", "rose", "risen", "support", "supports",
         "supported", "oppose", "opposes", "opposed",
+        "ارتفع", "ارتفعت", "ارتفاع", "زاد", "زادت", "زيادة", "صعد", "صعود",
+        "انخفض", "انخفضت", "انخفاض", "تراجع", "تراجعت", "هبط", "هبوط",
     }]
     structured = _structured_claim(topic, claim)
     scope = "|".join(structured["dates"] + structured["quantities"])
@@ -196,10 +222,10 @@ def _fingerprint(topic: str, claim: str) -> str:
 
 
 def _claim_type(text: str) -> str:
-    if _FORECAST.search(text): return "forecast"
-    if _OPINION.search(text): return "opinion"
-    if _CAUSAL.search(text): return "causal_explanation"
-    if _ATTRIBUTED.search(text): return "attributed_statement"
+    if _FORECAST.search(text) or _AR_FORECAST.search(text): return "forecast"
+    if _OPINION.search(text) or _AR_OPINION.search(text): return "opinion"
+    if _CAUSAL.search(text) or _AR_CAUSAL.search(text): return "causal_explanation"
+    if _ATTRIBUTED.search(text) or _AR_ATTRIBUTED.search(text): return "attributed_statement"
     return "factual_assertion"
 
 
@@ -225,7 +251,7 @@ def _sentences(row: dict) -> list[str]:
     # Evidence quotations come from the frozen document body. Titles and LLM
     # summaries help humans navigate, but are not treated as source passages.
     value = str(row.get("text") or "")
-    return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", value) if len(part.strip()) >= 20]
+    return [part.strip() for part in re.split(r"(?<=[.!?؟۔])\s+|\n+", value) if len(part.strip()) >= 20]
 
 
 def _best_passage(row: dict, claim: str) -> str:
@@ -268,9 +294,18 @@ def _claim_candidates(row: dict) -> list[tuple[str, str]]:
     topics = [str(x).strip() for x in (row.get("topics") or []) if str(x).strip()]
     topic = topics[0] if topics else "General"
     points = row.get("key_points") or []
+    if isinstance(points, str):
+        try:
+            decoded = json.loads(points)
+            points = decoded if isinstance(decoded, list) else [points]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            points = [points]
     claims = []
     for point in points[:8]:
-        text = str(point.get("point") or point.get("text") or "").strip() if isinstance(point, dict) else str(point).strip()
+        text = str(
+            point.get("point") or point.get("text") or point.get("claim") or
+            point.get("statement") or point.get("idea") or point.get("value") or ""
+        ).strip() if isinstance(point, dict) else str(point).strip()
         if len(text) >= 20:
             claims.append((topic, text[:1000]))
     if not claims:
@@ -416,6 +451,10 @@ def _snapshot_rows(run_id: str) -> list[dict]:
 def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
     """Rebuild claims from frozen content plus this run's analysis snapshot."""
     rows = _snapshot_rows(run_id)
+    if not rows:
+        raise ValueError(
+            "This analysis run has no frozen evidence snapshot. Start a new analysis run to capture the project's current articles."
+        )
     candidates = []
     embedding_cache: dict[str, list[float]] = {}
     for row in rows:
@@ -436,6 +475,11 @@ def _generate_for_run(run_id: str, project_id: int, generation: int) -> dict:
                 "fingerprint": fingerprint,
                 "embedding": embedding_cache[cache_key],
             })
+    if not candidates:
+        raise ValueError(
+            f"No claims could be extracted from the {len(rows)} frozen article(s). "
+            "Check that analysis summaries or key points exist for this run."
+        )
     grouped = _group_claim_candidates(candidates)
 
     db.execute("update evidence_claims set active=false where run_id=%s", (str(run_id),))
