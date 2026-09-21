@@ -262,6 +262,20 @@ try:
 except ValueError:
     ARTICLE_RELEVANCE_BATCH_SIZE = 50
 
+EVIDENCE_RELEVANCE_MODE = os.environ.get("EVIDENCE_RELEVANCE_MODE", "llm").strip().lower()
+if EVIDENCE_RELEVANCE_MODE not in {"llm", "embedding"}:
+    EVIDENCE_RELEVANCE_MODE = "llm"
+try:
+    EVIDENCE_RELEVANCE_DIRECT_THRESHOLD = float(os.environ.get("EVIDENCE_RELEVANCE_DIRECT_THRESHOLD", "0.78"))
+    EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD = float(os.environ.get("EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD", "0.72"))
+except ValueError:
+    EVIDENCE_RELEVANCE_DIRECT_THRESHOLD = 0.78
+    EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD = 0.72
+EVIDENCE_RELEVANCE_DIRECT_THRESHOLD = max(-1.0, min(1.0, EVIDENCE_RELEVANCE_DIRECT_THRESHOLD))
+EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD = max(-1.0, min(
+    EVIDENCE_RELEVANCE_DIRECT_THRESHOLD, EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD
+))
+
 # How long an analysis run may sit in queued/running before a new run for the
 # same project is allowed to start anyway. Without this, a backend that died
 # mid-run would block that project's analysis forever.

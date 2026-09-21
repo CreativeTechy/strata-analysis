@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import db
 import config
-from embeddings import cosine_similarity, get_embedding
+from embeddings import build_project_embedding_text, cosine_similarity, get_embedding, get_embeddings
 from llm_client import LLMError, chat_completion
 from psycopg.types.json import Jsonb
 from services.projects.projects_store import get_project
@@ -362,6 +362,39 @@ def _classify_relevance_resilient(scope: dict, groups: list[dict]) -> dict[str, 
 
 def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
     """Use versioned cache entries and bounded LLM batches."""
+    if config.EVIDENCE_RELEVANCE_MODE == "embedding":
+        embedded_scope = get_embedding(build_project_embedding_text(scope), role="query")
+        scope_vector = embedded_scope.get("embedding_json") or []
+        results = {}
+        for group in groups:
+            key = group["fingerprint"]
+            claim_vector = (group.get("canonical") or {}).get("embedding") or []
+            if not scope_vector or not claim_vector:
+                results[key] = {
+                    "relevance": "uncertain",
+                    "explanation": "A local relevance embedding was unavailable; review this claim manually.",
+                    "score": 0.0,
+                    "status": "failed",
+                }
+                continue
+            score = cosine_similarity(scope_vector, claim_vector)
+            if score >= config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD:
+                relevance = "direct"
+                explanation = "Local semantic similarity is above the direct-relevance threshold."
+            elif score >= config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD:
+                relevance = "contextual"
+                explanation = "Local semantic similarity indicates relevant project context."
+            else:
+                relevance = "unrelated"
+                explanation = "Local semantic similarity is below the project-relevance threshold."
+            results[key] = {
+                "relevance": relevance,
+                "explanation": explanation,
+                "score": score,
+                "status": "success",
+            }
+        return results
+
     digest = _scope_hash(scope)
     model = str(config.LLM_CHAT_MODEL or "")
     by_fingerprint = {group["fingerprint"]: group for group in groups}
@@ -693,26 +726,29 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
         raise ValueError(
             "This analysis run has no frozen evidence snapshot. Start a new analysis run to capture the project's current articles."
         )
-    candidates = []
-    embedding_cache: dict[str, list[float]] = {}
+    raw_candidates = []
     for row in rows:
         if row.get("provenance_status") == "rejected":
             continue
         for topic, claim_text in _claim_candidates(row):
-            fingerprint = _fingerprint(topic, claim_text)
-            cache_key = claim_text.strip().lower()
-            if cache_key not in embedding_cache:
-                embedded = get_embedding(claim_text)
-                embedding_cache[cache_key] = embedded.get("embedding_json") or []
-            candidates.append({
-                "row": row,
-                "topic": topic,
-                "claim": claim_text,
-                "type": _claim_type(claim_text),
-                "direction": _direction(claim_text),
-                "fingerprint": fingerprint,
-                "embedding": embedding_cache[cache_key],
-            })
+            raw_candidates.append((row, topic, claim_text))
+    unique_claims = list(dict.fromkeys(claim_text for _, _, claim_text in raw_candidates))
+    embedded_claims = get_embeddings(unique_claims)
+    embedding_cache = {
+        claim_text.strip().lower(): embedded.get("embedding_json") or []
+        for claim_text, embedded in zip(unique_claims, embedded_claims)
+    }
+    candidates = []
+    for row, topic, claim_text in raw_candidates:
+        candidates.append({
+            "row": row,
+            "topic": topic,
+            "claim": claim_text,
+            "type": _claim_type(claim_text),
+            "direction": _direction(claim_text),
+            "fingerprint": _fingerprint(topic, claim_text),
+            "embedding": embedding_cache.get(claim_text.strip().lower(), []),
+        })
     if not candidates:
         raise ValueError(
             f"No claims could be extracted from the {len(rows)} frozen article(s). "

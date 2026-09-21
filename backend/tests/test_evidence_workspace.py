@@ -213,7 +213,7 @@ class EvidenceSnapshotTests(unittest.TestCase):
         }
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
-             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
              patch.object(workspace, "_group_claim_candidates", return_value=[{"canonical": candidate, "fingerprint": "fuel-price", "items": [candidate]}]), \
              patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
              patch.object(workspace, "_classify_relevance", return_value={"fuel-price": {"relevance": "direct", "explanation": "Directly addresses fuel prices.", "score": 0.99, "status": "success"}}), \
@@ -244,6 +244,24 @@ class EvidenceSnapshotTests(unittest.TestCase):
             result = workspace._classify_relevance_batch({"name": "Lebanon Fuel Crisis Monitor"}, [group])
         self.assertEqual(result["claim-1"]["relevance"], "uncertain")
         self.assertEqual(result["claim-1"]["status"], "failed")
+
+    def test_embedding_relevance_mode_classifies_without_llm(self):
+        groups = [
+            {"fingerprint": "direct", "canonical": {"embedding": [1.0, 0.0]}},
+            {"fingerprint": "context", "canonical": {"embedding": [0.75, 0.66]}},
+            {"fingerprint": "other", "canonical": {"embedding": [0.0, 1.0]}},
+        ]
+        with patch.object(workspace.config, "EVIDENCE_RELEVANCE_MODE", "embedding"), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_DIRECT_THRESHOLD", 0.9), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD", 0.7), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
+             patch.object(workspace, "chat_completion") as chat:
+            result = workspace._classify_relevance({"name": "Fuel"}, groups)
+
+        self.assertEqual(result["direct"]["relevance"], "direct")
+        self.assertEqual(result["context"]["relevance"], "contextual")
+        self.assertEqual(result["other"]["relevance"], "unrelated")
+        chat.assert_not_called()
 
     def test_failed_relevance_batch_is_split_to_isolate_transient_failure(self):
         groups = [{"fingerprint": key} for key in ("one", "two")]
@@ -277,7 +295,7 @@ class EvidenceSnapshotTests(unittest.TestCase):
         }}
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
-             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
              patch.object(workspace, "_group_claim_candidates", return_value=[{
                  "canonical": candidate, "fingerprint": "fuel-price", "items": [candidate],
              }]), \
