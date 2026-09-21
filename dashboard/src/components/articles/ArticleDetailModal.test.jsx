@@ -44,6 +44,19 @@ describe('ArticleDetailModal', () => {
     expect(screen.getByText(/confidence 90%/)).toBeInTheDocument()
   })
 
+  it('renders the region with its confidence', () => {
+    render(<ArticleDetailModal {...baseProps({
+      data: {
+        analysis_status: 'success', sentiment: 'positive', article_category: 'review',
+        writer_tone: 'enthusiastic', article_tone: 'skeptical', overall_tone: 'mixed',
+        region: 'United States',
+        confidence: { region: 0.9 },
+      },
+    })} />)
+    expect(screen.getByText('United States')).toBeInTheDocument()
+    expect(screen.getByText(/confidence 90%/)).toBeInTheDocument()
+  })
+
   it('shows the reprocess button only when canReprocess is true', () => {
     const { rerender } = render(<ArticleDetailModal {...baseProps({ canReprocess: false })} />)
     expect(screen.queryByRole('button', { name: 'Reprocess' })).not.toBeInTheDocument()

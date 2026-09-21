@@ -55,7 +55,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [projectFilter, setProjectFilter] = useState(() => (
     searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
   ));
-  const [sourceFilter, setSourceFilter] = useState('all');
+  // Lets a link from the Sources tab (SourcesPage.jsx) deep-link straight
+  // into the matching document's articles, the same way `search`/`project_id`
+  // above pre-fill from the URL.
+  const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -138,7 +141,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
     [documents],
   );
 
+  // Skips the mount-time run so a `?source=` deep link (see sourceFilter's
+  // initializer above) survives instead of being wiped by this effect firing
+  // once on the very render that set it.
+  const skipNextSourceReset = useRef(true);
   useEffect(() => {
+    if (skipNextSourceReset.current) {
+      skipNextSourceReset.current = false;
+      return;
+    }
     setSourceFilter('all');
   }, [projectFilter]);
 

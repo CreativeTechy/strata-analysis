@@ -1,10 +1,14 @@
 import { motion } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, Info, Trash2 } from 'lucide-react';
 import { computeOverallTone } from '../../lib/tone.js';
-import { prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches } from '../../lib/articleHelpers.jsx';
+import {
+  prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches,
+  articleSourceLink, articleSourceLabel,
+} from '../../lib/articleHelpers.jsx';
 
 // One card in the grid ("Cards") view mode.
 export default function ArticleCard({ article, search, index, isRefreshing, canDelete, onShowDetails, onDelete }) {
+  const sourceLink = articleSourceLink(article);
   return (
     <motion.div
       layout
@@ -81,9 +85,13 @@ export default function ArticleCard({ article, search, index, isRefreshing, canD
       </div>
 
       <h3 className="article-title">
-        <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-          {highlightMatches(article.title || 'Untitled article', search)} <ExternalLink size={14} style={{ opacity: 0.5 }} />
-        </a>
+        {sourceLink ? (
+          <a href={sourceLink} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+            {highlightMatches(article.title || 'Untitled article', search)} <ExternalLink size={14} style={{ opacity: 0.5 }} />
+          </a>
+        ) : (
+          highlightMatches(article.title || 'Untitled article', search)
+        )}
       </h3>
 
       <p className="article-summary">
@@ -122,7 +130,7 @@ export default function ArticleCard({ article, search, index, isRefreshing, canD
         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <Calendar size={14} /> {articleDate(article.published)}
         </span>
-        <span>{article.source || 'Unknown source'}</span>
+        <span>{articleSourceLabel(article)}</span>
       </div>
     </motion.div>
   );

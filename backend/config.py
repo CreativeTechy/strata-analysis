@@ -332,6 +332,14 @@ ENTITY_EXTRACTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("ENTITY_EXTRACTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
 
+# Region detection (analysis/region_detection.py) is a deterministic local
+# stage, not a model - this threshold only controls the region_low_confidence
+# flag used for logging/observability. The raw region/region_confidence are
+# always stored regardless of this threshold.
+REGION_DETECTION_CONFIDENCE_THRESHOLD = float(
+    os.environ.get("REGION_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
+)
+
 # Chunking for long article text: applied uniformly by article_prep.py before
 # handing text to any model with a limited context window.
 ANALYSIS_CHUNK_SIZE_CHARS = int(os.environ.get("ANALYSIS_CHUNK_SIZE_CHARS", "2000") or 2000)
@@ -406,6 +414,14 @@ IDEA_SIMILARITY_THRESHOLD = float(os.environ.get("IDEA_SIMILARITY_THRESHOLD", "0
 # score lower on cosine similarity than full sentences even when they mean
 # the same thing - hence the slightly lower bar than IDEA_SIMILARITY_THRESHOLD.
 SEGMENT_SIMILARITY_THRESHOLD = float(os.environ.get("SEGMENT_SIMILARITY_THRESHOLD", "0.80") or 0.80)
+
+# services/articles/idea_comparisons.py: how many of a project's idea_clusters
+# (highest frequency_estimate first) get a comparison card per regeneration.
+# Each qualifying cluster costs one LLM call, so this bounds that the same way
+# competitor findings cap evidence per competitor - a project with hundreds of
+# clusters must not turn one "Regenerate" click into hundreds of calls against
+# a local model.
+IDEA_COMPARISON_MAX_CLUSTERS = int(os.environ.get("IDEA_COMPARISON_MAX_CLUSTERS", "20") or 20)
 
 # services/competitors/competitor_analysis.py's run_analysis_job(): one LLM
 # call per competitor, run through a small thread pool for the same reason

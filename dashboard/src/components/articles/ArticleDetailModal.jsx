@@ -79,6 +79,14 @@ export default function ArticleDetailModal({
           <div>
             <strong>Overall tone:</strong> {prettyLabel(data.overall_tone)}
           </div>
+          <div>
+            <strong>Region:</strong> {prettyLabel(data.region)}
+            {confidencePct(data.confidence?.region) && (
+              <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                (confidence {confidencePct(data.confidence.region)})
+              </span>
+            )}
+          </div>
           {data.source_language ? (
             <div>
               <strong>Source language:</strong> {data.source_language.toUpperCase()}

@@ -263,15 +263,16 @@ def _replace_idea_clusters_for_article(article_id, project_id, frequent_ideas):
             if idea_type not in {"complaint", "praise", "suggestion", "issue"}:
                 idea_type = "issue"
             category = str(item.get("category") or "").strip()
+            value = str(item.get("value") or "").strip() or None
 
             cluster_id = _resolve_idea_cluster_id(project_id, idea, idea_type, category)
             if cluster_id is None:
                 continue
             new_cluster_ids.add(cluster_id)
             db.execute(
-                "insert into idea_cluster_articles (idea_cluster_id, article_id) values (%s, %s) "
+                "insert into idea_cluster_articles (idea_cluster_id, article_id, value) values (%s, %s, %s) "
                 "on conflict do nothing",
-                (cluster_id, article_id),
+                (cluster_id, article_id, value),
             )
 
         for cluster_id in previous_ids | new_cluster_ids:

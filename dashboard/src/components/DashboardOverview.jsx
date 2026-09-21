@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, ChevronRight, FileText, Gauge, Network, Sparkles, TrendingDown, TrendingUp,
+  Activity, CheckCircle2, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
@@ -9,6 +10,7 @@ import {
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import { getIdeaComparisons } from '../api/projectsApi.js';
 
 const PERIODS = [
   { key: '7d', label: 'Last 7 days' },
@@ -173,6 +175,68 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
+
+  const [ideaComparisons, setIdeaComparisons] = useState([]);
+  const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
+  const [ideaComparisonsError, setIdeaComparisonsError] = useState('');
+  const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
+  const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
+  // Set right before bumping ideaComparisonsNonce from the Regenerate button
+  // below, and consumed (and cleared) by the effect - the same
+  // forceRegenerateRef/nonce pattern StatsOverview.jsx's trend-summary
+  // refresh button uses. Routing the regenerate call through this effect
+  // (instead of a standalone async click handler) means a project switch
+  // while a regenerate call is still in flight aborts/ignores that response
+  // instead of letting it land on top of the now-selected project's data.
+  const forceIdeaComparisonsRegenerateRef = useRef(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    async function loadIdeaComparisons() {
+      if (!selectedProjectId) {
+        setIdeaComparisons([]);
+        return;
+      }
+      const forceRegenerate = forceIdeaComparisonsRegenerateRef.current;
+      forceIdeaComparisonsRegenerateRef.current = false;
+      if (forceRegenerate) setIdeaComparisonsRegenerating(true);
+      else setIdeaComparisonsLoading(true);
+      setIdeaComparisonsError('');
+      try {
+        const { ok, data } = await getIdeaComparisons(
+          selectedProjectId,
+          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined },
+          controller.signal,
+        );
+        if (cancelled) return;
+        setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
+        if (!ok) setIdeaComparisonsError(data?.error || 'Failed to load idea comparisons.');
+      } catch (err) {
+        if (!cancelled && err?.name !== 'AbortError') {
+          setIdeaComparisons([]);
+          setIdeaComparisonsError(err?.message || 'Failed to load idea comparisons.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIdeaComparisonsLoading(false);
+          setIdeaComparisonsRegenerating(false);
+        }
+      }
+    }
+    loadIdeaComparisons();
+    return () => { cancelled = true; controller.abort(); };
+  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
+
+  // Spends an LLM call per qualifying idea cluster (see
+  // services/articles/idea_comparisons.py), so this only runs on an explicit
+  // click - never automatically on a page view - the same restraint
+  // getTrendSummary()'s refresh button uses.
+  const regenerateIdeaComparisons = () => {
+    if (!selectedProjectId) return;
+    forceIdeaComparisonsRegenerateRef.current = true;
+    setIdeaComparisonsNonce((n) => n + 1);
+  };
 
   return <div className="content-shell intelligence-page">
     <header className="intelligence-header">
@@ -402,6 +466,93 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card"><h3>Where it’s being said</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong>{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{item.total.toLocaleString()}</strong><small>{item.total === 1 ? 'article' : 'articles'}</small></div></div>)}</div></article>
           <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
           <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
+        </section>
+
+        <section className="intelligence-idea-comparisons-grid">
+          <article className="glass-card intelligence-card intelligence-idea-comparisons-card">
+            <div className="intelligence-card-heading">
+              <div>
+                <h3>Idea comparisons across sources</h3>
+                <span>Where two or more sources cover the same idea, side by side</span>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={regenerateIdeaComparisons}
+                disabled={ideaComparisonsRegenerating || !selectedProjectId}
+                style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+              >
+                {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                Regenerate
+              </button>
+            </div>
+            {ideaComparisonsError ? (
+              <p className="intelligence-empty">{ideaComparisonsError}</p>
+            ) : ideaComparisonsLoading ? (
+              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
+            ) : ideaComparisons.length === 0 ? (
+              <div className="intelligence-idea-comparison-empty">
+                <Lightbulb size={20} />
+                <p>
+                  No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
+                </p>
+              </div>
+            ) : (
+              <div className="intelligence-idea-comparison-list">
+                {ideaComparisons.map((comparison) => (
+                  <div
+                    key={comparison.idea_cluster_id}
+                    className={`intelligence-idea-comparison-item ${comparison.diverges ? 'diverges' : 'agrees'}`}
+                  >
+                    <div className="intelligence-idea-comparison-header">
+                      <div className="intelligence-idea-comparison-title">
+                        <Lightbulb size={14} className="intelligence-idea-comparison-icon" />
+                        <strong>{comparison.idea}</strong>
+                      </div>
+                      {comparison.diverges ? (
+                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
+                      ) : (
+                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
+                      )}
+                    </div>
+                    {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                    <div className="intelligence-idea-comparison-sources">
+                      {(comparison.sources || []).map((source, index) => {
+                        const content = (
+                          <>
+                            <span className="intelligence-idea-comparison-source-label">{source.source_label}</span>
+                            {source.value ? (
+                              <span className="intelligence-idea-comparison-source-value">{source.value}</span>
+                            ) : (
+                              <span className="intelligence-idea-comparison-source-novalue">no figure stated</span>
+                            )}
+                            {source.url ? <ExternalLink size={12} className="intelligence-idea-comparison-source-link-icon" /> : null}
+                          </>
+                        );
+                        const key = `${comparison.idea_cluster_id}-${source.article_id ?? index}`;
+                        return source.url ? (
+                          <a
+                            key={key}
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="intelligence-idea-comparison-source"
+                            title={source.title || source.source_label}
+                          >
+                            {content}
+                          </a>
+                        ) : (
+                          <span key={key} className="intelligence-idea-comparison-source" title={source.title || source.source_label}>
+                            {content}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
         </section>
 
         <section className="intelligence-bottom-grid">

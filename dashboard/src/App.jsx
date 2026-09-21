@@ -7,6 +7,7 @@ import ProjectsPage from './components/ProjectsPage';
 import ProjectDetailPage from './components/ProjectDetailPage';
 import EvidenceWorkspacePage from './components/EvidenceWorkspacePage';
 import TopicDetailPage from './components/TopicDetailPage';
+import SourcesPage from './components/SourcesPage';
 import IntelligencePage from './components/IntelligencePage';
 import CompetitorStudiesPage from './components/CompetitorStudiesPage';
 import CompetitorOnboarding from './components/CompetitorOnboarding';
@@ -390,6 +391,7 @@ export default function App() {
           <Route path="/dashboard" element={renderDashboardView()} />
           <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
+          <Route path="/sources" element={<SourcesPage projectId={selectedProjectId} projects={opinionMonitorProjects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />
           <Route path="/analysis" element={<AnalysisPage projects={projects} />} />
@@ -471,7 +473,7 @@ export default function App() {
             path="/competitors/new"
             element={(
               <RequirePermission permissions={['competitors.manage']}>
-                <CompetitorOnboarding />
+                <CompetitorOnboarding onStudyCreated={refreshProjects} />
               </RequirePermission>
             )}
           />

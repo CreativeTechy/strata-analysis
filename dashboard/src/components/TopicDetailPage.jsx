@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { getArticleAnalysis } from '../api/articlesApi.js';
+import { isSyntheticUrl, articleSourceLabel } from '../lib/articleHelpers.jsx';
 const TYPE_COLORS = { praise: '#16a34a', complaint: '#e11d48', issue: '#e11d48', suggestion: '#f59e0b' };
 const ARTICLE_DISPLAY_CAP = 200;
 
@@ -323,7 +324,8 @@ export default function TopicDetailPage() {
             {displayedSources.map((source) => {
               const detail = source.id != null ? articleDetails[source.id] : null;
               const sentiment = detail?.data?.sentiment || source.sentiment;
-              const url = detail?.data?.url || source.url;
+              const rawUrl = detail?.data?.url || source.url;
+              const url = isSyntheticUrl(rawUrl) ? null : rawUrl;
               return (
                 <div
                   key={source.id ?? source.url}
@@ -341,7 +343,7 @@ export default function TopicDetailPage() {
                       {source.title || source.url} <FileText size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexShrink: 0 }}>
-                      {source.source ? <span>{source.source}</span> : null}
+                      {source.source ? <span>{articleSourceLabel({ url: rawUrl, source: source.source })}</span> : null}
                       {sentiment ? <span className="admin-tag muted">{sentiment}</span> : null}
                       <span>{formatDate(sourceDate(source))}</span>
                     </span>

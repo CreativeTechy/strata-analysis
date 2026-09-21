@@ -70,6 +70,34 @@ class RelevanceScoreTests(unittest.TestCase):
         self.assertEqual(normalize.normalize_relevance_score(None), 0)
 
 
+class NormalizeRegionAliasTests(unittest.TestCase):
+    """normalize_region() canonicalizes common abbreviations/demonyms via
+    services/competitors/countries.py's COUNTRY_ALIASES, not just exact
+    country names/codes - see region_detection.py for the independent
+    per-article stage that also relies on this."""
+
+    def test_us_abbreviations_and_demonyms_canonicalize(self):
+        for value in ("US", "USA", "U.S.", "U.S.A.", "America", "American", "us"):
+            self.assertEqual(normalize.normalize_region(value), "United States")
+
+    def test_uk_abbreviations_and_demonyms_canonicalize(self):
+        for value in ("UK", "U.K.", "Britain", "British", "England", "english"):
+            self.assertEqual(normalize.normalize_region(value), "United Kingdom")
+
+    def test_other_demonyms_canonicalize(self):
+        self.assertEqual(normalize.normalize_region("Emirati"), "United Arab Emirates")
+        self.assertEqual(normalize.normalize_region("Saudi"), "Saudi Arabia")
+        self.assertEqual(normalize.normalize_region("Japanese"), "Japan")
+
+    def test_non_alias_free_text_passes_through_unchanged(self):
+        self.assertEqual(normalize.normalize_region("Middle East"), "Middle East")
+        self.assertEqual(normalize.normalize_region("Austin, Texas"), "Austin, Texas")
+
+    def test_blank_stays_unknown(self):
+        self.assertEqual(normalize.normalize_region(""), "unknown")
+        self.assertEqual(normalize.normalize_region(None), "unknown")
+
+
 class PeopleOpinionsTests(unittest.TestCase):
     def test_normalizes_and_dedupes(self):
         result = normalize.normalize_people_opinions([

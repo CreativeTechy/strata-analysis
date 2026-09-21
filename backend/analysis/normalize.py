@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from analysis import labels
-from services.competitors.countries import COUNTRIES
+from services.competitors.countries import COUNTRIES, resolve_country_alias
 
 VALID_CATEGORIES = set(labels.VALID_CATEGORIES)
 VALID_TONES = set(labels.VALID_TONES)
@@ -91,10 +91,13 @@ def normalize_age_range(value) -> str:
 def normalize_region(value) -> str:
     """Best-effort canonicalization: a known country name/code matches to its
     canonical form (see services/competitors/countries.py, already used the
-    same way for competitor target countries); anything else is passed
-    through as trimmed free text (city, "Middle East", ...) rather than
-    forced into the closed country list, since a quoted person's region
-    isn't always a country. Blank stays "unknown"."""
+    same way for competitor target countries), and a common abbreviation/
+    demonym (COUNTRY_ALIASES - "USA", "American", "UK", "British", ...)
+    resolves to that same canonical form so free-text model output doesn't
+    fragment into near-duplicates. Anything else is passed through as
+    trimmed free text (city, "Middle East", ...) rather than forced into the
+    closed country list, since a quoted person's region isn't always a
+    country. Blank stays "unknown"."""
     text = as_text(value)
     if not text:
         return labels.DEFAULT_REGION
@@ -106,6 +109,9 @@ def normalize_region(value) -> str:
     upper = text.upper()
     if upper in COUNTRIES:
         return COUNTRIES[upper]
+    alias_code = resolve_country_alias(text)
+    if alias_code:
+        return COUNTRIES[alias_code]
     return text
 
 
@@ -193,14 +199,20 @@ def normalize_frequent_ideas(value) -> list:
                 "type": type_value if type_value in _FREQUENT_IDEA_TYPES else "issue",
                 "category": as_text(item.get("category")),
                 "frequency_estimate": coerce_frequency_estimate(item.get("frequency_estimate", 1)),
+                "value": as_text(item.get("value")),
             })
         else:
             idea = as_text(item)
             if idea:
-                ideas.append({"idea": idea, "type": "issue", "category": "", "frequency_estimate": 1})
+                ideas.append({"idea": idea, "type": "issue", "category": "", "frequency_estimate": 1, "value": ""})
     deduped = []
     seen = set()
     for item in ideas:
+        # value is deliberately excluded from the key: two occurrences of the
+        # same idea with different stated values are still one idea for
+        # per-article dedup purposes (idea_clustering.py is where different
+        # values across different *articles* matter), so the first value seen
+        # on this article wins rather than spawning a near-duplicate entry.
         key = (item["idea"].lower(), item["type"], item["category"].lower())
         if key in seen:
             continue

@@ -61,6 +61,7 @@ DEFAULT_ENRICHMENT = {
     "article_tone": "neutral",
     "overall_tone": "neutral",
     "region": "unknown",
+    "region_confidence": 0.0,
     "gender": "unknown",
     "age_range": "unknown",
     "summary": "",

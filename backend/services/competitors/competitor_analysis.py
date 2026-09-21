@@ -55,6 +55,7 @@ from embeddings import cosine_similarity
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors import analysis_runs_store
+from services.competitors.idea_extraction import extract_frequent_ideas_for_documents
 
 logger = logging.getLogger(__name__)
 
@@ -1058,6 +1059,21 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     }
 
 
+def _regenerate_idea_comparisons(project_id: int) -> None:
+    """Refresh cross-source idea comparisons after a competitor analysis run -
+    the mirror of pipeline._regenerate_idea_comparisons for opinion-monitor
+    runs, now that extract_frequent_ideas_for_documents gives competitor
+    studies something for idea_clusters to hold. Best-effort: a failure here
+    (e.g. the LLM provider being down) must not turn an otherwise-successful
+    analysis run into a failed one."""
+    from services.articles.idea_comparisons import generate_idea_comparisons
+
+    try:
+        generate_idea_comparisons(project_id)
+    except Exception:
+        logger.exception("competitor analysis run for project %s: idea comparison regeneration failed", project_id)
+
+
 # --------------------------------------------------------------------------- #
 # Background job
 # --------------------------------------------------------------------------- #
@@ -1093,6 +1109,7 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
             return
 
         log(f"Scope: {len(resolved)} document{'' if len(resolved) == 1 else 's'}.")
+        extract_frequent_ideas_for_documents(project_id, resolved, log=log)
         result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log)
 
         # A provider failure is a failed run, not a run that generated zero
@@ -1106,6 +1123,7 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
 
         analysis_runs_store.record_covered_documents(run_id, resolved)
         analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
+        _regenerate_idea_comparisons(project_id)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
         log(f"Analysis failed: {exc}")
         analysis_runs_store.mark_failed(run_id, str(exc))
