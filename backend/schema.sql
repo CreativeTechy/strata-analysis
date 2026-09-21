@@ -222,6 +222,16 @@ create table if not exists public.pipeline_runs (
     updated_at           timestamptz not null default now()
 );
 
+-- `create table if not exists` does not add columns to an existing install.
+-- Keep the evolving baseline independently idempotent because migrate.py
+-- reapplies it before numbered migrations whenever its checksum changes.
+alter table public.pipeline_runs
+    add column if not exists articles_screened integer not null default 0,
+    add column if not exists articles_included integer not null default 0,
+    add column if not exists articles_excluded integer not null default 0,
+    add column if not exists articles_needs_review integer not null default 0,
+    add column if not exists screening_mode text;
+
 create index if not exists pipeline_runs_created_idx on public.pipeline_runs (created_at desc);
 create index if not exists pipeline_runs_status_idx on public.pipeline_runs (status);
 create index if not exists pipeline_runs_project_idx on public.pipeline_runs (project_id);
@@ -481,6 +491,21 @@ create table if not exists public.article_projects (
     constraint article_projects_manual_relevance_override_check
         check (manual_relevance_override is null or manual_relevance_override in ('include','exclude'))
 );
+
+alter table public.article_projects
+    add column if not exists relevance_decision text,
+    add column if not exists relevance_explanation text,
+    add column if not exists relevance_source text,
+    add column if not exists relevance_scope_hash text,
+    add column if not exists relevance_content_hash text,
+    add column if not exists relevance_model text,
+    add column if not exists relevance_rules_version text,
+    add column if not exists relevance_screened_at timestamptz,
+    add column if not exists manual_relevance_override text,
+    add column if not exists manual_relevance_reason text,
+    add column if not exists manual_relevance_reviewer_id bigint references public.users(id) on delete set null,
+    add column if not exists manual_relevance_reviewer_name text,
+    add column if not exists manual_relevance_updated_at timestamptz;
 
 create index if not exists article_projects_project_idx on public.article_projects (project_id);
 create index if not exists article_projects_article_idx on public.article_projects (article_id);

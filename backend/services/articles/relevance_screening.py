@@ -26,6 +26,14 @@ DECISIONS = {"accepted", "excluded", "needs_review"}
 OVERRIDE_DECISIONS = {"include", "exclude"}
 
 
+def _rules_version() -> str:
+    """Cache key includes tunable thresholds so calibration never goes stale."""
+    return (
+        f"{RULES_VERSION}:accept={config.ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:.4f}:"
+        f"exclude={config.ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD:.4f}"
+    )
+
+
 def _hash_text(value: str) -> str:
     normalized = " ".join(str(value or "").split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -178,7 +186,7 @@ def _persist_screening(project_id: int, row: dict, result: dict) -> None:
              where project_id=%s and article_id=%s""",
         (result.get("similarity_score"), result["decision"], result.get("explanation"),
          result.get("source"), result["scope_hash"], result["content_hash"],
-         config.EMBEDDING_MODEL, RULES_VERSION, int(project_id), int(row["id"])),
+         config.EMBEDDING_MODEL, result["rules_version"], int(project_id), int(row["id"])),
     )
 
 
@@ -198,7 +206,7 @@ def _record_run_screenings(run_id: str, project_id: int, results: list[dict]) ->
             [
                 (run_id, int(project_id), item["article_id"], item["decision"], item["included"],
                  item.get("similarity_score"), item.get("source"), item.get("explanation"),
-                 item["scope_hash"], item["content_hash"], RULES_VERSION, config.EMBEDDING_MODEL)
+                 item["scope_hash"], item["content_hash"], item["rules_version"], config.EMBEDDING_MODEL)
                 for item in results
             ],
         )
@@ -224,13 +232,15 @@ def screen_project_articles(project_id: int, run_id: str, mode: str | None = Non
 
     project = get_project(project_id) or {}
     scope_digest = _scope_hash(project)
+    rules_version = _rules_version()
     project_vector = _project_vector(project) if mode != "off" and project.get("id") else []
     results, pending, borderline = [], [], []
     for row in rows:
         article_id = int(row["id"])
         content_digest = _content_hash(row)
         override = str(row.get("manual_relevance_override") or "").strip().lower()
-        common = {"article_id": article_id, "scope_hash": scope_digest, "content_hash": content_digest}
+        common = {"article_id": article_id, "scope_hash": scope_digest,
+                  "content_hash": content_digest, "rules_version": rules_version}
         if override in OVERRIDE_DECISIONS:
             results.append({**common, "decision": "accepted" if override == "include" else "excluded",
                             "similarity_score": row.get("similarity_score"), "source": "manual",
@@ -244,7 +254,7 @@ def screen_project_articles(project_id: int, run_id: str, mode: str | None = Non
             row.get("relevance_scope_hash") == scope_digest
             and row.get("relevance_content_hash") == content_digest
             and row.get("relevance_model") == config.EMBEDDING_MODEL
-            and row.get("relevance_rules_version") == RULES_VERSION
+            and row.get("relevance_rules_version") == rules_version
             and row.get("relevance_decision") in DECISIONS
         )
         if cache_valid:

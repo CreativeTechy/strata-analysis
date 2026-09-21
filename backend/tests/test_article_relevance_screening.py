@@ -46,7 +46,7 @@ class ArticleRelevanceScreeningTests(unittest.TestCase):
             patcher.stop()
 
     def test_enforcement_excludes_clear_misses_and_keeps_uncertain_items(self):
-        vectors = {1: [1.0, 0.0], 2: [0.0, 1.0], 3: [0.5, 0.8660254]}
+        vectors = {1: [1.0, 0.0], 2: [0.0, 1.0], 3: [0.75, 0.6614378]}
         with patch.object(screening, "_article_vectors", return_value=vectors), \
              patch.object(screening, "_classify_borderline", return_value={
                  3: {"relevance": "uncertain", "score": 0.4, "explanation": "Needs a person."},
