@@ -257,10 +257,10 @@ if ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD > ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:
     ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = ARTICLE_RELEVANCE_ACCEPT_THRESHOLD
 try:
     ARTICLE_RELEVANCE_BATCH_SIZE = max(
-        1, int(os.environ.get("ARTICLE_RELEVANCE_BATCH_SIZE", "20") or 20)
+        1, int(os.environ.get("ARTICLE_RELEVANCE_BATCH_SIZE", "50") or 50)
     )
 except ValueError:
-    ARTICLE_RELEVANCE_BATCH_SIZE = 20
+    ARTICLE_RELEVANCE_BATCH_SIZE = 50
 
 # How long an analysis run may sit in queued/running before a new run for the
 # same project is allowed to start anyway. Without this, a backend that died

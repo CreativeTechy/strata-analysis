@@ -133,7 +133,7 @@ def _classify_borderline(project: dict, rows: list[dict]) -> dict[int, dict]:
             "keywords": project.get("keywords") or [],
         },
         "articles": [
-            {"id": int(row["id"]), "title": row.get("title"), "excerpt": str(row.get("text") or "")[:3500]}
+            {"id": int(row["id"]), "title": row.get("title"), "excerpt": str(row.get("text") or "")[:800]}
             for row in rows
         ],
         "instructions": (
@@ -152,7 +152,7 @@ def _classify_borderline(project: dict, rows: list[dict]) -> dict[int, dict]:
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
             ],
             temperature=0,
-            max_tokens=max(600, len(rows) * 100),
+            max_tokens=max(600, len(rows) * 70),
             json_mode=True,
         )
         parsed = _validate_llm_results(json.loads(raw), {int(row["id"]) for row in rows})
