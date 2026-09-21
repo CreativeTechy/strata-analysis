@@ -5,6 +5,23 @@ from services.evidence import workspace
 
 
 class EvidenceRuleTests(unittest.TestCase):
+    def test_generation_selection_defaults_to_published_not_newest_failed_attempt(self):
+        generations = [
+            {"generation": 4, "status": "failed", "published_at": None},
+            {"generation": 3, "status": "success", "published_at": "2026-09-21"},
+        ]
+        self.assertEqual(workspace._select_generation(generations, None, 3, False), 3)
+
+    def test_generation_selection_allows_opening_failed_attempt(self):
+        generations = [
+            {"generation": 4, "status": "failed", "published_at": None},
+            {"generation": 3, "status": "success", "published_at": "2026-09-21"},
+        ]
+        self.assertEqual(workspace._select_generation(generations, 4, 3, False), 4)
+
+    def test_generation_selection_supports_legacy_evidence(self):
+        self.assertEqual(workspace._select_generation([], None, 0, True), 0)
+
     def test_forecast_is_classified_separately(self):
         self.assertEqual(workspace._claim_type("Production will recover next quarter."), "forecast")
 

@@ -497,6 +497,7 @@ def add_project(background_tasks: BackgroundTasks, payload: dict, user: dict = D
 def project_evidence_workspace(
     project_id: int,
     run_id: str | None = None,
+    generation: int | None = None,
     topic: str | None = None,
     search: str | None = None,
     assessment: str | None = None,
@@ -512,7 +513,7 @@ def project_evidence_workspace(
 ):
     _ensure_project_visible(project_id, user)
     return list_evidence_workspace(
-        project_id, run_id=run_id, topic=topic, search=search, assessment=assessment,
+        project_id, run_id=run_id, generation=generation, topic=topic, search=search, assessment=assessment,
         claim_type=claim_type, publisher=publisher, review_status=review_status,
         provenance_status=provenance_status, coverage=coverage, relevance_filter=relevance,
         limit=limit, offset=offset,

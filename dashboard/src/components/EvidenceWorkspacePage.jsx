@@ -102,6 +102,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const canRetry = hasPermission('pipeline.run');
   const project = projects.find((item) => Number(item.id) === Number(projectId));
   const runId = search.get('run_id') || '';
+  const generation = search.get('generation') || '';
   const topic = search.get('topic') || '';
   const searchText = search.get('search') || '';
   const assessmentFilter = search.get('assessment') || '';
@@ -151,11 +152,11 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     setSearch(next, { replace: true });
   };
 
-  const load = async (signal) => {
+  const load = async (signal, generationOverride = generation) => {
     setLoading(true); setError('');
     try {
       const result = await getEvidenceWorkspace(projectId, {
-        run_id: runId, topic, search: searchText, assessment: assessmentFilter,
+        run_id: runId, generation: generationOverride, topic, search: searchText, assessment: assessmentFilter,
         claim_type: typeFilter, publisher: publisherFilter, review_status: reviewFilter,
         provenance_status: provenanceFilter, coverage: coverageFilter,
         relevance: relevanceFilter,
@@ -175,13 +176,13 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load(controller.signal);
     return () => controller.abort();
-  }, [projectId, runId, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, runId, generation, topic, searchText, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter, offset, view, matrixPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // This clears details that belong to the previous URL-scoped claim set.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected(null); setComparison(null); setProvenanceTarget(null); setMatrixDetail(null);
-  }, [runId, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter]);
+  }, [runId, generation, topic, assessmentFilter, typeFilter, publisherFilter, reviewFilter, provenanceFilter, coverageFilter, relevanceFilter]);
 
   useEffect(() => {
     if (!data?.scope || editingScope) return;
@@ -267,8 +268,10 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     if (!data?.selected_run_id) return;
     setRetrying(true);
     try {
-      await retryEvidenceRun(projectId, data.selected_run_id); await load();
-      window.setTimeout(() => load(), 1200);
+      await retryEvidenceRun(projectId, data.selected_run_id);
+      updateFilters({ generation: '' });
+      await load(undefined, '');
+      window.setTimeout(() => load(undefined, ''), 1200);
     }
     catch (err) { setError(err?.message || 'Failed to rebuild evidence.'); }
     finally { setRetrying(false); }
@@ -298,6 +301,8 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     (run) => String(run.id) === String(data?.selected_run_id),
   );
   const selectedRunActive = ['queued', 'running'].includes(selectedRunRecord?.status);
+  const selectedGeneration = data?.selected_generation_status;
+  const selectedGenerationPublished = Boolean(data?.is_selected_generation_published);
   const evidenceButtonLabel = selectedRunRecord?.evidence_status ? 'Rebuild evidence' : 'Build evidence';
   const assessmentCards = useMemo(() => Object.entries(overview.assessment_counts || {}), [overview.assessment_counts]);
   const matrix = data?.source_matrix || { publishers: [], rows: [] };
@@ -398,7 +403,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       </section> : null}
 
       <div className="glass-card evidence-filters">
-        <label>Analysis run<select value={data?.selected_run_id || runId} onChange={(event) => updateFilters({ run_id: event.target.value, topic: '' })}>
+        <label>Analysis run<select value={data?.selected_run_id || runId} onChange={(event) => updateFilters({ run_id: event.target.value, generation: '', topic: '' })}>
           {(data?.runs || []).map((run) => <option key={run.id} value={run.id}>Run {run.run_number} · {formatDateTime(run.created_at)} · {run.claim_count} claims · {run.document_count} documents</option>)}
         </select></label>
         <label>Topic<select value={topic} onChange={(event) => updateFilters({ topic: event.target.value })}>
@@ -425,32 +430,37 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         </select></label></div> : null}
       </div>
 
+      {(data?.generation_tabs || []).length ? <section className="glass-card evidence-generation-panel">
+        <header><div><strong>Evidence runs</strong><span>Open a completed run to review its saved claims. Rebuilding keeps the last published result available.</span></div></header>
+        <div className="evidence-generation-tabs" role="tablist" aria-label="Evidence processing runs">
+          {data.generation_tabs.map((item) => {
+            const active = Number(data.selected_generation) === Number(item.generation);
+            const relevant = Number(item.direct_count || 0) + Number(item.contextual_count || 0);
+            return <button type="button" role="tab" aria-selected={active} className={active ? 'active' : ''} key={item.generation} onClick={() => updateFilters({ generation: item.generation })}>
+              <span className={`evidence-generation-status ${item.status}`}>{item.status}</span>
+              <strong>{item.legacy ? 'Legacy evidence' : `Evidence #${item.generation}`}</strong>
+              <small>{formatDateTime(item.started_at || item.created_at)}{item.status === 'success' && !item.legacy ? ` · ${relevant} relevant claims` : ''}</small>
+              {Number(data.active_generation) === Number(item.generation) ? <b>Published</b> : null}
+            </button>;
+          })}
+        </div>
+      </section> : null}
+
       {error ? <div className="evidence-error">{error}</div> : null}
       {selectedRunRecord && !selectedRunRecord.evidence_status
         ? <div className="glass-card evidence-empty"><FileSearch size={22} /><strong>Evidence has not been built for this run</strong><span>Build it from the run’s frozen article snapshot. If this is a legacy run without a snapshot, start a new analysis run.</span></div>
         : null}
-      {selectedRunRecord?.evidence_status === 'failed'
-        ? <div className="evidence-error">Evidence processing failed: {selectedRunRecord.evidence_error || 'Unknown error'}. Use Rebuild evidence to retry safely.</div>
+      {selectedGeneration?.status === 'failed'
+        ? <div className="evidence-error">Evidence processing failed: {selectedGeneration.error || 'Unknown error'}. The last published evidence is still available in its tab. Use Rebuild evidence to retry safely.</div>
         : null}
-      {selectedRunRecord?.evidence_status === 'success' && Number(selectedRunRecord.article_count || 0) > 0 && Number(selectedRunRecord.claim_count || 0) === 0
-        ? <div className="evidence-error">Evidence processed {selectedRunRecord.article_count} saved article(s), but extracted no claims. Check that this run contains analysis summaries or key points before rebuilding.</div>
+      {selectedGeneration?.status === 'running' || selectedGeneration?.status === 'pending'
+        ? <div className="glass-card evidence-generation-progress"><RefreshCw size={18} className="spin" /><div><strong>Evidence processing is running</strong><span>{selectedGeneration.candidate_count ? `${selectedGeneration.classified_count || 0} of ${selectedGeneration.candidate_count} candidates classified` : 'Preparing claim candidates…'}</span></div></div>
         : null}
       {loading && !data ? <div className="glass-card evidence-empty">Loading evidence…</div> : null}
       {!loading && !(data?.runs || []).length ? <div className="glass-card evidence-empty"><FileSearch size={24} /><strong>No evidence run yet</strong><span>Complete an analysis run to freeze the project evidence and extract claims.</span></div> : null}
 
       {(data?.runs || []).length ? <>
-        {(data?.generations || []).length ? <details className="glass-card evidence-generation-history">
-          <summary>Evidence processing history · {data.generations.length} attempt{data.generations.length === 1 ? '' : 's'}</summary>
-          <div>
-            {data.generations.map((generation) => <article key={generation.generation}>
-              <span className={`evidence-generation-status ${generation.status}`}>{generation.status}</span>
-              <strong>Generation {generation.generation}</strong>
-              <small>{formatDateTime(generation.started_at || generation.created_at)} · {generation.candidate_count ? `${generation.classified_count || 0}/${generation.candidate_count} classified · ${(generation.direct_count || 0) + (generation.contextual_count || 0)} relevant · ${generation.unrelated_count || 0} excluded` : 'Preparing claim candidates'}</small>
-              {generation.published_at ? <small>Published {formatDateTime(generation.published_at)}</small> : null}
-              {generation.error ? <p>{generation.error}</p> : null}
-            </article>)}
-          </div>
-        </details> : null}
+        {selectedGeneration?.status === 'success' ? <>
         <div className="evidence-relevance-summary"><span><strong>{(data.relevance_counts?.direct || 0) + (data.relevance_counts?.contextual || 0)}</strong> relevant</span><span><strong>{data.relevance_counts?.uncertain || 0}</strong> uncertain</span><span><strong>{data.relevance_counts?.unrelated || 0}</strong> excluded</span><span><strong>{data.relevance_counts?.unclassified || 0}</strong> legacy</span></div>
         <div className="evidence-overview">
           <div className="glass-card evidence-stat"><span>Total claims</span><strong>{overview.total_claims || 0}</strong><small>Extracted from this run</small></div>
@@ -551,16 +561,16 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
                   <blockquote>{item.passage}</blockquote>
                   <div className="evidence-source"><strong>{provenance.publisher || meta.source || 'Unknown source'}</strong><span>Published: {formatDate(meta.published_at)}</span><span>Locator: {item.passage_locator || 'Unavailable'}</span><span>Content type: {item.quote_source || provenance.source_type || 'Unknown'}</span><span>Analysis: {meta.analysis_source === 'run' ? 'Produced in this run' : 'Reused frozen analysis'}</span><span>Origin review: {item.provenance_review?.status || provenance.verification_status || 'unassessed'}</span>{Number.isFinite(Number(meta.passage_match_score)) ? <span>Passage match: {Math.round(Number(meta.passage_match_score) * 100)}%</span> : null}{item.provenance_review ? <span>{item.provenance_review.reviewer_name}: {item.provenance_review.reason}</span> : null}</div>
                   {meta.qualification_reason ? <p className={`evidence-qualification ${item.qualifies ? 'qualified' : 'unqualified'}`}>{meta.qualification_reason}</p> : null}
-                  <div className="evidence-item-actions">{(provenance.original_url || meta.url)?.startsWith('http') ? <a href={provenance.original_url || meta.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={12} /></a> : <span>Stored article #{item.article_id}</span>}{canReview ? <button onClick={() => { setProvenanceTarget(item); setProvenanceDecision('verified'); setProvenanceReason(''); }}>Review origin</button> : null}</div>
+                  <div className="evidence-item-actions">{(provenance.original_url || meta.url)?.startsWith('http') ? <a href={provenance.original_url || meta.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={12} /></a> : <span>Stored article #{item.article_id}</span>}{canReview && selectedGenerationPublished ? <button onClick={() => { setProvenanceTarget(item); setProvenanceDecision('verified'); setProvenanceReason(''); }}>Review origin</button> : null}</div>
                   {provenanceTarget?.id === item.id ? <div className="evidence-provenance-form"><label>Origin decision<select value={provenanceDecision} onChange={(event) => setProvenanceDecision(event.target.value)}><option value="verified">Verified</option><option value="rejected">Rejected</option><option value="unassessed">Return to unassessed</option></select></label><label>Reason<textarea rows="2" value={provenanceReason} onChange={(event) => setProvenanceReason(event.target.value)} placeholder="Record what you checked and why…" /></label><div><button className="btn-primary" onClick={saveProvenanceReview} disabled={!provenanceReason.trim()}>Save origin review</button><button className="btn-secondary" onClick={() => setProvenanceTarget(null)}>Cancel</button></div></div> : null}
                 </article>;
               })}</div>
-              {canReview ? <div className="evidence-review"><h3>Analyst review</h3><select value={decision} onChange={(event) => setDecision(event.target.value)}>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain the evidence and the limits of this decision…"/><button className="btn-primary" onClick={saveReview} disabled={saving || !reason.trim()}>{saving ? 'Saving…' : 'Save review'}</button></div> : null}
-              {canReview ? <div className="evidence-review"><h3>Project relevance override</h3><select value={relevanceDecision} onChange={(event) => setRelevanceDecision(event.target.value)}>{Object.entries(RELEVANCE_LABELS).filter(([key]) => key !== 'unclassified').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={relevanceReason} onChange={(event) => setRelevanceReason(event.target.value)} placeholder="Explain why this claim belongs in or outside the project…"/><button className="btn-primary" onClick={saveRelevanceReview} disabled={savingRelevance || !relevanceReason.trim()}>{savingRelevance ? 'Saving…' : 'Save relevance override'}</button></div> : null}
+              {canReview && selectedGenerationPublished ? <div className="evidence-review"><h3>Analyst review</h3><select value={decision} onChange={(event) => setDecision(event.target.value)}>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain the evidence and the limits of this decision…"/><button className="btn-primary" onClick={saveReview} disabled={saving || !reason.trim()}>{saving ? 'Saving…' : 'Save review'}</button></div> : null}
+              {canReview && selectedGenerationPublished ? <div className="evidence-review"><h3>Project relevance override</h3><select value={relevanceDecision} onChange={(event) => setRelevanceDecision(event.target.value)}>{Object.entries(RELEVANCE_LABELS).filter(([key]) => key !== 'unclassified').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={relevanceReason} onChange={(event) => setRelevanceReason(event.target.value)} placeholder="Explain why this claim belongs in or outside the project…"/><button className="btn-primary" onClick={saveRelevanceReview} disabled={savingRelevance || !relevanceReason.trim()}>{savingRelevance ? 'Saving…' : 'Save relevance override'}</button></div> : null}
               {selected.reviews?.length ? <div><h3>Review history</h3>{selected.reviews.map((review) => <div className="evidence-history" key={review.id}><strong>{LABELS[review.decision]}</strong><span>{review.reviewer_name || 'Reviewer'} · {formatDate(review.created_at)}</span><p>{review.reason}</p></div>)}</div> : null}
             </>}
           </div>
-        </div>}
+        </div>}</> : null}
       </> : null}
     </div>
   );

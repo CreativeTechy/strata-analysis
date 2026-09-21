@@ -933,7 +933,29 @@ def generate_for_run(run_id: str, project_id: int) -> dict:
     return result
 
 
-def list_workspace(project_id: int, run_id: str | None = None, topic: str | None = None,
+def _select_generation(generations: list[dict], requested: int | None,
+                       active_generation: int | None, has_legacy: bool) -> int | None:
+    """Choose an evidence attempt without letting a failed rebuild hide published claims."""
+    available = {int(item["generation"]) for item in generations}
+    if has_legacy:
+        available.add(0)
+    if requested is not None and int(requested) in available:
+        return int(requested)
+    if active_generation is not None and int(active_generation) in available:
+        return int(active_generation)
+    published = [
+        int(item["generation"]) for item in generations
+        if item.get("status") == "success" and item.get("published_at")
+    ]
+    if published:
+        return max(published)
+    if has_legacy:
+        return 0
+    return int(generations[0]["generation"]) if generations else None
+
+
+def list_workspace(project_id: int, run_id: str | None = None, generation: int | None = None,
+                   topic: str | None = None,
                    search: str | None = None, assessment: str | None = None,
                    claim_type: str | None = None, publisher: str | None = None,
                    review_status: str | None = None, provenance_status: str | None = None,
@@ -971,9 +993,47 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
     selected = str(run_id) if run_id else (str(runs[0]["id"]) if runs else None)
     if not selected:
         return {"runs": [], "selected_run_id": None, "topics": [], "overview": {}, "claims": []}
-    base_params: list = [int(project_id), selected]
+    selected_run = next((run for run in runs if str(run["id"]) == selected), {})
+    generations = db.fetch_all(
+        """select generation,status,candidate_count,classified_count,direct_count,
+                  contextual_count,unrelated_count,uncertain_count,error,scope_snapshot,
+                  scope_hash,rules_version,model,started_at,finished_at,published_at,created_at
+             from evidence_generations
+            where run_id=%s and project_id=%s
+            order by generation desc limit 20""",
+        (selected, int(project_id)),
+    ) or []
+    legacy_row = db.fetch_one(
+        """select count(*)::int as count from evidence_claims
+            where project_id=%s and run_id=%s and generation=0""",
+        (int(project_id), selected),
+    ) or {}
+    has_legacy = int(legacy_row.get("count") or 0) > 0
+    selected_generation = _select_generation(
+        generations, generation, selected_run.get("active_generation"), has_legacy,
+    )
+    selected_generation_record = next(
+        (item for item in generations if int(item["generation"]) == selected_generation), None,
+    )
+    legacy_generation = {
+        "generation": 0, "status": "success", "legacy": True,
+        "published_at": selected_run.get("evidence_finished_at") or selected_run.get("finished_at"),
+        "created_at": selected_run.get("created_at"),
+    }
+    if selected_generation == 0 and has_legacy:
+        selected_generation_record = legacy_generation
+    generation_tabs = [*generations]
+    if has_legacy:
+        generation_tabs.append(legacy_generation)
+    generation_tabs.sort(key=lambda item: int(item["generation"]), reverse=True)
+    generation_viewable = bool(
+        selected_generation_record and selected_generation_record.get("status") == "success"
+    )
+    base_params: list = [int(project_id), selected, selected_generation]
     effective_relevance = "coalesce((select err.decision from evidence_relevance_reviews err where err.project_id=ec.project_id and err.run_id=ec.run_id and err.fingerprint=ec.fingerprint order by err.created_at desc limit 1),ec.relevance)"
-    conditions = ["ec.project_id=%s", "ec.run_id=%s", "ec.active=true"]
+    conditions = ["ec.project_id=%s", "ec.run_id=%s", "ec.generation=%s"]
+    if not generation_viewable:
+        conditions.append("false")
     relevance_filter = str(relevance_filter or "focused").strip().lower()
     if relevance_filter == "focused":
         # Legacy claims stay visible until the first successful scoped rebuild
@@ -1064,19 +1124,9 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
 
     relevance_rows = db.fetch_all(
         f"""select {effective_relevance} as relevance,count(*)::int as count
-              from evidence_claims ec where ec.project_id=%s and ec.run_id=%s and ec.active
-             group by {effective_relevance}""", (int(project_id), selected),
+              from evidence_claims ec where ec.project_id=%s and ec.run_id=%s and ec.generation=%s
+             group by {effective_relevance}""", (int(project_id), selected, selected_generation),
     ) or []
-    generations = db.fetch_all(
-        """select generation,status,candidate_count,classified_count,direct_count,
-                  contextual_count,unrelated_count,uncertain_count,error,
-                  started_at,finished_at,published_at,created_at
-             from evidence_generations
-            where run_id=%s and project_id=%s
-            order by generation desc limit 20""",
-        (selected, int(project_id)),
-    ) or []
-    selected_run = next((run for run in runs if str(run["id"]) == selected), {})
 
     claim_ids = [int(claim["id"]) for claim in claims]
     matrix_items = db.fetch_all(
@@ -1105,8 +1155,17 @@ def list_workspace(project_id: int, run_id: str | None = None, topic: str | None
         ],
     }
     return {"runs": runs, "selected_run_id": selected, "topics": topics,
-            "scope": selected_run.get("scope_snapshot") or get_run_scope(selected, project_id)["scope"],
-            "scope_hash": selected_run.get("scope_hash"),
+            "selected_generation": selected_generation,
+            "active_generation": selected_run.get("active_generation"),
+            "selected_generation_status": selected_generation_record,
+            "generation_tabs": generation_tabs,
+            "is_selected_generation_published": bool(
+                selected_generation is not None
+                and int(selected_generation) == int(selected_run.get("active_generation") or 0)
+            ),
+            "scope": (selected_generation_record or {}).get("scope_snapshot")
+                     or selected_run.get("scope_snapshot") or get_run_scope(selected, project_id)["scope"],
+            "scope_hash": (selected_generation_record or {}).get("scope_hash") or selected_run.get("scope_hash"),
             "overview": {
                 "total_claims": len(summary_rows),
                 "corroborated_claims": sum(1 for row in summary_rows if int(row.get("independent_origin_count") or 0) >= 2),
@@ -1221,7 +1280,7 @@ def compare_runs(project_id: int, base_run_id: str, target_run_id: str) -> dict 
 
 
 def get_claim(project_id: int, claim_id: int) -> dict | None:
-    claim = db.fetch_one("select * from evidence_claims where id=%s and project_id=%s and active", (int(claim_id), int(project_id)))
+    claim = db.fetch_one("select * from evidence_claims where id=%s and project_id=%s", (int(claim_id), int(project_id)))
     if not claim: return None
     claim["relevance_reviews"] = db.fetch_all(
         """select * from evidence_relevance_reviews
@@ -1253,7 +1312,10 @@ def get_claim(project_id: int, claim_id: int) -> dict | None:
 def review_claim(project_id: int, claim_id: int, decision: str, reason: str, user: dict) -> dict | None:
     if decision not in ASSESSMENTS or not reason.strip():
         raise ValueError("A valid decision and review reason are required.")
-    claim = db.fetch_one("select id from evidence_claims where id=%s and project_id=%s", (int(claim_id), int(project_id)))
+    claim = db.fetch_one(
+        "select id from evidence_claims where id=%s and project_id=%s and active",
+        (int(claim_id), int(project_id)),
+    )
     if not claim: return None
     db.execute("insert into evidence_reviews (claim_id, reviewer_id, reviewer_name, decision, reason) values (%s,%s,%s,%s,%s)",
                (int(claim_id), user.get("id"), user.get("username") or user.get("email"), decision, reason.strip()[:2000]))
