@@ -93,6 +93,7 @@ _PEOPLE_OPINIONS_SQL = """
                    'sentiment', po.sentiment,
                    'category',  po.category,
                    'gender',    po.gender,
+                   'gender_evidence', po.gender_evidence,
                    'age_range', po.age_range,
                    'region',    po.region,
                    'segment',   po.segment

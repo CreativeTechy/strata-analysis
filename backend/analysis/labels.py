@@ -57,6 +57,28 @@ DEFAULT_TONE = "neutral"
 VALID_GENDERS = ("male", "female", "unknown")
 DEFAULT_GENDER = "unknown"
 
+# The extraction model is asked for exactly "male"/"female"/"unknown" (see
+# structured_extraction_system_prompt.txt), but it doesn't always comply -
+# raw synonyms/abbreviations/translations it sometimes emits instead, mapped
+# onto the closed vocab above rather than falling through to "unknown" and
+# losing a signal the model actually gave us. Keyed lowercase; matched after
+# normalize.normalize_gender lowercases the raw value. Arabic/French entries
+# cover this product's non-English sources (see CLAUDE.md on Arabic-project
+# evidence generation) since the extraction prompt asks for English field
+# *values* like "positive"/"neutral" but a local model doesn't always follow
+# that for a bare word like this.
+GENDER_ALIASES = {
+    "m": "male", "man": "male", "men": "male", "male": "male",
+    "he": "male", "him": "male", "his": "male", "boy": "male", "gentleman": "male",
+    "mr": "male", "mr.": "male", "monsieur": "male", "homme": "male",
+    "f": "female", "woman": "female", "women": "female", "female": "female",
+    "she": "female", "her": "female", "hers": "female", "girl": "female", "lady": "female",
+    "mrs": "female", "mrs.": "female", "ms": "female", "ms.": "female", "miss": "female",
+    "madame": "female", "femme": "female",
+    "ذكر": "male", "رجل": "male", "الرجل": "male",
+    "أنثى": "female", "انثى": "female", "امرأة": "female", "المرأة": "female",
+}
+
 VALID_AGE_RANGES = ("under_18", "18-24", "25-34", "35-44", "45-54", "55-64", "65_plus", "unknown")
 DEFAULT_AGE_RANGE = "unknown"
 

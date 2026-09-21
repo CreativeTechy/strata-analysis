@@ -98,6 +98,47 @@ class NormalizeRegionAliasTests(unittest.TestCase):
         self.assertEqual(normalize.normalize_region(None), "unknown")
 
 
+class NormalizeGenderAliasTests(unittest.TestCase):
+    """normalize_gender() accepts common synonyms/abbreviations/translations
+    the extraction model sometimes emits instead of the exact "male"/"female"
+    the prompt asks for (labels.GENDER_ALIASES), rather than losing that
+    signal to "unknown"."""
+
+    def test_exact_values_pass_through(self):
+        for value in ("male", "female", "unknown"):
+            self.assertEqual(normalize.normalize_gender(value), value)
+
+    def test_english_synonyms_map_to_male_or_female(self):
+        for value in ("M", "man", "He", "his", "Mr.", "boy"):
+            self.assertEqual(normalize.normalize_gender(value), "male")
+        for value in ("F", "woman", "She", "her", "Ms.", "girl"):
+            self.assertEqual(normalize.normalize_gender(value), "female")
+
+    def test_arabic_tokens_map_to_male_or_female(self):
+        self.assertEqual(normalize.normalize_gender("رجل"), "male")
+        self.assertEqual(normalize.normalize_gender("امرأة"), "female")
+
+    def test_unrecognized_value_falls_back_to_unknown(self):
+        self.assertEqual(normalize.normalize_gender("nonbinary"), "unknown")
+        self.assertEqual(normalize.normalize_gender(""), "unknown")
+        self.assertEqual(normalize.normalize_gender(None), "unknown")
+
+
+class NormalizeGenderEvidenceTests(unittest.TestCase):
+    def test_evidence_kept_when_gender_resolved(self):
+        self.assertEqual(
+            normalize.normalize_gender_evidence('she said', 'female'), 'she said'
+        )
+
+    def test_evidence_dropped_when_gender_is_unknown(self):
+        self.assertEqual(normalize.normalize_gender_evidence("she said", "unknown"), "")
+
+    def test_evidence_is_capped_in_length(self):
+        long_text = "x" * 500
+        result = normalize.normalize_gender_evidence(long_text, "male")
+        self.assertEqual(len(result), normalize._GENDER_EVIDENCE_MAX_LEN)
+
+
 class PeopleOpinionsTests(unittest.TestCase):
     def test_normalizes_and_dedupes(self):
         result = normalize.normalize_people_opinions([
@@ -111,21 +152,33 @@ class PeopleOpinionsTests(unittest.TestCase):
         result = normalize.normalize_people_opinions(["just a plain string"])
         self.assertEqual(result, [{
             "opinion": "just a plain string", "sentiment": "neutral", "category": "",
-            "gender": "unknown", "age_range": "unknown", "region": "unknown",
+            "gender": "unknown", "gender_evidence": "", "age_range": "unknown",
+            "region": "unknown", "segment": "unknown",
         }])
 
     def test_demographics_are_normalized_and_default_to_unknown(self):
         result = normalize.normalize_people_opinions([
             {"opinion": "Loves the range", "sentiment": "positive", "category": "performance",
-             "gender": "Female", "age_range": "25-34", "region": "lebanon"},
+             "gender": "Female", "gender_evidence": "she said", "age_range": "25-34", "region": "lebanon"},
             {"opinion": "Slow charging", "sentiment": "negative", "category": "charging"},
         ])
         self.assertEqual(result[0]["gender"], "female")
+        self.assertEqual(result[0]["gender_evidence"], "she said")
         self.assertEqual(result[0]["age_range"], "25-34")
         self.assertEqual(result[0]["region"], "Lebanon")
         self.assertEqual(result[1]["gender"], "unknown")
+        self.assertEqual(result[1]["gender_evidence"], "")
         self.assertEqual(result[1]["age_range"], "unknown")
         self.assertEqual(result[1]["region"], "unknown")
+
+    def test_gender_evidence_is_dropped_when_gender_does_not_normalize(self):
+        """A model that quotes evidence but gives an unrecognized gender word
+        shouldn't leave the evidence sitting on a row that claims no signal."""
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Loves the range", "gender": "nonbinary", "gender_evidence": "they said"},
+        ])
+        self.assertEqual(result[0]["gender"], "unknown")
+        self.assertEqual(result[0]["gender_evidence"], "")
 
     def test_non_list_input_returns_empty(self):
         self.assertEqual(normalize.normalize_people_opinions("not a list"), [])

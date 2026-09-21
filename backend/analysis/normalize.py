@@ -80,7 +80,9 @@ def normalize_sentiment(value) -> str:
 
 def normalize_gender(value) -> str:
     gender = as_text(value).lower()
-    return gender if gender in VALID_GENDERS else labels.DEFAULT_GENDER
+    if gender in VALID_GENDERS:
+        return gender
+    return labels.GENDER_ALIASES.get(gender, labels.DEFAULT_GENDER)
 
 
 def normalize_age_range(value) -> str:
@@ -134,6 +136,24 @@ def normalize_relevance_score(value):
     return max(0, min(score, 10))
 
 
+_GENDER_EVIDENCE_MAX_LEN = 160
+
+
+def normalize_gender_evidence(value, gender: str) -> str:
+    """The exact word/phrase the model says it relied on for `gender` (see
+    structured_extraction_system_prompt.txt) - kept as an audit trail so a
+    "male"/"female" call can be checked against real wording instead of
+    trusted blind, and so a low-effort or hallucinated call (gender set but
+    no real evidence quoted) is visible as an empty string rather than
+    indistinguishable from a well-evidenced one. Dropped whenever gender
+    itself resolved to "unknown" - evidence for a value that didn't survive
+    normalize_gender is not meaningful and would just be noise (or, worse,
+    the model's guess from a name) sitting on a row that claims no signal."""
+    if gender == labels.DEFAULT_GENDER:
+        return ""
+    return as_text(value)[:_GENDER_EVIDENCE_MAX_LEN]
+
+
 def normalize_people_opinions(value) -> list:
     opinions = []
     if not isinstance(value, list):
@@ -147,6 +167,7 @@ def normalize_people_opinions(value) -> list:
                     "sentiment": "neutral",
                     "category": "",
                     "gender": labels.DEFAULT_GENDER,
+                    "gender_evidence": "",
                     "age_range": labels.DEFAULT_AGE_RANGE,
                     "region": labels.DEFAULT_REGION,
                     "segment": labels.DEFAULT_SEGMENT,
@@ -155,11 +176,13 @@ def normalize_people_opinions(value) -> list:
         opinion = as_text(item.get("opinion"))
         if not opinion:
             continue
+        gender = normalize_gender(item.get("gender"))
         opinions.append({
             "opinion": opinion,
             "sentiment": normalize_sentiment(item.get("sentiment")),
             "category": as_text(item.get("category")),
-            "gender": normalize_gender(item.get("gender")),
+            "gender": gender,
+            "gender_evidence": normalize_gender_evidence(item.get("gender_evidence"), gender),
             "age_range": normalize_age_range(item.get("age_range")),
             "region": normalize_region(item.get("region")),
             "segment": as_text(item.get("segment")) or labels.DEFAULT_SEGMENT,

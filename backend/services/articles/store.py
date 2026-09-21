@@ -494,6 +494,9 @@ def _replace_article_children(article_id, article):
             sentiment = str(item.get("sentiment") or "neutral").strip().lower() or "neutral"
             category = str(item.get("category") or "").strip()
             gender = str(item.get("gender") or "unknown").strip().lower() or "unknown"
+            # Only meaningful (and only ever set upstream) alongside a resolved
+            # gender - see normalize.normalize_gender_evidence's docstring.
+            gender_evidence = str(item.get("gender_evidence") or "").strip() if gender != "unknown" else ""
             age_range = str(item.get("age_range") or "unknown").strip().lower() or "unknown"
             region = str(item.get("region") or "unknown").strip() or "unknown"
             segment_raw = str(item.get("segment") or "unknown").strip() or "unknown"
@@ -501,12 +504,12 @@ def _replace_article_children(article_id, article):
             if segment != "unknown":
                 segment_votes[segment] += 1
             opinion_rows.append(
-                (article_id, opinion, sentiment, category, gender, age_range, region, segment_raw, segment)
+                (article_id, opinion, sentiment, category, gender, gender_evidence, age_range, region, segment_raw, segment)
             )
         _bulk_insert(
             "article_people_opinions",
             (
-                "article_id", "opinion", "sentiment", "category", "gender", "age_range", "region",
+                "article_id", "opinion", "sentiment", "category", "gender", "gender_evidence", "age_range", "region",
                 "segment_raw", "segment",
             ),
             opinion_rows,
