@@ -48,12 +48,42 @@ class TableExistsTests(unittest.TestCase):
                 self.assertFalse(store._table_exists("article_tags"))
 
 
+class TableColumnsTests(unittest.TestCase):
+    def setUp(self):
+        store._table_columns.cache_clear()
+
+    def tearDown(self):
+        store._table_columns.cache_clear()
+
+    def test_returns_empty_set_without_database_url(self):
+        with patch("services.articles.store.config.DATABASE_URL", ""):
+            self.assertEqual(store._table_columns("article_people_opinions"), set())
+
+    def test_returns_the_columns_the_query_reports(self):
+        with patch("services.articles.store.config.DATABASE_URL", "postgresql://x"):
+            with patch(
+                "services.articles.store.db.fetch_all",
+                return_value=[{"column_name": "gender"}, {"column_name": "gender_evidence"}],
+            ):
+                self.assertEqual(
+                    store._table_columns("article_people_opinions"),
+                    {"gender", "gender_evidence"},
+                )
+
+    def test_returns_empty_set_and_does_not_raise_on_query_error(self):
+        with patch("services.articles.store.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.store.db.fetch_all", side_effect=RuntimeError("boom")):
+                self.assertEqual(store._table_columns("article_people_opinions"), set())
+
+
 class ReplaceArticleChildrenTests(unittest.TestCase):
     def setUp(self):
         store._table_exists.cache_clear()
+        store._table_columns.cache_clear()
 
     def tearDown(self):
         store._table_exists.cache_clear()
+        store._table_columns.cache_clear()
 
     ARTICLE = {
         "positive_feedback": ["great range"],
@@ -64,6 +94,13 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
         "entities": ["Model X"],
         "topics": ["ev"],
     }
+
+    def _opinions_insert_call(self, mock_execute):
+        for call in mock_execute.call_args_list:
+            sql = call.args[0].strip()
+            if sql.startswith("insert into article_people_opinions"):
+                return call
+        return None
 
     def test_noop_when_table_does_not_exist(self):
         with patch("services.articles.store._table_exists", return_value=False):
@@ -88,6 +125,73 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
         with patch("services.articles.store._table_exists", return_value=True):
             with patch("services.articles.store.db.execute", side_effect=RuntimeError("boom")):
                 store._replace_article_children(1, self.ARTICLE)  # must not raise
+
+    def test_gender_evidence_is_written_when_the_column_exists(self):
+        """The opinions insert names and populates gender_evidence when the
+        database actually has that column."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender": "female", "gender_evidence": "she said",
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value={"gender_evidence"}), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        call = self._opinions_insert_call(mock_execute)
+        self.assertIsNotNone(call)
+        sql, params = call.args
+        self.assertIn("gender_evidence", sql)
+        self.assertEqual(sql.count("%s"), 10)
+        self.assertIn("she said", params)
+        self.assertIn("female", params)
+
+    def test_gender_evidence_is_forced_empty_when_gender_is_unknown(self):
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender_evidence": "she said",  # gender omitted -> "unknown"
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value={"gender_evidence"}), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        call = self._opinions_insert_call(mock_execute)
+        sql, params = call.args
+        self.assertNotIn("she said", params)
+        self.assertIn("", params)
+
+    def test_gender_evidence_is_dropped_from_the_insert_when_the_column_is_missing(self):
+        """A database that hasn't had migration 0019 applied yet still has
+        article_people_opinions itself (so _table_exists passes) but not this
+        column - the insert must adapt instead of failing outright and, with
+        it, silently dropping the article_tags write that follows (see
+        store.py's _replace_article_children docstring)."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender": "female", "gender_evidence": "she said",
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value=set()), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        call = self._opinions_insert_call(mock_execute)
+        self.assertIsNotNone(call)
+        sql, params = call.args
+        self.assertNotIn("gender_evidence", sql)
+        self.assertEqual(sql.count("%s"), 9)
+        self.assertNotIn("she said", params)
+        # the tags insert (previously lost when the opinions insert raised)
+        # still runs
+        tag_calls = [c for c in mock_execute.call_args_list if c.args[0].strip().startswith("insert into article_tags")]
+        self.assertTrue(tag_calls)
 
 
 class ArticleRowFieldHandlingTests(unittest.TestCase):
