@@ -221,7 +221,11 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
                 with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
                     store._upsert_article_row(article)
 
-        self.assertIn("articles.source_url like 'document://project-document/%'", captured["sql"])
+        self.assertIn(
+            "starts_with(articles.source_url, 'document://project-document/')",
+            captured["sql"],
+        )
+        self.assertNotIn("project-document/%", captured["sql"])
         self.assertNotIn("source_url = excluded.source_url", captured["sql"])
 
 

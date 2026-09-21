@@ -355,12 +355,12 @@ def _upsert_article_row(article):
         # so a later import or reanalysis can collide on `url`. Keep the document
         # provenance used by the Articles document filter and Evidence snapshot.
         updates.append(
-            "source_url = case when articles.source_url like 'document://project-document/%' "
+            "source_url = case when starts_with(articles.source_url, 'document://project-document/') "
             "then articles.source_url else excluded.source_url end"
         )
     if "source" in fields:
         updates.append(
-            "source = case when articles.source_url like 'document://project-document/%' "
+            "source = case when starts_with(articles.source_url, 'document://project-document/') "
             "then articles.source else excluded.source end"
         )
     if "pipeline_run_id" in fields:
