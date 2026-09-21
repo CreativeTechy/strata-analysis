@@ -1,0 +1,50 @@
+[
+  {
+    "id": "en-blocked-login",
+    "language": "en",
+    "label": "unusable",
+    "text": "Access denied. Sign in to continue and enter the verification code. The requested content is unavailable."
+  },
+  {
+    "id": "ar-blocked-login",
+    "language": "ar",
+    "label": "unusable",
+    "text": "المحتوى غير متاح. سجّل الدخول وأدخل رمز التحقق للمتابعة. تعذر الوصول إلى الصفحة المطلوبة."
+  },
+  {
+    "id": "en-empty-extraction",
+    "language": "en",
+    "label": "unusable",
+    "text": ""
+  },
+  {
+    "id": "en-cookie-only",
+    "language": "en",
+    "label": "unusable",
+    "text": "Cookie policy. Accept all cookies. Privacy policy. Terms and conditions. Menu. Navigation. All rights reserved."
+  },
+  {
+    "id": "en-cookie-plus-article",
+    "language": "en",
+    "label": "usable",
+    "text": "Cookie policy. Accept all cookies. The energy ministry increased gasoline prices by 40000 pounds on Monday after global oil prices rose. The official schedule took effect immediately and also changed diesel and household gas prices."
+  },
+  {
+    "id": "ar-substantive",
+    "language": "ar",
+    "label": "usable",
+    "text": "أعلنت وزارة الطاقة صباح الاثنين ارتفاع سعر صفيحة البنزين أربعين ألف ليرة لبنانية بعد ارتفاع أسعار النفط عالمياً. ودخل جدول الأسعار الرسمي الجديد حيز التنفيذ فوراً وشمل المازوت والغاز المنزلي."
+  },
+  {
+    "id": "en-substantive-history",
+    "language": "en",
+    "label": "usable",
+    "text": "Fuel import costs increased during the 2024 supply disruption, according to the published ministry schedule. The report records the historical price changes and explains their effect on transport operators and household spending."
+  },
+  {
+    "id": "ar-short-navigation",
+    "language": "ar",
+    "label": "unusable",
+    "text": "القائمة. سياسة الخصوصية. جميع الحقوق محفوظة."
+  }
+]
