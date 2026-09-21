@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
@@ -7,7 +7,6 @@ import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
 import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
-import ArticleDetailModal from './articles/ArticleDetailModal.jsx';
 import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
@@ -24,7 +23,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, getArticleAnalysis, reprocessArticle, deleteAllArticles, deleteArticle,
+  listArticles, deleteAllArticles,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
 import '../styles/Articles.css';
@@ -69,8 +68,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deletingArticle, setDeletingArticle] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importRun, setImportRun] = useState(null);
@@ -87,20 +84,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const [detailArticleId, setDetailArticleId] = useState(null);
-  const [detailData, setDetailData] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState('');
-  const [detailReprocessing, setDetailReprocessing] = useState(false);
-  const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
   const searchInputRef = useRef(null);
   const importInputRef = useRef(null);
   const importFolderInputRef = useRef(null);
+  const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
   const canImport = hasPermission('articles.import');
-  const canReprocess = hasPermission('pipeline.run');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -194,29 +185,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
     hasArticlesRef.current = articles.length > 0;
   }, [articles.length]);
 
-  useEffect(() => {
-    if (detailArticleId == null) return undefined;
-    const controller = new AbortController();
-    async function loadDetail() {
-      setDetailLoading(true);
-      setDetailError('');
-      setDetailActionMessage('');
-      try {
-        const data = await getArticleAnalysis(detailArticleId, controller.signal);
-        setDetailData(data?.analysis || null);
-      } catch (err) {
-        if (err?.name !== 'AbortError') {
-          setDetailData(null);
-          setDetailError(err?.message || 'Failed to load analysis details.');
-        }
-      } finally {
-        setDetailLoading(false);
-      }
-    }
-    loadDetail();
-    return () => controller.abort();
-  }, [detailArticleId]);
-
   const changeViewMode = (mode) => {
     setViewMode(mode);
     try {
@@ -233,27 +201,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
       else next.add(id);
       return next;
     });
-  };
-
-  const closeDetailModal = () => {
-    setDetailArticleId(null);
-    setDetailData(null);
-    setDetailError('');
-    setDetailActionMessage('');
-  };
-
-  const handleReprocess = async () => {
-    if (detailArticleId == null || detailReprocessing) return;
-    setDetailReprocessing(true);
-    setDetailActionMessage('');
-    try {
-      await reprocessArticle(detailArticleId);
-      setDetailActionMessage('Reprocessing started - reopen this panel in a moment to see the updated result.');
-    } catch (err) {
-      setDetailActionMessage(err?.message || 'Failed to reprocess article.');
-    } finally {
-      setDetailReprocessing(false);
-    }
   };
 
   const start = total === 0 ? 0 : offset + 1;
@@ -297,21 +244,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setError(err?.message || 'Failed to delete articles.');
     } finally {
       setDeletingAll(false);
-    }
-  };
-
-  const handleDeleteArticle = async () => {
-    if (!deleteTarget || deletingArticle) return;
-    setDeletingArticle(true);
-    setError('');
-    try {
-      await deleteArticle(deleteTarget.id);
-      setDeleteTarget(null);
-      setReloadToken((value) => value + 1);
-    } catch (err) {
-      setError(err?.message || 'Failed to delete article.');
-    } finally {
-      setDeletingArticle(false);
     }
   };
 
@@ -584,22 +516,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
         />
 
         <ConfirmModal
-          open={Boolean(deleteTarget)}
-          title="Delete this article?"
-          message={deleteTarget ? `"${deleteTarget.title || 'Untitled article'}" will be permanently removed and cannot be undone.` : ''}
-          confirmLabel={deletingArticle ? 'Deleting...' : 'Delete article'}
-          cancelLabel="Keep article"
-          confirmButtonStyle={{
-            background: 'linear-gradient(135deg, #ff4757, #e03131)',
-            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
-          }}
-          onClose={() => {
-            if (!deletingArticle) setDeleteTarget(null);
-          }}
-          onConfirm={handleDeleteArticle}
-        />
-
-        <ConfirmModal
           open={showExportModal}
           title="Export articles?"
           message={`This will export ${total.toLocaleString()} article${total === 1 ? '' : 's'} matching your current filters as a JSONL file.`}
@@ -628,18 +544,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
             setShowImportModal(false);
             importFolderInputRef.current?.click();
           }}
-        />
-
-        <ArticleDetailModal
-          open={detailArticleId != null}
-          canReprocess={canReprocess}
-          loading={detailLoading}
-          error={detailError}
-          data={detailData}
-          actionMessage={detailActionMessage}
-          reprocessing={detailReprocessing}
-          onClose={closeDetailModal}
-          onReprocess={handleReprocess}
         />
 
         <div className="articles-filters-row">
@@ -876,10 +780,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       index={i}
                       isExpanded={expandedRows.has(article.id)}
                       isRefreshing={isRefreshing}
-                      canDelete={canDeleteAll}
                       onToggleExpanded={() => toggleRowExpanded(article.id)}
-                      onShowDetails={() => setDetailArticleId(article.id)}
-                      onDelete={() => setDeleteTarget(article)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`)}
                     />
                   ))}
                 </AnimatePresence>
@@ -894,9 +796,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       search={search}
                       index={i}
                       isRefreshing={isRefreshing}
-                      canDelete={canDeleteAll}
-                      onShowDetails={() => setDetailArticleId(article.id)}
-                      onDelete={() => setDeleteTarget(article)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`)}
                     />
                   ))}
                 </AnimatePresence>

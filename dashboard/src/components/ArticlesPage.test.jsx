@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ArticlesPage from './ArticlesPage'
 import { useAuth } from '../auth/useAuth.js'
 
@@ -32,8 +32,14 @@ function jsonResponse(body) {
 
 function renderPage(props = {}) {
   return render(
-    <MemoryRouter>
-      <ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} {...props} />
+    <MemoryRouter initialEntries={['/articles']}>
+      <Routes>
+        <Route
+          path="/articles"
+          element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} {...props} />}
+        />
+        <Route path="/articles/:articleId" element={<div>Article detail page</div>} />
+      </Routes>
     </MemoryRouter>
   )
 }
@@ -83,12 +89,11 @@ describe('ArticlesPage', () => {
     await waitFor(() => expect(screen.getByText(/1 articles total/)).toBeInTheDocument(), { timeout: 2000 })
   })
 
-  it('opens the analysis detail modal for an article', async () => {
+  it('navigates to the article detail page for an article', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
     fireEvent.click(screen.getAllByTitle('View analysis details')[0])
-    const dialog = await screen.findByRole('dialog')
-    await waitFor(() => expect(within(dialog).getByText('Negative')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Article detail page')).toBeInTheDocument())
   })
 
   it('shows an empty state when there are no articles', async () => {
