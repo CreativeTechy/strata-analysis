@@ -4,6 +4,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import ArticlesPage from './ArticlesPage'
 import { useAuth } from '../auth/useAuth.js'
+import {
+  uploadDocuments,
+  pollDocumentExtraction,
+  pollArticleCandidates,
+  listDocumentArticles,
+  approveDocumentArticlesForDocuments,
+} from '../api/projectDocumentsApi.js'
 
 // Stands in for ArticleDetailPage: surfaces what onShowDetails actually
 // navigated with (the destination's own search, plus the router `state.from`
@@ -25,7 +32,8 @@ vi.mock('../api/projectDocumentsApi.js', () => ({
   pollDocumentExtraction: vi.fn(() => Promise.resolve()),
   pollArticleCandidates: vi.fn(() => Promise.resolve([])),
   listDocumentArticles: vi.fn(() => Promise.resolve({ articles: [] })),
-  setDocumentArticleStatus: vi.fn(),
+  approveDocumentArticlesForDocuments: vi.fn(() => Promise.resolve({ articles: [], run_id: null })),
+  listDocuments: vi.fn(() => Promise.resolve({ documents: [] })),
 }))
 
 const ARTICLES = [
@@ -167,6 +175,58 @@ describe('ArticlesPage', () => {
     await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('tab', { name: /List/ }))
     expect(screen.getByRole('tab', { name: /List/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // Regression for F001/F002 in the SM-87 import rework: a truncated
+  // .jsonl/.ndjson import (more records than the per-file cap) must not read
+  // as a plain, unqualified success, and approving what was just uploaded
+  // must be one batched call scoped to the uploaded documents - not one
+  // request per candidate.
+  it('surfaces a truncated import as a warning and approves the batch in one scoped call', async () => {
+    render(
+      <MemoryRouter initialEntries={['/articles?project_id=5']}>
+        <Routes>
+          <Route
+            path="/articles"
+            element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+
+    uploadDocuments.mockResolvedValue({ documents: [{ id: 101, original_filename: 'export.jsonl' }] })
+    pollDocumentExtraction.mockResolvedValue([{ id: 101, status: 'processed' }])
+    pollArticleCandidates.mockResolvedValue([{
+      id: 101,
+      original_filename: 'export.jsonl',
+      status: 'processed',
+      articles_status: 'ready',
+      articles_error: 'Imported the first 5,000 of 20,000 records in this file. Split the file to import the rest.',
+    }])
+    listDocumentArticles.mockResolvedValue({
+      articles: [
+        { id: 1, document_id: 101, status: 'approved' },
+        { id: 2, document_id: 101, status: 'approved' },
+      ],
+    })
+    approveDocumentArticlesForDocuments.mockResolvedValue({ articles: [{ article_id: 1 }, { article_id: 2 }], run_id: 'run-1' })
+
+    const file = new File(['{"title":"A","text":"one"}'], 'export.jsonl', { type: 'application/x-ndjson' })
+    const [fileInput] = document.querySelectorAll('input[type="file"]')
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    await waitFor(() =>
+      expect(screen.getByText(/Added 2 articles from 1 file\./)).toBeInTheDocument()
+    )
+    // The truncation note travels with the success message rather than being
+    // dropped just because the document itself didn't fail outright.
+    expect(screen.getByText(/Imported the first 5,000 of 20,000 records/)).toBeInTheDocument()
+
+    // One call for the whole batch, scoped to just the uploaded document -
+    // not one setDocumentArticleStatus call per candidate.
+    expect(approveDocumentArticlesForDocuments).toHaveBeenCalledTimes(1)
+    expect(approveDocumentArticlesForDocuments).toHaveBeenCalledWith('5', [101])
   })
 
   // Regression for F004: React StrictMode (which main.jsx wraps the whole

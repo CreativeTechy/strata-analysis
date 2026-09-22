@@ -66,6 +66,16 @@ UNATTRIBUTED = "Imported articles"
 _cancel_requested = set()
 _registry_lock = threading.Lock()
 
+# Projects whose start_or_reuse_analysis_run() call landed while a run was
+# already active for them - see that function's docstring and
+# _maybe_start_followup() below. A run's own work set is frozen once at
+# `prepare` (_select_articles, called from _run_analysis_pipeline), so an
+# article materialized afterward - another document finishing its LLM split,
+# another batch of JSONL records being approved - is invisible to it and
+# would otherwise sit at analysis_status='pending' with no run left to ever
+# pick it up.
+_pending_followup = set()
+
 
 class PipelineCancelled(Exception):
     """Raised internally when a run is stopped by the user."""
@@ -119,11 +129,15 @@ def start_or_reuse_analysis_run(project_id: int) -> dict:
     One run at a time per project (same rule POST /api/analysis-runs
     enforces): a second worker analyzing the same rows would write over the
     first. A caller invoked while an earlier run is already past its
-    `prepare` stage won't have its rows picked up by that run - they stay
-    pending until the next run starts.
+    `prepare` stage won't have its rows picked up by *that* run - instead this
+    marks the project in _pending_followup, and _maybe_start_followup() below
+    starts exactly one more run for it once the active one finishes, so the
+    caller's articles are still picked up rather than left pending forever.
     """
     active = get_active_run_for_project(project_id)
     if active:
+        with _registry_lock:
+            _pending_followup.add(int(project_id))
         return {"run_id": active["id"], "started": False}
     run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
     run_id = run["id"] if run else uuid.uuid4().hex
@@ -134,6 +148,25 @@ def start_or_reuse_analysis_run(project_id: int) -> dict:
         daemon=True,
     ).start()
     return {"run_id": run_id, "started": True}
+
+
+def _maybe_start_followup(project_id: int) -> None:
+    """Called once a run finishes on its own (not by user cancellation) - see
+    the `finally` block in _run_analysis_pipeline. Starts exactly one more run
+    if start_or_reuse_analysis_run() was asked to queue work for this project
+    while this run was already active (_pending_followup).
+
+    Bounded to one extra run per finish rather than looping here: the
+    follow-up run goes through _run_analysis_pipeline like any other, so if
+    *more* work lands while it too is active, this same check fires again
+    when it finishes - a project with a steady trickle of approvals
+    eventually catches up run by run instead of this function blocking to
+    drain an unbounded queue."""
+    with _registry_lock:
+        pending = int(project_id) in _pending_followup
+        _pending_followup.discard(int(project_id))
+    if pending:
+        start_or_reuse_analysis_run(project_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -473,4 +506,10 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             finished_at=_now(),
         )
     finally:
+        # A run that ended because a user cancelled it should not immediately
+        # restart itself - _is_cancel_requested is checked before it's
+        # cleared below, so this only fires for a run that ran to its own
+        # natural conclusion (success, failed, fatal, or crashed).
+        if not _is_cancel_requested(run_id):
+            _maybe_start_followup(project_id)
         _clear_cancellation(run_id)

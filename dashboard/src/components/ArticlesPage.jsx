@@ -18,7 +18,7 @@ import {
   pollDocumentExtraction,
   pollArticleCandidates,
   listDocumentArticles,
-  setDocumentArticleStatus,
+  approveDocumentArticlesForDocuments,
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
@@ -315,12 +315,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   // Imports a batch of documents (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON) via
   // the same upload -> extract -> LLM-split pipeline the project-create
-  // wizard uses, then auto-approves only the candidates split out of *these*
-  // documents (not every pending candidate in the project - see approve_all's
-  // docstring - a wizard mid-review elsewhere shouldn't get its candidates
-  // silently approved by an Articles-page import). Every resulting article
-  // gets a document_id (via its synthetic source_url), so it's filterable by
-  // document the same way any other uploaded document's articles are.
+  // wizard uses, then approves only the candidates split out of *these*
+  // documents (not every pending candidate in the project - see
+  // approve_for_documents' docstring - a wizard mid-review elsewhere
+  // shouldn't get its candidates silently approved by an Articles-page
+  // import). Every resulting article gets a document_id (via its synthetic
+  // source_url), so it's filterable by document the same way any other
+  // uploaded document's articles are.
   const importDocumentFiles = async (files) => {
     const projectId = projectFilter;
     setDocumentImportStatus({ message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
@@ -332,30 +333,41 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setDocumentImportStatus({ message: 'Splitting into articles...' });
     const afterSplit = await pollArticleCandidates(projectId, documentIds, () => {});
+    const thisBatch = afterSplit.filter((doc) => documentIds.includes(doc.id));
     const failedIds = new Set(
-      afterSplit
-        .filter((doc) => documentIds.includes(doc.id) && (doc.status === 'failed' || doc.articles_status === 'failed'))
-        .map((doc) => doc.id)
+      thisBatch.filter((doc) => doc.status === 'failed' || doc.articles_status === 'failed').map((doc) => doc.id)
     );
+    // A document can finish 'ready' and still leave a note behind:
+    // articles_error also carries a .json/.jsonl/.ndjson upload's truncation
+    // report (records left behind past the per-file cap - see
+    // project_documents_store.py's _process_record_document and
+    // listDocuments' own doc comment). That must not be swallowed just
+    // because the document itself didn't fail outright.
+    const notes = thisBatch
+      .filter((doc) => !failedIds.has(doc.id) && doc.articles_error)
+      .map((doc) => `${doc.original_filename || `Document #${doc.id}`}: ${doc.articles_error}`);
+
+    setDocumentImportStatus({ message: 'Adding articles...' });
+    // One request for the whole batch, scoped to just these documents (see
+    // approve_for_documents' docstring), instead of one approval request per
+    // candidate - process_document already auto-approves each document as it
+    // finishes splitting, so this is also a safety net for whatever that
+    // missed, and it's what starts (or joins) the one analysis run this
+    // import needs rather than a run-start call per document/candidate.
+    await approveDocumentArticlesForDocuments(projectId, documentIds);
+    setReloadToken((value) => value + 1);
 
     const { articles: candidates } = await listDocumentArticles(projectId);
-    const toApprove = candidates.filter((candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'pending');
-
-    setDocumentImportStatus({ message: `Adding ${toApprove.length} article${toApprove.length === 1 ? '' : 's'}...` });
-    let approved = 0;
-    for (const candidate of toApprove) {
-      try {
-        await setDocumentArticleStatus(candidate.id, 'approved');
-        approved += 1;
-        setReloadToken((value) => value + 1);
-      } catch {
-        // Left pending - reviewable from the project's document-review view.
-      }
-    }
+    const approved = candidates.filter(
+      (candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'approved'
+    ).length;
 
     setDocumentImportStatus({
-      message: `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`,
+      message:
+        `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`
+        + (notes.length ? ` ${notes.join(' ')}` : ''),
       done: true,
+      warning: notes.length > 0,
     });
 
     if (failedIds.size) {

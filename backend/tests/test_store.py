@@ -482,6 +482,60 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
         self.assertNotIn("project-document/%", captured["sql"])
         self.assertNotIn("source_url = excluded.source_url", captured["sql"])
 
+    def test_enrichment_fields_are_guarded_when_analysis_status_is_in_the_write(self):
+        """project_document_articles._materialize() and its competitor-study
+        counterpart both save a freshly-approved candidate with
+        analysis_status='pending' and every enrichment field still at
+        DEFAULT_ENRICHMENT's neutral placeholder - real analysis for *that
+        candidate* hasn't run yet. If the candidate's url already belongs to a
+        successfully-analyzed article (the same export re-imported, or a
+        shared real-world url approved into a second project), that
+        placeholder write must not blank out analysis already on file - see
+        store.ENRICHMENT_FIELDS."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "analysis_status": "pending", "sentiment": "neutral"}
+        fields = ["url", "analysis_status", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success' "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
+        self.assertNotIn("sentiment = excluded.sentiment,", captured["sql"])
+        # analysis_status itself must still move forward unconditionally - the
+        # whole point is that this candidate needs (re)analysis.
+        self.assertIn("analysis_status = excluded.analysis_status", captured["sql"])
+
+    def test_enrichment_fields_fall_back_to_plain_overwrite_without_analysis_status(self):
+        """A caller that never writes analysis_status (none exists today, but
+        nothing should silently stop updating enrichment fields if one
+        didn't) has no 'pending' placeholder to guard against."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "sentiment": "positive"}
+        fields = ["url", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn("sentiment = excluded.sentiment", captured["sql"])
+        self.assertNotIn("case when excluded.analysis_status", captured["sql"])
+
 
 if __name__ == "__main__":
     unittest.main()

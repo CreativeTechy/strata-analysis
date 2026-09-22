@@ -45,12 +45,20 @@ def _export_select():
     so exporting the narrow list and re-importing it would null those out.
     Selecting exactly what the upsert writes keeps export -> import lossless.
 
+    Also unions in ARTICLES_SELECT itself: `segment` (and any other future
+    dashboard-list field) is derived/written outside the upsert - see
+    store.py's _replace_article_children(), which sets it from the
+    per-article-opinion majority vote rather than from ARTICLE_MUTABLE_FIELDS
+    - so it would otherwise be visible on every article card yet silently
+    absent from the export. Whatever the dashboard shows for an article, the
+    export must be able to carry too.
+
     Built from the live table rather than hardcoded so a database that hasn't
     had every migration applied yet exports the columns it does have instead of
     failing the whole query on one missing name."""
     from services.articles.store import stored_article_fields
 
-    fields = ["id", *stored_article_fields(), "created_at"]
+    fields = ["id", *stored_article_fields(), *ARTICLES_SELECT.split(","), "created_at"]
     seen = set()
     ordered = []
     for field in fields:

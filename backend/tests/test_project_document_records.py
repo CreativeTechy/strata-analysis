@@ -118,6 +118,28 @@ class ParseRecordsTests(unittest.TestCase):
         self.assertTrue(parsed.truncated)
         self.assertEqual(parsed.total_seen, records.MAX_RECORDS + 7)
 
+    def test_a_genuine_jsonl_file_is_iterated_lazily_not_parsed_all_at_once(self):
+        """_iter_raw's line-delimited path must stay a true generator for the
+        common .jsonl/.ndjson case - a multi-thousand-record export must not
+        have every record parsed into a list before MAX_RECORDS gets to
+        discard most of them (see the module's own note on this). Proven by
+        counting json.loads calls against how many items the caller actually
+        pulled, rather than the file's full line count."""
+        text = "\n".join(json.dumps({"title": f"A{i}", "text": "x"}) for i in range(10))
+        calls = []
+        original_loads = json.loads
+
+        def counting_loads(raw):
+            calls.append(raw)
+            return original_loads(raw)
+
+        with patch("services.documents.records.json.loads", side_effect=counting_loads):
+            generator = records._iter_raw(text, ".jsonl")
+            for _ in range(3):
+                next(generator)
+
+        self.assertEqual(len(calls), 3)
+
     def test_source_run_snapshot_is_carried_through_as_metadata(self):
         snapshot = {"id": "run-1", "started_at": "2026-08-20T00:00:00+00:00", "project_id": 4}
         text = json.dumps({"title": "A", "text": "one", "source_run_snapshot": snapshot})
@@ -327,6 +349,95 @@ class AutoApproveAndQueueAnalysisTests(unittest.TestCase):
              patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
             project_documents_store._try_approve_all_and_queue_analysis(9)  # must not raise
         mock_start.assert_not_called()
+
+
+class ApproveForDocumentsTests(unittest.TestCase):
+    """approve_for_documents() is approve_all()'s scoped counterpart - the
+    Articles page's import uses it so approving what it just uploaded can't
+    also sweep up a pending candidate from a wizard mid-review elsewhere in
+    the same project."""
+
+    def _candidate(self, candidate_id, document_id, status="pending"):
+        return {"id": candidate_id, "document_id": document_id, "status": status}
+
+    def test_only_pending_candidates_from_the_given_documents_are_approved(self):
+        candidates = [
+            self._candidate(1, document_id=10),  # in scope, pending
+            self._candidate(2, document_id=10, status="approved"),  # in scope, already decided
+            self._candidate(3, document_id=11),  # not in scope
+        ]
+        with patch.object(project_document_articles, "list_candidates", return_value=candidates), \
+             patch.object(project_document_articles, "set_status",
+                           side_effect=lambda cid, status: {"id": cid, "status": status, "article_id": 100 + cid}) as mock_set:
+            approved = project_document_articles.approve_for_documents(9, [10])
+
+        mock_set.assert_called_once_with(1, "approved")
+        self.assertEqual([a["id"] for a in approved], [1])
+
+    def test_empty_document_ids_approves_nothing(self):
+        with patch.object(project_document_articles, "list_candidates") as mock_list, \
+             patch.object(project_document_articles, "set_status") as mock_set:
+            approved = project_document_articles.approve_for_documents(9, [])
+
+        self.assertEqual(approved, [])
+        mock_list.assert_not_called()
+        mock_set.assert_not_called()
+
+    def test_a_failed_set_status_is_left_out_of_the_result_not_raised(self):
+        candidates = [self._candidate(1, document_id=10)]
+        with patch.object(project_document_articles, "list_candidates", return_value=candidates), \
+             patch.object(project_document_articles, "set_status", return_value=None):
+            approved = project_document_articles.approve_for_documents(9, [10])
+
+        self.assertEqual(approved, [])
+
+
+class ApproveForDocumentsRouteTests(unittest.TestCase):
+    """POST .../document-articles/approve-for-documents: one approval call and
+    one run-start for a whole import batch, scoped to the documents it
+    actually uploaded."""
+
+    def test_starts_a_run_only_when_something_was_materialized(self):
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approve_for_documents",
+                           return_value=[{"article_id": 42}]) as mock_approve, \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run",
+                           return_value={"run_id": "run-1"}) as mock_start:
+            result = project_documents_api.approve_document_articles_for_documents(
+                9, {"document_ids": [10, 11]}, user={"id": 1}
+            )
+
+        mock_approve.assert_called_once_with(9, [10, 11])
+        mock_start.assert_called_once_with(9)
+        self.assertEqual(result, {"articles": [{"article_id": 42}], "run_id": "run-1"})
+
+    def test_no_run_when_nothing_was_materialized(self):
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approve_for_documents", return_value=[]), \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run") as mock_start:
+            result = project_documents_api.approve_document_articles_for_documents(
+                9, {"document_ids": [10]}, user={"id": 1}
+            )
+
+        mock_start.assert_not_called()
+        self.assertIsNone(result["run_id"])
+
+    def test_rejects_non_integer_document_ids(self):
+        from fastapi import HTTPException
+
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"):
+            with self.assertRaises(HTTPException) as ctx:
+                project_documents_api.approve_document_articles_for_documents(
+                    9, {"document_ids": ["not-a-number"]}, user={"id": 1}
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
 
 
 class AllowedExtensionTests(unittest.TestCase):

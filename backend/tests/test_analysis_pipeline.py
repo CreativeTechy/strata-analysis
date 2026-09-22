@@ -60,9 +60,12 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         for patcher in self.patchers:
             patcher.start()
 
+        pipeline._pending_followup.clear()
+
     def tearDown(self):
         for patcher in self.patchers:
             patcher.stop()
+        pipeline._pending_followup.clear()
 
     def _final(self):
         """The terminal update - the one carrying finished_at."""
@@ -213,6 +216,93 @@ class RunAnalysisPipelineTests(unittest.TestCase):
             pipeline.run_analysis_pipeline("run-5", project_id=5)
 
         self.assertEqual([call.kwargs["run_id"] for call in analyze.call_args_list], ["run-5", "run-5"])
+
+    def test_a_pending_followup_starts_once_the_run_finishes(self):
+        """start_or_reuse_analysis_run() marks a project in _pending_followup
+        when it's asked to queue work while a run is already active for it
+        (its own work-set snapshot at `prepare` already missed that work) -
+        this is the other half: a run that finishes normally must start
+        exactly one follow-up run for a project left marked that way."""
+        pipeline._pending_followup.add(5)
+        rows = _rows((1, 10, "survey.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}), \
+             patch.object(pipeline, "start_or_reuse_analysis_run") as mock_start:
+            pipeline.run_analysis_pipeline("run-1", project_id=5)
+
+        mock_start.assert_called_once_with(5)
+        self.assertNotIn(5, pipeline._pending_followup)
+
+    def test_no_followup_when_nothing_was_marked_pending(self):
+        rows = _rows((1, 10, "survey.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}), \
+             patch.object(pipeline, "start_or_reuse_analysis_run") as mock_start:
+            pipeline.run_analysis_pipeline("run-1", project_id=5)
+
+        mock_start.assert_not_called()
+
+    def test_a_cancelled_run_does_not_start_a_followup(self):
+        """A user-cancelled run must not immediately restart itself, even if
+        work was marked pending for the project while it was running."""
+        pipeline._pending_followup.add(5)
+
+        def analyze(article_id, run_id=None):
+            pipeline.cancel_pipeline_run("run-1")
+            return {"ok": True}
+
+        rows = _rows((1, 10, "a.pdf"), (2, 10, "a.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", side_effect=analyze), \
+             patch.object(pipeline, "start_or_reuse_analysis_run") as mock_start:
+            pipeline.run_analysis_pipeline("run-1", project_id=5)
+
+        self.assertEqual(self._final()["status"], "cancelled")
+        mock_start.assert_not_called()
+        # Left marked - a caller that already asked for this project's
+        # analysis while it was cancelled should still get it once something
+        # starts a run again, just not automatically from here.
+        self.assertIn(5, pipeline._pending_followup)
+
+
+class StartOrReuseAnalysisRunTests(unittest.TestCase):
+    def setUp(self):
+        pipeline._pending_followup.clear()
+
+    def tearDown(self):
+        pipeline._pending_followup.clear()
+
+    def test_reusing_an_active_run_marks_the_project_for_followup(self):
+        with patch.object(pipeline, "get_active_run_for_project", return_value={"id": "run-active"}):
+            result = pipeline.start_or_reuse_analysis_run(5)
+
+        self.assertEqual(result, {"run_id": "run-active", "started": False})
+        self.assertIn(5, pipeline._pending_followup)
+
+    def test_starting_a_fresh_run_does_not_mark_followup(self):
+        with patch.object(pipeline, "get_active_run_for_project", return_value=None), \
+             patch.object(pipeline, "create_pipeline_run", return_value={"id": "run-new"}), \
+             patch.object(pipeline.threading, "Thread") as mock_thread:
+            result = pipeline.start_or_reuse_analysis_run(5)
+
+        self.assertEqual(result, {"run_id": "run-new", "started": True})
+        self.assertNotIn(5, pipeline._pending_followup)
+        mock_thread.assert_called_once()
+
+    def test_maybe_start_followup_starts_exactly_one_run_and_clears_the_flag(self):
+        pipeline._pending_followup.add(5)
+        with patch.object(pipeline, "start_or_reuse_analysis_run") as mock_start:
+            pipeline._maybe_start_followup(5)
+            pipeline._maybe_start_followup(5)  # nothing left pending the 2nd time
+
+        mock_start.assert_called_once_with(5)
+        self.assertNotIn(5, pipeline._pending_followup)
+
+    def test_maybe_start_followup_is_a_noop_when_nothing_pending(self):
+        with patch.object(pipeline, "start_or_reuse_analysis_run") as mock_start:
+            pipeline._maybe_start_followup(5)
+
+        mock_start.assert_not_called()
 
 
 class SelectArticlesTests(unittest.TestCase):

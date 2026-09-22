@@ -110,6 +110,65 @@ ARTICLE_JSON_FIELDS = {
     "embedding_json",
 }
 
+# The AI-derived output columns, as opposed to the article's own identity/
+# content fields (url, title, text, author, published, ...). Guarded
+# separately in _upsert_article_row(): project_document_articles.py and
+# competitor_document_articles.py both materialize a freshly-approved
+# candidate by calling save_articles() with these fields still at
+# DEFAULT_ENRICHMENT's neutral placeholders and analysis_status='pending' -
+# real analysis for *that candidate* hasn't run yet. If the candidate's url
+# happens to already belong to a successfully-analyzed article (the same
+# export re-imported, or a real-world URL approved into a second project),
+# `on conflict (url) do update` would otherwise blank out that existing
+# analysis the moment the placeholder lands - and if the analysis run queued
+# right after doesn't get around to re-analyzing this particular article
+# (e.g. it was materialized after that run's own work was already selected),
+# the neutral placeholder is what a viewer sees, indefinitely, in place of
+# analysis that used to be there. A genuine reanalysis result is never
+# written with analysis_status='pending' (see reanalyze.py), so gating on
+# that incoming value only ever protects against the placeholder case.
+ENRICHMENT_FIELDS = frozenset({
+    "sentiment",
+    "sentiment_score",
+    "sentiment_low_confidence",
+    "sentiment_model",
+    "relevance_score",
+    "category",
+    "category_confidence",
+    "article_category",
+    "writer_tone",
+    "writer_tone_confidence",
+    "article_tone",
+    "article_tone_confidence",
+    "region",
+    "region_confidence",
+    "gender",
+    "age_range",
+    "verified",
+    "insight_json",
+    "analysis_model",
+    "analysis_prompt_version",
+    "analyzed_at",
+    "organizations",
+    "entities",
+    "topics",
+    "key_points",
+    "risks",
+    "opportunities",
+    "brands",
+    "car_models",
+    "embedding_json",
+    "embedding_model",
+    "embedding_source",
+    "embedded_at",
+    "embedding_dimensions",
+    "classification_model",
+    "extraction_model",
+    "analysis_pipeline_version",
+    "source_language",
+    "source_language_confidence",
+})
+
 
 def _row(article):
     row = {k: article.get(k) for k in ARTICLE_COLUMNS}
@@ -348,7 +407,23 @@ def _upsert_article_row(article):
         if field not in (
             "url", "source", "source_url", "pipeline_run_id", "source_run_snapshot", "source_provenance",
         )
+        and field not in ENRICHMENT_FIELDS
     ]
+    if "analysis_status" in fields:
+        for field in fields:
+            if field in ENRICHMENT_FIELDS:
+                # See ENRICHMENT_FIELDS' docstring: a materialize-as-pending
+                # write must not blank out analysis that already succeeded.
+                updates.append(
+                    f"{field} = case when excluded.analysis_status = 'pending' "
+                    f"and articles.analysis_status = 'success' "
+                    f"then articles.{field} else excluded.{field} end"
+                )
+    else:
+        # analysis_status itself isn't in this write (a caller that never
+        # touches it), so there is no 'pending' placeholder to guard against -
+        # fall back to the plain overwrite for every enrichment field present.
+        updates.extend(f"{field} = excluded.{field}" for field in fields if field in ENRICHMENT_FIELDS)
     if "source_url" in fields:
         # An approved uploaded-document record may carry a real per-article URL,
         # so a later import or reanalysis can collide on `url`. Keep the document

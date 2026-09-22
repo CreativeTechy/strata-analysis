@@ -196,6 +196,31 @@ def approve_all_document_articles(
     return {"articles": approved, "run_id": run_id}
 
 
+@router.post("/{project_id}/document-articles/approve-for-documents")
+def approve_document_articles_for_documents(
+    project_id: int,
+    payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    """Same as approve-all, scoped to specific document ids - what the
+    Articles page's import uses so approving what it just uploaded can't also
+    sweep up a pending candidate from a wizard mid-review elsewhere in the
+    project (see project_document_articles.approve_for_documents), and so an
+    import of many candidates is one approval call and one run-start instead
+    of one of each per candidate."""
+    _project_or_404(project_id, user)
+    document_ids = (payload or {}).get("document_ids") or []
+    try:
+        document_ids = [int(document_id) for document_id in document_ids]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="document_ids must be a list of integers.")
+    approved = project_document_articles.approve_for_documents(project_id, document_ids)
+    run_id = None
+    if any(candidate.get("article_id") for candidate in approved):
+        run_id = start_or_reuse_analysis_run(project_id)["run_id"]
+    return {"articles": approved, "run_id": run_id}
+
+
 @router.post("/{project_id}/document-articles/reanalyze")
 def reanalyze_document_articles(
     project_id: int,
