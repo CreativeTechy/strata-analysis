@@ -536,6 +536,66 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
         self.assertIn("sentiment = excluded.sentiment", captured["sql"])
         self.assertNotIn("case when excluded.analysis_status", captured["sql"])
 
+    def test_enrichment_guard_also_requires_unchanged_content_when_content_hash_is_available(self):
+        """A materialize-as-pending write whose url matches an existing
+        successfully-analyzed article, but whose body differs (a re-scrape, a
+        different tool's export of the same URL), must not preserve analysis
+        that was derived from a *different* body while text/summary still
+        take the new one - that would pair analysis with content it was never
+        run on. content_hash (when the write includes it) is what tells the
+        two cases apart from analysis_status alone."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {
+            "url": "https://example.com/a", "analysis_status": "pending",
+            "sentiment": "neutral", "text": "new body", "content_hash": "newhash",
+        }
+        fields = ["url", "analysis_status", "sentiment", "text", "content_hash"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success'"
+            " and articles.content_hash is not distinct from excluded.content_hash "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
+        # content_hash itself is not an enrichment field - it always tracks
+        # the row's own (possibly new) text, same as before this guard.
+        self.assertIn("content_hash = excluded.content_hash", captured["sql"])
+
+    def test_enrichment_guard_omits_the_content_check_when_content_hash_is_unavailable(self):
+        """A database without the content_hash column (pre-migration) has
+        nothing to compare - falls back to the analysis_status-only guard
+        this shipped with, not to no guard at all."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "analysis_status": "pending", "sentiment": "neutral"}
+        fields = ["url", "analysis_status", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertNotIn("content_hash", captured["sql"])
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success' "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

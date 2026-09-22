@@ -410,13 +410,27 @@ def _upsert_article_row(article):
         and field not in ENRICHMENT_FIELDS
     ]
     if "analysis_status" in fields:
+        # When content_hash is available, only preserve when the body is
+        # actually the same one the analysis was derived from - otherwise a
+        # materialize call whose url matches an existing article but whose
+        # text differs (a re-scrape, a different tool's export of the same
+        # URL) would keep sentiment/topics/embeddings computed from the OLD
+        # body while text/summary below still take the new one, pairing
+        # analysis with content it was never run on. Without content_hash
+        # (a pre-migration database) there is nothing to compare, so this
+        # falls back to guarding on analysis_status alone - the same
+        # conservative behavior this guard shipped with.
+        content_unchanged = (
+            " and articles.content_hash is not distinct from excluded.content_hash" if "content_hash" in fields else ""
+        )
         for field in fields:
             if field in ENRICHMENT_FIELDS:
                 # See ENRICHMENT_FIELDS' docstring: a materialize-as-pending
                 # write must not blank out analysis that already succeeded.
                 updates.append(
                     f"{field} = case when excluded.analysis_status = 'pending' "
-                    f"and articles.analysis_status = 'success' "
+                    f"and articles.analysis_status = 'success'"
+                    f"{content_unchanged} "
                     f"then articles.{field} else excluded.{field} end"
                 )
     else:

@@ -37,6 +37,42 @@ class ExportSelectTests(unittest.TestCase):
         dropped = [field for field in articles_store.ARTICLES_SELECT.split(",") if field not in selected]
         self.assertEqual(dropped, [])
 
+    def test_a_column_missing_from_a_pre_migration_database_is_dropped_not_queried(self):
+        """ARTICLES_SELECT's names (segment, source_run_snapshot, ...) are
+        hardcoded, unlike stored_article_fields() which is already filtered
+        against the live table - so they must be filtered again here, or a
+        database that hasn't had the migration adding one of them applied yet
+        would have the whole export query fail on an unknown column name."""
+        from services.articles import store
+
+        articles_store._export_select.cache_clear()
+        live_columns = (set(store.ARTICLE_MUTABLE_FIELDS) | {"id", "created_at"}) - {
+            "segment", "source_run_snapshot",
+        }
+        with patch.object(store, "_article_table_columns", return_value=live_columns):
+            selected = articles_store._export_select().split(",")
+
+        self.assertNotIn("segment", selected)
+        self.assertNotIn("source_run_snapshot", selected)
+        self.assertIn("id", selected)
+        self.assertIn("title", selected)
+
+    def test_an_unreachable_database_falls_back_to_trusting_every_candidate_column(self):
+        """_article_table_columns() returns an empty set both when there is no
+        DATABASE_URL and when the query itself fails - in either case there is
+        nothing to check against, so every candidate name (including the ones
+        unioned in from ARTICLES_SELECT) is kept rather than partially
+        filtered out, matching stored_article_fields()'s own "can't check, so
+        trust everything" fallback for the same condition."""
+        from services.articles import store
+
+        articles_store._export_select.cache_clear()
+        with patch.object(store, "_article_table_columns", return_value=set()):
+            selected = articles_store._export_select().split(",")
+
+        self.assertIn("segment", selected)
+        self.assertIn("source_run_snapshot", selected)
+
 
 class ExportRouteTests(unittest.TestCase):
     """GET /api/articles/export writes NDJSON straight off the generator, so
