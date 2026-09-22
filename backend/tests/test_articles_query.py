@@ -39,13 +39,13 @@ class ListIdeaClustersForProjectTests(unittest.TestCase):
 
 
 class ArticleFilterTests(unittest.TestCase):
-    def test_source_reliability_filter_is_allowlisted_and_parameterized(self):
-        sql, params = articles_query._where_parts(source_reliability_status="concern_reported")
-        self.assertIn("source_reliability_status = %s", sql)
-        self.assertEqual(params, ["concern_reported"])
+    def test_coverage_filter_is_allowlisted_and_parameterized(self):
+        sql, params = articles_query._where_parts(coverage_status="broad_coverage")
+        self.assertIn("coverage_evidence->>'status'", sql)
+        self.assertEqual(params, ["broad_coverage"])
 
         invalid_sql, invalid_params = articles_query._where_parts(
-            source_reliability_status="verified'; drop table articles; --"
+            coverage_status="verified'; drop table articles; --"
         )
         self.assertEqual(invalid_sql, "")
         self.assertEqual(invalid_params, [])
@@ -281,14 +281,7 @@ class GetArticleAnalysisTests(unittest.TestCase):
             "analysis_status": "success", "analysis_error": None,
             "sentiment_score": 0.9, "sentiment_low_confidence": False,
             "sentiment_model": "fake-sentiment-model",
-            "source_domain": "example.com",
-            "source_reliability_status": "concern_reported",
-            "source_reliability_reason": "Iffy reports reliability concerns for example.com.",
-            "source_reliability_provider": "Iffy.news",
-            "source_reliability_reference_url": "https://review.example/example",
-            "source_reliability_dataset_version": "iffy-test",
-            "source_reliability_details": {"factual_rating": "L"},
-            "source_reliability_assessed_at": "2026-09-22T00:00:00Z",
+            "coverage_evidence": {"status": "some_coverage", "matching_domain_count": 2},
         }
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
             with patch("services.articles.articles_query.db.fetch_all", return_value=[{"column_name": k} for k in row]):
@@ -302,9 +295,8 @@ class GetArticleAnalysisTests(unittest.TestCase):
         self.assertEqual(result["confidence"]["sentiment"], 0.9)
         self.assertFalse(result["confidence"]["sentiment_low_confidence"])
         self.assertEqual(result["models"]["sentiment"], "fake-sentiment-model")
-        self.assertEqual(result["source_reliability"]["status"], "concern_reported")
-        self.assertEqual(result["source_reliability"]["domain"], "example.com")
-        self.assertEqual(result["source_reliability"]["details"]["factual_rating"], "L")
+        self.assertEqual(result["coverage_evidence"]["status"], "some_coverage")
+        self.assertEqual(result["coverage_evidence"]["matching_domain_count"], 2)
 
     def test_malformed_insight_json_does_not_leak_through(self):
         row = {

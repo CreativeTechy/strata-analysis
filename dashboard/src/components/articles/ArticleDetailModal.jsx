@@ -1,12 +1,6 @@
 import ConfirmModal from '../ConfirmModal';
 import { prettyLabel, confidencePct } from '../../lib/articleHelpers.jsx';
 
-const SOURCE_RELIABILITY_LABELS = {
-  concern_reported: 'Concern reported',
-  not_listed: 'Not listed by Iffy',
-  not_assessed: 'Not assessed',
-};
-
 const COVERAGE_LABELS = {
   broad_coverage: 'Broad matching coverage',
   some_coverage: 'Some matching coverage',
@@ -111,41 +105,6 @@ export default function ArticleDetailModal({
               )}
             </div>
           ) : null}
-          <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
-            <strong>Source reliability:</strong>{' '}
-            {SOURCE_RELIABILITY_LABELS[data.source_reliability?.status] || prettyLabel(data.source_reliability?.status || 'not_assessed')}
-            {data.source_reliability?.domain ? ` · ${data.source_reliability.domain}` : ''}
-            {data.source_reliability?.reason ? (
-              <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                {data.source_reliability.reason}
-              </div>
-            ) : null}
-            {data.source_reliability?.details?.matched_domain ? (
-              <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                Matched list domain: {data.source_reliability.details.matched_domain}
-                {data.source_reliability.details.publisher_name ? ` · ${data.source_reliability.details.publisher_name}` : ''}
-              </div>
-            ) : null}
-            {data.source_reliability?.reference_url ? (
-              <a
-                href={data.source_reliability.reference_url}
-                target="_blank"
-                rel="noreferrer"
-                style={{ display: 'inline-block', marginTop: 4, fontSize: '0.85rem' }}
-              >
-                View {data.source_reliability.provider || 'source'} assessment
-              </a>
-            ) : null}
-            {data.source_reliability?.assessed_at ? (
-              <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.78rem' }}>
-                Assessed {new Date(data.source_reliability.assessed_at).toLocaleString()}
-                {data.source_reliability.dataset_version ? ` · Dataset ${data.source_reliability.dataset_version}` : ''}
-                {data.source_reliability.details?.dataset_imported_at
-                  ? ` · Imported ${new Date(data.source_reliability.details.dataset_imported_at).toLocaleDateString()}`
-                  : ''}
-              </div>
-            ) : null}
-          </div>
           <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
             <strong>Cross-source coverage:</strong>{' '}
             {data.coverage_evidence

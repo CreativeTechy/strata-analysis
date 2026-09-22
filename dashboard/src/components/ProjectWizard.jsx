@@ -836,7 +836,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               disabled={uploadingDocs || extractingDocs}
             />
             <span className="proj-row-desc">
-              Applied to this upload batch and used for the publisher reliability signal.
+              Applied to this upload batch and used to identify the original publisher during coverage checks.
             </span>
           </label>
 

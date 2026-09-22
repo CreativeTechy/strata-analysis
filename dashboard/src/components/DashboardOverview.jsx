@@ -19,17 +19,6 @@ const PERIODS = [
   { key: 'all', label: 'All time' },
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
-const RELIABILITY_COLORS = {
-  concern_reported: '#e11d48',
-  not_listed: '#64748b',
-  not_assessed: '#cbd5e1',
-};
-const RELIABILITY_LABELS = {
-  concern_reported: 'Concern reported',
-  not_listed: 'Not listed by Iffy',
-  not_assessed: 'Not assessed',
-};
-
 const COVERAGE_LABELS = {
   broad_coverage: 'Broad matching coverage',
   some_coverage: 'Some matching coverage',
@@ -192,15 +181,6 @@ export default function DashboardOverview({
   const genderData = capBreakdown((data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0));
   const ageRangeData = capBreakdown((data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0));
   const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
-  const sourceReliabilityCounts = new Map(
-    (data.insights?.source_reliability_breakdown || []).map((entry) => [entry.value, Number(entry.total || 0)]),
-  );
-  const sourceReliabilityData = Object.keys(RELIABILITY_LABELS).map((value) => ({
-    value,
-    total: sourceReliabilityCounts.get(value) || 0,
-  }));
-  const sourceReliabilityTotal = sourceReliabilityData.reduce((sum, entry) => sum + Number(entry.total || 0), 0);
-  const sourceReliabilityDataset = data.source_reliability_dataset;
   const coverageCounts = new Map(
     (data.insights?.coverage_evidence_breakdown || []).map((entry) => [entry.value, Number(entry.total || 0)]),
   );
@@ -480,71 +460,50 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card intelligence-language-card intelligence-source-reliability-card">
             <div className="intelligence-card-heading">
               <div>
-                <h3>Source reliability signals</h3>
-                <span>Articles by publisher signal</span>
+                <h3>Cross-source coverage</h3>
+                <span>Matching stories found through GDELT</span>
               </div>
             </div>
-            {sourceReliabilityTotal > 0 ? (
+            {coverageTotal > 0 ? (
               <div className="source-reliability-layout">
                 <div
                   className="source-reliability-bar"
                   role="img"
-                  aria-label={sourceReliabilityData.map((entry) => `${RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}: ${entry.total} articles, ${percent(entry.total, sourceReliabilityTotal)} percent`).join('; ')}
+                  aria-label={coverageData.map((entry) => `${COVERAGE_LABELS[entry.value]}: ${entry.total} articles, ${percent(entry.total, coverageTotal)} percent`).join('; ')}
                 >
-                  {sourceReliabilityData.filter((entry) => entry.total > 0).map((entry) => (
+                  {coverageData.filter((entry) => entry.total > 0).map((entry) => (
                     <span
                       key={entry.value}
                       style={{
-                        background: RELIABILITY_COLORS[entry.value] || RELIABILITY_COLORS.not_assessed,
-                        width: `${(Number(entry.total) / sourceReliabilityTotal) * 100}%`,
+                        background: COVERAGE_COLORS[entry.value],
+                        width: `${(Number(entry.total) / coverageTotal) * 100}%`,
                       }}
-                      title={`${RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}: ${entry.total} (${percent(entry.total, sourceReliabilityTotal)}%)`}
+                      title={`${COVERAGE_LABELS[entry.value]}: ${entry.total} (${percent(entry.total, coverageTotal)}%)`}
                     />
                   ))}
                 </div>
                 <div className="source-reliability-legend">
-                  {sourceReliabilityData.map((entry) => (
+                  {coverageData.map((entry) => (
                     <Link
                       key={entry.value}
                       className="source-reliability-row"
                       to={`/articles?${new URLSearchParams({
                         ...(selectedProjectId != null ? { project_id: String(selectedProjectId) } : {}),
-                        source_reliability_status: entry.value,
+                        coverage_status: entry.value,
                       }).toString()}`}
-                      aria-label={`View ${entry.total} articles with source signal ${RELIABILITY_LABELS[entry.value]}`}
+                      aria-label={`View ${entry.total} articles with ${COVERAGE_LABELS[entry.value]}`}
                     >
-                      <span className="source-reliability-dot" style={{ background: RELIABILITY_COLORS[entry.value] || RELIABILITY_COLORS.not_assessed }} />
-                      <span className="source-reliability-label">{RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}</span>
-                      <strong>{Number(entry.total).toLocaleString()} · {percent(entry.total, sourceReliabilityTotal)}%</strong>
+                      <span className="source-reliability-dot" style={{ background: COVERAGE_COLORS[entry.value] }} />
+                      <span className="source-reliability-label">{COVERAGE_LABELS[entry.value]}</span>
+                      <strong>{Number(entry.total).toLocaleString()} · {percent(entry.total, coverageTotal)}%</strong>
                     </Link>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No source reliability assessments yet.</p>}
+            ) : <p className="intelligence-empty">No articles are available for coverage checks yet.</p>}
             <p className="source-reliability-note">
-              Publisher signal from <a href="https://iffy.news/index/" target="_blank" rel="noreferrer">Iffy.news</a>. Not listed does not mean verified.
-              {sourceReliabilityDataset?.imported_at && (
-                <> Dataset imported {new Date(sourceReliabilityDataset.imported_at).toLocaleDateString()} ({Number(sourceReliabilityDataset.record_count || 0).toLocaleString()} domains, {sourceReliabilityDataset.license}).</>
-              )}
+              <a href="https://www.gdeltproject.org/" target="_blank" rel="noreferrer">GDELT</a> checks are started from each article’s details. Matching coverage supports comparison but does not prove truth or source independence.
             </p>
-            <div className="source-reliability-layout" style={{ marginTop: 18 }}>
-              <div className="intelligence-card-heading"><div><h3 style={{ fontSize: '0.92rem' }}>GDELT coverage evidence</h3><span>Matching stories across other domains</span></div></div>
-              <div className="source-reliability-bar" role="img" aria-label="GDELT coverage evidence distribution">
-                {coverageData.filter((entry) => entry.total > 0).map((entry) => (
-                  <span key={entry.value} style={{ background: COVERAGE_COLORS[entry.value], width: `${coverageTotal ? (entry.total / coverageTotal) * 100 : 0}%` }} />
-                ))}
-              </div>
-              <div className="source-reliability-legend">
-                {coverageData.map((entry) => (
-                  <div key={entry.value} className="source-reliability-row">
-                    <span className="source-reliability-dot" style={{ background: COVERAGE_COLORS[entry.value] }} />
-                    <span className="source-reliability-label">{COVERAGE_LABELS[entry.value]}</span>
-                    <strong>{entry.total.toLocaleString()} · {percent(entry.total, coverageTotal)}%</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <p className="source-reliability-note">Coverage is checked explicitly from each article’s details. Matching coverage is supporting evidence, not proof of truth or source independence.</p>
           </article>
         </section>
 

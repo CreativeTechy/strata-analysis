@@ -274,30 +274,12 @@ def _verified_breakdown(rows):
     ]
 
 
-def _source_reliability_breakdown(rows):
-    """Publisher-level Iffy signal for the dashboard.
-
-    No match is deliberately kept distinct from a positive verification: the
-    Iffy dataset primarily identifies publishers with reported concerns.
-    """
-    valid = {"concern_reported", "not_listed", "not_assessed"}
-    counts = Counter()
-    for row in rows:
-        value = str(row.get("source_reliability_status") or "not_assessed").strip().lower()
-        counts[value if value in valid else "not_assessed"] += 1
-    return [
-        {"value": value, "total": counts[value]}
-        for value in ("concern_reported", "not_listed", "not_assessed")
-    ]
-
-
 def _coverage_evidence_breakdown(rows):
     valid = {"broad_coverage", "some_coverage", "no_coverage_found", "not_checked"}
     counts = Counter()
     for row in rows:
-        details = row.get("source_reliability_details")
-        gdelt = details.get("gdelt_coverage") if isinstance(details, dict) else None
-        value = str((gdelt or {}).get("status") or "not_checked").strip().lower()
+        evidence = row.get("coverage_evidence")
+        value = str((evidence or {}).get("status") or "not_checked").strip().lower()
         counts[value if value in valid else "not_checked"] += 1
     return [
         {"value": value, "total": counts[value]}
@@ -432,7 +414,6 @@ def _topic_summary(rows):
         "age_range_breakdown": _demographic_sentiment_breakdown(rows, "age_range"),
         "segment_breakdown": _demographic_sentiment_breakdown(rows, "segment"),
         "verified_breakdown": _verified_breakdown(rows),
-        "source_reliability_breakdown": _source_reliability_breakdown(rows),
         "coverage_evidence_breakdown": _coverage_evidence_breakdown(rows),
         "positive_feedback": positive_items,
         "negative_feedback": negative_items,
@@ -468,7 +449,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,source_reliability_status,source_reliability_details,insight_json,summary,published,pipeline_run_id,source_language",
+            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,coverage_evidence,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,

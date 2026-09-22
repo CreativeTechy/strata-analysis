@@ -34,11 +34,12 @@ const VIEW_MODES = [
   { value: 'list', label: 'List', icon: List },
 ];
 
-const SOURCE_RELIABILITY_OPTIONS = [
-  { value: 'all', label: 'All source signals' },
-  { value: 'concern_reported', label: 'Concern reported' },
-  { value: 'not_listed', label: 'Not listed by Iffy' },
-  { value: 'not_assessed', label: 'Not assessed' },
+const COVERAGE_OPTIONS = [
+  { value: 'all', label: 'All coverage checks' },
+  { value: 'broad_coverage', label: 'Broad matching coverage' },
+  { value: 'some_coverage', label: 'Some matching coverage' },
+  { value: 'no_coverage_found', label: 'No matching coverage found' },
+  { value: 'not_checked', label: 'Not checked' },
 ];
 
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
@@ -66,8 +67,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // into the matching document's articles, the same way `search`/`project_id`
   // above pre-fill from the URL.
   const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
-  const [sourceReliabilityFilter, setSourceReliabilityFilter] = useState(
-    () => searchParams.get('source_reliability_status') || 'all',
+  const [coverageFilter, setCoverageFilter] = useState(
+    () => searchParams.get('coverage_status') || 'all',
   );
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
@@ -120,7 +121,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, projectFilter, sourceFilter, sourceReliabilityFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -175,7 +176,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
           sentiment: sentiment !== 'all' ? sentiment : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
-          source_reliability_status: sourceReliabilityFilter !== 'all' ? sourceReliabilityFilter : undefined,
+          coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
           limit,
@@ -200,7 +201,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, sourceReliabilityFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -316,7 +317,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
-      setSourceReliabilityFilter('all');
+      setCoverageFilter('all');
       setAddedFrom('');
       setAddedTo('');
       setOffset(0);
@@ -353,7 +354,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         sentiment: sentiment !== 'all' ? sentiment : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
-        source_reliability_status: sourceReliabilityFilter !== 'all' ? sourceReliabilityFilter : undefined,
+        coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
         sort,
@@ -693,11 +694,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
             <select
               className="filter-select"
-              value={sourceReliabilityFilter}
-              onChange={(event) => setSourceReliabilityFilter(event.target.value)}
-              aria-label="Source reliability signal"
+              value={coverageFilter}
+              onChange={(event) => setCoverageFilter(event.target.value)}
+              aria-label="GDELT coverage evidence"
             >
-              {SOURCE_RELIABILITY_OPTIONS.map((option) => (
+              {COVERAGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>

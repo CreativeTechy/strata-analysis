@@ -20,8 +20,6 @@ import config
 import db
 from psycopg.types.json import Jsonb
 
-from services.articles.source_reliability import normalize_domain
-
 
 PROVIDER = "GDELT"
 PROVIDER_PAGE = "https://www.gdeltproject.org/"
@@ -30,6 +28,23 @@ STATUS_SOME = "some_coverage"
 STATUS_NONE = "no_coverage_found"
 class GdeltError(RuntimeError):
     """A safe, user-facing GDELT lookup failure."""
+
+
+def normalize_domain(value) -> str | None:
+    """Return a comparable ASCII hostname from a URL or bare domain."""
+    text = str(value or "").strip()
+    if not text or text.lower().startswith("document://"):
+        return None
+    candidate = text if "://" in text else f"//{text}"
+    try:
+        hostname = (urlsplit(candidate).hostname or "").strip().lower().rstrip(".")
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        if not hostname or "." not in hostname or " " in hostname:
+            return None
+        return hostname.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return None
 
 
 def _title_tokens(value: str) -> set[str]:
@@ -59,7 +74,14 @@ def build_query(title: str) -> str:
 
 def summarize_results(article: dict, payload: dict, query: str) -> dict:
     """Reduce GDELT results to distinct-domain, title-matched evidence."""
-    original_domain = normalize_domain(article.get("source_domain"))
+    provenance = article.get("source_provenance")
+    original_domain = normalize_domain(provenance.get("original_url")) if isinstance(provenance, dict) else None
+    original_domain = (
+        original_domain
+        or normalize_domain(article.get("source_domain"))
+        or normalize_domain(article.get("url"))
+        or normalize_domain(article.get("source_url"))
+    )
     matches_by_domain: dict[str, dict] = {}
 
     for raw in payload.get("articles") or []:
@@ -149,7 +171,7 @@ def check_article(article_id: int) -> dict:
     article = db.fetch_one(
         """
         select id, title, url, source_url, source_domain, source_provenance,
-               source_reliability_details
+               coverage_evidence
         from articles where id = %s
         """,
         (int(article_id),),
@@ -158,11 +180,8 @@ def check_article(article_id: int) -> dict:
         raise LookupError("Article not found.")
     query = build_query(article.get("title") or "")
     result = summarize_results(article, _fetch(query), query)
-    details = article.get("source_reliability_details")
-    details = dict(details) if isinstance(details, dict) else {}
-    details["gdelt_coverage"] = result
     db.execute(
-        "update articles set source_reliability_details = %s where id = %s",
-        (Jsonb(details), int(article_id)),
+        "update articles set coverage_evidence = %s where id = %s",
+        (Jsonb(result), int(article_id)),
     )
     return result

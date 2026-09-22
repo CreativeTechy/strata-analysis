@@ -56,20 +56,21 @@ class ComputeOverallToneTests(unittest.TestCase):
         self.assertEqual(articles_analytics.compute_overall_tone("critical", "enthusiastic"), "mixed")
 
 
-class SourceReliabilityBreakdownTests(unittest.TestCase):
-    def test_keeps_concerns_unlisted_and_unknown_separate(self):
+class CoverageEvidenceBreakdownTests(unittest.TestCase):
+    def test_keeps_gdelt_coverage_states_separate(self):
         rows = [
-            {"source_reliability_status": "concern_reported"},
-            {"source_reliability_status": "not_listed"},
-            {"source_reliability_status": "not_listed"},
+            {"coverage_evidence": {"status": "broad_coverage"}},
+            {"coverage_evidence": {"status": "some_coverage"}},
+            {"coverage_evidence": {"status": "no_coverage_found"}},
             {},
         ]
         self.assertEqual(
-            articles_analytics._source_reliability_breakdown(rows),
+            articles_analytics._coverage_evidence_breakdown(rows),
             [
-                {"value": "concern_reported", "total": 1},
-                {"value": "not_listed", "total": 2},
-                {"value": "not_assessed", "total": 1},
+                {"value": "broad_coverage", "total": 1},
+                {"value": "some_coverage", "total": 1},
+                {"value": "no_coverage_found", "total": 1},
+                {"value": "not_checked", "total": 1},
             ],
         )
 

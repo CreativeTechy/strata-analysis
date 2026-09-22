@@ -59,33 +59,6 @@ describe('ArticleDetailModal', () => {
     expect(screen.getByText(/confidence 90%/)).toBeInTheDocument()
   })
 
-  it('explains the publisher reliability signal and links its evidence', () => {
-    render(<ArticleDetailModal {...baseProps({
-      data: {
-        analysis_status: 'success', sentiment: 'neutral', article_category: 'general_article',
-        writer_tone: 'neutral', article_tone: 'neutral', overall_tone: 'neutral',
-        source_reliability: {
-          status: 'concern_reported', domain: 'example.com',
-          reason: 'Iffy reports reliability concerns for example.com.',
-          provider: 'Iffy.news', reference_url: 'https://review.example/example',
-          dataset_version: 'iffy-test', assessed_at: '2026-09-22T00:00:00Z',
-          details: {
-            matched_domain: 'example.com', publisher_name: 'Example News',
-            dataset_imported_at: '2026-09-21T00:00:00Z',
-          },
-        },
-      },
-    })} />)
-    expect(screen.getByText(/Concern reported · example\.com/)).toBeInTheDocument()
-    expect(screen.getByText(/Iffy reports reliability concerns/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'View Iffy.news assessment' })).toHaveAttribute(
-      'href', 'https://review.example/example',
-    )
-    expect(screen.getByText(/Dataset iffy-test/)).toBeInTheDocument()
-    expect(screen.getByText(/Matched list domain: example.com · Example News/)).toBeInTheDocument()
-    expect(screen.getByText(/Imported/)).toBeInTheDocument()
-  })
-
   it('shows the reprocess button only when canReprocess is true', () => {
     const { rerender } = render(<ArticleDetailModal {...baseProps({ canReprocess: false })} />)
     expect(screen.queryByRole('button', { name: 'Reprocess' })).not.toBeInTheDocument()

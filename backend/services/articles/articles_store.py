@@ -39,7 +39,7 @@ from services.articles.articles_query import (
 from services.articles.articles_search import search_results
 
 
-def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, source_reliability_status=None):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, coverage_status=None):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -54,7 +54,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             source_url=source_url,
             added_from=added_from,
             added_to=added_to,
-            source_reliability_status=source_reliability_status,
+            coverage_status=coverage_status,
         )
         rows = rows[offset:offset + limit]
         rows = _attach_project_similarity_scores(rows, project_id)
@@ -78,7 +78,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         source_url=source_url,
         added_from=added_from,
         added_to=added_to,
-        source_reliability_status=source_reliability_status,
+        coverage_status=coverage_status,
     )
     rows = _attach_project_similarity_scores(rows, project_id)
     return {
@@ -90,7 +90,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, source_reliability_status=None):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, coverage_status=None):
     """Yield full article rows for the JSONL export, one page at a time.
 
     A generator rather than a list: the export carries `text` and
@@ -119,7 +119,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             source_url=source_url,
             added_from=added_from,
             added_to=added_to,
-            source_reliability_status=source_reliability_status,
+            coverage_status=coverage_status,
             select=select,
         )
         yield from _apply_similarity_scores(rows, scores)
@@ -142,7 +142,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             source_url=source_url,
             added_from=added_from,
             added_to=added_to,
-            source_reliability_status=source_reliability_status,
+            coverage_status=coverage_status,
             max_limit=page_size,
         )
         if not batch:

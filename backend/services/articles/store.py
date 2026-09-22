@@ -648,13 +648,6 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
 
                 _replace_article_children(article_id, article)
                 _replace_idea_clusters_for_article(article_id, project_id, article.get("frequent_ideas"))
-                # Publisher reliability is derived from the article's stored
-                # provenance and the active local Iffy dataset. It is best
-                # effort, just like story grouping: a missing dataset or an
-                # assessment failure must never block article persistence.
-                from services.articles.source_reliability import assess_article
-                assess_article(article_id)
-
                 # An article belongs to the project the caller named - the
                 # document it was split out of, or the import that brought it
                 # in. (The crawler this was forked from also inferred linkage

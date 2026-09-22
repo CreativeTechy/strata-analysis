@@ -314,6 +314,7 @@ create table if not exists public.articles (
     source_reliability_dataset_version text,
     source_reliability_details jsonb not null default '{}'::jsonb,
     source_reliability_assessed_at timestamptz,
+    coverage_evidence jsonb not null default '{}'::jsonb,
     constraint articles_source_reliability_status_check
         check (source_reliability_status in ('concern_reported', 'not_listed', 'not_assessed')),
 
@@ -413,6 +414,9 @@ alter table public.articles
     add column if not exists source_reliability_assessed_at timestamptz;
 
 alter table public.articles
+    add column if not exists coverage_evidence jsonb not null default '{}'::jsonb;
+
+alter table public.articles
     drop constraint if exists articles_source_reliability_status_check;
 alter table public.articles
     add constraint articles_source_reliability_status_check
@@ -482,6 +486,9 @@ create index if not exists articles_story_idx on public.articles (story_id);
 create index if not exists articles_verified_idx on public.articles (verified);
 create index if not exists articles_source_reliability_status_idx
     on public.articles (source_reliability_status);
+
+create index if not exists articles_coverage_evidence_status_idx
+    on public.articles ((coverage_evidence->>'status'));
 create index if not exists articles_source_domain_idx on public.articles (source_domain);
 create index if not exists articles_gender_idx on public.articles (gender);
 create index if not exists articles_age_range_idx on public.articles (age_range);
