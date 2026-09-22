@@ -37,18 +37,6 @@ class RunAnalysisPipelineTests(unittest.TestCase):
             patch.object(pipeline, "record_run_completion",
                          side_effect=lambda pid, **kw: self.completions.append(kw)),
             patch.object(pipeline, "mark_processing"),
-            patch.object(
-                pipeline,
-                "screen_project_articles",
-                return_value={
-                    "mode": "enforce",
-                    "screened": 3,
-                    "included": 3,
-                    "excluded": 0,
-                    "needs_review": 0,
-                    "included_ids": [1, 2, 3],
-                },
-            ),
             patch.object(pipeline, "capture_run_snapshot", return_value=3),
             patch.object(pipeline, "generate_for_run", return_value={"claims": 2, "articles": 3}),
             patch.object(pipeline, "_queue_evidence_after_analysis"),
@@ -85,7 +73,7 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(self.documents["survey.pdf"]["analyzed"], 2)
         self.assertEqual(self.documents["interviews.docx"]["analyzed"], 1)
         self.assertEqual(self.completions[-1]["status"], "success")
-        pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5, article_ids=[1, 2, 3])
+        pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5)
         pipeline.generate_for_run.assert_not_called()
         pipeline._queue_evidence_after_analysis.assert_called_once_with("run-1", 5)
 
@@ -143,17 +131,6 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertIn("No articles require analysis", final["message"])
         pipeline.generate_for_run.assert_not_called()
         pipeline._queue_evidence_after_analysis.assert_not_called()
-
-    def test_screening_failure_fails_open_and_analyzes_the_full_scope(self):
-        rows = _rows((8, 10, "survey.pdf"))
-        with patch.object(pipeline, "screen_project_articles", side_effect=RuntimeError("screen unavailable")), \
-             patch.object(pipeline, "_select_articles", return_value=rows) as select, \
-             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}):
-            pipeline.run_analysis_pipeline("run-fallback", project_id=5)
-
-        select.assert_called_once_with(5, "pending", None)
-        pipeline.capture_run_snapshot.assert_called_with("run-fallback", 5, article_ids=None)
-        self.assertEqual(self._final()["status"], "success")
 
     def test_evidence_failure_cannot_change_completed_analysis_status(self):
         with patch.object(pipeline, "generate_for_run", side_effect=RuntimeError("evidence failed")), \
@@ -410,18 +387,6 @@ class SelectArticlesTests(unittest.TestCase):
         query, params = self._query_for("all")
         self.assertNotIn("analysis_status", query)
         self.assertEqual(params, (5,))
-
-    def test_relevance_filter_limits_the_analysis_corpus(self):
-        with patch.object(pipeline.db, "fetch_all", return_value=[]) as fetch:
-            pipeline._select_articles(5, "all", [3, 8])
-        query, params = fetch.call_args[0]
-        self.assertIn("a.id = any", query)
-        self.assertEqual(params, (5, [3, 8]))
-
-    def test_empty_relevance_filter_skips_the_database_query(self):
-        with patch.object(pipeline.db, "fetch_all") as fetch:
-            self.assertEqual(pipeline._select_articles(5, "all", []), [])
-        fetch.assert_not_called()
 
 
 class PipelineRunEligibilityTests(unittest.TestCase):

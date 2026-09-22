@@ -38,7 +38,6 @@ import config
 import db
 from core.logging import reset_run_id, set_run_id
 from services.articles.idea_comparisons import generate_idea_comparisons
-from services.articles.relevance_screening import screen_project_articles
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
     create_pipeline_run,
@@ -228,7 +227,7 @@ def _maybe_start_followup(project_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Selecting the work
 # --------------------------------------------------------------------------- #
-def _select_articles(project_id, scope, included_article_ids=None):
+def _select_articles(project_id, scope):
     """Every in-scope article for the project, with the document it came from.
 
     Left-joined through project_document_articles: an article that was imported
@@ -236,17 +235,10 @@ def _select_articles(project_id, scope, included_article_ids=None):
     under UNATTRIBUTED in the per-document breakdown.
     """
     status_filter = ""
-    relevance_filter = ""
     params = [int(project_id)]
     if scope != "all":
         status_filter = "and coalesce(a.analysis_status, 'pending') = any(%s)"
         params.append(list(PENDING_STATUSES))
-    if included_article_ids is not None:
-        included_article_ids = [int(article_id) for article_id in included_article_ids]
-        if not included_article_ids:
-            return []
-        relevance_filter = "and a.id = any(%s)"
-        params.append(included_article_ids)
 
     rows = db.fetch_all(
         f"""
@@ -261,7 +253,6 @@ def _select_articles(project_id, scope, included_article_ids=None):
         left join project_documents pd on pd.id = pda.document_id
         where ap.project_id = %s
           {status_filter}
-          {relevance_filter}
         order by a.id asc
         """,
         tuple(params),
@@ -377,37 +368,8 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             prepare_started_at=started,
         )
 
-        update_pipeline_run(run_id, message="Screening articles for project relevance...")
-        try:
-            screening = screen_project_articles(project_id, run_id)
-        except Exception:
-            # Relevance is an optimization and safety gate, not a reason to
-            # lose an analysis run. Any infrastructure or classifier failure
-            # falls back to the former behavior and keeps every article.
-            logger.exception("run %s: relevance screening failed; including all articles", run_id)
-            screening = {
-                "mode": "fallback",
-                "screened": 0,
-                "included": 0,
-                "excluded": 0,
-                "needs_review": 0,
-                "included_ids": None,
-            }
-        update_pipeline_run(
-            run_id,
-            articles_screened=screening["screened"],
-            articles_included=screening["included"],
-            articles_excluded=screening["excluded"],
-            articles_needs_review=screening["needs_review"],
-            screening_mode=screening["mode"],
-        )
-
-        rows = _select_articles(project_id, scope, screening["included_ids"])
-        # Freeze only the corpus admitted by the relevance gate. For a
-        # pending-only run this still includes previously analyzed, relevant
-        # articles so evidence can corroborate new claims without allowing
-        # unrelated material into the workspace.
-        capture_run_snapshot(run_id, project_id, article_ids=screening["included_ids"])
+        rows = _select_articles(project_id, scope)
+        capture_run_snapshot(run_id, project_id)
         document_stats = _initial_document_stats(rows)
         upsert_pipeline_run_document_stats(run_id, document_stats)
         update_pipeline_run(
@@ -423,9 +385,7 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
                 status="success",
                 stage="no_work",
                 message=(
-                    "No articles passed relevance screening."
-                    if screening["screened"] and not screening["included"]
-                    else "No articles require analysis; existing analytical results remain unchanged."
+                    "No articles require analysis; existing analytical results remain unchanged."
                     if scope != "all"
                     else "No articles are available to analyze."
                 ),
