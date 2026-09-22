@@ -44,13 +44,15 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import config
+
 RECORD_EXTENSIONS = {".json", ".jsonl", ".ndjson"}
 
 # Every record becomes a row in the review step's un-paginated candidate list,
-# so a 50,000-line export has to be cut off somewhere or that step becomes
-# unusable. The remainder is reported, never silently dropped - see
-# ParsedRecords.truncated.
-MAX_RECORDS = 500
+# so a file has to be cut off somewhere or that step becomes unusable - see
+# config.RECORD_IMPORT_MAX_RECORDS. The remainder is reported, never silently
+# dropped - see ParsedRecords.truncated.
+MAX_RECORDS = config.RECORD_IMPORT_MAX_RECORDS
 
 # A file with the wrong shape would otherwise report one error per line.
 MAX_ERRORS_REPORTED = 5

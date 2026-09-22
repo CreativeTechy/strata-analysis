@@ -198,7 +198,7 @@ class ProcessRecordDocumentTests(unittest.TestCase):
             for call in mock_db.execute.call_args_list
             if "articles_status = 'ready'" in call.args[0] and call.args[1:]
         ]
-        self.assertTrue(notes and notes[0] and "of 502 records" in notes[0])
+        self.assertTrue(notes and notes[0] and f"of {records.MAX_RECORDS + 2:,} records" in notes[0])
         mock_approve.assert_called_once_with(9)
 
 

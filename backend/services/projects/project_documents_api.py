@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
+import config
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible
 from services.pipeline.pipeline import start_or_reuse_analysis_run
@@ -116,7 +117,10 @@ async def upload_documents(
     for upload in files:
         content = await upload.read()
         if len(content) > project_documents_store.MAX_FILE_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail=f"'{upload.filename}' is larger than 25 MB.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{upload.filename}' is larger than {config.DOCUMENT_MAX_FILE_SIZE_MB} MB.",
+            )
         record = project_documents_store.save_document(
             project_id, filename=upload.filename, content=content, mime_type=upload.content_type
         )

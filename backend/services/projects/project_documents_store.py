@@ -47,6 +47,7 @@ import re
 import uuid
 from pathlib import Path
 
+import config
 import db
 from services.documents import extraction as document_extraction
 from services.documents import records as document_records
@@ -68,7 +69,7 @@ ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".png", ".jpg", ".jpeg",
 } | document_records.RECORD_EXTENSIONS
 
-MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB/file - generous for a single document, cheap to enforce.
+MAX_FILE_SIZE_BYTES = config.DOCUMENT_MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_FILES_PER_UPLOAD = 20
 
 DOCUMENT_COLUMNS = """
