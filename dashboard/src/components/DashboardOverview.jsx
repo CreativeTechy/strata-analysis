@@ -461,7 +461,7 @@ export default function DashboardOverview({
             <div className="intelligence-card-heading">
               <div>
                 <h3>Cross-source coverage</h3>
-                <span>Matching stories found through GDELT</span>
+                <span>Matching stories found across other domains</span>
               </div>
             </div>
             {coverageTotal > 0 ? (
@@ -502,7 +502,7 @@ export default function DashboardOverview({
               </div>
             ) : <p className="intelligence-empty">No articles are available for coverage checks yet.</p>}
             <p className="source-reliability-note">
-              <a href="https://www.gdeltproject.org/" target="_blank" rel="noreferrer">GDELT</a> checks are started from each article’s details. Matching coverage supports comparison but does not prove truth or source independence.
+              Coverage checks are started from each article’s details. Matching coverage supports comparison but does not prove truth or source independence.
             </p>
           </article>
         </section>

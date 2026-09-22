@@ -57,7 +57,7 @@ class ComputeOverallToneTests(unittest.TestCase):
 
 
 class CoverageEvidenceBreakdownTests(unittest.TestCase):
-    def test_keeps_gdelt_coverage_states_separate(self):
+    def test_keeps_coverage_states_separate(self):
         rows = [
             {"coverage_evidence": {"status": "broad_coverage"}},
             {"coverage_evidence": {"status": "some_coverage"}},

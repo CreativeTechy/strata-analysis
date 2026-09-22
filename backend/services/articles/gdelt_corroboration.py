@@ -21,8 +21,6 @@ import db
 from psycopg.types.json import Jsonb
 
 
-PROVIDER = "GDELT"
-PROVIDER_PAGE = "https://www.gdeltproject.org/"
 STATUS_BROAD = "broad_coverage"
 STATUS_SOME = "some_coverage"
 STATUS_NONE = "no_coverage_found"
@@ -124,13 +122,11 @@ def summarize_results(article: dict, payload: dict, query: str) -> dict:
         reason = f"Closely matching coverage was found on {domain_count} other domain{'s' if domain_count != 1 else ''}."
     else:
         status = STATUS_NONE
-        reason = "No closely matching coverage was found in the GDELT results."
+        reason = "No closely matching coverage was found in the available results."
 
     return {
         "status": status,
         "reason": reason,
-        "provider": PROVIDER,
-        "reference_url": PROVIDER_PAGE,
         "query": query,
         "matching_domain_count": domain_count,
         "matches": matches[: config.GDELT_STORED_MATCHES],
@@ -155,15 +151,15 @@ def _fetch(query: str) -> dict:
         with urlopen(request, timeout=config.GDELT_TIMEOUT_SECONDS) as response:
             body = response.read(config.GDELT_MAX_RESPONSE_BYTES + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise GdeltError("GDELT is temporarily unavailable. Please try again later.") from exc
+        raise GdeltError("The coverage service is temporarily unavailable. Please try again later.") from exc
     if len(body) > config.GDELT_MAX_RESPONSE_BYTES:
-        raise GdeltError("GDELT returned more data than the safety limit allows.")
+        raise GdeltError("The coverage service returned more data than the safety limit allows.")
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GdeltError("GDELT returned an unreadable response.") from exc
+        raise GdeltError("The coverage service returned an unreadable response.") from exc
     if not isinstance(payload, dict):
-        raise GdeltError("GDELT returned an unexpected response.")
+        raise GdeltError("The coverage service returned an unexpected response.")
     return payload
 
 

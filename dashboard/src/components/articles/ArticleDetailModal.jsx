@@ -137,7 +137,7 @@ export default function ArticleDetailModal({
                 disabled={checkingCoverage}
                 style={{ marginTop: 8 }}
               >
-                {checkingCoverage ? 'Checking GDELT...' : 'Check GDELT coverage'}
+                {checkingCoverage ? 'Checking coverage...' : 'Check cross-source coverage'}
               </button>
             ) : null}
           </div>

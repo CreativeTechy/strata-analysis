@@ -71,10 +71,10 @@ describe('ArticleDetailModal', () => {
       },
     })} />)
     expect(screen.getByRole('button', { name: 'Reprocess' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Check GDELT coverage' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check cross-source coverage' })).toBeInTheDocument()
   })
 
-  it('shows GDELT coverage with evidence and its limitation', () => {
+  it('shows cross-source coverage with evidence and its limitation', () => {
     render(<ArticleDetailModal {...baseProps({
       data: {
         analysis_status: 'success', sentiment: 'neutral', article_category: 'general_article',

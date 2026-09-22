@@ -1206,12 +1206,12 @@ def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_
     return {"analysis": analysis}
 
 
-@app.post("/api/articles/{article_id}/gdelt-coverage")
-def check_article_gdelt_coverage(
+@app.post("/api/articles/{article_id}/coverage")
+def check_article_coverage(
     article_id: int,
     user: dict = Depends(require_permission("pipeline.run")),
 ):
-    """Explicit external lookup for cross-source coverage in GDELT.
+    """Explicit external lookup for cross-source coverage.
 
     This is deliberately separate from analysis: uploaded text does not leave
     the machine merely because an article was imported or analyzed.

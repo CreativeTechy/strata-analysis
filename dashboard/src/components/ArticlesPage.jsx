@@ -24,7 +24,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, getArticleAnalysis, checkGdeltCoverage, reprocessArticle, deleteAllArticles, deleteArticle,
+  listArticles, getArticleAnalysis, checkCoverage, reprocessArticle, deleteAllArticles, deleteArticle,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
 import '../styles/Articles.css';
@@ -274,11 +274,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
     setDetailCheckingCoverage(true);
     setDetailActionMessage('');
     try {
-      const result = await checkGdeltCoverage(detailArticleId);
+      const result = await checkCoverage(detailArticleId);
       setDetailData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
-      setDetailActionMessage('GDELT coverage evidence updated.');
+      setDetailActionMessage('Cross-source coverage updated.');
     } catch (err) {
-      setDetailActionMessage(err?.message || 'Failed to check GDELT coverage.');
+      setDetailActionMessage(err?.message || 'Failed to check cross-source coverage.');
     } finally {
       setDetailCheckingCoverage(false);
     }
@@ -696,7 +696,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
               className="filter-select"
               value={coverageFilter}
               onChange={(event) => setCoverageFilter(event.target.value)}
-              aria-label="GDELT coverage evidence"
+              aria-label="Cross-source coverage"
             >
               {COVERAGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
