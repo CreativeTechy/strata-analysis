@@ -19,10 +19,16 @@ const PERIODS = [
   { key: 'all', label: 'All time' },
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
-// Fixed semantic colors for the binary verified/unverified split - unlike
-// region/gender/segment this is never an open-ended category set, so it
-// doesn't cycle through LANGUAGE_COLORS.
-const VERIFIED_COLORS = { verified: '#16a34a', unverified: '#94a3b8' };
+const RELIABILITY_COLORS = {
+  concern_reported: '#e11d48',
+  not_listed: '#64748b',
+  not_assessed: '#cbd5e1',
+};
+const RELIABILITY_LABELS = {
+  concern_reported: 'Concern reported',
+  not_listed: 'Not listed by Iffy',
+  not_assessed: 'Not assessed',
+};
 // Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
 // same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
 const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
@@ -172,7 +178,15 @@ export default function DashboardOverview({
   const genderData = capBreakdown((data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0));
   const ageRangeData = capBreakdown((data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0));
   const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
-  const verifiedData = (data.insights?.verified_breakdown || []).filter((entry) => entry.total > 0);
+  const sourceReliabilityCounts = new Map(
+    (data.insights?.source_reliability_breakdown || []).map((entry) => [entry.value, Number(entry.total || 0)]),
+  );
+  const sourceReliabilityData = Object.keys(RELIABILITY_LABELS).map((value) => ({
+    value,
+    total: sourceReliabilityCounts.get(value) || 0,
+  }));
+  const sourceReliabilityTotal = sourceReliabilityData.reduce((sum, entry) => sum + Number(entry.total || 0), 0);
+  const sourceReliabilityDataset = data.source_reliability_dataset;
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -444,31 +458,56 @@ export default function DashboardOverview({
             ) : <p className="intelligence-empty">No life-situation/occupation segment detected on analyzed articles yet.</p>}
           </article>
 
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Source verification</h3>
-            {verifiedData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={verifiedData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {verifiedData.map((entry) => <Cell key={entry.value} fill={VERIFIED_COLORS[entry.value]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
+          <article className="glass-card intelligence-card intelligence-language-card intelligence-source-reliability-card">
+            <div className="intelligence-card-heading">
+              <div>
+                <h3>Source reliability signals</h3>
+                <span>Articles by publisher signal</span>
+              </div>
+            </div>
+            {sourceReliabilityTotal > 0 ? (
+              <div className="source-reliability-layout">
+                <div
+                  className="source-reliability-bar"
+                  role="img"
+                  aria-label={sourceReliabilityData.map((entry) => `${RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}: ${entry.total} articles, ${percent(entry.total, sourceReliabilityTotal)} percent`).join('; ')}
+                >
+                  {sourceReliabilityData.filter((entry) => entry.total > 0).map((entry) => (
+                    <span
+                      key={entry.value}
+                      style={{
+                        background: RELIABILITY_COLORS[entry.value] || RELIABILITY_COLORS.not_assessed,
+                        width: `${(Number(entry.total) / sourceReliabilityTotal) * 100}%`,
+                      }}
+                      title={`${RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}: ${entry.total} (${percent(entry.total, sourceReliabilityTotal)}%)`}
+                    />
+                  ))}
                 </div>
-                <div className="intelligence-legend">
-                  {verifiedData.map((entry) => (
-                    <div key={entry.value}>
-                      <span style={{ background: VERIFIED_COLORS[entry.value] }} />
-                      <label>{distributionLabel(entry.value)}</label>
-                      <strong>{percent(entry.total, total)}%</strong>
-                    </div>
+                <div className="source-reliability-legend">
+                  {sourceReliabilityData.map((entry) => (
+                    <Link
+                      key={entry.value}
+                      className="source-reliability-row"
+                      to={`/articles?${new URLSearchParams({
+                        ...(selectedProjectId != null ? { project_id: String(selectedProjectId) } : {}),
+                        source_reliability_status: entry.value,
+                      }).toString()}`}
+                      aria-label={`View ${entry.total} articles with source signal ${RELIABILITY_LABELS[entry.value]}`}
+                    >
+                      <span className="source-reliability-dot" style={{ background: RELIABILITY_COLORS[entry.value] || RELIABILITY_COLORS.not_assessed }} />
+                      <span className="source-reliability-label">{RELIABILITY_LABELS[entry.value] || distributionLabel(entry.value)}</span>
+                      <strong>{Number(entry.total).toLocaleString()} · {percent(entry.total, sourceReliabilityTotal)}%</strong>
+                    </Link>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">No source reliability assessments yet.</p>}
+            <p className="source-reliability-note">
+              Publisher signal from <a href="https://iffy.news/index/" target="_blank" rel="noreferrer">Iffy.news</a>. Not listed does not mean verified.
+              {sourceReliabilityDataset?.imported_at && (
+                <> Dataset imported {new Date(sourceReliabilityDataset.imported_at).toLocaleDateString()} ({Number(sourceReliabilityDataset.record_count || 0).toLocaleString()} domains, {sourceReliabilityDataset.license}).</>
+              )}
+            </p>
           </article>
         </section>
 

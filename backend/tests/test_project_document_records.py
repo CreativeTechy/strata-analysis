@@ -258,10 +258,13 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
         "body": "one",
     }
 
-    def _materialize(self, candidate):
+    def _materialize(self, candidate, document=None):
         with patch.object(project_document_articles, "save_articles") as mock_save:
             mock_cur = MagicMock()
-            mock_cur.fetchone.side_effect = [{"original_filename": "export.jsonl"}, {"id": 42}]
+            mock_cur.fetchone.side_effect = [
+                document or {"original_filename": "export.jsonl", "publisher_url": None},
+                {"id": 42},
+            ]
             article_id = project_document_articles._materialize(candidate, mock_cur)
         return article_id, mock_save.call_args.args[0][0]
 
@@ -296,6 +299,27 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
         candidate = {**self.CANDIDATE, "record_metadata": {"url": "https://x/1", "source_run_snapshot": snapshot}}
         _, article = self._materialize(candidate)
         self.assertEqual(article["source_run_snapshot"], snapshot)
+
+    def test_document_publisher_url_becomes_original_source_provenance(self):
+        _, article = self._materialize(
+            dict(self.CANDIDATE),
+            {"original_filename": "report.pdf", "publisher_url": "https://publisher.example/report"},
+        )
+        self.assertEqual(
+            article["source_provenance"],
+            {"original_url": "https://publisher.example/report"},
+        )
+
+    def test_record_original_url_takes_precedence_over_document_publisher(self):
+        candidate = {
+            **self.CANDIDATE,
+            "record_metadata": {"source_provenance": {"original_url": "https://record.example/story"}},
+        }
+        _, article = self._materialize(
+            candidate,
+            {"original_filename": "export.jsonl", "publisher_url": "https://batch.example"},
+        )
+        self.assertEqual(article["source_provenance"]["original_url"], "https://record.example/story")
 
 
 class AutoApproveAndQueueAnalysisTests(unittest.TestCase):

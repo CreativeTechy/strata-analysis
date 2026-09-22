@@ -56,6 +56,24 @@ class ComputeOverallToneTests(unittest.TestCase):
         self.assertEqual(articles_analytics.compute_overall_tone("critical", "enthusiastic"), "mixed")
 
 
+class SourceReliabilityBreakdownTests(unittest.TestCase):
+    def test_keeps_concerns_unlisted_and_unknown_separate(self):
+        rows = [
+            {"source_reliability_status": "concern_reported"},
+            {"source_reliability_status": "not_listed"},
+            {"source_reliability_status": "not_listed"},
+            {},
+        ]
+        self.assertEqual(
+            articles_analytics._source_reliability_breakdown(rows),
+            [
+                {"value": "concern_reported", "total": 1},
+                {"value": "not_listed", "total": 2},
+                {"value": "not_assessed", "total": 1},
+            ],
+        )
+
+
 class GetArticleStatsTests(unittest.TestCase):
     """End-to-end smoke test: get_article_stats composes _count_articles (via
     articles_query, or articles_search when a search term is present) with

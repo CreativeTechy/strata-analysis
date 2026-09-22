@@ -96,6 +96,7 @@ MAX_LIMIT = 100
 BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
+VALID_SOURCE_RELIABILITY_STATUSES = {"concern_reported", "not_listed", "not_assessed"}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -177,7 +178,7 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, source_reliability_status=None):
     clauses = []
     params = []
 
@@ -216,6 +217,11 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         clauses.append("lower(source_url) = %s")
         params.append(source_url_value.lower())
 
+    reliability_value = _normalize_text(source_reliability_status).lower()
+    if reliability_value in VALID_SOURCE_RELIABILITY_STATUSES:
+        clauses.append("source_reliability_status = %s")
+        params.append(reliability_value)
+
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
         clauses.append("coalesce(published, created_at) >= %s")
@@ -241,7 +247,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, source_reliability_status=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -258,6 +264,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         source_url=source_url,
         added_from=added_from,
         added_to=added_to,
+        source_reliability_status=source_reliability_status,
     )
 
     try:
@@ -568,6 +575,10 @@ _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "region_confidence",
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
+    "source_domain", "source_reliability_status", "source_reliability_reason",
+    "source_reliability_provider", "source_reliability_reference_url",
+    "source_reliability_dataset_version", "source_reliability_details",
+    "source_reliability_assessed_at",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at",
 )
@@ -634,6 +645,16 @@ def _shape_article_analysis(row: dict) -> dict:
         },
         "source_language": row.get("source_language"),
         "source_language_confidence": row.get("source_language_confidence"),
+        "source_reliability": {
+            "status": row.get("source_reliability_status") or "not_assessed",
+            "domain": row.get("source_domain"),
+            "reason": row.get("source_reliability_reason"),
+            "provider": row.get("source_reliability_provider"),
+            "reference_url": row.get("source_reliability_reference_url"),
+            "dataset_version": row.get("source_reliability_dataset_version"),
+            "details": row.get("source_reliability_details") if isinstance(row.get("source_reliability_details"), dict) else {},
+            "assessed_at": row.get("source_reliability_assessed_at"),
+        },
         "models": {
             "sentiment": row.get("sentiment_model"),
             "classification": row.get("classification_model"),

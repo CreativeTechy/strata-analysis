@@ -263,7 +263,11 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
-               a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.insight_json,
+               a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.segment, a.insight_json,
+               a.source_domain, a.source_reliability_status, a.source_reliability_reason,
+               a.source_reliability_provider, a.source_reliability_reference_url,
+               a.source_reliability_dataset_version, a.source_reliability_details,
+               a.source_reliability_assessed_at,
                a.published, a.created_at, a.pipeline_run_id, a.source_language
         from articles a
         join article_projects ap on ap.article_id = a.id
@@ -338,6 +342,7 @@ def _fetch_document_count(project_id: int) -> int:
 
 def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
     from services.articles.articles_analytics import _topic_summary
+    from services.articles.source_reliability import get_active_dataset_metadata
     period = normalize_period(period)
     if run_id:
         rows = _fetch_project_rows(project["id"], run_id=run_id)
@@ -376,6 +381,7 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
         "document_count": _fetch_document_count(project["id"]),
+        "source_reliability_dataset": get_active_dataset_metadata(),
         "sentiment_over_time": [
             {"date": date, "total": values["total"], **{key: values[key] for key in VALID_SENTIMENTS}}
             for date, values in sorted(daily.items())

@@ -34,6 +34,13 @@ const VIEW_MODES = [
   { value: 'list', label: 'List', icon: List },
 ];
 
+const SOURCE_RELIABILITY_OPTIONS = [
+  { value: 'all', label: 'All source signals' },
+  { value: 'concern_reported', label: 'Concern reported' },
+  { value: 'not_listed', label: 'Not listed by Iffy' },
+  { value: 'not_assessed', label: 'Not assessed' },
+];
+
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
@@ -59,6 +66,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // into the matching document's articles, the same way `search`/`project_id`
   // above pre-fill from the URL.
   const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
+  const [sourceReliabilityFilter, setSourceReliabilityFilter] = useState(
+    () => searchParams.get('source_reliability_status') || 'all',
+  );
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState('published.desc');
@@ -109,7 +119,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   useEffect(() => {
     setOffset(0);
-  }, [search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceReliabilityFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -164,6 +174,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
           sentiment: sentiment !== 'all' ? sentiment : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+          source_reliability_status: sourceReliabilityFilter !== 'all' ? sourceReliabilityFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
           limit,
@@ -188,7 +199,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceReliabilityFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -289,6 +300,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
+      setSourceReliabilityFilter('all');
       setAddedFrom('');
       setAddedTo('');
       setOffset(0);
@@ -325,6 +337,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         sentiment: sentiment !== 'all' ? sentiment : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+        source_reliability_status: sourceReliabilityFilter !== 'all' ? sourceReliabilityFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
         sort,
@@ -657,6 +670,17 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
+              ))}
+            </select>
+
+            <select
+              className="filter-select"
+              value={sourceReliabilityFilter}
+              onChange={(event) => setSourceReliabilityFilter(event.target.value)}
+              aria-label="Source reliability signal"
+            >
+              {SOURCE_RELIABILITY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
 

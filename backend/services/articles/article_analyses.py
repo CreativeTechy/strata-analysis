@@ -78,6 +78,14 @@ SNAPSHOT_COLUMNS = (
     "segment",
     "source_language",
     "source_language_confidence",
+    "source_domain",
+    "source_reliability_status",
+    "source_reliability_reason",
+    "source_reliability_provider",
+    "source_reliability_reference_url",
+    "source_reliability_dataset_version",
+    "source_reliability_details",
+    "source_reliability_assessed_at",
     "analysis_model",
     "analysis_prompt_version",
     "analysis_pipeline_version",
@@ -223,7 +231,11 @@ def fetch_run_article_rows(project_id: int, run_id: str) -> list[dict]:
                    a.published, a.created_at, a.pipeline_run_id,
                    an.summary, an.sentiment, an.writer_tone, an.article_tone,
                    an.region, an.gender, an.age_range, an.segment,
-                   an.insight_json, an.source_language,
+                   an.insight_json, an.source_language, an.source_domain,
+                   an.source_reliability_status, an.source_reliability_reason,
+                   an.source_reliability_provider, an.source_reliability_reference_url,
+                   an.source_reliability_dataset_version, an.source_reliability_details,
+                   an.source_reliability_assessed_at,
                    an.run_id
             from article_analyses an
             join articles a          on a.id = an.article_id

@@ -253,14 +253,37 @@ python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
   how an existing database converges with a fresh one. It is also mounted into
   `docker-entrypoint-initdb.d`, so a brand-new volume starts from it directly.
 - `backend/migrations/NNNN_name.sql` are the forward migrations, applied in
-  numeric order, each in its own transaction. That directory is currently empty:
-  everything through `0028` was folded back into the baseline once the fork had
-  no database left to preserve, so the next one starts at `0002`. See
+  numeric order, each in its own transaction. See
   `backend/migrations/README.md`.
 - Applied versions and their checksums are recorded in `schema_migrations`.
   Editing a migration after it has been applied is a hard error - the runner
   refuses rather than letting environments diverge silently. Add a new
   migration instead.
+
+## Source reliability data
+
+The dashboard's **Source reliability signals** card uses a local copy of the
+[Iffy.news Index of Unreliable Sources](https://iffy.news/index/). Iffy is a
+publisher concern list: a match is shown as **Concern reported**, while an
+unmatched identifiable publisher is **Not listed in Iffy**, not "verified".
+
+Import or refresh the dataset explicitly from `backend/`:
+
+```bash
+python scripts/import_iffy_dataset.py
+# or import a reviewed/downloaded local copy
+python scripts/import_iffy_dataset.py --file /path/to/iffy-news.json
+```
+
+The command applies pending migrations, validates and versions the dataset,
+then reassesses stored articles. Normal uploads and analysis runs only read the
+local database and do not contact Iffy. Data attribution: Iffy.news Index of
+Unreliable Sources, licensed under CC BY 4.0.
+
+For uploaded documents, enter the optional **Original publisher URL** during
+upload. The app keeps its internal document URL for grouping while storing the
+publisher URL in provenance for the reliability assessment. Without a usable
+publisher URL, the article remains **Not assessed**.
 
 `schema.sql` is organized in numbered sections (helpers, access control,
 projects, analysis runs, articles, per-article output, idea clusters, documents,
