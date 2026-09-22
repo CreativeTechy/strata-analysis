@@ -86,6 +86,7 @@ class RunScopedReadTests(unittest.TestCase):
         # ...identity from the live article row.
         for column in ("a.url", "a.title", "a.text", "a.published", "a.verified"):
             self.assertIn(column, captured["sql"])
+        self.assertIn("a.coverage_evidence", captured["sql"])
 
     def test_intelligence_reads_snapshots_when_scoped_to_a_run(self):
         """The bug in one assertion: before this, a run-scoped read was
@@ -110,6 +111,7 @@ class RunScopedReadTests(unittest.TestCase):
         sql = fetch_all.call_args[0][0]
         self.assertIn("from articles a", sql)
         self.assertNotIn("article_analyses", sql)
+        self.assertIn("a.coverage_evidence", sql)
 
     def test_sentiment_counts_group_by_the_snapshot_not_first_attribution(self):
         """Grouping `articles` by pipeline_run_id credited every article to the

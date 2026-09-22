@@ -49,6 +49,19 @@ or not-yet-verifiable assessments. Analyst decisions and origin checks are
 stored as separate audit events. Run comparison distinguishes changes in the
 captured evidence from rule-only reprocessing.
 
+Every claim is screened against the project scope before duplicate assertions
+are consolidated. The default view includes only current, directly relevant or
+contextual claims; uncertain and historical results remain available through
+the filters. Similar wording alone never merges different assertions.
+Literal supporting passages and explicit negations are checked against the
+claim; ambiguous paraphrases require review. Shared publishers, uploaded
+documents, story groups, and identical bodies count as one origin.
+
+After applying migrations, rebuild historical results from `backend/` with
+`python revalidate_evidence.py --apply`. Without `--apply`, this command lists
+the affected runs only. It uses the configured model, preserves prior
+generations, and leaves analyst decisions attached to the reviewed generation.
+
 Web collection stays outside Strata. Export the collector's results as JSON or
 JSONL, upload the file as a project document, review its records, and approve
 them for local analysis. One JSONL record can use this contract:
@@ -253,14 +266,27 @@ python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
   how an existing database converges with a fresh one. It is also mounted into
   `docker-entrypoint-initdb.d`, so a brand-new volume starts from it directly.
 - `backend/migrations/NNNN_name.sql` are the forward migrations, applied in
-  numeric order, each in its own transaction. That directory is currently empty:
-  everything through `0028` was folded back into the baseline once the fork had
-  no database left to preserve, so the next one starts at `0002`. See
+  numeric order, each in its own transaction. See
   `backend/migrations/README.md`.
 - Applied versions and their checksums are recorded in `schema_migrations`.
   Editing a migration after it has been applied is a hard error - the runner
   refuses rather than letting environments diverge silently. Add a new
   migration instead.
+
+## Source reliability data
+
+The dashboard's **Source reliability signals** card summarizes explicit
+article-level coverage checks. A matching headline is a lead for comparison,
+so results with matches show **Needs review**. Missing matches show
+**Not assessed**. These checks do not automatically assign high or low source
+reliability. Publisher domains are normalized with bundled public-suffix data,
+including private hosting suffixes; domain normalization makes no network call.
+
+For uploaded documents, enter the optional **Original publisher URL** during
+upload. The app keeps its internal document URL for grouping while storing the
+publisher URL in provenance for the reliability assessment. Without a usable
+publisher URL, publisher identity may remain unknown. Coverage checks send the
+article title to the configured external service only when explicitly requested.
 
 `schema.sql` is organized in numbered sections (helpers, access control,
 projects, analysis runs, articles, per-article output, idea clusters, documents,

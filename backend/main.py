@@ -61,6 +61,7 @@ from services.articles.reanalyze import (
     reanalyze_articles,
 )
 from services.articles.relevance_screening import set_relevance_override
+from services.articles.gdelt_corroboration import GdeltError, check_article as check_gdelt_article
 from llm_client import LLMError, chat_completion
 from services.projects.projects_store import (
     create_project,
@@ -852,6 +853,7 @@ def get_articles(
     project_id: int | None = None,
     source_url: str | None = None,
     source_host: str | None = None,
+    coverage_status: str | None = None,
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
@@ -868,6 +870,7 @@ def get_articles(
         project_id=project_id,
         source_url=source_url,
         source_host=source_host,
+        coverage_status=coverage_status,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -1008,6 +1011,7 @@ def export_articles_jsonl(
     project_id: int | None = None,
     source_url: str | None = None,
     source_host: str | None = None,
+    coverage_status: str | None = None,
     sort: str = "published.desc",
     added_from: str | None = None,
     added_to: str | None = None,
@@ -1027,6 +1031,7 @@ def export_articles_jsonl(
             project_id=project_id,
             source_url=source_url,
             source_host=source_host,
+            coverage_status=coverage_status,
             sort=sort,
             added_from=added_from,
             added_to=added_to,
@@ -1222,6 +1227,33 @@ def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_
     if not analysis:
         raise HTTPException(status_code=404, detail="Article not found.")
     return {"analysis": analysis}
+
+
+@app.post("/api/articles/{article_id}/coverage")
+def check_article_coverage(
+    article_id: int,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Explicit external lookup for cross-source coverage.
+
+    This is deliberately separate from analysis: uploaded text does not leave
+    the machine merely because an article was imported or analyzed.
+    """
+    visible_ids = _visible_project_ids_or_none(user)
+    if visible_ids is not None and not db.fetch_one(
+        'select article_id from article_projects where article_id=%s and project_id=any(%s) limit 1',
+        (int(article_id), visible_ids),
+    ):
+        raise HTTPException(status_code=404, detail='Article not found.')
+    try:
+        result = check_gdelt_article(article_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GdeltError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"article_id": article_id, "coverage": result}
 
 
 @app.get("/api/analysis/status")

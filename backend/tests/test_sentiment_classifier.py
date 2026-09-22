@@ -51,14 +51,14 @@ class ClassifySentimentTests(unittest.TestCase):
 
     def test_successful_classification_is_normalized(self):
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
-        fake_pipeline = lambda text: [{"label": "LABEL_2", "score": 0.87}]
+        fake_pipeline = lambda text, **kwargs: [{"label": "LABEL_2", "score": 0.87}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
             result = sc.classify_sentiment("I love this")
         self.assertEqual(result, {"label": "positive", "score": 0.87})
 
     def test_human_readable_labels_pass_through_case_insensitively(self):
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
-        fake_pipeline = lambda text: [{"label": "NEGATIVE", "score": 0.7}]
+        fake_pipeline = lambda text, **kwargs: [{"label": "NEGATIVE", "score": 0.7}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
             result = sc.classify_sentiment("terrible")
         self.assertEqual(result, {"label": "negative", "score": 0.7})
@@ -71,7 +71,7 @@ class ClassifySentimentTests(unittest.TestCase):
     def test_inference_error_returns_none_instead_of_raising(self):
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
 
-        def boom(text):
+        def boom(text, **kwargs):
             raise RuntimeError("boom")
 
         with patch("sentiment_classifier._load_pipeline", return_value=boom):
@@ -79,7 +79,7 @@ class ClassifySentimentTests(unittest.TestCase):
 
     def test_unrecognized_label_returns_none(self):
         config.SENTIMENT_CLASSIFIER_MODEL = "fake/model"
-        fake_pipeline = lambda text: [{"label": "surprise", "score": 0.5}]
+        fake_pipeline = lambda text, **kwargs: [{"label": "surprise", "score": 0.5}]
         with patch("sentiment_classifier._load_pipeline", return_value=fake_pipeline):
             self.assertIsNone(sc.classify_sentiment("huh"))
 

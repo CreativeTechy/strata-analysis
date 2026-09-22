@@ -4,9 +4,9 @@
 holds the forward migrations layered on top of it, applied in filename order by
 `../migrate.py`.
 
-Everything through `0028` was squashed back into the baseline once the product
-had no database left to preserve, so this directory starts empty again. Add the
-next one as `0002_short_name.sql`.
+Earlier changes were folded into the baseline during the fork's schema squash;
+subsequent forward migrations remain here for existing databases. New files use
+the next available four-digit number.
 
 ## Rules
 

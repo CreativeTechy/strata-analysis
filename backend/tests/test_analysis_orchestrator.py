@@ -40,6 +40,8 @@ EXTRACTED_DATA = {
 class AnalyzeArticleTests(unittest.TestCase):
     def setUp(self):
         self._patchers = [
+            patch.object(config, 'SENTIMENT_CLASSIFIER_MODEL', 'fixture/sentiment'),
+            patch.object(config, 'CLASSIFICATION_MODEL', 'fixture/classification'),
             patch(
                 "analysis.orchestrator.structured_extraction.extract_structured_data",
                 return_value=ExtractionResult(data=dict(EXTRACTED_DATA), attempts=1),

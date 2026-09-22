@@ -56,6 +56,25 @@ class ComputeOverallToneTests(unittest.TestCase):
         self.assertEqual(articles_analytics.compute_overall_tone("critical", "enthusiastic"), "mixed")
 
 
+class CoverageEvidenceBreakdownTests(unittest.TestCase):
+    def test_keeps_coverage_states_separate(self):
+        rows = [
+            {"coverage_evidence": {"status": "broad_coverage"}},
+            {"coverage_evidence": {"status": "some_coverage"}},
+            {"coverage_evidence": {"status": "no_coverage_found"}},
+            {},
+        ]
+        self.assertEqual(
+            articles_analytics._coverage_evidence_breakdown(rows),
+            [
+                {"value": "broad_coverage", "total": 1},
+                {"value": "some_coverage", "total": 1},
+                {"value": "no_coverage_found", "total": 1},
+                {"value": "not_checked", "total": 1},
+            ],
+        )
+
+
 class GetArticleStatsTests(unittest.TestCase):
     """End-to-end smoke test: get_article_stats composes _count_articles (via
     articles_query, or articles_search when a search term is present) with
