@@ -440,6 +440,66 @@ class ApproveForDocumentsRouteTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
 
+class ReanalyzeDocumentArticlesRouteTests(unittest.TestCase):
+    """POST .../document-articles/reanalyze must not misreport why nothing
+    happened - start_or_reuse_analysis_run() can now legitimately return
+    run_id=None, started=False when a self-drain re-check (pipeline.py's
+    race-safety fix) finds nothing actually pending, which is a different
+    outcome from "a run is already active" and needs a different message."""
+
+    def test_no_approved_candidates_reports_nothing_to_analyze(self):
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approved_article_ids", return_value=[]), \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run") as mock_start:
+            result = project_documents_api.reanalyze_document_articles(9, user={"id": 1})
+
+        mock_start.assert_not_called()
+        self.assertEqual(result, {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."})
+
+    def test_a_run_starts_reports_started(self):
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approved_article_ids", return_value=[101]), \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run",
+                           return_value={"run_id": "run-1", "started": True}):
+            result = project_documents_api.reanalyze_document_articles(9, user={"id": 1})
+
+        self.assertEqual(result, {"run_id": "run-1", "message": "Analysis run started."})
+
+    def test_a_genuinely_active_run_reports_already_active(self):
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approved_article_ids", return_value=[101]), \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run",
+                           return_value={"run_id": "run-1", "started": False}):
+            result = project_documents_api.reanalyze_document_articles(9, user={"id": 1})
+
+        self.assertEqual(
+            result,
+            {"run_id": "run-1", "queued": 0, "message": "An analysis run is already active for this project."},
+        )
+
+    def test_nothing_actually_pending_reports_nothing_to_reanalyze_not_active(self):
+        """start_or_reuse_analysis_run() found an active run, marked this
+        project, then its own self-drain re-check discovered the run had
+        already finished with nothing left pending - run_id=None,
+        started=False. Must not be reported as "already active"."""
+        from services.projects import project_documents_api
+
+        with patch.object(project_documents_api, "_project_or_404"), \
+             patch.object(project_document_articles, "approved_article_ids", return_value=[101]), \
+             patch.object(project_documents_api, "start_or_reuse_analysis_run",
+                           return_value={"run_id": None, "started": False}):
+            result = project_documents_api.reanalyze_document_articles(9, user={"id": 1})
+
+        self.assertEqual(result, {"run_id": None, "queued": 0, "message": "Nothing to re-analyze."})
+        self.assertNotIn("already active", result["message"])
+
+
 class AllowedExtensionTests(unittest.TestCase):
     def test_record_formats_are_uploadable(self):
         for name in ("export.jsonl", "export.json", "export.ndjson"):

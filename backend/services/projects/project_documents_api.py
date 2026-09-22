@@ -237,6 +237,13 @@ def reanalyze_document_articles(
         return {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."}
 
     run_info = start_or_reuse_analysis_run(project_id)
+    if run_info["run_id"] is None:
+        # start_or_reuse_analysis_run() found an active run, marked this
+        # project for a follow-up, then discovered on its own self-drain
+        # re-check that the run had already finished with nothing left
+        # pending (see pipeline.py's _project_has_pending_articles) - not
+        # "still active", just nothing to do right now.
+        return {"run_id": None, "queued": 0, "message": "Nothing to re-analyze."}
     if not run_info["started"]:
         return {"run_id": run_info["run_id"], "queued": 0, "message": "An analysis run is already active for this project."}
     return {"run_id": run_info["run_id"], "message": "Analysis run started."}
