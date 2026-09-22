@@ -1,13 +1,12 @@
 import { motion } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, Info, Trash2 } from 'lucide-react';
-import { computeOverallTone } from '../../lib/tone.js';
+import { ExternalLink, Calendar, CarFront, Tag, Info } from 'lucide-react';
 import {
   prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches,
   articleSourceLink, articleSourceLabel,
 } from '../../lib/articleHelpers.jsx';
 
 // One card in the grid ("Cards") view mode.
-export default function ArticleCard({ article, search, index, isRefreshing, canDelete, onShowDetails, onDelete }) {
+export default function ArticleCard({ article, search, index, isRefreshing, onShowDetails }) {
   const sourceLink = articleSourceLink(article);
   return (
     <motion.div
@@ -27,6 +26,16 @@ export default function ArticleCard({ article, search, index, isRefreshing, canD
           <span className="badge category">
             {prettyLabel(article.article_category || article.category || 'general_article')}
           </span>
+          {article.author ? (
+            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Author">
+              By {article.author}
+            </span>
+          ) : null}
+          {article.region && article.region !== 'unknown' ? (
+            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Region">
+              Region: {prettyLabel(article.region)}
+            </span>
+          ) : null}
           {article.source_language ? (
             <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
               Language: {article.source_language.toUpperCase()}
@@ -41,15 +50,6 @@ export default function ArticleCard({ article, search, index, isRefreshing, canD
               Collected: {articleDate(article.source_run_snapshot.started_at)}
             </span>
           ) : null}
-          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
-            Writer: {prettyLabel(article.writer_tone || 'neutral')}
-          </span>
-          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
-            Article: {prettyLabel(article.article_tone || 'neutral')}
-          </span>
-          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
-            Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
-          </span>
           <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
             <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
           </span>
@@ -70,17 +70,6 @@ export default function ArticleCard({ article, search, index, isRefreshing, canD
           >
             <Info size={13} /> Details
           </button>
-          {canDelete && (
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ padding: '4px 8px', fontSize: '0.72rem', color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
-              onClick={onDelete}
-              title="Delete article"
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
         </div>
       </div>
 

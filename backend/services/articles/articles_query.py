@@ -557,7 +557,7 @@ def list_analysis_errors(project_id=None, limit=24, offset=0):
 
 
 _ARTICLE_ANALYSIS_BASE_COLUMNS = (
-    "id", "url", "title", "source", "published", "sentiment", "article_category",
+    "id", "url", "title", "source", "author", "published", "text", "sentiment", "article_category",
     "writer_tone", "article_tone", "region", "insight_json", "analyzed_at", "analysis_model",
     "analysis_prompt_version",
 )
@@ -610,7 +610,9 @@ def _shape_article_analysis(row: dict) -> dict:
         "url": row.get("url"),
         "title": row.get("title"),
         "source": row.get("source"),
+        "author": row.get("author"),
         "published": row.get("published"),
+        "text": row.get("text"),
         "sentiment": _normalize_sentiment(row.get("sentiment")) or "neutral",
         "article_category": _normalize_article_category(row.get("article_category")),
         "writer_tone": writer_tone,
