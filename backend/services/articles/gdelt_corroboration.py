@@ -23,13 +23,21 @@ from psycopg.types.json import Jsonb
 
 STATUS_BROAD = "broad_coverage"
 STATUS_SOME = "some_coverage"
-STATUS_NONE = "no_coverage_found"
+STATUS_LOW = "no_coverage_found"
+STATUS_NONE = "not_checked"
+_COMMON_SECOND_LEVEL_SUFFIXES = {
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au",
+    "co.nz", "co.jp", "co.in", "com.br", "com.mx", "com.tr", "com.lb",
+}
+_TITLE_UP = re.compile(r"\b(approv(?:e|es|ed)|support(?:s|ed)?|increase[ds]?|rise[sn]?|rose|gain(?:s|ed)?|win[sn]?|won|allow(?:s|ed)?)\b", re.I)
+_TITLE_DOWN = re.compile(r"\b(reject(?:s|ed)?|oppose[ds]?|decrease[ds]?|decline[ds]?|fall[sn]?|fell|lose[sn]?|lost|ban[sn]?|block(?:s|ed)?)\b", re.I)
+_TITLE_NEGATION = re.compile(r"\b(no|not|never|without|didn't|doesn't|won't)\b", re.I)
 class GdeltError(RuntimeError):
     """A safe, user-facing GDELT lookup failure."""
 
 
 def normalize_domain(value) -> str | None:
-    """Return a comparable ASCII hostname from a URL or bare domain."""
+    """Return a comparable registrable domain, collapsing ordinary subdomains."""
     text = str(value or "").strip()
     if not text or text.lower().startswith("document://"):
         return None
@@ -40,7 +48,12 @@ def normalize_domain(value) -> str | None:
             hostname = hostname[4:]
         if not hostname or "." not in hostname or " " in hostname:
             return None
-        return hostname.encode("idna").decode("ascii")
+        hostname = hostname.encode("idna").decode("ascii")
+        labels = hostname.split(".")
+        if len(labels) <= 2:
+            return hostname
+        suffix = ".".join(labels[-2:])
+        return ".".join(labels[-3:]) if suffix in _COMMON_SECOND_LEVEL_SUFFIXES else suffix
     except (UnicodeError, ValueError):
         return None
 
@@ -59,6 +72,39 @@ def _title_overlap(left: str, right: str) -> float:
     if not expected or not candidate:
         return 0.0
     return len(expected & candidate) / len(expected)
+
+
+def _title_direction(value: str) -> str:
+    negated = bool(_TITLE_NEGATION.search(value))
+    up, down = bool(_TITLE_UP.search(value)), bool(_TITLE_DOWN.search(value))
+    if up and down:
+        return "mixed"
+    if negated and up:
+        return "negative"
+    if negated and down:
+        return "positive"
+    if up:
+        return "positive"
+    if down or negated:
+        return "negative"
+    return "neutral"
+
+
+def _title_quantities(value: str) -> set[str]:
+    return {token.replace(",", "").lower() for token in re.findall(r"\b\d[\d,.]*%?\b", str(value or ""))}
+
+
+def _title_relationship(expected: str, candidate: str) -> str | None:
+    expected_quantities, candidate_quantities = _title_quantities(expected), _title_quantities(candidate)
+    if expected_quantities or candidate_quantities:
+        if expected_quantities != candidate_quantities:
+            return None
+    expected_direction, candidate_direction = _title_direction(expected), _title_direction(candidate)
+    if {expected_direction, candidate_direction} == {"positive", "negative"}:
+        return "contradicting"
+    if "mixed" in {expected_direction, candidate_direction}:
+        return None
+    return "supporting"
 
 
 def build_query(title: str) -> str:
@@ -96,8 +142,12 @@ def summarize_results(article: dict, payload: dict, query: str) -> dict:
         if not domain or domain == original_domain:
             continue
         title = str(raw.get("title") or "").strip()
-        overlap = _title_overlap(article.get("title") or "", title)
+        article_title = article.get("title") or ""
+        overlap = _title_overlap(article_title, title)
         if overlap < config.GDELT_MIN_TITLE_OVERLAP:
+            continue
+        relationship = _title_relationship(article_title, title)
+        if relationship is None:
             continue
         candidate = {
             "domain": domain,
@@ -107,28 +157,38 @@ def summarize_results(article: dict, payload: dict, query: str) -> dict:
             "language": raw.get("language"),
             "source_country": raw.get("sourcecountry"),
             "title_overlap": round(overlap, 3),
+            "relationship": relationship,
         }
         previous = matches_by_domain.get(domain)
-        if previous is None or candidate["title_overlap"] > previous["title_overlap"]:
+        if previous is not None and previous["relationship"] != candidate["relationship"]:
+            candidate["relationship"] = "conflicting"
+        if previous is None or candidate["relationship"] == "conflicting" or candidate["title_overlap"] > previous["title_overlap"]:
             matches_by_domain[domain] = candidate
 
     matches = sorted(matches_by_domain.values(), key=lambda item: (-item["title_overlap"], item["domain"]))
+    supporting_count = sum(match["relationship"] == "supporting" for match in matches)
+    contradicting_count = sum(match["relationship"] == "contradicting" for match in matches)
     domain_count = len(matches)
-    if domain_count >= config.GDELT_BROAD_COVERAGE_DOMAINS:
+    if supporting_count >= config.GDELT_BROAD_COVERAGE_DOMAINS and supporting_count == domain_count:
         status = STATUS_BROAD
-        reason = f"Closely matching coverage was found on {domain_count} other domains."
+        reason = f"Consistent matching coverage was found from {supporting_count} other publisher domains."
+    elif contradicting_count >= 2 and contradicting_count == domain_count:
+        status = STATUS_LOW
+        reason = f"Conflicting coverage was found from {contradicting_count} other publisher domains."
     elif domain_count:
         status = STATUS_SOME
-        reason = f"Closely matching coverage was found on {domain_count} other domain{'s' if domain_count != 1 else ''}."
+        reason = "The available matching coverage is limited or conflicting and needs review."
     else:
         status = STATUS_NONE
-        reason = "No closely matching coverage was found in the available results."
+        reason = "There is not enough matching coverage to assess this source."
 
     return {
         "status": status,
         "reason": reason,
         "query": query,
         "matching_domain_count": domain_count,
+        "supporting_domain_count": supporting_count,
+        "contradicting_domain_count": contradicting_count,
         "matches": matches[: config.GDELT_STORED_MATCHES],
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "caveat": "Cross-source coverage is not proof that a claim is true or that the sources are independent.",

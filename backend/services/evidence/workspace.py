@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
+from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
 import db
@@ -21,7 +22,7 @@ from llm_client import LLMError, chat_completion
 from psycopg.types.json import Jsonb
 from services.projects.projects_store import get_project
 
-RULES_VERSION = "evidence-v5"
+RULES_VERSION = "evidence-v6"
 RELEVANCE_LABELS = {"direct", "contextual", "unrelated", "uncertain"}
 DEFAULT_VISIBLE_RELEVANCE = {"direct", "contextual", "unclassified"}
 RELEVANCE_BATCH_SIZE = 20
@@ -53,9 +54,20 @@ _AR_DATE = re.compile(
     r"أيلول|ايلول|تشرين\s+الأول|تشرين\s+الاول|تشرين\s+الثاني|كانون\s+الأول|كانون\s+الاول)\s+\d{4}\b"
 )
 _NUMERIC_DATE = re.compile(r"\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b")
+_NUMBER_WORD = (
+    r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+    r"sixteen|seventeen|eighteen|nineteen|twenty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"thirty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"forty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"fifty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"sixty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"seventy(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"eighty(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?|"
+    r"ninety(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?)"
+)
 _QUANTITY = re.compile(
-    r"(?:[$£€]\s?\d[\d,.]*|\b\d[\d,.]*(?:\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?))?"
-    r"|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:million|billion|trillion)\b)",
+    rf"(?:[$£€]\s?\d[\d,.]*|\b\d[\d,.]*(?:\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?))?"
+    rf"|\b{_NUMBER_WORD}\s+(?:percent|million|billion|trillion)\b)",
     re.I,
 )
 
@@ -64,6 +76,9 @@ _CLAIM_EQUIVALENTS = {
     "cars": "car", "automobiles": "car", "charging": "charge", "chargers": "charge",
     "registrations": "registered", "registration": "registered", "sales": "sold",
     "costs": "cost", "prices": "price", "publicly": "public", "approximately": "about",
+    "passed": "registered", "british": "uk", "number": "amount",
+    "increased": "increase", "increasing": "increase", "decreased": "decrease",
+    "decreasing": "decrease", "declined": "decline", "declining": "decline",
 }
 _GENERIC_CLAIM_WORDS = {
     "according", "report", "reported", "reports", "says", "source", "uk", "united", "kingdom",
@@ -174,16 +189,28 @@ def _claim_words(value: str) -> set[str]:
 def _normalized_scopes(value: str) -> tuple[set[str], set[str]]:
     structured = _structured_claim("", value)
     dates = {re.sub(r"\s+", " ", item.lower()).strip() for item in structured["dates"]}
-    number_words = {
-        "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
-        "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    units = {
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+        "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
     }
+    tens = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+            "seventy": 70, "eighty": 80, "ninety": 90}
+
+    def replace_number_word(match: re.Match) -> str:
+        parts = match.group(0).lower().replace("-", " ").split()
+        value = tens.get(parts[0], units.get(parts[0], 0))
+        if len(parts) > 1:
+            value += units.get(parts[1], 0)
+        return str(value)
+
     quantities = {
         re.sub(
             r"[^a-z0-9.%]+", "",
             re.sub(
-                r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\b",
-                lambda match: number_words[match.group(1).lower()],
+                rf"\b{_NUMBER_WORD}\b",
+                replace_number_word,
                 _normalize_digits(item).lower().replace("percent", "%").replace("بالمئة", "%").replace("في المئة", "%"),
             ),
         )
@@ -198,11 +225,11 @@ def _scope_compatible(left: str, right: str) -> bool:
     right_dates, right_quantities = _normalized_scopes(right)
     if bool(left_dates) != bool(right_dates):
         return False
-    if left_dates and right_dates and left_dates.isdisjoint(right_dates):
+    if left_dates and right_dates and left_dates != right_dates:
         return False
     if bool(left_quantities) != bool(right_quantities):
         return False
-    if left_quantities and right_quantities and left_quantities.isdisjoint(right_quantities):
+    if left_quantities and right_quantities and left_quantities != right_quantities:
         return False
     return True
 
@@ -219,15 +246,42 @@ def _lexical_similarity(left: str, right: str) -> float:
     if not left_words or not right_words:
         return 0.0
     overlap = len(left_words & right_words)
-    return max(
-        overlap / len(left_words | right_words),
-        overlap / min(len(left_words), len(right_words)),
-    )
+    return overlap / len(left_words | right_words)
+
+
+def _candidate_entities(candidate: dict) -> set[str]:
+    """Return explicit analyzed entities when available; do not guess entities from capitalization."""
+    row = candidate.get("row") or {}
+    values = [*(row.get("entities") or []), *(row.get("organizations") or [])]
+    entities = set()
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("name") or value.get("text") or value.get("value")
+        normalized = " ".join(_words(str(value or "")))
+        if normalized:
+            entities.add(normalized)
+    return entities
+
+
+def _entity_compatible(left: dict, right: dict) -> bool:
+    left_entities, right_entities = _candidate_entities(left), _candidate_entities(right)
+    return not left_entities or not right_entities or not left_entities.isdisjoint(right_entities)
+
+
+def _word_order_compatible(left: str, right: str) -> bool:
+    left_words, right_words = _words(left), _words(right)
+    if Counter(left_words) != Counter(right_words):
+        return True
+    return SequenceMatcher(a=left_words, b=right_words, autojunk=False).ratio() >= 0.6
 
 
 def _claims_match(left: dict, right: dict, threshold: float | None = None) -> bool:
     """Hybrid paraphrase match with hard safeguards for dates and quantities."""
     if not _scope_compatible(left["claim"], right["claim"]):
+        return False
+    if left.get("type") and right.get("type") and left["type"] != right["type"]:
+        return False
+    if not _entity_compatible(left, right) or not _word_order_compatible(left["claim"], right["claim"]):
         return False
     overlap = len(_claim_words(left["claim"]) & _claim_words(right["claim"]))
     if overlap < 2:
@@ -235,13 +289,24 @@ def _claims_match(left: dict, right: dict, threshold: float | None = None) -> bo
     lexical = _lexical_similarity(left["claim"], right["claim"])
     semantic = cosine_similarity(left.get("embedding") or [], right.get("embedding") or [])
     minimum = config.EVIDENCE_CLAIM_SIMILARITY_THRESHOLD if threshold is None else threshold
-    return lexical >= 0.72 or semantic >= minimum
+    return lexical >= 0.72 or (lexical >= 0.5 and semantic >= minimum)
 
 
 def _group_claim_candidates(candidates: list[dict]) -> list[dict]:
     """Cluster exact claims and cautious semantic paraphrases across topics."""
     groups: list[dict] = []
     for candidate in candidates:
+        duplicate = next((
+            group for group in groups
+            if any(
+                int(item["row"]["id"]) == int(candidate["row"]["id"])
+                and re.sub(r"\s+", " ", item["claim"].strip().casefold())
+                == re.sub(r"\s+", " ", candidate["claim"].strip().casefold())
+                for item in group["items"]
+            )
+        ), None)
+        if duplicate:
+            continue
         exact = next((group for group in groups if group["fingerprint"] == candidate["fingerprint"]), None)
         if exact:
             exact["items"].append(candidate)
@@ -436,13 +501,18 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
 
 
 def _direction(value: str) -> str:
-    negative = bool(_NEGATION.search(value) or _DOWN.search(value) or _AR_DOWN.search(value))
-    positive = bool(_UP.search(value) or _AR_UP.search(value))
-    if negative and positive:
+    negated = bool(_NEGATION.search(value))
+    down = bool(_DOWN.search(value) or _AR_DOWN.search(value))
+    up = bool(_UP.search(value) or _AR_UP.search(value))
+    if up and down:
         return "mixed"
-    if negative:
+    if negated and up:
         return "negative"
-    if positive:
+    if negated and down:
+        return "positive"
+    if down or negated:
+        return "negative"
+    if up:
         return "positive"
     return "neutral"
 
@@ -476,7 +546,9 @@ def _fingerprint(topic: str, claim: str) -> str:
     }]
     structured = _structured_claim(topic, claim)
     scope = "|".join(structured["dates"] + structured["quantities"])
-    basis = f"{topic.lower()}|{' '.join(sorted(set(words))[:32])}|{scope.lower()}"
+    # Preserve word order: subject/object role reversals must not become exact
+    # duplicates merely because they contain the same bag of words.
+    basis = f"{topic.lower()}|{' '.join(words[:32])}|{scope.lower()}"
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
@@ -490,20 +562,77 @@ def _claim_type(text: str) -> str:
 
 def _origin(row: dict) -> str:
     provenance = row.get("source_provenance") or {}
-    # A deduplicated story is one underlying origin even when several outlets
-    # republished it under different hostnames.
+    # Prefer publisher identity so separate stories from one publisher do not
+    # masquerade as independent corroboration. Generation-level component
+    # grouping below also collapses copies with the same story/origin group.
     if provenance.get("origin_group"):
         return f"origin:{str(provenance['origin_group']).strip().lower()}"
-    if row.get("story_id"):
-        return f"story:{row['story_id']}"
     publisher = str(provenance.get("publisher") or "").strip().lower()
     if publisher:
         return f"publisher:{publisher}"
+    if row.get("story_id"):
+        return f"story:{row['story_id']}"
     for value in (provenance.get("original_url"), row.get("url"), row.get("source_url")):
         host = urlparse(str(value or "")).netloc.lower().removeprefix("www.")
         if host:
             return f"host:{host}"
     return f"source:{str(row.get('source') or 'unknown').strip().lower()}"
+
+
+def _origin_keys(row: dict) -> set[str]:
+    """Identity signals used to collapse same-publisher and syndicated copies."""
+    provenance = row.get("source_provenance") or {}
+    keys = set()
+    origin_group = str(provenance.get("origin_group") or "").strip().lower()
+    publisher = str(provenance.get("publisher") or "").strip().lower()
+    if origin_group:
+        keys.add(f"origin:{origin_group}")
+    if publisher:
+        keys.add(f"publisher:{publisher}")
+    if row.get("story_id"):
+        keys.add(f"story:{row['story_id']}")
+    if not keys:
+        keys.add(_origin(row))
+    return keys
+
+
+def _origin_components(rows: list[dict]) -> dict[int, str]:
+    """Map each article to one connected origin across publisher/story signals."""
+    parents: dict[str, str] = {}
+
+    def find(key: str) -> str:
+        parents.setdefault(key, key)
+        while parents[key] != key:
+            parents[key] = parents[parents[key]]
+            key = parents[key]
+        return key
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parents[max(left_root, right_root)] = min(left_root, right_root)
+
+    row_keys: dict[int, set[str]] = {}
+    for row in rows:
+        article_id = int(row["id"])
+        keys = _origin_keys(row)
+        row_keys[article_id] = keys
+        anchor = min(keys)
+        for key in keys:
+            union(anchor, key)
+    return {article_id: find(min(keys)) for article_id, keys in row_keys.items()}
+
+
+def _deduplicate_prepared(prepared: list[tuple]) -> list[tuple]:
+    """Mirror the evidence_items uniqueness rule before calculating counters."""
+    unique = {}
+    for item in prepared:
+        row, relationship = item[0], item[1]
+        key = (int(row["id"]), relationship)
+        previous = unique.get(key)
+        if previous is None or (item[4], item[3], item[6]) > (previous[4], previous[3], previous[6]):
+            unique[key] = item
+    return list(unique.values())
 
 
 def _sentences(row: dict) -> list[str]:
@@ -784,6 +913,8 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             row, direction = candidate["row"], candidate["direction"]
             if {direction, focal_direction} == {"positive", "negative"}:
                 relationship = "contradicting"
+            elif direction == "mixed" or focal_direction == "mixed":
+                relationship = "contextual"
             else:
                 relationship = "supporting"
             passage = _best_passage(row, candidate["claim"])
@@ -793,6 +924,7 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             is_summary = "summary" in source_type or "synthetic" in source_type
             qualifies = bool(valid and aligned and not is_summary and row.get("provenance_status") != "rejected")
             prepared.append((row, relationship, passage, valid, qualifies, source_type, match_score, qualification_reason))
+        prepared = _deduplicate_prepared(prepared)
 
         model_result = None
         if canonical["type"] not in {"forecast", "opinion"}:
@@ -804,10 +936,11 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
                 for row, relationship, passage, valid, qualifies, source_type, match_score, qualification_reason in prepared
             ]
 
-        support = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "supporting" and ok}
-        conflict = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contradicting" and ok}
-        context = {_origin(row) for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contextual" and ok}
-        all_origins = {_origin(row) for row, _rel, _p, _v, _ok, _s, _m, _q in prepared}
+        origin_map = _origin_components([item[0] for item in prepared])
+        support = {origin_map[int(row["id"])] for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "supporting" and ok}
+        conflict = {origin_map[int(row["id"])] for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contradicting" and ok}
+        context = {origin_map[int(row["id"])] for row, rel, _p, _v, ok, _s, _m, _q in prepared if rel == "contextual" and ok}
+        all_origins = set(origin_map.values())
         if model_result:
             assessment, explanation = model_result["assessment"], model_result["explanation"]
         elif not support and not conflict:
@@ -877,7 +1010,7 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    on conflict (claim_id,article_id,relationship) do nothing""",
                 (claim_id, int(row["id"]), relationship, passage or "No exact document passage was available.",
-                 valid, _origin(row), Jsonb(snapshot), source_type, _passage_locator(row, passage), qualifies),
+                 valid, origin_map[int(row["id"])], Jsonb(snapshot), source_type, _passage_locator(row, passage), qualifies),
             )
         db.execute(
             """insert into evidence_assessment_revisions

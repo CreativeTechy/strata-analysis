@@ -43,8 +43,22 @@ class EvidenceRuleTests(unittest.TestCase):
         second = workspace._fingerprint("Oil", "Oil production decreased by 15 percent")
         self.assertNotEqual(first, second)
 
+    def test_fingerprint_keeps_subject_object_roles_separate(self):
+        first = workspace._fingerprint("Business", "Acme acquired Beta")
+        second = workspace._fingerprint("Business", "Beta acquired Acme")
+        self.assertNotEqual(first, second)
+
     def test_lower_is_direction_not_grammatical_negation(self):
         self.assertEqual(workspace._direction("Production was lower in August"), "negative")
+
+    def test_negated_increase_is_negative(self):
+        self.assertEqual(workspace._direction("Oil production did not increase in 2025"), "negative")
+
+    def test_negated_claim_can_be_linked_as_a_contradiction(self):
+        positive = {"claim": "Oil production increased in 2025", "embedding": [1.0, 0.0]}
+        negative = {"claim": "Oil production did not increase in 2025", "embedding": [1.0, 0.0]}
+        self.assertTrue(workspace._claims_match(positive, negative))
+        self.assertEqual({workspace._direction(positive["claim"]), workspace._direction(negative["claim"])}, {"positive", "negative"})
 
     def test_story_group_collapses_republished_hosts(self):
         first = {"story_id": 44, "url": "https://one.example/report"}
@@ -74,6 +88,22 @@ class EvidenceRuleTests(unittest.TestCase):
         second = {"source_provenance": {"origin_group": "announcement-17"}, "url": "https://two.example"}
         self.assertEqual(workspace._origin(first), workspace._origin(second))
 
+    def test_same_publisher_is_one_origin_across_different_stories(self):
+        rows = [
+            {"id": 1, "story_id": 11, "source_provenance": {"publisher": "Same Publisher"}},
+            {"id": 2, "story_id": 12, "source_provenance": {"publisher": "Same Publisher"}},
+        ]
+        origins = workspace._origin_components(rows)
+        self.assertEqual(origins[1], origins[2])
+
+    def test_syndicated_story_is_one_origin_across_publishers(self):
+        rows = [
+            {"id": 1, "story_id": 11, "source_provenance": {"publisher": "Publisher A"}},
+            {"id": 2, "story_id": 11, "source_provenance": {"publisher": "Publisher B"}},
+        ]
+        origins = workspace._origin_components(rows)
+        self.assertEqual(origins[1], origins[2])
+
     def test_semantic_match_groups_paraphrases_across_topics(self):
         first = {"claim": "More than two million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
         second = {"claim": "The number of EVs on British roads passed two million", "embedding": [0.99, 0.01]}
@@ -87,6 +117,26 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_semantic_match_rejects_different_quantities(self):
         first = {"claim": "Electric car sales reached 20 percent", "embedding": [1.0, 0.0]}
         second = {"claim": "Electric car sales reached 35 percent", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_semantic_match_rejects_different_quantities_with_same_year(self):
+        first = {"claim": "Vehicle sales reached 20 percent in 2025", "embedding": [1.0, 0.0]}
+        second = {"claim": "Vehicle sales reached 35 percent in 2025", "embedding": [1.0, 0.0]}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_lexical_match_rejects_different_subjects(self):
+        first = {"claim": "Toyota vehicle sales increased in 2025", "embedding": []}
+        second = {"claim": "Tesla vehicle sales increased in 2025", "embedding": []}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_explicit_entities_prevent_semantic_subject_merge(self):
+        first = {"claim": "Vehicle sales increased in 2025", "embedding": [1.0, 0.0], "row": {"organizations": ["Toyota"]}}
+        second = {"claim": "Vehicle sales rose in 2025", "embedding": [1.0, 0.0], "row": {"organizations": ["Tesla"]}}
+        self.assertFalse(workspace._claims_match(first, second))
+
+    def test_role_reversal_is_not_a_claim_match(self):
+        first = {"claim": "Acme acquired Beta", "embedding": [1.0, 0.0]}
+        second = {"claim": "Beta acquired Acme", "embedding": [1.0, 0.0]}
         self.assertFalse(workspace._claims_match(first, second))
 
     def test_semantic_match_rejects_missing_quantitative_scope(self):
@@ -105,6 +155,17 @@ class EvidenceRuleTests(unittest.TestCase):
             "More than 2 million electric vehicles are registered",
             "Electric vehicle registrations passed two million",
         ))
+
+    def test_quantity_scope_reads_compound_number_words(self):
+        _, quantities = workspace._normalized_scopes("Forty-five percent of adults agreed")
+        self.assertEqual(quantities, {"45%"})
+
+    def test_duplicate_prepared_rows_are_removed_before_counting(self):
+        row = {"id": 9}
+        weaker = (row, "supporting", "quote", True, False, "original", 0.5, "review")
+        stronger = (row, "supporting", "quote", True, True, "original", 0.8, "ok")
+        result = workspace._deduplicate_prepared([weaker, stronger])
+        self.assertEqual(result, [stronger])
 
     def test_passage_qualification_rejects_conflicting_quantity(self):
         qualified, _, reason = workspace._passage_qualification(
@@ -133,6 +194,15 @@ class EvidenceRuleTests(unittest.TestCase):
         groups = workspace._group_claim_candidates([first, second])
         self.assertEqual(len(groups), 1)
         self.assertEqual([item["row"]["id"] for item in groups[0]["items"]], [1, 2])
+
+    def test_group_claim_candidates_removes_duplicate_claim_from_same_article(self):
+        candidate = {
+            "row": {"id": 1}, "topic": "Policy", "claim": "Oil production increased in 2025",
+            "type": "factual_assertion", "direction": "positive", "fingerprint": "one", "embedding": [1.0],
+        }
+        groups = workspace._group_claim_candidates([candidate, {**candidate}])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]["items"]), 1)
 
     def test_arabic_claim_words_are_preserved(self):
         words = workspace._claim_words("ارتفع سعر صفيحة البنزين في لبنان")

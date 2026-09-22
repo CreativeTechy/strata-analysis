@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from services.articles.gdelt_corroboration import (
     STATUS_BROAD,
+    STATUS_LOW,
     STATUS_NONE,
     build_query,
     summarize_results,
@@ -38,7 +39,52 @@ class GdeltCorroborationTests(unittest.TestCase):
     def test_empty_results_do_not_claim_verification(self):
         result = summarize_results({"title": "A useful article title"}, {"articles": []}, '"useful article title"')
         self.assertEqual(result["status"], STATUS_NONE)
+        self.assertEqual(result["status"], "not_checked")
         self.assertIn("not proof", result["caveat"].lower())
+
+    @patch("services.articles.gdelt_corroboration.config.GDELT_BROAD_COVERAGE_DOMAINS", 3)
+    def test_subdomains_of_one_publisher_count_once(self):
+        article = {"title": "City council approves new public transport plan", "url": "https://origin.example/story"}
+        payload = {"articles": [
+            {"url": f"https://{subdomain}.publisher.example/story", "title": article["title"]}
+            for subdomain in ("news", "local", "mobile")
+        ]}
+        result = summarize_results(article, payload, '"City council approves"')
+        self.assertEqual(result["matching_domain_count"], 1)
+        self.assertNotEqual(result["status"], STATUS_BROAD)
+
+    def test_opposing_headlines_do_not_raise_confidence(self):
+        article = {"title": "City council approves new public transport plan", "url": "https://origin.example/story"}
+        payload = {"articles": [
+            {"url": f"https://{domain}/story", "title": "City council rejects new public transport plan"}
+            for domain in ("one.example", "two.example", "three.example")
+        ]}
+        result = summarize_results(article, payload, '"City council approves"')
+        self.assertEqual(result["status"], STATUS_LOW)
+        self.assertEqual(result["supporting_domain_count"], 0)
+        self.assertEqual(result["contradicting_domain_count"], 3)
+
+    def test_different_title_quantities_are_not_matches(self):
+        article = {"title": "Sales increased 20 percent in 2025", "url": "https://origin.example/story"}
+        payload = {"articles": [{
+            "url": "https://other.example/story",
+            "title": "Sales increased 35 percent in 2025",
+        }]}
+        result = summarize_results(article, payload, '"Sales increased"')
+        self.assertEqual(result["status"], STATUS_NONE)
+        self.assertEqual(result["matching_domain_count"], 0)
+
+    @patch("services.articles.gdelt_corroboration.config.GDELT_BROAD_COVERAGE_DOMAINS", 2)
+    def test_mixed_reporting_from_one_domain_forces_review(self):
+        article = {"title": "City council approves new public transport plan", "url": "https://origin.example/story"}
+        payload = {"articles": [
+            {"url": "https://one.example/support", "title": article["title"]},
+            {"url": "https://two.example/support", "title": article["title"]},
+            {"url": "https://three.example/support", "title": article["title"]},
+            {"url": "https://three.example/conflict", "title": "City council rejects new public transport plan"},
+        ]}
+        result = summarize_results(article, payload, '"City council approves"')
+        self.assertEqual(result["status"], "some_coverage")
 
 
 if __name__ == "__main__":
