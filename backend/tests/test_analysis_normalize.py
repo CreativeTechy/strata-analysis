@@ -153,7 +153,7 @@ class NormalizeAgeRangeAliasTests(unittest.TestCase):
     def test_natural_phrasing_of_the_irregular_buckets_is_accepted(self):
         for value in ("65+", "65 plus", "Over 65", "senior", "elderly"):
             self.assertEqual(normalize.normalize_age_range(value), "65_plus")
-        for value in ("Under 18", "under-18", "minor", "teenager", "kid"):
+        for value in ("Under 18", "under-18", "minor", "kid"):
             self.assertEqual(normalize.normalize_age_range(value), "under_18")
 
     def test_to_worded_ranges_canonicalize(self):
@@ -164,6 +164,13 @@ class NormalizeAgeRangeAliasTests(unittest.TestCase):
         bucket, so guessing one would be worse than "unknown"."""
         self.assertEqual(normalize.normalize_age_range("30s"), "unknown")
         self.assertEqual(normalize.normalize_age_range("thirties"), "unknown")
+
+    def test_teen_words_stay_unknown(self):
+        """"teenager" spans roughly 13-19, straddling under_18 and 18-24
+        exactly the way "30s" straddles 25-34 and 35-44 - same rule, so it
+        must not be guessed into under_18 either."""
+        for value in ("teen", "teens", "teenager"):
+            self.assertEqual(normalize.normalize_age_range(value), "unknown")
 
     def test_unrecognized_or_blank_falls_back_to_unknown(self):
         self.assertEqual(normalize.normalize_age_range(""), "unknown")
@@ -186,7 +193,15 @@ class BucketAgeYearsTests(unittest.TestCase):
         self.assertEqual(normalize.bucket_age_years(65), "65_plus")
 
     def test_implausible_or_non_numeric_returns_empty(self):
-        for value in (-1, 121, "not a number", None, ""):
+        for value in (-1, 121, "not a number", None, "", float("inf")):
+            self.assertEqual(normalize.bucket_age_years(value), "")
+
+    def test_sentinel_zero_is_not_read_as_a_stated_age(self):
+        """A model emitting "0" as a placeholder for "no age given" (instead
+        of the "" the prompt asks for) must not be bucketed as under_18 -
+        that would silently override a correct age_range/age_evidence the
+        model separately supplied (see normalize_people_opinions)."""
+        for value in (0, "0", 1, 4):
             self.assertEqual(normalize.bucket_age_years(value), "")
 
 
@@ -263,6 +278,17 @@ class PeopleOpinionsTests(unittest.TestCase):
         ])
         self.assertEqual(result[0]["age_range"], "25-34")
         self.assertEqual(result[0]["age_evidence"], "in her late twenties")
+
+    def test_sentinel_zero_age_years_falls_back_to_the_models_bucket(self):
+        """A placeholder age_years of 0 must not override a correct
+        model-given age_range/age_evidence with under_18 - see
+        normalize.bucket_age_years."""
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Prices are too high", "age_years": 0, "age_range": "65_plus",
+             "age_evidence": "retiree"},
+        ])
+        self.assertEqual(result[0]["age_range"], "65_plus")
+        self.assertEqual(result[0]["age_evidence"], "retiree")
 
     def test_age_evidence_is_dropped_when_age_range_does_not_normalize(self):
         result = normalize.normalize_people_opinions([

@@ -92,16 +92,25 @@ def normalize_age_range(value) -> str:
     return labels.AGE_RANGE_ALIASES.get(age_range, labels.DEFAULT_AGE_RANGE)
 
 
+_MIN_PLAUSIBLE_AGE_YEARS = 5
+_MAX_PLAUSIBLE_AGE_YEARS = 120
+
+
 def _parse_age_years(value):
     """A plausible human age parsed out of `value`, or None - guards
     bucket_age_years against non-numeric input and against nonsense numbers
     (a stray page number, a year like "2024") a model might drop into the
-    field instead of leaving it blank."""
+    field instead of leaving it blank. The lower bound is deliberately above
+    zero: a model that emits "0" as a placeholder for "no age given" (instead
+    of the "" the prompt asks for) must not be read as a stated age of zero -
+    that would silently override a correct model-given age_range/age_evidence
+    with "under_18" (bucket_age_years is preferred over them whenever it
+    resolves - see normalize_people_opinions)."""
     try:
         age = int(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return age if 0 <= age <= 120 else None
+    return age if _MIN_PLAUSIBLE_AGE_YEARS <= age <= _MAX_PLAUSIBLE_AGE_YEARS else None
 
 
 _AGE_RANGE_UPPER_BOUNDS = (

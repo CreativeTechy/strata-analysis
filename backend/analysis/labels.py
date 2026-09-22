@@ -90,11 +90,13 @@ DEFAULT_AGE_RANGE = "unknown"
 # transform normalize_age_range applies, so e.g. "25 to 34" strips to
 # "25to34" here. Deliberately excludes bare decade words ("30s", "thirties")
 # - "30-39" straddles both 25-34 and 35-44 with no correct single bucket, so
-# guessing one would be worse than "unknown".
+# guessing one would be worse than "unknown" - and, by the same reasoning,
+# excludes "teen"/"teens"/"teenager": that spans roughly 13-19, straddling
+# under_18 and 18-24, so it stays unresolved rather than guessing under_18.
 AGE_RANGE_ALIASES = {
     "under18": "under_18", "under-18": "under_18", "below18": "under_18",
     "minor": "under_18", "minors": "under_18", "child": "under_18", "children": "under_18",
-    "kid": "under_18", "kids": "under_18", "teen": "under_18", "teens": "under_18", "teenager": "under_18",
+    "kid": "under_18", "kids": "under_18",
     "65+": "65_plus", "65plus": "65_plus", "over65": "65_plus", "above65": "65_plus",
     "senior": "65_plus", "seniors": "65_plus", "elderly": "65_plus", "seniorcitizen": "65_plus",
     "18to24": "18-24", "25to34": "25-34", "35to44": "35-44", "45to54": "45-54", "55to64": "55-64",
