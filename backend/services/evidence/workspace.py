@@ -22,7 +22,7 @@ from llm_client import LLMError, chat_completion
 from psycopg.types.json import Jsonb
 from services.projects.projects_store import get_project
 
-RULES_VERSION = "evidence-v6-content-quality"
+RULES_VERSION = "evidence-v7-grounded-quality"
 RELEVANCE_LABELS = {"direct", "contextual", "unrelated", "uncertain"}
 DEFAULT_VISIBLE_RELEVANCE = {"direct", "contextual", "unclassified"}
 RELEVANCE_BATCH_SIZE = 20
@@ -39,7 +39,11 @@ _FORECAST = re.compile(r"\b(will|expects?|forecast|projected|plans?|aims?|next (
 _OPINION = re.compile(r"\b(think|believe|feel|in my view|should|best|worst)\b", re.I)
 _CAUSAL = re.compile(r"\b(because|caused|causes|led to|resulted in|due to|drives?)\b", re.I)
 _ATTRIBUTED = re.compile(r"\b(said|stated|announced|according to|reported|claimed)\b", re.I)
-_NEGATION = re.compile(r"\b(no|not|never|didn't|doesn't|won't|without)\b", re.I)
+_NEGATION = re.compile(
+    r"\b(no|not|never|cannot|can't|isn't|aren't|wasn't|weren't|didn't|doesn't|hasn't|haven't|won't|without)\b",
+    re.I,
+)
+_AR_NEGATION = re.compile(r"(?:^|\s)(?:لا|لم|لن|ليس|ليست|ما)(?=\s|$)")
 _UP = re.compile(r"\b(increase[ds]?|increasing|rose|risen|higher|grew|growth|support(?:s|ed)?)\b", re.I)
 _DOWN = re.compile(r"\b(decrease[ds]?|decreasing|fell|fallen|lower|decline[ds]?|declining|oppose[ds]?|ban)\b", re.I)
 _AR_FORECAST = re.compile(r"(?:\bسوف\b|\bمن المتوقع\b|\bيتوقع\b|\bمتوقع\b|\bسي(?=[\u0621-\u064a]))")
@@ -136,6 +140,16 @@ def _project_scope(project_id: int, override: dict | None = None) -> dict:
 def _scope_hash(scope: dict) -> str:
     payload = json.dumps(scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _evidence_scope_text(scope: dict) -> str:
+    """Include the evidence question, not only generic project metadata."""
+    parts = [
+        build_project_embedding_text(scope),
+        str(scope.get("direct_relevance") or "").strip(),
+        str(scope.get("contextual_relevance") or "").strip(),
+    ]
+    return "\n".join(part for part in parts if part)[:8000]
 
 
 def get_run_scope(run_id: str, project_id: int) -> dict:
@@ -382,12 +396,14 @@ def _classify_relevance_resilient(scope: dict, groups: list[dict]) -> dict[str, 
 def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
     """Use versioned cache entries and bounded LLM batches."""
     if config.EVIDENCE_RELEVANCE_MODE == "embedding":
-        embedded_scope = get_embedding(build_project_embedding_text(scope), role="query")
+        embedded_scope = get_embedding(_evidence_scope_text(scope), role="query")
         scope_vector = embedded_scope.get("embedding_json") or []
+        concept_words, location_words = _scope_concept_words(scope)
         results = {}
         for group in groups:
             key = group["fingerprint"]
-            claim_vector = (group.get("canonical") or {}).get("embedding") or []
+            canonical = group.get("canonical") or {}
+            claim_vector = canonical.get("embedding") or []
             if not scope_vector or not claim_vector:
                 results[key] = {
                     "relevance": "uncertain",
@@ -397,15 +413,21 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
                 }
                 continue
             score = cosine_similarity(scope_vector, claim_vector)
-            if score >= config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD:
-                relevance = "direct"
-                explanation = "Local semantic similarity is above the direct-relevance threshold."
+            candidate_text = "\n".join(
+                str(value or "") for value in (canonical.get("claim"), canonical.get("passage")) if value
+            )
+            if candidate_text:
+                relevance, explanation = _passage_relevance_label(
+                    score, candidate_text, concept_words, location_words,
+                    config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD,
+                    config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD,
+                )
+            elif score >= config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD:
+                relevance, explanation = "direct", "Local semantic similarity is above the direct-relevance threshold."
             elif score >= config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD:
-                relevance = "contextual"
-                explanation = "Local semantic similarity indicates relevant project context."
+                relevance, explanation = "contextual", "Local semantic similarity indicates relevant project context."
             else:
-                relevance = "unrelated"
-                explanation = "Local semantic similarity is below the project-relevance threshold."
+                relevance, explanation = "unrelated", "Local semantic similarity is below the project-relevance threshold."
             results[key] = {
                 "relevance": relevance,
                 "explanation": explanation,
@@ -526,12 +548,14 @@ def _origin(row: dict) -> str:
     provenance = row.get("source_provenance") or {}
     # A deduplicated story is one underlying origin even when several outlets
     # republished it under different hostnames.
+    # Exact frozen copies are one underlying origin even when importers gave
+    # each syndicated copy a different story or origin identifier.
+    if row.get("_content_duplicate") and row.get("_content_cluster"):
+        return f"content:{row['_content_cluster']}"
     if provenance.get("origin_group"):
         return f"origin:{str(provenance['origin_group']).strip().lower()}"
     if row.get("story_id"):
         return f"story:{row['story_id']}"
-    if row.get("_content_duplicate") and row.get("_content_cluster"):
-        return f"content:{row['_content_cluster']}"
     publisher = str(provenance.get("publisher") or "").strip().lower()
     if publisher:
         return f"publisher:{publisher}"
@@ -553,13 +577,15 @@ def _substantive_passages(row: dict) -> list[str]:
     """Return source-body passages after removing obvious navigation boilerplate."""
     passages = []
     for sentence in _sentences(row):
-        compact = " ".join(sentence.split())
-        if _BOILERPLATE.search(compact) and len(compact) < 320:
+        normalized = " ".join(sentence.split())
+        if _BOILERPLATE.search(normalized) and len(normalized) < 320:
             continue
-        if _BLOCKED_CONTENT.search(compact) and len(compact) < 320:
+        if _BLOCKED_CONTENT.search(normalized) and len(normalized) < 320:
             continue
-        if len(_words(compact)) >= 6:
-            passages.append(compact[:1200])
+        if len(_words(normalized)) >= 6:
+            # Preserve the exact frozen substring for citation checks. Only
+            # use the normalized copy for classification.
+            passages.append(sentence[:1200])
     return passages
 
 
@@ -616,17 +642,44 @@ def _scope_concept_words(scope: dict) -> tuple[set[str], set[str]]:
     concept = " ".join([
         str(scope.get("name") or ""), str(scope.get("description") or ""),
         " ".join(str(item) for item in (scope.get("keywords") or [])),
+        str(scope.get("direct_relevance") or ""),
     ])
     return set(_words(concept)), set(_words(scope.get("location") or ""))
 
 
+def _script_families(value: str) -> set[str]:
+    families = set()
+    if re.search(r"[A-Za-z]", value or ""):
+        families.add("latin")
+    if re.search(r"[\u0600-\u06ff]", value or ""):
+        families.add("arabic")
+    return families
+
+
 def _passage_relevance_label(score: float, passage: str, concept_words: set[str],
-                             location_words: set[str]) -> tuple[str, str]:
-    if score >= config.EVIDENCE_PASSAGE_DIRECT_THRESHOLD:
-        return "direct", "A substantive frozen passage directly matches the research scope."
-    if score >= config.EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD:
-        passage_words = set(_words(passage))
-        concept_overlap = passage_words.intersection(concept_words - location_words)
+                             location_words: set[str], direct_threshold: float | None = None,
+                             contextual_threshold: float | None = None) -> tuple[str, str]:
+    direct_threshold = (
+        config.EVIDENCE_PASSAGE_DIRECT_THRESHOLD if direct_threshold is None else direct_threshold
+    )
+    contextual_threshold = (
+        config.EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD if contextual_threshold is None else contextual_threshold
+    )
+    passage_words = set(_words(passage))
+    material_words = concept_words - location_words
+    concept_overlap = passage_words.intersection(material_words)
+    if score >= direct_threshold:
+        if len(concept_overlap) >= 2:
+            return "direct", "A substantive frozen passage directly matches the research scope."
+        scope_scripts = _script_families(" ".join(material_words))
+        passage_scripts = _script_families(passage)
+        cross_language = bool(scope_scripts and passage_scripts and scope_scripts.isdisjoint(passage_scripts))
+        # Cross-language sources cannot provide lexical overlap. Require a
+        # substantially stronger multilingual embedding match instead.
+        if cross_language and score >= min(1.0, direct_threshold + 0.12):
+            return "direct", "A strong cross-language passage match directly connects to the research scope."
+        return "unrelated", "High topic similarity lacks a concrete non-geographic connection to the project scope."
+    if score >= contextual_threshold:
         if len(concept_overlap) >= 2:
             return "contextual", "A substantive frozen passage has a concrete contextual connection to the research scope."
         return "unrelated", "The passage only shares broad geography or generic terminology with the project scope."
@@ -639,7 +692,7 @@ def _screen_articles(rows: list[dict], scope: dict, run_id: str, project_id: int
     scope_hash = _scope_hash(scope)
     decision_config = _passage_decision_config()
     config_hash = hashlib.sha256(json.dumps(decision_config, sort_keys=True).encode()).hexdigest()
-    scope_text = build_project_embedding_text(scope)
+    scope_text = _evidence_scope_text(scope)
     scope_vector = (get_embedding(scope_text, role="query") or {}).get("embedding_json") or []
     scope_words = set(_words(scope_text))
     concept_words, location_words = _scope_concept_words(scope)
@@ -678,7 +731,12 @@ def _screen_articles(rows: list[dict], scope: dict, run_id: str, project_id: int
               and decision_config_hash=%s and content_hash=any(%s)""",
         (scope_hash, RULES_VERSION, config.EMBEDDING_MODEL, config_hash, content_keys),
     ) if content_keys else []
-    decisions = {item["content_hash"]: dict(item) for item in (cached or [])}
+    # Uncertain decisions commonly represent a transient embedding failure;
+    # retry them rather than turning provider downtime into a durable cache hit.
+    decisions = {
+        item["content_hash"]: dict(item) for item in (cached or [])
+        if item.get("relevance") != "uncertain"
+    }
     missing = [key for key in content_keys if key not in decisions]
     passages = [passage for key in missing for passage in prepared[key]["passages"]]
     embedded = get_embeddings(passages, role="passage") if passages else []
@@ -688,8 +746,9 @@ def _screen_articles(rows: list[dict], scope: dict, run_id: str, project_id: int
         vectors = embedded[cursor:cursor + len(options)]
         cursor += len(options)
         scored = [
-            (cosine_similarity(scope_vector, item.get("embedding_json") or []), passage)
+            (cosine_similarity(scope_vector, vector), passage)
             for passage, item in zip(options, vectors)
+            if (vector := item.get("embedding_json") or [])
         ] if scope_vector else []
         score, passage = max(scored, default=(0.0, ""), key=lambda item: item[0])
         if not scope_vector or not passage:
@@ -698,16 +757,17 @@ def _screen_articles(rows: list[dict], scope: dict, run_id: str, project_id: int
             relevance, reason = _passage_relevance_label(score, passage, concept_words, location_words)
         decisions[key] = {"content_hash": key, "relevance": relevance, "score": score,
                           "passage": passage, "reason": reason}
-        db.execute(
-            """insert into evidence_passage_relevance_cache
+        if relevance != "uncertain":
+            db.execute(
+                """insert into evidence_passage_relevance_cache
                    (scope_hash,content_hash,rules_version,model,decision_config_hash,relevance,score,passage,reason)
                values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                on conflict (scope_hash,content_hash,rules_version,model,decision_config_hash) do update set
                  relevance=excluded.relevance,score=excluded.score,passage=excluded.passage,
                  reason=excluded.reason,updated_at=now()""",
-            (scope_hash, key, RULES_VERSION, config.EMBEDDING_MODEL, config_hash,
-             relevance, score, passage, reason),
-        )
+                (scope_hash, key, RULES_VERSION, config.EMBEDDING_MODEL, config_hash,
+                 relevance, score, passage, reason),
+            )
 
     included, records = [], []
     duplicate_count = max(0, len(rows) - len(key_counts))
@@ -783,6 +843,13 @@ def _passage_qualification(claim: str, passage: str) -> tuple[bool, float, str]:
         return False, score, "The quotation does not share enough specific meaning with the extracted claim."
     if not _passage_covers_scope(claim, passage):
         return False, score, "The quotation and claim use incompatible dates or quantities."
+    claim_negated = bool(_NEGATION.search(claim) or _AR_NEGATION.search(claim))
+    passage_negated = bool(_NEGATION.search(passage) or _AR_NEGATION.search(passage))
+    if claim_negated != passage_negated:
+        return False, score, "The quotation and claim have incompatible negation or polarity."
+    claim_direction, passage_direction = _direction(claim), _direction(passage)
+    if {claim_direction, passage_direction} == {"positive", "negative"}:
+        return False, score, "The quotation and claim assert opposite directions."
     return True, score, "The quotation matches the claim scope and contains the claim's key terms."
 
 

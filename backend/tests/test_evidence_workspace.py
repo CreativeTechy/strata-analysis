@@ -54,6 +54,53 @@ class EvidenceRuleTests(unittest.TestCase):
             second = workspace._passage_decision_config()
         self.assertNotEqual(first, second)
 
+    def test_uncertain_passage_cache_entry_is_retried(self):
+        row = {
+            "id": 7,
+            "text": (
+                "The energy ministry increased gasoline prices after global oil costs rose on Monday, "
+                "and the official nationwide price schedule took effect immediately at fuel stations."
+            ),
+            "content_hash": "snapshot-hash",
+        }
+        uncertain = {
+            "content_hash": workspace._content_key(row), "relevance": "uncertain", "score": 0,
+            "passage": "", "reason": "Embedding unavailable.",
+        }
+        with patch.object(workspace.db, "fetch_all", side_effect=[[], [uncertain]]), \
+             patch.object(workspace.db, "execute") as execute, \
+             patch.object(workspace.db, "transaction"), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0, 0.0]}]) as embed:
+            included, stats = workspace._screen_articles(
+                [row], {"name": "Fuel prices", "description": "Gasoline price changes"}, "run-1", 3, 1,
+            )
+        embed.assert_called_once()
+        self.assertEqual(included, [row])
+        self.assertEqual(stats["pending_articles"], 0)
+        self.assertTrue(any("evidence_passage_relevance_cache" in call.args[0] for call in execute.call_args_list))
+
+    def test_missing_passage_embedding_is_pending_and_not_cached(self):
+        row = {
+            "id": 8,
+            "text": (
+                "The energy ministry increased gasoline prices after global oil costs rose on Monday, "
+                "and the official nationwide price schedule took effect immediately at fuel stations."
+            ),
+            "content_hash": "snapshot-hash",
+        }
+        with patch.object(workspace.db, "fetch_all", side_effect=[[], []]), \
+             patch.object(workspace.db, "execute") as execute, \
+             patch.object(workspace.db, "transaction"), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{}]):
+            included, stats = workspace._screen_articles(
+                [row], {"name": "Fuel prices", "description": "Gasoline price changes"}, "run-2", 3, 1,
+            )
+        self.assertEqual(included, [])
+        self.assertEqual(stats["pending_articles"], 1)
+        self.assertFalse(any("evidence_passage_relevance_cache" in call.args[0] for call in execute.call_args_list))
+
     def test_shared_geography_alone_is_not_contextual_evidence(self):
         with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.8), \
              patch.object(workspace.config, "EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD", 0.6):
@@ -63,6 +110,48 @@ class EvidenceRuleTests(unittest.TestCase):
             )
         self.assertEqual(relevance, "unrelated")
         self.assertIn("geography", reason)
+
+    def test_high_similarity_without_material_topic_link_is_unrelated(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72), \
+             patch.object(workspace.config, "EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD", 0.62):
+            relevance, reason = workspace._passage_relevance_label(
+                0.90, "A football club in Lebanon announced its squad today.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "unrelated")
+        self.assertIn("non-geographic", reason)
+
+    def test_one_generic_keyword_does_not_make_a_direct_match(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72):
+            relevance, _ = workspace._passage_relevance_label(
+                0.90, "A retailer announced a price promotion for football shirts in Lebanon.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "unrelated")
+
+    def test_strong_cross_language_match_can_be_direct(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72):
+            relevance, _ = workspace._passage_relevance_label(
+                0.86, "ارتفع سعر صفيحة البنزين بعد صدور الجدول الرسمي.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "direct")
+
+    def test_claim_with_opposite_negation_requires_review(self):
+        row = {"text": "The ministry did not increase gasoline prices after the cabinet meeting on Monday."}
+        result = workspace._evaluate_claim_candidate(
+            row, "Fuel", "The ministry increased gasoline prices after the cabinet meeting on Monday.",
+        )
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("negation", result["reason"])
+
+    def test_substantive_passage_preserves_exact_frozen_whitespace(self):
+        body = "The ministry increased  gasoline prices after the cabinet meeting on Monday."
+        passage = workspace._best_passage(
+            {"text": body}, "The ministry increased gasoline prices after the cabinet meeting on Monday.",
+        )
+        self.assertIn(passage, body)
+        self.assertIn("increased  gasoline", passage)
 
     def test_concrete_scope_connection_can_be_contextual(self):
         with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.8), \
@@ -126,6 +215,11 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_story_group_collapses_republished_hosts(self):
         first = {"story_id": 44, "url": "https://one.example/report"}
         second = {"story_id": 44, "url": "https://two.example/reprint"}
+        self.assertEqual(workspace._origin(first), workspace._origin(second))
+
+    def test_duplicate_content_overrides_different_story_ids(self):
+        first = {"story_id": 44, "_content_duplicate": True, "_content_cluster": "same-body"}
+        second = {"story_id": 99, "_content_duplicate": True, "_content_cluster": "same-body"}
         self.assertEqual(workspace._origin(first), workspace._origin(second))
 
     def test_best_passage_is_exact_stored_text(self):
@@ -343,6 +437,23 @@ class EvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(result["context"]["relevance"], "contextual")
         self.assertEqual(result["other"]["relevance"], "unrelated")
         chat.assert_not_called()
+
+    def test_claim_embedding_cannot_promote_generic_keyword_only_text(self):
+        groups = [{"fingerprint": "retail", "canonical": {
+            "embedding": [1.0, 0.0],
+            "claim": "A retailer announced a price promotion for football shirts in Lebanon.",
+            "passage": "A retailer announced a price promotion for football shirts in Lebanon.",
+        }}]
+        scope = {
+            "name": "Lebanon Fuel Crisis Monitor", "description": "Fuel supply and gasoline prices",
+            "location": "Lebanon", "keywords": ["fuel", "gasoline"],
+        }
+        with patch.object(workspace.config, "EVIDENCE_RELEVANCE_MODE", "embedding"), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_DIRECT_THRESHOLD", 0.9), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD", 0.7), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}):
+            result = workspace._classify_relevance(scope, groups)
+        self.assertEqual(result["retail"]["relevance"], "unrelated")
 
     def test_failed_relevance_batch_is_split_to_isolate_transient_failure(self):
         groups = [{"fingerprint": key} for key in ("one", "two")]

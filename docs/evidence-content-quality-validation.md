@@ -29,10 +29,12 @@ and UI requests are excluded.
 
 ## Other verified behavior
 
-- Sixty-nine focused evidence, relevance-screening, and pipeline tests pass.
+- Seventy-eight focused evidence, relevance-screening, and pipeline tests pass.
 - Tests cover English and Arabic unavailable content, legitimate cookie notices, generic geography,
-  grounded and vague candidates, date/quantity passage mismatches, exact duplicates, threshold cache
-  invalidation, provider failure, and interrupted publication.
+  generic-keyword false positives, cross-language relevance, grounded and vague candidates,
+  negation and direction mismatches, exact frozen citations, date/quantity passage mismatches,
+  exact duplicates, threshold cache invalidation, retryable embedding failures, provider failure,
+  and interrupted publication.
 - A fresh PostgreSQL 16 database applied the baseline and all 20 migrations, then passed migration
   verification with no pending migration.
 - A database-backed evidence generation created and published one grounded claim, and the workspace
