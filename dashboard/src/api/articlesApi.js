@@ -58,7 +58,6 @@ function query(params = {}) {
 // --- articles ----------------------------------------------------------
 export const listArticles = (params, signal) => request(`/articles${query(params)}`, { signal });
 export const getArticleAnalysis = (articleId, signal) => request(`/articles/${articleId}/analysis`, { signal });
-export const checkCoverage = (articleId) => request(`/articles/${articleId}/coverage`, { method: 'POST' });
 export const reprocessArticle = (articleId) => request(`/articles/${articleId}/reprocess`, { method: 'POST' });
 /** Batch retry: force-reruns analysis for the given article ids regardless of
  *  their current status. */

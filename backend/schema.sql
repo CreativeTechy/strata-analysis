@@ -307,16 +307,12 @@ create table if not exists public.articles (
     fetched_at                timestamptz,
     verified                  boolean not null default false,
     source_domain             text,
-    source_reliability_status text not null default 'not_assessed',
-    source_reliability_reason text,
-    source_reliability_provider text,
-    source_reliability_reference_url text,
-    source_reliability_dataset_version text,
-    source_reliability_details jsonb not null default '{}'::jsonb,
-    source_reliability_assessed_at timestamptz,
-    coverage_evidence jsonb not null default '{}'::jsonb,
-    constraint articles_source_reliability_status_check
-        check (source_reliability_status in ('concern_reported', 'not_listed', 'not_assessed')),
+
+    -- Vestigial: the removed GDELT coverage-check feature populated this.
+    -- Migration 0024 (applied and immutable, see migrations/README.md) still
+    -- reads/writes it, so it stays here for a fresh database to have it in
+    -- place when 0024 runs; migration 0025 drops it again afterward.
+    coverage_evidence         jsonb not null default '{}'::jsonb,
 
     -- Change detection for a re-uploaded/re-imported body.
     content_hash              text,
@@ -404,23 +400,9 @@ create table if not exists public.articles (
 -- Keep these additive statements beside the definition so reapplying the
 -- baseline upgrades an existing database before the indexes below are built.
 alter table public.articles
-    add column if not exists source_domain text,
-    add column if not exists source_reliability_status text not null default 'not_assessed',
-    add column if not exists source_reliability_reason text,
-    add column if not exists source_reliability_provider text,
-    add column if not exists source_reliability_reference_url text,
-    add column if not exists source_reliability_dataset_version text,
-    add column if not exists source_reliability_details jsonb not null default '{}'::jsonb,
-    add column if not exists source_reliability_assessed_at timestamptz;
-
+    add column if not exists source_domain text;
 alter table public.articles
     add column if not exists coverage_evidence jsonb not null default '{}'::jsonb;
-
-alter table public.articles
-    drop constraint if exists articles_source_reliability_status_check;
-alter table public.articles
-    add constraint articles_source_reliability_status_check
-    check (source_reliability_status in ('concern_reported', 'not_listed', 'not_assessed'));
 
 -- Syndication collapse: group near-identical article bodies into one story.
 --
@@ -484,11 +466,6 @@ create index if not exists articles_analysis_status_idx on public.articles (anal
 create index if not exists articles_pipeline_run_id_idx on public.articles (pipeline_run_id);
 create index if not exists articles_story_idx on public.articles (story_id);
 create index if not exists articles_verified_idx on public.articles (verified);
-create index if not exists articles_source_reliability_status_idx
-    on public.articles (source_reliability_status);
-
-create index if not exists articles_coverage_evidence_status_idx
-    on public.articles ((coverage_evidence->>'status'));
 create index if not exists articles_source_domain_idx on public.articles (source_domain);
 create index if not exists articles_gender_idx on public.articles (gender);
 create index if not exists articles_age_range_idx on public.articles (age_range);
@@ -503,40 +480,6 @@ create index if not exists articles_story_unassigned_idx
     on public.articles (id) where story_id is null;
 create index if not exists articles_reprocess_requested_idx
     on public.articles (reprocess_requested_at) where reprocess_requested_at is not null;
-
--- Versioned local copies of publisher reliability data. Iffy is a concern
--- list, so no-match is recorded as "not listed" rather than "verified".
-create table if not exists public.source_reliability_datasets (
-    id           bigint generated always as identity primary key,
-    provider     text not null,
-    version      text not null,
-    source_url   text not null,
-    license      text not null,
-    checksum     text not null,
-    record_count integer not null,
-    active       boolean not null default false,
-    imported_at  timestamptz not null default now(),
-    unique (provider, version)
-);
-
-create unique index if not exists source_reliability_datasets_active_idx
-    on public.source_reliability_datasets (provider) where active;
-
-create table if not exists public.source_reliability_ratings (
-    dataset_id         bigint not null references public.source_reliability_datasets(id) on delete cascade,
-    domain             text not null,
-    publisher_name     text,
-    factual_rating     text,
-    credibility_rating text,
-    quality_score      numeric,
-    provider_score     numeric,
-    review_url         text,
-    raw_data           jsonb not null default '{}'::jsonb,
-    primary key (dataset_id, domain)
-);
-
-create index if not exists source_reliability_ratings_domain_idx
-    on public.source_reliability_ratings (domain);
 
 -- Which projects an article belongs to. `similarity_score` is how well it
 -- matched the project when it was linked.

@@ -116,7 +116,6 @@ MAX_LIMIT = 100
 BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
-VALID_COVERAGE_STATUSES = {"broad_coverage", "some_coverage", "no_coverage_found", "not_checked"}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -238,7 +237,7 @@ def list_article_ids_for_source_host(project_id, host):
     return matches
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, coverage_status=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None):
     clauses = []
     params = []
 
@@ -300,11 +299,6 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
                 clauses.append("id = any(%s)")
                 params.append(matching_ids)
 
-    coverage_value = _normalize_text(coverage_status).lower()
-    if coverage_value in VALID_COVERAGE_STATUSES:
-        clauses.append("coalesce(coverage_evidence->>'status', 'not_checked') = %s")
-        params.append(coverage_value)
-
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
         clauses.append("coalesce(published, created_at) >= %s")
@@ -330,7 +324,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, coverage_status=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -349,7 +343,6 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         source_host_ids=source_host_ids,
         added_from=added_from,
         added_to=added_to,
-        coverage_status=coverage_status,
     )
 
     try:
@@ -660,7 +653,7 @@ _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "region_confidence",
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
-    "source_domain", "coverage_evidence",
+    "source_domain",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at",
 )
@@ -729,7 +722,6 @@ def _shape_article_analysis(row: dict) -> dict:
         },
         "source_language": row.get("source_language"),
         "source_language_confidence": row.get("source_language_confidence"),
-        "coverage_evidence": row.get("coverage_evidence") if isinstance(row.get("coverage_evidence"), dict) and row.get("coverage_evidence") else None,
         "models": {
             "sentiment": row.get("sentiment_model"),
             "classification": row.get("classification_model"),

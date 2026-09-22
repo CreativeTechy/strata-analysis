@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from services.evidence import workspace as w
-from services.articles import gdelt_corroboration as coverage
 from services.articles.publisher_identity import publisher_domain
 
 
@@ -57,14 +56,6 @@ class AccuracyRegressionTests(unittest.TestCase):
         self.assertEqual(publisher_domain('https://news.alpha.co.za/a'), 'alpha.co.za')
         self.assertEqual(publisher_domain('https://beta.co.za/a'), 'beta.co.za')
         self.assertNotEqual(publisher_domain('https://alpha.blogspot.com'), publisher_domain('https://beta.blogspot.com'))
-
-    def test_headlines_never_establish_high_or_low_reliability(self):
-        article = {'title': 'Toyota vehicle sales increased in 2025'}
-        for title in [article['title'], 'Tesla vehicle sales increased in 2025', 'Toyota vehicle sales decreased in 2025']:
-            result = coverage.summarize_results(article, {'articles': [
-                {'url': f'https://publisher{i}.com/a', 'title': title} for i in range(3)
-            ]}, 'query')
-            self.assertIn(result['status'], ('some_coverage', 'not_checked'))
 
     def run_generation(self, rows):
         written = []
