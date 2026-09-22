@@ -35,11 +35,11 @@ const VIEW_MODES = [
 ];
 
 const COVERAGE_OPTIONS = [
-  { value: 'all', label: 'All coverage checks' },
-  { value: 'broad_coverage', label: 'Broad matching coverage' },
-  { value: 'some_coverage', label: 'Some matching coverage' },
-  { value: 'no_coverage_found', label: 'No matching coverage found' },
-  { value: 'not_checked', label: 'Not checked' },
+  { value: 'all', label: 'All source signals' },
+  { value: 'broad_coverage', label: 'Higher confidence' },
+  { value: 'some_coverage', label: 'Needs review' },
+  { value: 'no_coverage_found', label: 'Low confidence' },
+  { value: 'not_checked', label: 'Not assessed' },
 ];
 
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {

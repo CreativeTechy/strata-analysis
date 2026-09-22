@@ -2,9 +2,9 @@ import ConfirmModal from '../ConfirmModal';
 import { prettyLabel, confidencePct } from '../../lib/articleHelpers.jsx';
 
 const COVERAGE_LABELS = {
-  broad_coverage: 'Broad matching coverage',
-  some_coverage: 'Some matching coverage',
-  no_coverage_found: 'No matching coverage found',
+  broad_coverage: 'Higher confidence',
+  some_coverage: 'Needs review',
+  no_coverage_found: 'Low confidence',
 };
 
 // The "Analysis details" popover opened from an article card/row - extracted
@@ -109,7 +109,7 @@ export default function ArticleDetailModal({
             <strong>Source reliability signals:</strong>{' '}
             {data.coverage_evidence
               ? (COVERAGE_LABELS[data.coverage_evidence.status] || prettyLabel(data.coverage_evidence.status))
-              : 'Not checked'}
+              : 'Not assessed'}
             {data.coverage_evidence?.reason ? (
               <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {data.coverage_evidence.reason}

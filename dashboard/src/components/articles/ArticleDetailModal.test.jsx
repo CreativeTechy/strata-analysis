@@ -86,7 +86,7 @@ describe('ArticleDetailModal', () => {
         },
       },
     })} />)
-    expect(screen.getByText(/Some matching coverage/)).toBeInTheDocument()
+    expect(screen.getByText(/Needs review/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /news\.example/ })).toHaveAttribute('href', 'https://news.example/report')
     expect(screen.getByText(/not proof/)).toBeInTheDocument()
   })

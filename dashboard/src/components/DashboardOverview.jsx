@@ -20,10 +20,10 @@ const PERIODS = [
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
 const COVERAGE_LABELS = {
-  broad_coverage: 'Broad matching coverage',
-  some_coverage: 'Some matching coverage',
-  no_coverage_found: 'No matching coverage found',
-  not_checked: 'Not checked',
+  broad_coverage: 'Higher confidence',
+  some_coverage: 'Needs review',
+  no_coverage_found: 'Low confidence',
+  not_checked: 'Not assessed',
 };
 
 const COVERAGE_COLORS = {
