@@ -13,10 +13,8 @@ import {
   ListChecks,
   ScanSearch,
   Sparkles,
-  ShieldCheck,
 } from 'lucide-react';
-import { getPipelineRun, setArticleRelevanceOverride } from '../api/pipelineRunsApi.js';
-import { useAuth } from '../auth/useAuth.js';
+import { getPipelineRun } from '../api/pipelineRunsApi.js';
 
 function prettyStage(stage) {
   if (!stage) return 'queued';
@@ -142,17 +140,11 @@ function SummaryField({ label, children }) {
 
 export default function PipelineRunDetailPage({ projects = [] }) {
   const { runId } = useParams();
-  const { hasPermission } = useAuth();
-  const canReview = hasPermission('projects.update');
   const [run, setRun] = useState(null);
   const [documents, setDocuments] = useState([]);
-  const [screenings, setScreenings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedDocuments, setExpandedDocuments] = useState(() => new Set());
-  const [overrideDraft, setOverrideDraft] = useState(null);
-  const [overrideSaving, setOverrideSaving] = useState(false);
-  const [overrideMessage, setOverrideMessage] = useState('');
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -176,7 +168,6 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           if (cancelled) return null;
           setRun(data?.run || null);
           setDocuments(Array.isArray(data?.documents) ? data.documents : []);
-          setScreenings(Array.isArray(data?.screenings) ? data.screenings : []);
           return data?.run || null;
         })
         .catch((err) => {
@@ -223,24 +214,6 @@ export default function PipelineRunDetailPage({ projects = [] }) {
 
   const total = run ? stageDuration(run.started_at, run.finished_at) : null;
   const projectName = projectNameForRun(run, projectsById);
-
-  const saveOverride = async () => {
-    if (!overrideDraft || !overrideDraft.reason.trim()) return;
-    setOverrideSaving(true);
-    setOverrideMessage('');
-    try {
-      await setArticleRelevanceOverride(run.project_id, overrideDraft.articleId, {
-        decision: overrideDraft.decision,
-        reason: overrideDraft.reason.trim(),
-      });
-      setOverrideMessage(`Saved. The article will be ${overrideDraft.decision === 'include' ? 'included' : 'excluded'} on the next analysis run.`);
-      setOverrideDraft(null);
-    } catch (err) {
-      setOverrideMessage(err?.message || 'Unable to save the relevance override.');
-    } finally {
-      setOverrideSaving(false);
-    }
-  };
 
   return (
     <div className="admin-page-shell">
@@ -356,65 +329,6 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             )}
           </div>
 
-          {run.articles_screened > 0 || screenings.length > 0 ? (
-            <div className="glass-card" style={{ marginBottom: 18 }}>
-              <div className="run-detail-relevance-header">
-                <div>
-                  <h3 className="run-detail-section-title">Article relevance screening</h3>
-                  <p className="run-detail-relevance-copy">
-                    Embeddings admit clear matches, reject clear misses, and send borderline articles to a small batched check.
-                    {run.screening_mode === 'observe' ? ' Observation mode records decisions while still analyzing every article.' : ''}
-                  </p>
-                </div>
-                <span className="run-detail-mode-badge"><ShieldCheck size={14} /> {run.screening_mode || 'off'}</span>
-              </div>
-
-              <div className="run-detail-relevance-stats">
-                <SummaryField label="Screened">{run.articles_screened || 0}</SummaryField>
-                <SummaryField label="Included">{run.articles_included || 0}</SummaryField>
-                <SummaryField label="Marked unrelated">{run.articles_excluded || 0}</SummaryField>
-                <SummaryField label="Needs review">{run.articles_needs_review || 0}</SummaryField>
-              </div>
-
-              {overrideMessage ? <div className="run-detail-override-message">{overrideMessage}</div> : null}
-              {screenings.length ? (
-                <div className="table-scroll run-detail-screening-scroll">
-                  <table className="run-detail-source-table run-detail-screening-table">
-                    <thead>
-                      <tr>
-                        <th>Article</th>
-                        <th>Decision</th>
-                        <th>Similarity</th>
-                        <th>Method</th>
-                        <th>Reason</th>
-                        {canReview ? <th>Override next run</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {screenings.map((item) => (
-                        <tr key={item.article_id}>
-                          <td><strong>{item.title || `Article #${item.article_id}`}</strong><small>{item.source || ''}</small></td>
-                          <td><span className={`run-detail-decision run-detail-decision-${item.decision}`}>{item.decision.replace('_', ' ')}</span></td>
-                          <td>{item.similarity_score == null ? '—' : Number(item.similarity_score).toFixed(3)}</td>
-                          <td>{item.decision_source || '—'}</td>
-                          <td>{item.explanation || '—'}</td>
-                          {canReview ? (
-                            <td>
-                              <div className="run-detail-override-actions">
-                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'include', reason: '' })}>Include</button>
-                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'exclude', reason: '' })}>Exclude</button>
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <div className="run-detail-fallback">Screening details have not been recorded yet.</div>}
-            </div>
-          ) : null}
-
           <div className="glass-card">
             <h3 className="run-detail-section-title">Per-document breakdown</h3>
             {!run.has_detail ? (
@@ -514,22 +428,6 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             )}
           </div>
 
-          {overrideDraft ? (
-            <div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => !overrideSaving && setOverrideDraft(null)}>
-              <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="relevance-override-title" onMouseDown={(event) => event.stopPropagation()}>
-                <h3 id="relevance-override-title">{overrideDraft.decision === 'include' ? 'Include' : 'Exclude'} this article next run?</h3>
-                <p>{overrideDraft.title || `Article #${overrideDraft.articleId}`}</p>
-                <label className="run-detail-override-label" htmlFor="relevance-override-reason">Reason</label>
-                <textarea id="relevance-override-reason" rows={4} value={overrideDraft.reason} onChange={(event) => setOverrideDraft((draft) => ({ ...draft, reason: event.target.value }))} placeholder="Explain why this article belongs in or outside the project scope." />
-                <div className="confirm-modal-actions">
-                  <button type="button" className="btn-secondary" disabled={overrideSaving} onClick={() => setOverrideDraft(null)}>Cancel</button>
-                  <button type="button" className="btn-primary" disabled={overrideSaving || !overrideDraft.reason.trim()} onClick={saveOverride}>
-                    {overrideSaving ? 'Saving…' : 'Save for next run'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </>
       )}
     </div>

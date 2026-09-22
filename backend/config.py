@@ -245,39 +245,6 @@ EMBEDDING_MODEL = os.environ.get(
 ).strip()
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 
-# Article-to-project relevance screening runs before the expensive analysis and
-# evidence stages. "observe" records what would be excluded without skipping
-# it; switch to "enforce" after reviewing real project results. "off" bypasses
-# screening entirely. Cosine similarity is not a probability, so these values
-# are deliberately configurable rather than presented as confidence percent.
-ARTICLE_RELEVANCE_SCREENING_MODE = os.environ.get(
-    "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"
-).strip().lower()
-if ARTICLE_RELEVANCE_SCREENING_MODE not in {"off", "observe", "enforce"}:
-    ARTICLE_RELEVANCE_SCREENING_MODE = "observe"
-try:
-    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = float(
-        os.environ.get("ARTICLE_RELEVANCE_ACCEPT_THRESHOLD", "0.82")
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = 0.82
-ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_ACCEPT_THRESHOLD))
-try:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = float(
-        os.environ.get("ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD", "0.65")
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = 0.65
-ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD))
-if ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD > ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = ARTICLE_RELEVANCE_ACCEPT_THRESHOLD
-try:
-    ARTICLE_RELEVANCE_BATCH_SIZE = max(
-        1, int(os.environ.get("ARTICLE_RELEVANCE_BATCH_SIZE", "50") or 50)
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_BATCH_SIZE = 50
-
 EVIDENCE_RELEVANCE_MODE = os.environ.get("EVIDENCE_RELEVANCE_MODE", "llm").strip().lower()
 if EVIDENCE_RELEVANCE_MODE not in {"llm", "embedding"}:
     EVIDENCE_RELEVANCE_MODE = "llm"

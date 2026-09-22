@@ -52,7 +52,3 @@ export const deletePipelineRun = (runId) => request(`/pipeline-runs/${runId}`, {
 /** Starts a tracked analysis run for one project. `scope` is 'pending'
  *  (only articles that haven't succeeded yet) or 'all'. */
 export const startAnalysisRun = (body) => request('/analysis-runs', { method: 'POST', body });
-/** Saves a human include/exclude decision. It is applied when the project's
- * next analysis run performs relevance screening. */
-export const setArticleRelevanceOverride = (projectId, articleId, body) =>
-  request(`/projects/${projectId}/articles/${articleId}/relevance-override`, { method: 'POST', body });
