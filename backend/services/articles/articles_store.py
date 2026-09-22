@@ -39,7 +39,7 @@ from services.articles.articles_query import (
 from services.articles.articles_search import search_results
 
 
-def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, source_host=None, added_from=None, added_to=None):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -52,6 +52,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             category=category,
             project_id=project_id,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
         )
@@ -75,6 +76,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         order=f"{field}.{direction}",
         select=ARTICLES_SELECT,
         source_url=source_url,
+        source_host=source_host,
         added_from=added_from,
         added_to=added_to,
     )
@@ -88,7 +90,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, source_host=None, added_from=None, added_to=None):
     """Yield full article rows for the JSONL export, one page at a time.
 
     A generator rather than a list: the export carries `text` and
@@ -115,6 +117,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             category=category,
             project_id=project_id,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
             select=select,
@@ -137,6 +140,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             order=f"{field}.{direction}",
             select=select,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
             max_limit=page_size,

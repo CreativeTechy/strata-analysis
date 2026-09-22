@@ -208,6 +208,16 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         {source.latest_published_at ? ` · latest ${articleDate(source.latest_published_at)}` : ''}
                       </div>
                     </div>
+                    {isReal && project ? (
+                      <Link
+                        to={`/articles?project_id=${project.id}&source_host=${encodeURIComponent(source.label || '')}`}
+                        onClick={(event) => event.stopPropagation()}
+                        className="btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '0.72rem', textDecoration: 'none', flexShrink: 0 }}
+                      >
+                        View articles
+                      </Link>
+                    ) : null}
                     {isReal && source.url ? (
                       <a
                         href={source.url}

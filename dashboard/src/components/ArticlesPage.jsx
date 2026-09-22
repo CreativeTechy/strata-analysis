@@ -26,6 +26,7 @@ import {
   listArticles, deleteAllArticles,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
+import { listProjectSources } from '../api/projectsApi.js';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
@@ -60,6 +61,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // into the matching document's articles, the same way `search`/`project_id`
   // above pre-fill from the URL.
   const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
+  // The real-source counterpart to sourceFilter above: a "real" source (an
+  // article whose own url isn't the document:// scheme, grouped by hostname -
+  // see list_project_sources()) instead of an uploaded document. The two are
+  // mutually exclusive by construction (an article is either a document split
+  // or has its own real url, never both), so picking one clears the other.
+  const [sourceHostFilter, setSourceHostFilter] = useState(() => searchParams.get('source_host') || 'all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(() => {
     const parsed = Number(searchParams.get('offset'));
@@ -114,12 +121,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -136,6 +143,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (search) next.set('search', search);
     if (projectFilter !== 'all') next.set('project_id', projectFilter);
     if (sourceFilter !== 'all') next.set('source', sourceFilter);
+    if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
@@ -143,7 +151,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sentiment, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -170,9 +178,41 @@ export default function ArticlesPage({ project = null, projectId = null, project
     [documents],
   );
 
-  // Skips the mount-time run so a `?source=` deep link (see sourceFilter's
-  // initializer above) survives instead of being wiped by this effect firing
-  // once on the very render that set it.
+  // The real (hostname-grouped) sources for the same project - see
+  // list_project_sources()'s "real" groups, whose `label` is already the
+  // plain hostname. A generous limit rather than real pagination: this feeds
+  // a dropdown, and a project's distinct real hostnames are few compared to
+  // its articles.
+  const [realSources, setRealSources] = useState([]);
+
+  useEffect(() => {
+    const id = activeProject?.id;
+    if (id == null) {
+      setRealSources([]);
+      return undefined;
+    }
+    let cancelled = false;
+    listProjectSources(id, { limit: 500 })
+      .then((data) => {
+        if (cancelled) return;
+        const sources = Array.isArray(data?.sources) ? data.sources : [];
+        setRealSources(sources.filter((source) => source.type === 'real'));
+      })
+      .catch(() => { if (!cancelled) setRealSources([]); });
+    return () => { cancelled = true; };
+  }, [activeProject?.id]);
+
+  const sourceHostOptions = useMemo(
+    () => realSources.map((source) => ({
+      value: source.label,
+      label: `${source.label} (${source.article_count})`,
+    })),
+    [realSources],
+  );
+
+  // Skips the mount-time run so a `?source=`/`?source_host=` deep link (see
+  // sourceFilter/sourceHostFilter's initializers above) survives instead of
+  // being wiped by this effect firing once on the very render that set it.
   const skipNextSourceReset = useRef(true);
   useEffect(() => {
     if (skipNextSourceReset.current) {
@@ -180,6 +220,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       return;
     }
     setSourceFilter('all');
+    setSourceHostFilter('all');
   }, [projectFilter]);
 
   useEffect(() => {
@@ -193,6 +234,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
           sentiment: sentiment !== 'all' ? sentiment : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+          source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
           limit,
@@ -217,7 +259,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -274,6 +316,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
+      setSourceHostFilter('all');
       setAddedFrom('');
       setAddedTo('');
       setOffset(0);
@@ -295,6 +338,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         sentiment: sentiment !== 'all' ? sentiment : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
+        source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
         sort,
@@ -589,13 +633,35 @@ export default function ArticlesPage({ project = null, projectId = null, project
             <select
               className="filter-select"
               value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value)}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                if (e.target.value !== 'all') setSourceHostFilter('all');
+              }}
               disabled={!activeProject || sourceOptions.length === 0}
             >
               <option value="all">
                 {activeProject ? 'All documents' : 'Select a project for documents'}
               </option>
               {sourceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="filter-select"
+              value={sourceHostFilter}
+              onChange={(e) => {
+                setSourceHostFilter(e.target.value);
+                if (e.target.value !== 'all') setSourceFilter('all');
+              }}
+              disabled={!activeProject || sourceHostOptions.length === 0}
+            >
+              <option value="all">
+                {activeProject ? 'All real sources' : 'Select a project for sources'}
+              </option>
+              {sourceHostOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -690,6 +756,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 <Filter size={12} />
                 {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
+              </span>
+            )}
+            {sourceHostFilter !== 'all' && (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                <Filter size={12} />
+                {sourceHostOptions.find((option) => option.value === sourceHostFilter)?.label || sourceHostFilter}
               </span>
             )}
             {(addedFrom || addedTo) && (

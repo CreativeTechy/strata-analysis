@@ -24,7 +24,7 @@ from services.articles.articles_query import (
 SEARCH_SCAN_LIMIT = 1000
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None):
     if not config.DATABASE_URL:
         return []
 
@@ -47,6 +47,7 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             date_from=date_from,
             date_to=date_to,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
             max_limit=page_size,
@@ -162,7 +163,7 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, select=ARTICLES_SELECT):
+def search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None, select=ARTICLES_SELECT):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
@@ -173,6 +174,7 @@ def search_results(search=None, sentiment=None, category=None, project_id=None, 
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
+        source_host=source_host,
         added_from=added_from,
         added_to=added_to,
     )

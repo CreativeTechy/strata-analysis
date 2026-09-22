@@ -177,7 +177,35 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
+def list_article_ids_for_source_host(project_id, host):
+    """Article ids, scoped to `project_id`, whose own `url` (a "real" source -
+    see SYNTHETIC_SOURCE_PREFIX) resolves to this hostname - the query-side
+    counterpart to list_project_sources()'s "real" grouping below, used by the
+    Articles page's source filter. Hostname isn't a stored column (it's
+    derived from `url` the same way list_project_sources derives it), so
+    matching it means reading each candidate row rather than an indexed
+    lookup - bounded to one project's articles, same as list_project_sources."""
+    host_value = (host or "").strip().lower()
+    if not project_id or not host_value or not config.DATABASE_URL:
+        return []
+    article_ids = list_article_ids_for_project(project_id)
+    if not article_ids:
+        return []
+    try:
+        rows = db.fetch_all("select id, url from articles where id = any(%s)", (article_ids,))
+    except Exception:
+        return []
+    matches = []
+    for row in rows:
+        url = str(row.get("url") or "")
+        if not url or url.startswith(SYNTHETIC_SOURCE_PREFIX):
+            continue
+        if (urlparse(url).hostname or "").lower() == host_value:
+            matches.append(row["id"])
+    return matches
+
+
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None):
     clauses = []
     params = []
 
@@ -216,6 +244,15 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         clauses.append("lower(source_url) = %s")
         params.append(source_url_value.lower())
 
+    source_host_value = _normalize_text(source_host)
+    if source_host_value:
+        matching_ids = list_article_ids_for_source_host(project_id, source_host_value)
+        if not matching_ids:
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(matching_ids)
+
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
         clauses.append("coalesce(published, created_at) >= %s")
@@ -241,7 +278,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -256,6 +293,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
+        source_host=source_host,
         added_from=added_from,
         added_to=added_to,
     )
