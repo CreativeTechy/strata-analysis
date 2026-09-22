@@ -46,6 +46,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import config
 import db
@@ -73,7 +74,7 @@ MAX_FILE_SIZE_BYTES = config.DOCUMENT_MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_FILES_PER_UPLOAD = 20
 
 DOCUMENT_COLUMNS = """
-    id, project_id, original_filename, storage_path, mime_type, size_bytes, status,
+    id, project_id, original_filename, publisher_url, storage_path, mime_type, size_bytes, status,
     extraction_method, extraction_error, total_chunks, processed_chunks,
     length(coalesce(extracted_text, '')) as text_length,
     articles_status, articles_error,
@@ -95,8 +96,21 @@ def extension_allowed(filename: str) -> bool:
     return Path(filename or "").suffix.lower() in ALLOWED_EXTENSIONS
 
 
-def save_document(project_id: int, *, filename: str, content: bytes, mime_type: str | None) -> dict:
+def _normalize_publisher_url(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    candidate = text if "://" in text else f"https://{text}"
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or "." not in parsed.hostname:
+        raise ValueError("Original publisher URL must be a valid http(s) URL or domain.")
+    return candidate
+
+
+def save_document(project_id: int, *, filename: str, content: bytes, mime_type: str | None,
+                  publisher_url: str | None = None) -> dict:
     """Write one file to disk under this project and record it. Caller validates first."""
+    normalized_publisher_url = _normalize_publisher_url(publisher_url)
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     project_dir = DOCUMENTS_DIR / str(int(project_id))
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -108,11 +122,15 @@ def save_document(project_id: int, *, filename: str, content: bytes, mime_type: 
     storage_path = str(disk_path.relative_to(STORAGE_DIR))
     record = db.fetch_one(
         f"""
-        insert into project_documents (project_id, original_filename, storage_path, mime_type, size_bytes)
-        values (%s, %s, %s, %s, %s)
+        insert into project_documents
+            (project_id, original_filename, publisher_url, storage_path, mime_type, size_bytes)
+        values (%s, %s, %s, %s, %s, %s)
         returning {DOCUMENT_COLUMNS}
         """,
-        (int(project_id), (filename or "").strip() or disk_name, storage_path, mime_type, len(content)),
+        (
+            int(project_id), (filename or "").strip() or disk_name,
+            normalized_publisher_url, storage_path, mime_type, len(content),
+        ),
     )
     if not record:
         disk_path.unlink(missing_ok=True)

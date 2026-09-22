@@ -21,7 +21,7 @@ the whole point of this wizard, and a second path into `articles` would skip it.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 import config
 from services.auth.auth import require_permission
@@ -90,6 +90,7 @@ async def upload_documents(
     project_id: int,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
+    publisher_url: str | None = Form(None),
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Save uploaded documents for an offline project and queue extraction for
@@ -121,9 +122,16 @@ async def upload_documents(
                 status_code=400,
                 detail=f"'{upload.filename}' is larger than {config.DOCUMENT_MAX_FILE_SIZE_MB} MB.",
             )
-        record = project_documents_store.save_document(
-            project_id, filename=upload.filename, content=content, mime_type=upload.content_type
-        )
+        try:
+            record = project_documents_store.save_document(
+                project_id,
+                filename=upload.filename,
+                content=content,
+                mime_type=upload.content_type,
+                publisher_url=publisher_url,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if record:
             saved.append(record)
             background_tasks.add_task(project_documents_store.process_document, record["id"])

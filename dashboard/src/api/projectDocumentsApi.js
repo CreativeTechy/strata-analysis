@@ -80,9 +80,10 @@ async function requestForm(path, formData) {
  *  is also the only one that sets `articles_error` on a *successful* document:
  *  it reports records left behind when a file exceeded the per-file cap. */
 export const listDocuments = (projectId) => request(`/${projectId}/documents`);
-export const uploadDocuments = (projectId, files) => {
+export const uploadDocuments = (projectId, files, publisherUrl = '') => {
   const formData = new FormData();
   for (const file of files) formData.append('files', file);
+  if (publisherUrl.trim()) formData.append('publisher_url', publisherUrl.trim());
   return requestForm(`/${projectId}/documents`, formData);
 };
 export const deleteDocument = (documentId) => request(`/documents/${documentId}`, { method: 'DELETE' });

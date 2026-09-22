@@ -81,6 +81,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
   const [isCreatingOfflineProject, setIsCreatingOfflineProject] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [pendingFiles, setPendingFiles] = useState([]);
+  const [publisherUrl, setPublisherUrl] = useState('');
   const [uploadingDocs, setUploadingDocs] = useState(false);
   const [extractingDocs, setExtractingDocs] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -100,6 +101,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     setIsCreatingOfflineProject(false);
     setDocuments([]);
     setPendingFiles([]);
+    setPublisherUrl('');
     setUploadingDocs(false);
     setExtractingDocs(false);
     setDropActive(false);
@@ -318,9 +320,10 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     try {
       id = await ensureOfflineProject();
       if (!id) throw new Error('Could not create the project.');
-      const result = await uploadProjectDocuments(id, pendingFiles);
+      const result = await uploadProjectDocuments(id, pendingFiles, publisherUrl);
       uploadedIds = (result.documents || []).map((document) => document.id);
       setPendingFiles([]);
+      setPublisherUrl('');
     } catch (error) {
       setMetadataError(error?.message || 'Failed to upload documents.');
       setUploadingDocs(false);
@@ -820,6 +823,23 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             />
           </div>
 
+          <label style={{ display: 'grid', gap: 6, marginTop: 14 }}>
+            <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>
+              Original publisher URL (optional)
+            </span>
+            <input
+              type="url"
+              className="source-input"
+              placeholder="https://publisher.example"
+              value={publisherUrl}
+              onChange={(event) => setPublisherUrl(event.target.value)}
+              disabled={uploadingDocs || extractingDocs}
+            />
+            <span className="proj-row-desc">
+              Applied to this upload batch and used to identify the original publisher during coverage checks.
+            </span>
+          </label>
+
           {pendingFiles.length > 0 && (
             <div className="proj-rows" style={{ marginTop: 14 }}>
               {pendingFiles.map((file, index) => (
@@ -866,6 +886,9 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                   <div key={document.id} className="proj-row">
                     <div className="proj-row-main">
                       <span className="proj-row-name">{document.original_filename}</span>
+                      {document.publisher_url && (
+                        <span className="proj-row-desc">Publisher: {document.publisher_url}</span>
+                      )}
                       {document.extraction_error && (
                         <span className="proj-row-desc" style={{ color: '#b42318', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <AlertTriangle size={12} /> {document.extraction_error}

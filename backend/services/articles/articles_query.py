@@ -116,6 +116,7 @@ MAX_LIMIT = 100
 BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
+VALID_COVERAGE_STATUSES = {"broad_coverage", "some_coverage", "no_coverage_found", "not_checked"}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -197,7 +198,47 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None):
+def _real_source_host(url: str) -> str:
+    """The "real source" grouping key for one article's own `url` - shared by
+    list_project_sources() (which shows it as a label) and
+    list_article_ids_for_source_host() (which matches against it), so the two
+    can't drift apart. `urlparse` can't find a hostname in a scheme-less URL
+    (e.g. "example.com/a", common in hand-typed or JSONL-imported data), in
+    which case the whole URL stands in as its own grouping key - same
+    fallback list_project_sources always used, now shared instead of
+    duplicated with a narrower one that never matched it."""
+    return (urlparse(url).hostname or url).lower()
+
+
+def list_article_ids_for_source_host(project_id, host):
+    """Article ids, scoped to `project_id`, whose own `url` (a "real" source -
+    see SYNTHETIC_SOURCE_PREFIX) resolves to this hostname - the query-side
+    counterpart to list_project_sources()'s "real" grouping below, used by the
+    Articles page's source filter. Hostname isn't a stored column (it's
+    derived from `url` the same way list_project_sources derives it), so
+    matching it means reading each candidate row rather than an indexed
+    lookup - bounded to one project's articles, same as list_project_sources."""
+    host_value = (host or "").strip().lower()
+    if not project_id or not host_value or not config.DATABASE_URL:
+        return []
+    article_ids = list_article_ids_for_project(project_id)
+    if not article_ids:
+        return []
+    try:
+        rows = db.fetch_all("select id, url from articles where id = any(%s)", (article_ids,))
+    except Exception:
+        return []
+    matches = []
+    for row in rows:
+        url = str(row.get("url") or "")
+        if not url or url.startswith(SYNTHETIC_SOURCE_PREFIX):
+            continue
+        if _real_source_host(url) == host_value:
+            matches.append(row["id"])
+    return matches
+
+
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, coverage_status=None):
     clauses = []
     params = []
 
@@ -236,6 +277,34 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         clauses.append("lower(source_url) = %s")
         params.append(source_url_value.lower())
 
+    # A caller that already resolved source_host to ids (see
+    # list_article_ids_for_source_host's docstring on why that resolution
+    # isn't a cheap indexed lookup) passes them in directly via
+    # source_host_ids so a multi-page reader doesn't redo that full-project
+    # scan on every page - see articles_search._fetch_all_articles and
+    # articles_store.export_articles.
+    if source_host_ids is not None:
+        matching_ids = source_host_ids
+        if not matching_ids:
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(matching_ids)
+    else:
+        source_host_value = _normalize_text(source_host)
+        if source_host_value:
+            matching_ids = list_article_ids_for_source_host(project_id, source_host_value)
+            if not matching_ids:
+                clauses.append("id = -1")
+            else:
+                clauses.append("id = any(%s)")
+                params.append(matching_ids)
+
+    coverage_value = _normalize_text(coverage_status).lower()
+    if coverage_value in VALID_COVERAGE_STATUSES:
+        clauses.append("coalesce(coverage_evidence->>'status', 'not_checked') = %s")
+        params.append(coverage_value)
+
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
         clauses.append("coalesce(published, created_at) >= %s")
@@ -261,7 +330,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, coverage_status=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -276,8 +345,11 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
+        source_host=source_host,
+        source_host_ids=source_host_ids,
         added_from=added_from,
         added_to=added_to,
+        coverage_status=coverage_status,
     )
 
     try:
@@ -470,7 +542,7 @@ def list_project_sources(project_id, limit=20, offset=0):
         url = str(row.get("url") or "")
         is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
         if is_real:
-            host = (urlparse(url).hostname or url).lower()
+            host = _real_source_host(url)
             key = f"real:{host}"
             label = host
             link = f"https://{host}"
@@ -588,6 +660,7 @@ _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "region_confidence",
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
+    "source_domain", "coverage_evidence",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at",
 )
@@ -656,6 +729,7 @@ def _shape_article_analysis(row: dict) -> dict:
         },
         "source_language": row.get("source_language"),
         "source_language_confidence": row.get("source_language_confidence"),
+        "coverage_evidence": row.get("coverage_evidence") if isinstance(row.get("coverage_evidence"), dict) and row.get("coverage_evidence") else None,
         "models": {
             "sentiment": row.get("sentiment_model"),
             "classification": row.get("classification_model"),

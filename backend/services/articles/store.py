@@ -747,7 +747,6 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
 
                 _replace_article_children(article_id, article)
                 _replace_idea_clusters_for_article(article_id, project_id, article.get("frequent_ideas"))
-
                 # An article belongs to the project the caller named - the
                 # document it was split out of, or the import that brought it
                 # in. (The crawler this was forked from also inferred linkage

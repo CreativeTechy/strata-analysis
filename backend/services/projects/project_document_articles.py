@@ -215,11 +215,14 @@ def _materialize(candidate: dict, cur) -> int | None:
     connection - its insert is a single idempotent upsert-by-url, so retrying
     a half-finished approval re-runs it safely rather than duplicating the row."""
     cur.execute(
-        "select original_filename from project_documents where id = %s",
+        "select original_filename, publisher_url from project_documents where id = %s",
         (int(candidate["document_id"]),),
     )
     document = cur.fetchone()
     metadata = candidate.get("record_metadata") or {}
+    provenance = dict(metadata.get("source_provenance") or {})
+    if (document or {}).get("publisher_url") and not provenance.get("original_url"):
+        provenance["original_url"] = document["publisher_url"]
     url = str(metadata.get("url") or "").strip() or (
         f"document://project-document/{candidate['document_id']}/article/{candidate['id']}"
     )
@@ -247,7 +250,7 @@ def _materialize(candidate: dict, cur) -> int | None:
         # upload. save_articles()/_upsert_article_row() keep whatever value is
         # already on the row once set, so re-approving never blanks it out.
         "source_run_snapshot": metadata.get("source_run_snapshot") or None,
-        "source_provenance": metadata.get("source_provenance") or None,
+        "source_provenance": provenance or None,
         "analysis_status": "pending",
         "analysis_error": None,
     }

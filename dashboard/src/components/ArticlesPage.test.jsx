@@ -160,6 +160,7 @@ describe('ArticlesPage', () => {
     expect(screen.getByTestId('detail-from-state').textContent).toContain('search=battery')
   })
 
+
   it('shows an empty state when there are no articles', async () => {
     fetch.mockImplementation((url) => {
       const href = String(url)
