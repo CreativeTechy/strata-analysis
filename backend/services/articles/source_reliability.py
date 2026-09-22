@@ -223,17 +223,26 @@ def _assessment_params(article_id: int, result: dict) -> tuple:
     )
 
 
+def _preserve_article_level_signals(article: dict, result: dict) -> dict:
+    """Keep separately gathered evidence when refreshing the Iffy signal."""
+    existing = article.get("source_reliability_details")
+    gdelt = existing.get("gdelt_coverage") if isinstance(existing, dict) else None
+    if gdelt:
+        result = {**result, "details": {**(result.get("details") or {}), "gdelt_coverage": gdelt}}
+    return result
+
+
 def assess_article(article_id: int) -> dict | None:
     """Assess one stored article. Failure never blocks article persistence."""
     try:
         article = db.fetch_one(
-            "select id, url, source_url, source_provenance from articles where id = %s",
+            "select id, url, source_url, source_provenance, source_reliability_details from articles where id = %s",
             (int(article_id),),
         )
         if not article:
             return None
         dataset, ratings = _active_dataset()
-        result = assess(article, dataset, ratings)
+        result = _preserve_article_level_signals(article, assess(article, dataset, ratings))
         db.execute(_UPDATE_SQL, _assessment_params(article["id"], result))
         return result
     except Exception as exc:
@@ -244,13 +253,13 @@ def assess_article(article_id: int) -> dict | None:
 def assess_all_articles() -> dict:
     """Reassess every article against the currently active local dataset."""
     rows = db.fetch_all(
-        "select id, url, source_url, source_provenance from articles order by id"
+        "select id, url, source_url, source_provenance, source_reliability_details from articles order by id"
     ) or []
     dataset, ratings = _active_dataset()
     counts = Counter()
     with db.transaction() as cur:
         for article in rows:
-            result = assess(article, dataset, ratings)
+            result = _preserve_article_level_signals(article, assess(article, dataset, ratings))
             cur.execute(_UPDATE_SQL, _assessment_params(article["id"], result))
             counts[result["status"]] += 1
     return {"articles_assessed": len(rows), "counts": dict(counts)}

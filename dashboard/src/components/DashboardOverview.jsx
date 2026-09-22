@@ -29,6 +29,20 @@ const RELIABILITY_LABELS = {
   not_listed: 'Not listed by Iffy',
   not_assessed: 'Not assessed',
 };
+
+const COVERAGE_LABELS = {
+  broad_coverage: 'Broad matching coverage',
+  some_coverage: 'Some matching coverage',
+  no_coverage_found: 'No matching coverage found',
+  not_checked: 'Not checked',
+};
+
+const COVERAGE_COLORS = {
+  broad_coverage: '#22c55e',
+  some_coverage: '#eab308',
+  no_coverage_found: '#f97316',
+  not_checked: '#94a3b8',
+};
 // Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
 // same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
 const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
@@ -187,6 +201,11 @@ export default function DashboardOverview({
   }));
   const sourceReliabilityTotal = sourceReliabilityData.reduce((sum, entry) => sum + Number(entry.total || 0), 0);
   const sourceReliabilityDataset = data.source_reliability_dataset;
+  const coverageCounts = new Map(
+    (data.insights?.coverage_evidence_breakdown || []).map((entry) => [entry.value, Number(entry.total || 0)]),
+  );
+  const coverageData = Object.keys(COVERAGE_LABELS).map((value) => ({ value, total: coverageCounts.get(value) || 0 }));
+  const coverageTotal = coverageData.reduce((sum, entry) => sum + entry.total, 0);
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -508,6 +527,24 @@ export default function DashboardOverview({
                 <> Dataset imported {new Date(sourceReliabilityDataset.imported_at).toLocaleDateString()} ({Number(sourceReliabilityDataset.record_count || 0).toLocaleString()} domains, {sourceReliabilityDataset.license}).</>
               )}
             </p>
+            <div className="source-reliability-layout" style={{ marginTop: 18 }}>
+              <div className="intelligence-card-heading"><div><h3 style={{ fontSize: '0.92rem' }}>GDELT coverage evidence</h3><span>Matching stories across other domains</span></div></div>
+              <div className="source-reliability-bar" role="img" aria-label="GDELT coverage evidence distribution">
+                {coverageData.filter((entry) => entry.total > 0).map((entry) => (
+                  <span key={entry.value} style={{ background: COVERAGE_COLORS[entry.value], width: `${coverageTotal ? (entry.total / coverageTotal) * 100 : 0}%` }} />
+                ))}
+              </div>
+              <div className="source-reliability-legend">
+                {coverageData.map((entry) => (
+                  <div key={entry.value} className="source-reliability-row">
+                    <span className="source-reliability-dot" style={{ background: COVERAGE_COLORS[entry.value] }} />
+                    <span className="source-reliability-label">{COVERAGE_LABELS[entry.value]}</span>
+                    <strong>{entry.total.toLocaleString()} · {percent(entry.total, coverageTotal)}%</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="source-reliability-note">Coverage is checked explicitly from each article’s details. Matching coverage is supporting evidence, not proof of truth or source independence.</p>
           </article>
         </section>
 

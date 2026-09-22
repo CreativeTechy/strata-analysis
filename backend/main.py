@@ -61,6 +61,7 @@ from services.articles.reanalyze import (
     reanalyze_articles,
 )
 from services.articles.relevance_screening import set_relevance_override
+from services.articles.gdelt_corroboration import GdeltError, check_article as check_gdelt_article
 from llm_client import LLMError, chat_completion
 from services.projects.projects_store import (
     create_project,
@@ -1203,6 +1204,27 @@ def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_
     if not analysis:
         raise HTTPException(status_code=404, detail="Article not found.")
     return {"analysis": analysis}
+
+
+@app.post("/api/articles/{article_id}/gdelt-coverage")
+def check_article_gdelt_coverage(
+    article_id: int,
+    user: dict = Depends(require_permission("pipeline.run")),
+):
+    """Explicit external lookup for cross-source coverage in GDELT.
+
+    This is deliberately separate from analysis: uploaded text does not leave
+    the machine merely because an article was imported or analyzed.
+    """
+    try:
+        result = check_gdelt_article(article_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GdeltError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"article_id": article_id, "coverage": result}
 
 
 @app.get("/api/analysis/status")

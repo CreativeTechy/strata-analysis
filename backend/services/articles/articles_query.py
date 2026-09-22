@@ -655,6 +655,11 @@ def _shape_article_analysis(row: dict) -> dict:
             "details": row.get("source_reliability_details") if isinstance(row.get("source_reliability_details"), dict) else {},
             "assessed_at": row.get("source_reliability_assessed_at"),
         },
+        "coverage_evidence": (
+            row.get("source_reliability_details", {}).get("gdelt_coverage")
+            if isinstance(row.get("source_reliability_details"), dict)
+            else None
+        ),
         "models": {
             "sentiment": row.get("sentiment_model"),
             "classification": row.get("classification_model"),

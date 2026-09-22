@@ -11,8 +11,10 @@ function baseProps(overrides = {}) {
     data: null,
     actionMessage: '',
     reprocessing: false,
+    checkingCoverage: false,
     onClose: vi.fn(),
     onReprocess: vi.fn(),
+    onCheckCoverage: vi.fn(),
     ...overrides,
   }
 }
@@ -88,7 +90,31 @@ describe('ArticleDetailModal', () => {
     const { rerender } = render(<ArticleDetailModal {...baseProps({ canReprocess: false })} />)
     expect(screen.queryByRole('button', { name: 'Reprocess' })).not.toBeInTheDocument()
 
-    rerender(<ArticleDetailModal {...baseProps({ canReprocess: true })} />)
+    rerender(<ArticleDetailModal {...baseProps({
+      canReprocess: true,
+      data: {
+        analysis_status: 'success', sentiment: 'neutral', article_category: 'general_article',
+        writer_tone: 'neutral', article_tone: 'neutral', overall_tone: 'neutral',
+      },
+    })} />)
     expect(screen.getByRole('button', { name: 'Reprocess' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check GDELT coverage' })).toBeInTheDocument()
+  })
+
+  it('shows GDELT coverage with evidence and its limitation', () => {
+    render(<ArticleDetailModal {...baseProps({
+      data: {
+        analysis_status: 'success', sentiment: 'neutral', article_category: 'general_article',
+        writer_tone: 'neutral', article_tone: 'neutral', overall_tone: 'neutral',
+        coverage_evidence: {
+          status: 'some_coverage', reason: 'Closely matching coverage was found on 1 other domain.',
+          caveat: 'Cross-source coverage is not proof that a claim is true.',
+          matches: [{ domain: 'news.example', title: 'Matching report', url: 'https://news.example/report' }],
+        },
+      },
+    })} />)
+    expect(screen.getByText(/Some matching coverage/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /news\.example/ })).toHaveAttribute('href', 'https://news.example/report')
+    expect(screen.getByText(/not proof/)).toBeInTheDocument()
   })
 })

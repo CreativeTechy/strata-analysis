@@ -24,7 +24,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, getArticleAnalysis, reprocessArticle, deleteAllArticles, deleteArticle,
+  listArticles, getArticleAnalysis, checkGdeltCoverage, reprocessArticle, deleteAllArticles, deleteArticle,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
 import '../styles/Articles.css';
@@ -102,6 +102,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [detailReprocessing, setDetailReprocessing] = useState(false);
+  const [detailCheckingCoverage, setDetailCheckingCoverage] = useState(false);
   const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
   const searchInputRef = useRef(null);
@@ -264,6 +265,21 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setDetailActionMessage(err?.message || 'Failed to reprocess article.');
     } finally {
       setDetailReprocessing(false);
+    }
+  };
+
+  const handleCheckCoverage = async () => {
+    if (detailArticleId == null || detailCheckingCoverage) return;
+    setDetailCheckingCoverage(true);
+    setDetailActionMessage('');
+    try {
+      const result = await checkGdeltCoverage(detailArticleId);
+      setDetailData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
+      setDetailActionMessage('GDELT coverage evidence updated.');
+    } catch (err) {
+      setDetailActionMessage(err?.message || 'Failed to check GDELT coverage.');
+    } finally {
+      setDetailCheckingCoverage(false);
     }
   };
 
@@ -651,8 +667,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
           data={detailData}
           actionMessage={detailActionMessage}
           reprocessing={detailReprocessing}
+          checkingCoverage={detailCheckingCoverage}
           onClose={closeDetailModal}
           onReprocess={handleReprocess}
+          onCheckCoverage={handleCheckCoverage}
         />
 
         <div className="articles-filters-row">

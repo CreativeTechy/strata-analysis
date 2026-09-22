@@ -7,6 +7,12 @@ const SOURCE_RELIABILITY_LABELS = {
   not_assessed: 'Not assessed',
 };
 
+const COVERAGE_LABELS = {
+  broad_coverage: 'Broad matching coverage',
+  some_coverage: 'Some matching coverage',
+  no_coverage_found: 'No matching coverage found',
+};
+
 // The "Analysis details" popover opened from an article card/row - extracted
 // out of ArticlesPage.jsx as its own component since it's a fully
 // self-contained read (plus optional reprocess action) of one article's
@@ -19,8 +25,10 @@ export default function ArticleDetailModal({
   data,
   actionMessage,
   reprocessing,
+  checkingCoverage,
   onClose,
   onReprocess,
+  onCheckCoverage,
 }) {
   return (
     <ConfirmModal
@@ -136,6 +144,42 @@ export default function ArticleDetailModal({
                   ? ` · Imported ${new Date(data.source_reliability.details.dataset_imported_at).toLocaleDateString()}`
                   : ''}
               </div>
+            ) : null}
+          </div>
+          <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
+            <strong>Cross-source coverage:</strong>{' '}
+            {data.coverage_evidence
+              ? (COVERAGE_LABELS[data.coverage_evidence.status] || prettyLabel(data.coverage_evidence.status))
+              : 'Not checked'}
+            {data.coverage_evidence?.reason ? (
+              <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.85rem' }}>
+                {data.coverage_evidence.reason}
+              </div>
+            ) : null}
+            {data.coverage_evidence?.matches?.length ? (
+              <div style={{ display: 'grid', gap: 4, marginTop: 6, fontSize: '0.82rem' }}>
+                {data.coverage_evidence.matches.slice(0, 5).map((match) => (
+                  <a key={`${match.domain}-${match.url}`} href={match.url} target="_blank" rel="noreferrer">
+                    {match.domain} — {match.title || 'Matching article'}
+                  </a>
+                ))}
+              </div>
+            ) : null}
+            {data.coverage_evidence?.caveat ? (
+              <div style={{ marginTop: 6, color: 'var(--text-light)', fontSize: '0.78rem' }}>
+                {data.coverage_evidence.caveat}
+              </div>
+            ) : null}
+            {canReprocess ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={onCheckCoverage}
+                disabled={checkingCoverage}
+                style={{ marginTop: 8 }}
+              >
+                {checkingCoverage ? 'Checking GDELT...' : 'Check GDELT coverage'}
+              </button>
             ) : null}
           </div>
           <div style={{ fontSize: '0.82rem', color: 'var(--text-light)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>

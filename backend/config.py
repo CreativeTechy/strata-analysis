@@ -442,6 +442,18 @@ SEARCH_SEMANTIC_MATCH_THRESHOLD = float(
     os.environ.get("SEARCH_SEMANTIC_MATCH_THRESHOLD", "0.78") or 0.78
 )
 
+# GDELT is only contacted when an operator explicitly requests a coverage
+# check for an article. It is not part of ingestion or the analysis pipeline.
+GDELT_DOC_API_URL = os.environ.get(
+    "GDELT_DOC_API_URL", "https://api.gdeltproject.org/api/v2/doc/doc"
+).strip()
+GDELT_TIMEOUT_SECONDS = max(1, int(os.environ.get("GDELT_TIMEOUT_SECONDS", "12") or 12))
+GDELT_MAX_RECORDS = min(250, max(10, int(os.environ.get("GDELT_MAX_RECORDS", "75") or 75)))
+GDELT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+GDELT_MIN_TITLE_OVERLAP = min(1.0, max(0.0, float(os.environ.get("GDELT_MIN_TITLE_OVERLAP", "0.6") or 0.6)))
+GDELT_BROAD_COVERAGE_DOMAINS = max(2, int(os.environ.get("GDELT_BROAD_COVERAGE_DOMAINS", "3") or 3))
+GDELT_STORED_MATCHES = min(20, max(1, int(os.environ.get("GDELT_STORED_MATCHES", "8") or 8)))
+
 # services/competitors/competitor_analysis.py's semantic-mention fallback:
 # only ever consulted when no literal name/alias was found in the text, so
 # this is set high (unrelated passages typically score well below 0.3; a

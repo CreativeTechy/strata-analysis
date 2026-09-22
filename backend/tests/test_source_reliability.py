@@ -8,6 +8,7 @@ from services.articles.source_reliability import (
     match_rating,
     normalize_domain,
     resolve_source_domain,
+    _preserve_article_level_signals,
 )
 
 
@@ -69,6 +70,12 @@ class IffyAssessmentTests(unittest.TestCase):
         self.assertEqual(result["status"], STATUS_NOT_ASSESSED)
         self.assertEqual(result["domain"], "publisher.example")
         self.assertIn("has not been imported", result["reason"])
+
+    def test_refresh_preserves_gdelt_article_evidence(self):
+        article = {"source_reliability_details": {"gdelt_coverage": {"status": "some_coverage"}}}
+        result = _preserve_article_level_signals(article, {"details": {"matched_domain": "example.com"}})
+        self.assertEqual(result["details"]["gdelt_coverage"]["status"], "some_coverage")
+        self.assertEqual(result["details"]["matched_domain"], "example.com")
 
 
 if __name__ == "__main__":
