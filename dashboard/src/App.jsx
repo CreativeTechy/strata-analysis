@@ -92,7 +92,7 @@ export default function App() {
     // for the project - otherwise picking an older run leaves the card
     // silently describing a different run than the rest of the page.
     if (dashboardRunId) {
-      const selectedRun = projectRuns.find((run) => run.id === dashboardRunId) || null;
+      const selectedRun = projectRuns.find((run) => Number(run.id) === Number(dashboardRunId)) || null;
       return {
         lastRun: selectedRun,
         lastFinished: selectedRun?.finished_at ? selectedRun : null,
