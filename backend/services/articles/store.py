@@ -511,27 +511,32 @@ def _replace_article_children(article_id, article):
                     feedback_rows.append((article_id, feedback_type, text))
         _bulk_insert("article_feedback_items", ("article_id", "feedback_type", "text"), feedback_rows)
 
-        # gender_evidence is a newer column (migration 0019) - a database that
-        # hasn't had it applied yet (MIGRATE_ON_STARTUP=false, or a replica
-        # mid-rollout) still has article_people_opinions itself, so the
-        # table-existence check above passes but this insert would otherwise
-        # name a column that doesn't exist and fail the whole child write,
-        # including article_tags below (the deletes above have already
-        # committed by then - see _table_exists's docstring on db.execute).
-        has_gender_evidence = "gender_evidence" in _table_columns("article_people_opinions")
-        if not has_gender_evidence:
+        # gender_evidence/age_evidence are newer columns (migrations 0019 and
+        # 0021) - a database that hasn't had one applied yet (MIGRATE_ON_STARTUP=
+        # false, or a replica mid-rollout) still has article_people_opinions
+        # itself, so the table-existence check above passes but this insert
+        # would otherwise name a column that doesn't exist and fail the whole
+        # child write, including article_tags below (the deletes above have
+        # already committed by then - see _table_exists's docstring on
+        # db.execute).
+        existing_columns = _table_columns("article_people_opinions")
+        has_gender_evidence = "gender_evidence" in existing_columns
+        has_age_evidence = "age_evidence" in existing_columns
+        if not has_gender_evidence or not has_age_evidence:
             # _table_columns is memoized for the life of the process, which is
             # right for the steady state but wrong for a "not there yet"
-            # answer: the column is only ever added, never dropped, so a
-            # cached False would keep this process writing no evidence even
-            # after the migration lands - until someone restarts it. Drop the
-            # memo so the next article re-checks. Safe to clear wholesale:
-            # this is the only caller.
+            # answer: a column is only ever added, never dropped, so a cached
+            # miss would keep this process writing no evidence even after the
+            # migration lands - until someone restarts it. Drop the memo so
+            # the next article re-checks. Safe to clear wholesale: this is
+            # the only caller.
             _table_columns.cache_clear()
         opinion_columns = (
             "article_id", "opinion", "sentiment", "category", "gender",
         ) + (("gender_evidence",) if has_gender_evidence else ()) + (
-            "age_range", "region", "segment_raw", "segment",
+            "age_range",
+        ) + (("age_evidence",) if has_age_evidence else ()) + (
+            "region", "segment_raw", "segment",
         )
 
         opinion_rows = []
@@ -546,9 +551,11 @@ def _replace_article_children(article_id, article):
             category = str(item.get("category") or "").strip()
             gender = str(item.get("gender") or "unknown").strip().lower() or "unknown"
             # Only meaningful (and only ever set upstream) alongside a resolved
-            # gender - see normalize.normalize_gender_evidence's docstring.
+            # gender/age_range - see normalize.normalize_gender_evidence's and
+            # normalize_age_evidence's docstrings.
             gender_evidence = str(item.get("gender_evidence") or "").strip() if gender != "unknown" else ""
             age_range = str(item.get("age_range") or "unknown").strip().lower() or "unknown"
+            age_evidence = str(item.get("age_evidence") or "").strip() if age_range != "unknown" else ""
             region = str(item.get("region") or "unknown").strip() or "unknown"
             segment_raw = str(item.get("segment") or "unknown").strip() or "unknown"
             segment = _resolve_segment_label(segment_raw)
@@ -557,7 +564,10 @@ def _replace_article_children(article_id, article):
             row = (article_id, opinion, sentiment, category, gender)
             if has_gender_evidence:
                 row += (gender_evidence,)
-            row += (age_range, region, segment_raw, segment)
+            row += (age_range,)
+            if has_age_evidence:
+                row += (age_evidence,)
+            row += (region, segment_raw, segment)
             opinion_rows.append(row)
         _bulk_insert("article_people_opinions", opinion_columns, opinion_rows)
         if segment_votes:
