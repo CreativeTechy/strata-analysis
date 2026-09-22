@@ -32,6 +32,7 @@ from services.articles.articles_query import (
     get_analysis_status_counts,  # noqa: F401 - re-exported
     get_article_analysis,  # noqa: F401 - re-exported
     list_analysis_errors,  # noqa: F401 - re-exported
+    list_article_ids_for_source_host,
     list_articles_for_idea_cluster,  # noqa: F401 - re-exported
     list_idea_clusters_for_project,  # noqa: F401 - re-exported
     list_project_sources,  # noqa: F401 - re-exported
@@ -129,6 +130,14 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
     offset = 0
     field, direction = _normalize_sort(sort)
 
+    # Resolved once up front, same reasoning as articles_search's scan loop:
+    # source_host has no index to filter on, so resolving it means scanning
+    # every one of the project's articles - not something a full-export
+    # loop (potentially many pages for a large project) should redo per page.
+    source_host_ids = None
+    if project_id is not None and _normalize_text(source_host):
+        source_host_ids = list_article_ids_for_source_host(project_id, source_host)
+
     while True:
         batch, _ = _fetch_articles(
             limit=page_size,
@@ -141,6 +150,7 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             select=select,
             source_url=source_url,
             source_host=source_host,
+            source_host_ids=source_host_ids,
             added_from=added_from,
             added_to=added_to,
             max_limit=page_size,

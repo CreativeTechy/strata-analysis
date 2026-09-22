@@ -19,6 +19,7 @@ from services.articles.articles_query import (
     DEFAULT_SORT,
     _fetch_articles,
     _normalize_text,
+    list_article_ids_for_source_host,
 )
 
 SEARCH_SCAN_LIMIT = 1000
@@ -32,6 +33,15 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
     page_size = 500
     offset = 0
     limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
+
+    # Resolved once up front rather than inside the loop below: source_host
+    # has no index to filter on, so resolving it is a full scan of the
+    # project's articles (see list_article_ids_for_source_host) - paying
+    # that cost again on every page of this scan would turn one search into
+    # several full-project scans.
+    source_host_ids = None
+    if project_id is not None and _normalize_text(source_host):
+        source_host_ids = list_article_ids_for_source_host(project_id, source_host)
 
     while len(rows) < limit:
         want = min(page_size, limit - len(rows))
@@ -48,6 +58,7 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             date_to=date_to,
             source_url=source_url,
             source_host=source_host,
+            source_host_ids=source_host_ids,
             added_from=added_from,
             added_to=added_to,
             max_limit=page_size,
