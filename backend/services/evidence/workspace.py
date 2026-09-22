@@ -23,7 +23,7 @@ from psycopg.types.json import Jsonb
 from services.projects.projects_store import get_project
 from services.articles.publisher_identity import publisher_domain
 
-RULES_VERSION = "evidence-v8-grounded-accuracy"
+RULES_VERSION = "evidence-v9-restored-relevance"
 RELEVANCE_LABELS = {"direct", "contextual", "unrelated", "uncertain"}
 DEFAULT_VISIBLE_RELEVANCE = {"direct", "contextual"}
 RELEVANCE_BATCH_SIZE = 20
@@ -466,15 +466,10 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
                 continue
             score = cosine_similarity(scope_vector, claim_vector)
             candidate_text = "\n".join(str(canonical.get(field) or "") for field in ("claim", "passage"))
-            label, _ = _passage_relevance_label(
+            relevance, explanation = _passage_relevance_label(
                 score, candidate_text, concept_words, location_words,
                 config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD, config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD,
-            ) if candidate_text.strip() else ("uncertain", "")
-            if label != 'unrelated' and score >= config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD:
-                relevance = "uncertain"
-                explanation = "Topic similarity alone cannot establish relevance. Review the claim against the research question."
-            else:
-                relevance, explanation = "unrelated", "Local semantic similarity is below the project-relevance threshold."
+            ) if candidate_text.strip() else ("uncertain", "No saved claim or passage was available for relevance review.")
             results[key] = {
                 "relevance": relevance,
                 "explanation": explanation,
