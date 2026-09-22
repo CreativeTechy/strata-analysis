@@ -264,7 +264,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.segment, a.insight_json,
-               a.source_domain, a.coverage_evidence,
+               a.source_domain,
                a.published, a.created_at, a.pipeline_run_id, a.source_language
         from articles a
         join article_projects ap on ap.article_id = a.id

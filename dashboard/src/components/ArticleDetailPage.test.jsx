@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, Link } from 'react-router-dom'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ArticleDetailPage from './ArticleDetailPage.jsx'
 import { useAuth } from '../auth/useAuth.js'
-import { getArticleAnalysis, deleteArticle, checkCoverage } from '../api/articlesApi.js'
+import { getArticleAnalysis, deleteArticle } from '../api/articlesApi.js'
 
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }))
 vi.mock('../api/articlesApi.js', () => ({
   getArticleAnalysis: vi.fn(),
   reprocessArticle: vi.fn(),
   deleteArticle: vi.fn(),
-  checkCoverage: vi.fn(),
 }))
 
 function renderPage(articleId = '1', { state } = {}) {
@@ -29,31 +28,6 @@ beforeEach(() => {
 })
 
 describe('ArticleDetailPage', () => {
-  it('ignores a delayed signal result after navigating to another article', async () => {
-    useAuth.mockReturnValue({ hasPermission: () => true })
-    getArticleAnalysis.mockImplementation((id) => Promise.resolve({ analysis: { title: `Article ${id}` } }))
-    let finishCoverage
-    checkCoverage.mockReturnValue(new Promise((resolve) => { finishCoverage = resolve }))
-    render(<MemoryRouter initialEntries={['/articles/1']}>
-      <Link to="/articles/2">Next article</Link>
-      <Routes><Route path="/articles/:articleId" element={<ArticleDetailPage />} /></Routes>
-    </MemoryRouter>)
-    fireEvent.click(await screen.findByRole('button', { name: 'Check source reliability signals' }))
-    fireEvent.click(screen.getByText('Next article'))
-    await screen.findByRole('heading', { name: 'Article 2' })
-    await act(async () => { finishCoverage({ coverage: { status: 'some_coverage', reason: 'First article result' } }) })
-    expect(screen.queryByText('First article result')).not.toBeInTheDocument()
-  })
-  it('shows source reliability signals and refreshes the result', async () => {
-    useAuth.mockReturnValue({ hasPermission: () => true })
-    getArticleAnalysis.mockResolvedValue({ analysis: { title: 'Article', coverage_evidence: { status: 'not_checked' } } })
-    checkCoverage.mockResolvedValue({ coverage: { status: 'some_coverage', reason: 'Headline matches need review.' } })
-    renderPage()
-    fireEvent.click(await screen.findByRole('button', { name: 'Check source reliability signals' }))
-    await screen.findByText('Headline matches need review.')
-    expect(checkCoverage).toHaveBeenCalledWith('1')
-    expect(screen.getByText('Needs review', { exact: false })).toBeInTheDocument()
-  })
   it('shows a loading message while fetching', async () => {
     getArticleAnalysis.mockReturnValue(new Promise(() => {}))
     renderPage()

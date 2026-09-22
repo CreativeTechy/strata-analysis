@@ -273,21 +273,6 @@ python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
   refuses rather than letting environments diverge silently. Add a new
   migration instead.
 
-## Source reliability data
-
-The dashboard's **Source reliability signals** card summarizes explicit
-article-level coverage checks. A matching headline is a lead for comparison,
-so results with matches show **Needs review**. Missing matches show
-**Not assessed**. These checks do not automatically assign high or low source
-reliability. Publisher domains are normalized with bundled public-suffix data,
-including private hosting suffixes; domain normalization makes no network call.
-
-For uploaded documents, enter the optional **Original publisher URL** during
-upload. The app keeps its internal document URL for grouping while storing the
-publisher URL in provenance for the reliability assessment. Without a usable
-publisher URL, publisher identity may remain unknown. Coverage checks send the
-article title to the configured external service only when explicitly requested.
-
 `schema.sql` is organized in numbered sections (helpers, access control,
 projects, analysis runs, articles, per-article output, idea clusters, documents,
 competitor study, seed data) with the conventions it follows stated at the top -

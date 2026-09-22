@@ -34,14 +34,6 @@ const VIEW_MODES = [
   { value: 'list', label: 'List', icon: List },
 ];
 
-const COVERAGE_OPTIONS = [
-  { value: 'all', label: 'All source signals' },
-  { value: 'broad_coverage', label: 'Higher confidence' },
-  { value: 'some_coverage', label: 'Needs review' },
-  { value: 'no_coverage_found', label: 'Low confidence' },
-  { value: 'not_checked', label: 'Not assessed' },
-];
-
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
@@ -75,9 +67,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // mutually exclusive by construction (an article is either a document split
   // or has its own real url, never both), so picking one clears the other.
   const [sourceHostFilter, setSourceHostFilter] = useState(() => searchParams.get('source_host') || 'all');
-  const [coverageFilter, setCoverageFilter] = useState(
-    () => searchParams.get('coverage_status') || 'all',
-  );
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(() => {
     const parsed = Number(searchParams.get('offset'));
@@ -132,12 +121,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -156,14 +145,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (sourceFilter !== 'all') next.set('source', sourceFilter);
     if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
-    if (coverageFilter !== 'all') next.set('coverage_status', coverageFilter);
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
     if (sort !== 'published.desc') next.set('sort', sort);
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, coverageFilter, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -247,7 +235,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
           source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
-          coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
           limit,
@@ -272,7 +259,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, coverageFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -330,7 +317,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
       setSourceHostFilter('all');
-      setCoverageFilter('all');
       setAddedFrom('');
       setAddedTo('');
       setOffset(0);
@@ -353,7 +339,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
         source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
-        coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
         sort,
@@ -680,17 +665,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
-              ))}
-            </select>
-
-            <select
-              className="filter-select"
-              value={coverageFilter}
-              onChange={(event) => setCoverageFilter(event.target.value)}
-              aria-label="Source reliability signals"
-            >
-              {COVERAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
 
