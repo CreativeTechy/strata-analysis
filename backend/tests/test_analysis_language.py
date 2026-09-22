@@ -27,14 +27,14 @@ class DetectLanguageTests(unittest.TestCase):
         self.assertTrue(result["low_confidence"])
 
     def test_confident_detection_is_used(self):
-        fake_pipeline = lambda text: [{"label": "en", "score": 0.97}]
+        fake_pipeline = lambda text, **kwargs: [{"label": "en", "score": 0.97}]
         with patch("analysis.language._get_pipeline", return_value=fake_pipeline):
             result = language.detect_language("hello world")
         self.assertEqual(result["language"], "en")
         self.assertFalse(result["low_confidence"])
 
     def test_low_confidence_keeps_the_label_but_flags_it(self):
-        fake_pipeline = lambda text: [{"label": "fr", "score": 0.2}]
+        fake_pipeline = lambda text, **kwargs: [{"label": "fr", "score": 0.2}]
         with patch("analysis.language._get_pipeline", return_value=fake_pipeline):
             result = language.detect_language("bonjour")
         self.assertEqual(result["language"], "fr")
@@ -52,7 +52,7 @@ class DetectLanguageTests(unittest.TestCase):
         self.assertIsNone(result["language"])
 
     def test_inference_error_returns_none_language_without_crashing(self):
-        def boom(text):
+        def boom(text, **kwargs):
             raise RuntimeError("boom")
 
         with patch("analysis.language._get_pipeline", return_value=boom):

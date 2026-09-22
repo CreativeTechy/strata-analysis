@@ -50,7 +50,7 @@ def _export_select():
     failing the whole query on one missing name."""
     from services.articles.store import stored_article_fields
 
-    fields = ["id", *stored_article_fields(), "created_at"]
+    fields = ["id", *stored_article_fields(), "segment", "created_at"]
     seen = set()
     ordered = []
     for field in fields:

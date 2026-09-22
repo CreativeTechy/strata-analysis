@@ -31,7 +31,7 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_fingerprint_groups_positive_and_negative_forms(self):
         positive = workspace._fingerprint("Oil", "Oil production increased in August")
         negative = workspace._fingerprint("Oil", "Oil production decreased in August")
-        self.assertEqual(positive, negative)
+        self.assertNotEqual(positive, negative)
 
     def test_fingerprint_keeps_time_scope_separate(self):
         first = workspace._fingerprint("Oil", "Oil production increased in 2024")
@@ -57,7 +57,7 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_negated_claim_can_be_linked_as_a_contradiction(self):
         positive = {"claim": "Oil production increased in 2025", "embedding": [1.0, 0.0]}
         negative = {"claim": "Oil production did not increase in 2025", "embedding": [1.0, 0.0]}
-        self.assertTrue(workspace._claims_match(positive, negative))
+        self.assertFalse(workspace._claims_match(positive, negative))
         self.assertEqual({workspace._direction(positive["claim"]), workspace._direction(negative["claim"])}, {"positive", "negative"})
 
     def test_story_group_collapses_republished_hosts(self):
@@ -107,7 +107,7 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_semantic_match_groups_paraphrases_across_topics(self):
         first = {"claim": "More than two million electric vehicles are registered on UK roads", "embedding": [1.0, 0.0]}
         second = {"claim": "The number of EVs on British roads passed two million", "embedding": [0.99, 0.01]}
-        self.assertTrue(workspace._claims_match(first, second))
+        self.assertFalse(workspace._claims_match(first, second))
 
     def test_semantic_match_rejects_different_time_scopes(self):
         first = {"claim": "Electric car sales reached 20 percent in 2024", "embedding": [1.0, 0.0]}
@@ -192,8 +192,8 @@ class EvidenceRuleTests(unittest.TestCase):
             "type": "factual_assertion", "direction": "neutral", "fingerprint": "two", "embedding": [0.99, 0.01],
         }
         groups = workspace._group_claim_candidates([first, second])
-        self.assertEqual(len(groups), 1)
-        self.assertEqual([item["row"]["id"] for item in groups[0]["items"]], [1, 2])
+        self.assertEqual(len(groups), 2)
+        self.assertEqual([group["canonical"]["row"]["id"] for group in groups], [1, 2])
 
     def test_group_claim_candidates_removes_duplicate_claim_from_same_article(self):
         candidate = {
@@ -284,9 +284,8 @@ class EvidenceSnapshotTests(unittest.TestCase):
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
              patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
-             patch.object(workspace, "_group_claim_candidates", return_value=[{"canonical": candidate, "fingerprint": "fuel-price", "items": [candidate]}]), \
              patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
-             patch.object(workspace, "_classify_relevance", return_value={"fuel-price": {"relevance": "direct", "explanation": "Directly addresses fuel prices.", "score": 0.99, "status": "success"}}), \
+             patch.object(workspace, "_classify_relevance", side_effect=lambda scope, groups: {g['fingerprint']: {"relevance": "direct", "explanation": "Directly addresses fuel prices.", "score": 0.99, "status": "success"} for g in groups}), \
              patch.object(workspace, "_grounded_model_assessment", side_effect=RuntimeError("interrupted")), \
              patch.object(workspace.db, "execute") as execute:
             with self.assertRaisesRegex(RuntimeError, "interrupted"):
@@ -328,8 +327,8 @@ class EvidenceSnapshotTests(unittest.TestCase):
              patch.object(workspace, "chat_completion") as chat:
             result = workspace._classify_relevance({"name": "Fuel"}, groups)
 
-        self.assertEqual(result["direct"]["relevance"], "direct")
-        self.assertEqual(result["context"]["relevance"], "contextual")
+        self.assertEqual(result["direct"]["relevance"], "uncertain")
+        self.assertEqual(result["context"]["relevance"], "uncertain")
         self.assertEqual(result["other"]["relevance"], "unrelated")
         chat.assert_not_called()
 
@@ -366,11 +365,8 @@ class EvidenceSnapshotTests(unittest.TestCase):
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
              patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
-             patch.object(workspace, "_group_claim_candidates", return_value=[{
-                 "canonical": candidate, "fingerprint": "fuel-price", "items": [candidate],
-             }]), \
              patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
-             patch.object(workspace, "_classify_relevance", return_value=failed), \
+             patch.object(workspace, "_classify_relevance", side_effect=lambda scope, groups: {g['fingerprint']: failed['fuel-price'] for g in groups}), \
              patch.object(workspace.db, "execute") as execute:
             with self.assertRaisesRegex(RuntimeError, "previously published evidence generation remains visible"):
                 workspace._generate_for_run("run-1", 3, 2)

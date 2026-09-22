@@ -23,7 +23,7 @@ class ClassificationStageTests(unittest.TestCase):
         classification._load_pipeline.cache_clear()
 
     def test_category_confident_result_maps_back_to_snake_case_key(self):
-        fake_pipeline = lambda text, candidates, hypothesis_template, multi_label: {
+        fake_pipeline = lambda text, candidates, hypothesis_template, multi_label, **kwargs: {
             "labels": [labels.CATEGORY_HYPOTHESIS_LABELS["review"], labels.CATEGORY_HYPOTHESIS_LABELS["news"]],
             "scores": [0.8, 0.1],
         }
@@ -33,7 +33,7 @@ class ClassificationStageTests(unittest.TestCase):
         self.assertFalse(result["low_confidence"])
 
     def test_category_low_confidence_falls_back_to_general_article(self):
-        fake_pipeline = lambda text, candidates, hypothesis_template, multi_label: {
+        fake_pipeline = lambda text, candidates, hypothesis_template, multi_label, **kwargs: {
             "labels": [labels.CATEGORY_HYPOTHESIS_LABELS["review"]],
             "scores": [0.1],
         }
@@ -56,7 +56,7 @@ class ClassificationStageTests(unittest.TestCase):
     def test_writer_tone_and_article_tone_are_independent_calls(self):
         calls = []
 
-        def fake_pipeline(text, candidates, hypothesis_template, multi_label):
+        def fake_pipeline(text, candidates, hypothesis_template, multi_label, **kwargs):
             calls.append(hypothesis_template)
             if "writer" in hypothesis_template:
                 return {"labels": ["enthusiastic"], "scores": [0.9]}
@@ -70,7 +70,7 @@ class ClassificationStageTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_inference_error_is_handled_gracefully(self):
-        def boom(text, candidates, hypothesis_template, multi_label):
+        def boom(text, candidates, hypothesis_template, multi_label, **kwargs):
             raise RuntimeError("boom")
 
         with patch("analysis.classification._get_pipeline", return_value=boom):

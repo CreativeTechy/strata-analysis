@@ -1216,6 +1216,12 @@ def check_article_coverage(
     This is deliberately separate from analysis: uploaded text does not leave
     the machine merely because an article was imported or analyzed.
     """
+    visible_ids = _visible_project_ids_or_none(user)
+    if visible_ids is not None and not db.fetch_one(
+        'select article_id from article_projects where article_id=%s and project_id=any(%s) limit 1',
+        (int(article_id), visible_ids),
+    ):
+        raise HTTPException(status_code=404, detail='Article not found.')
     try:
         result = check_gdelt_article(article_id)
     except LookupError as exc:

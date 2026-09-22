@@ -70,9 +70,10 @@ function evidencePublisher(item) {
 
 function matrixCellState(row, publisher) {
   const items = row.sources.filter((item) => item.publisher === publisher);
-  const relationship = items.find((item) => item.relationship === 'contradicting')?.relationship
-    || items.find((item) => item.relationship === 'supporting')?.relationship
-    || items[0]?.relationship;
+  const qualifiedItems = items.filter((item) => item.citation_valid && item.qualifies);
+  const relationship = qualifiedItems.find((item) => item.relationship === 'contradicting')?.relationship
+    || qualifiedItems.find((item) => item.relationship === 'supporting')?.relationship
+    || qualifiedItems[0]?.relationship;
   const qualified = items.some((item) => item.citation_valid && item.qualifies);
   const stateKey = qualified && relationship ? relationship : items.length ? 'review' : 'missing';
   return { items, stateKey, state: MATRIX_STATES[stateKey] || MATRIX_STATES.missing };
@@ -388,6 +389,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         <div><strong>Evidence from this run’s saved documents</strong><span>Claims are screened against the frozen research scope. Relevance and evidential support are assessed separately. No website is fetched while you review this page.</span></div>
       </div>
 
+      {data?.requires_rebuild ? <p role="status" className="evidence-scope-note">These saved results need a new relevance assessment. Rebuild evidence to show current relevant claims. Earlier results remain available under All candidates.</p> : null}
       {data?.scope ? <section className="glass-card evidence-research-scope">
         <header><div><strong>Frozen research scope</strong><span>{data.scope.source === 'explicit_override' ? 'Edited for this evidence run' : 'Captured from project settings'}</span></div>{canReview ? <button type="button" className="btn-secondary" onClick={() => setEditingScope((value) => !value)}>{editingScope ? 'Cancel' : 'Edit scope'}</button> : null}</header>
         {editingScope && scopeDraft ? <div className="evidence-scope-form">
@@ -426,7 +428,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         <label>Origin review<select value={provenanceFilter} onChange={(event) => updateFilters({ provenance_status: event.target.value })}>
           <option value="">Any status</option><option value="unassessed">Unassessed</option><option value="verified">Verified</option><option value="rejected">Rejected</option>
         </select></label><label>Project relevance<select value={relevanceFilter} onChange={(event) => updateFilters({ relevance: event.target.value })}>
-          <option value="focused">Relevant and legacy claims</option><option value="direct">Directly relevant</option><option value="contextual">Relevant context</option><option value="uncertain">Uncertain</option><option value="unrelated">Excluded as unrelated</option><option value="unclassified">Legacy / unclassified</option><option value="all">All candidates</option>
+          <option value="focused">Relevant claims · current assessment</option><option value="direct">Directly relevant</option><option value="contextual">Relevant context</option><option value="uncertain">Uncertain</option><option value="unrelated">Excluded as unrelated</option><option value="unclassified">Legacy / unclassified</option><option value="all">All candidates</option>
         </select></label></div> : null}
       </div>
 

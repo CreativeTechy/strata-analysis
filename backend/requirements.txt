@@ -1,4 +1,5 @@
 requests>=2.31   # LLM/HF HTTP calls (llm_client.py); no crawling in this product
+tldextract>=5.1,<6  # bundled public suffix data; network updates disabled
 psycopg[binary]>=3.2
 psycopg-pool>=3.2  # pooled connections behind db.py's connect()/fetch_*/execute()
 fastapi>=0.110

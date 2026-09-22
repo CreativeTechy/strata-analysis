@@ -32,7 +32,7 @@ class GdeltCorroborationTests(unittest.TestCase):
             {"domain": "unsafe.example", "title": article["title"], "url": "javascript:alert(1)"},
         ]}
         result = summarize_results(article, payload, '"City council approves"')
-        self.assertEqual(result["status"], STATUS_BROAD)
+        self.assertEqual(result["status"], "some_coverage")
         self.assertEqual(result["matching_domain_count"], 2)
         self.assertEqual({match["domain"] for match in result["matches"]}, {"one.example", "two.example"})
 
@@ -46,7 +46,7 @@ class GdeltCorroborationTests(unittest.TestCase):
     def test_subdomains_of_one_publisher_count_once(self):
         article = {"title": "City council approves new public transport plan", "url": "https://origin.example/story"}
         payload = {"articles": [
-            {"url": f"https://{subdomain}.publisher.example/story", "title": article["title"]}
+            {"url": f"https://{subdomain}.publisher.com/story", "title": article["title"]}
             for subdomain in ("news", "local", "mobile")
         ]}
         result = summarize_results(article, payload, '"City council approves"')
@@ -60,7 +60,7 @@ class GdeltCorroborationTests(unittest.TestCase):
             for domain in ("one.example", "two.example", "three.example")
         ]}
         result = summarize_results(article, payload, '"City council approves"')
-        self.assertEqual(result["status"], STATUS_LOW)
+        self.assertEqual(result["status"], "some_coverage")
         self.assertEqual(result["supporting_domain_count"], 0)
         self.assertEqual(result["contradicting_domain_count"], 3)
 

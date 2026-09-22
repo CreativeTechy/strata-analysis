@@ -49,6 +49,19 @@ or not-yet-verifiable assessments. Analyst decisions and origin checks are
 stored as separate audit events. Run comparison distinguishes changes in the
 captured evidence from rule-only reprocessing.
 
+Every claim is screened against the project scope before duplicate assertions
+are consolidated. The default view includes only current, directly relevant or
+contextual claims; uncertain and historical results remain available through
+the filters. Similar wording alone never merges different assertions.
+Literal supporting passages and explicit negations are checked against the
+claim; ambiguous paraphrases require review. Shared publishers, uploaded
+documents, story groups, and identical bodies count as one origin.
+
+After applying migrations, rebuild historical results from `backend/` with
+`python revalidate_evidence.py --apply`. Without `--apply`, this command lists
+the affected runs only. It uses the configured model, preserves prior
+generations, and leaves analyst decisions attached to the reviewed generation.
+
 Web collection stays outside Strata. Export the collector's results as JSON or
 JSONL, upload the file as a project document, review its records, and approve
 them for local analysis. One JSONL record can use this contract:
@@ -262,28 +275,18 @@ python migrate.py --verify   # exit non-zero if pending or drifted (for CI)
 
 ## Source reliability data
 
-The dashboard's **Source reliability signals** card uses a local copy of the
-[Iffy.news Index of Unreliable Sources](https://iffy.news/index/). Iffy is a
-publisher concern list: a match is shown as **Concern reported**, while an
-unmatched identifiable publisher is **Not listed in Iffy**, not "verified".
-
-Import or refresh the dataset explicitly from `backend/`:
-
-```bash
-python scripts/import_iffy_dataset.py
-# or import a reviewed/downloaded local copy
-python scripts/import_iffy_dataset.py --file /path/to/iffy-news.json
-```
-
-The command applies pending migrations, validates and versions the dataset,
-then reassesses stored articles. Normal uploads and analysis runs only read the
-local database and do not contact Iffy. Data attribution: Iffy.news Index of
-Unreliable Sources, licensed under CC BY 4.0.
+The dashboard's **Source reliability signals** card summarizes explicit
+article-level coverage checks. A matching headline is a lead for comparison,
+so results with matches show **Needs review**. Missing matches show
+**Not assessed**. These checks do not automatically assign high or low source
+reliability. Publisher domains are normalized with bundled public-suffix data,
+including private hosting suffixes; domain normalization makes no network call.
 
 For uploaded documents, enter the optional **Original publisher URL** during
 upload. The app keeps its internal document URL for grouping while storing the
 publisher URL in provenance for the reliability assessment. Without a usable
-publisher URL, the article remains **Not assessed**.
+publisher URL, publisher identity may remain unknown. Coverage checks send the
+article title to the configured external service only when explicitly requested.
 
 `schema.sql` is organized in numbered sections (helpers, access control,
 projects, analysis runs, articles, per-article output, idea clusters, documents,

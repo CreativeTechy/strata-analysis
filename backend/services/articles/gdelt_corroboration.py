@@ -19,16 +19,13 @@ from urllib.request import Request, urlopen
 import config
 import db
 from psycopg.types.json import Jsonb
+from services.articles.publisher_identity import publisher_domain
 
 
 STATUS_BROAD = "broad_coverage"
 STATUS_SOME = "some_coverage"
 STATUS_LOW = "no_coverage_found"
 STATUS_NONE = "not_checked"
-_COMMON_SECOND_LEVEL_SUFFIXES = {
-    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au",
-    "co.nz", "co.jp", "co.in", "com.br", "com.mx", "com.tr", "com.lb",
-}
 _TITLE_UP = re.compile(r"\b(approv(?:e|es|ed)|support(?:s|ed)?|increase[ds]?|rise[sn]?|rose|gain(?:s|ed)?|win[sn]?|won|allow(?:s|ed)?)\b", re.I)
 _TITLE_DOWN = re.compile(r"\b(reject(?:s|ed)?|oppose[ds]?|decrease[ds]?|decline[ds]?|fall[sn]?|fell|lose[sn]?|lost|ban[sn]?|block(?:s|ed)?)\b", re.I)
 _TITLE_NEGATION = re.compile(r"\b(no|not|never|without|didn't|doesn't|won't)\b", re.I)
@@ -37,25 +34,7 @@ class GdeltError(RuntimeError):
 
 
 def normalize_domain(value) -> str | None:
-    """Return a comparable registrable domain, collapsing ordinary subdomains."""
-    text = str(value or "").strip()
-    if not text or text.lower().startswith("document://"):
-        return None
-    candidate = text if "://" in text else f"//{text}"
-    try:
-        hostname = (urlsplit(candidate).hostname or "").strip().lower().rstrip(".")
-        if hostname.startswith("www."):
-            hostname = hostname[4:]
-        if not hostname or "." not in hostname or " " in hostname:
-            return None
-        hostname = hostname.encode("idna").decode("ascii")
-        labels = hostname.split(".")
-        if len(labels) <= 2:
-            return hostname
-        suffix = ".".join(labels[-2:])
-        return ".".join(labels[-3:]) if suffix in _COMMON_SECOND_LEVEL_SUFFIXES else suffix
-    except (UnicodeError, ValueError):
-        return None
+    return publisher_domain(value)
 
 
 def _title_tokens(value: str) -> set[str]:
@@ -169,21 +148,16 @@ def summarize_results(article: dict, payload: dict, query: str) -> dict:
     supporting_count = sum(match["relationship"] == "supporting" for match in matches)
     contradicting_count = sum(match["relationship"] == "contradicting" for match in matches)
     domain_count = len(matches)
-    if supporting_count >= config.GDELT_BROAD_COVERAGE_DOMAINS and supporting_count == domain_count:
-        status = STATUS_BROAD
-        reason = f"Consistent matching coverage was found from {supporting_count} other publisher domains."
-    elif contradicting_count >= 2 and contradicting_count == domain_count:
-        status = STATUS_LOW
-        reason = f"Conflicting coverage was found from {contradicting_count} other publisher domains."
-    elif domain_count:
+    if domain_count:
         status = STATUS_SOME
-        reason = "The available matching coverage is limited or conflicting and needs review."
+        reason = "Related headlines were found. Their claims and source independence need review before reliability can be assessed."
     else:
         status = STATUS_NONE
         reason = "There is not enough matching coverage to assess this source."
 
     return {
         "status": status,
+        "rules_version": "coverage-v2",
         "reason": reason,
         "query": query,
         "matching_domain_count": domain_count,
@@ -220,6 +194,8 @@ def _fetch(query: str) -> dict:
         raise GdeltError("The coverage service returned an unreadable response.") from exc
     if not isinstance(payload, dict):
         raise GdeltError("The coverage service returned an unexpected response.")
+    if 'error' in payload or ('articles' in payload and not isinstance(payload['articles'], list)):
+        raise GdeltError("The coverage service could not complete this assessment. Please try again later.")
     return payload
 
 

@@ -292,9 +292,8 @@ def _env_bool(name: str, default: bool) -> bool:
 # Optional second-pass evidence adjudication. It only receives claims and exact
 # frozen-document passages; failures fall back to the conservative local rules.
 EVIDENCE_LLM_ASSESSMENT = _env_bool("EVIDENCE_LLM_ASSESSMENT", False)
-# Candidate claims must clear this semantic-similarity threshold before they
-# can share one evidence record. Structured date/quantity checks still run
-# first, so similarity can join paraphrases without merging incompatible facts.
+# Retained for compatibility with older configurations. Current Evidence rules
+# do not use embedding similarity to merge assertions.
 EVIDENCE_CLAIM_SIMILARITY_THRESHOLD = float(
     os.environ.get("EVIDENCE_CLAIM_SIMILARITY_THRESHOLD", "0.82") or 0.82
 )

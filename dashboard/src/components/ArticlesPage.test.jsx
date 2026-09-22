@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import ArticlesPage from './ArticlesPage'
 import { useAuth } from '../auth/useAuth.js'
@@ -89,6 +89,26 @@ describe('ArticlesPage', () => {
     fireEvent.click(screen.getAllByTitle('View analysis details')[0])
     const dialog = await screen.findByRole('dialog')
     await waitFor(() => expect(within(dialog).getByText('Negative')).toBeInTheDocument())
+  })
+
+  it('does not attach a delayed coverage response to another article', async () => {
+    const originalFetch = fetch.getMockImplementation()
+    let finishCoverage
+    fetch.mockImplementation((url, ...args) => String(url).endsWith('/coverage')
+      ? new Promise((resolve) => { finishCoverage = resolve })
+      : originalFetch(url, ...args))
+    renderPage()
+    await screen.findByText('Battery fires spark recall')
+    fireEvent.click(screen.getAllByTitle('View analysis details')[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Check source reliability signals' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+    fireEvent.click(screen.getAllByTitle('View analysis details')[1])
+    await screen.findByText('Not assessed', { selector: 'div' })
+    await act(async () => {
+      finishCoverage(jsonResponse({ article_id: 1, coverage: { status: 'some_coverage', reason: 'Result for first article' } }))
+    })
+    expect(screen.queryByText('Result for first article')).not.toBeInTheDocument()
+    expect(screen.getByText('Not assessed', { selector: 'div' })).toBeInTheDocument()
   })
 
   it('shows an empty state when there are no articles', async () => {

@@ -99,6 +99,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
   });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [detailArticleId, setDetailArticleId] = useState(null);
+  const detailArticleIdRef = useRef(null);
+  useEffect(() => { detailArticleIdRef.current = detailArticleId; }, [detailArticleId]);
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -271,14 +273,16 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
   const handleCheckCoverage = async () => {
     if (detailArticleId == null || detailCheckingCoverage) return;
+    const checkedId = detailArticleId;
     setDetailCheckingCoverage(true);
     setDetailActionMessage('');
     try {
       const result = await checkCoverage(detailArticleId);
+      if (detailArticleIdRef.current !== checkedId) return;
       setDetailData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
       setDetailActionMessage('Source reliability signals updated.');
     } catch (err) {
-      setDetailActionMessage(err?.message || 'Failed to check source reliability signals.');
+      if (detailArticleIdRef.current === checkedId) setDetailActionMessage(err?.message || 'Failed to check source reliability signals.');
     } finally {
       setDetailCheckingCoverage(false);
     }
