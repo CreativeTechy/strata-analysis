@@ -79,6 +79,8 @@ class AccuracyRegressionTests(unittest.TestCase):
                                 'quotes': params[20], 'relevance': params[24]})
             return {'id': len(written)}
         with patch.object(w, '_snapshot_rows', return_value=rows), \
+             patch.object(w, '_screen_articles', return_value=(rows, {'source_articles': len(rows), 'usable_articles': len(rows), 'excluded_articles': 0, 'duplicate_articles': 0, 'pending_articles': 0, 'decision_config': {}})), \
+             patch.object(w, '_evaluate_claim_candidate', side_effect=lambda row, topic, claim: {'fingerprint': w._fingerprint(topic, claim), 'status': 'accepted', 'passage': w._best_passage(row, claim), 'reason': 'fixture'}), \
              patch.object(w, 'get_embeddings', return_value=[]), \
              patch.object(w, '_project_scope', return_value={'name': 'Oil production'}), \
              patch.object(w, '_classify_relevance', side_effect=classify), \
@@ -89,8 +91,8 @@ class AccuracyRegressionTests(unittest.TestCase):
         return written, screened
 
     def test_opposing_document_passages_do_not_support_extracted_claim(self):
-        rows = [{'id': i, 'text': f'Oil production did not increase last month. Publisher {i}.',
-                 'key_points': ['Oil production increased last month'],
+        rows = [{'id': i, 'text': f'Oil production did not increase during the previous reporting month. Publisher {i}.',
+                 'key_points': ['Oil production increased during the previous reporting month'],
                  'source_provenance': {'publisher': f'Publisher {i}'}} for i in (1, 2)]
         written, screened = self.run_generation(rows)
         self.assertEqual(len(screened), 2)
@@ -98,7 +100,7 @@ class AccuracyRegressionTests(unittest.TestCase):
         self.assertEqual(written[0]['assessment'], 'contradicted')
 
     def test_each_claim_is_screened_and_duplicate_quotes_count_once(self):
-        claim = 'Oil production increased last month'
+        claim = 'Oil production increased during the previous reporting month'
         rows = [{'id': 1, 'text': claim + '.', 'key_points': [claim, claim, 'The football club won its final match']}]
         written, screened = self.run_generation(rows)
         self.assertEqual(len(screened), 2)

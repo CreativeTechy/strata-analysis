@@ -4,7 +4,8 @@ import { AlertTriangle, ArrowLeft, BarChart3, CheckCircle2, ChevronDown, Chevron
 import { useAuth } from '../auth/useAuth.js';
 import {
   compareEvidenceRuns, getEvidenceClaim, getEvidenceWorkspace, retryEvidenceRun,
-  reviewEvidenceClaim, reviewEvidenceProvenance, reviewEvidenceRelevance, updateEvidenceScope,
+  reviewEvidenceArticleScreening, reviewEvidenceClaim, reviewEvidenceProvenance,
+  reviewEvidenceRelevance, updateEvidenceScope,
 } from '../api/projectsApi.js';
 import '../styles/Evidence.css';
 
@@ -134,6 +135,10 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [relevanceDecision, setRelevanceDecision] = useState('direct');
   const [relevanceReason, setRelevanceReason] = useState('');
   const [savingRelevance, setSavingRelevance] = useState(false);
+  const [sourceReviewTarget, setSourceReviewTarget] = useState(null);
+  const [sourceReviewDecision, setSourceReviewDecision] = useState('include');
+  const [sourceReviewReason, setSourceReviewReason] = useState('');
+  const [savingSourceReview, setSavingSourceReview] = useState(false);
   const [view, setView] = useState('review');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [matrixPage, setMatrixPage] = useState(0);
@@ -241,6 +246,18 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       setSelected(result.claim); setRelevanceReason(''); await load();
     } catch (err) { setError(err?.message || 'Failed to save relevance review.'); }
     finally { setSavingRelevance(false); }
+  };
+
+  const saveSourceReview = async () => {
+    if (!sourceReviewTarget || !sourceReviewReason.trim() || !data?.selected_run_id) return;
+    setSavingSourceReview(true); setError('');
+    try {
+      await reviewEvidenceArticleScreening(projectId, data.selected_run_id, sourceReviewTarget.article_id, {
+        decision: sourceReviewDecision, reason: sourceReviewReason,
+      });
+      setSourceReviewTarget(null); setSourceReviewReason(''); await load();
+    } catch (err) { setError(err?.message || 'Failed to save the source review.'); }
+    finally { setSavingSourceReview(false); }
   };
 
   const saveScope = async () => {
@@ -441,7 +458,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
             return <button type="button" role="tab" aria-selected={active} className={active ? 'active' : ''} key={item.generation} onClick={() => updateFilters({ generation: item.generation })}>
               <span className={`evidence-generation-status ${item.status}`}>{item.status}</span>
               <strong>{item.legacy ? 'Legacy evidence' : `Evidence #${item.generation}`}</strong>
-              <small>{formatDateTime(item.started_at || item.created_at)}{item.status === 'success' && !item.legacy ? ` · ${relevant} relevant claims` : ''}</small>
+              <small>{formatDateTime(item.started_at || item.created_at)}{item.status === 'success' && !item.legacy ? ` · ${relevant} relevant claims · ${item.excluded_article_count || 0} sources excluded` : ''}</small>
               {Number(data.active_generation) === Number(item.generation) ? <b>Published</b> : null}
             </button>;
           })}
@@ -454,6 +471,9 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
         : null}
       {selectedGeneration?.status === 'failed'
         ? <div className="evidence-error">Evidence processing failed: {selectedGeneration.error || 'Unknown error'}. The last published evidence is still available in its tab. Use Rebuild evidence to retry safely.</div>
+        : null}
+      {selectedGeneration?.status === 'failed' && ((data?.excluded_articles || []).length || (data?.candidate_review || []).length)
+        ? <details className="glass-card evidence-quality-review"><summary><span><strong>Review failed attempt decisions</strong><small>{data.excluded_articles?.length || 0} excluded sources · {data.candidate_review?.length || 0} unsupported candidates shown</small></span><ChevronDown size={17} /></summary><p>The failed attempt did not replace published evidence. These saved reasons explain what it excluded before stopping.</p><div className="evidence-quality-list">{(data.excluded_articles || []).map((item) => <article key={item.article_id}><div><strong>{item.title || item.source || `Article ${item.article_id}`}</strong><span>{item.quality_code.replaceAll('_', ' ')}</span><p>{item.reason}</p></div></article>)}{(data.candidate_review || []).map((item, index) => <article key={`${item.article_id}-${index}`}><div><strong>{item.claim_text}</strong><span>{item.status.replaceAll('_', ' ')} · {item.source_title || `Article ${item.article_id}`}</span><p>{item.reason}</p></div></article>)}</div></details>
         : null}
       {selectedGeneration?.status === 'running' || selectedGeneration?.status === 'pending'
         ? <div className="glass-card evidence-generation-progress"><RefreshCw size={18} className="spin" /><div><strong>Evidence processing is running</strong><span>{selectedGeneration.candidate_count ? `${selectedGeneration.classified_count || 0} of ${selectedGeneration.candidate_count} candidates classified` : 'Preparing claim candidates…'}</span></div></div>
@@ -471,6 +491,18 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
           <div className={`glass-card evidence-stat ${(overview.needs_review_claims || 0) ? 'attention' : ''}`}><span>Needs review</span><strong>{overview.needs_review_claims || 0}</strong><small>Quotation or source needs attention</small></div>
           {assessmentCards.map(([key, value]) => <button type="button" className={`glass-card ${assessmentFilter === key ? 'active' : ''}`} key={key} onClick={() => updateFilters({ assessment: assessmentFilter === key ? '' : key })}><span>{LABELS[key] || key}</span><strong>{value}</strong></button>)}
         </div>
+
+        <details className="glass-card evidence-quality-review">
+          <summary><span><strong>Source and candidate quality</strong><small>{selectedGeneration?.excluded_article_count || 0} sources excluded · {selectedGeneration?.unsupported_candidate_count || 0} unsupported candidates · {selectedGeneration?.duplicate_article_count || 0} duplicate records</small></span><ChevronDown size={17} /></summary>
+          <p>Similarity is a ranking signal, not a confidence percentage. Excluded material stays here with its reason. A source review applies on the next evidence rebuild.</p>
+          {(data.quality_summary || []).length ? <div className="evidence-quality-counts">{data.quality_summary.map((item) => <span key={`${item.decision}-${item.quality_code}`}><strong>{item.count}</strong> {item.decision.replaceAll('_', ' ')} · {item.quality_code.replaceAll('_', ' ')}</span>)}</div> : null}
+          {(data.excluded_articles || []).length ? <div className="evidence-quality-list"><h4>Excluded or pending sources</h4>{data.excluded_articles.map((item) => <article key={item.article_id}>
+            <div><strong>{item.title || item.source || `Article ${item.article_id}`}</strong><span>{item.decision.replaceAll('_', ' ')} · {item.quality_code.replaceAll('_', ' ')} · {item.decision_method.replaceAll('_', ' ')}</span><p>{item.reason}</p>{item.best_passage ? <blockquote>{item.best_passage}</blockquote> : null}{item.review_decision ? <small>Latest review: {item.review_decision} — {item.review_reason}</small> : null}</div>
+            {canReview ? <button type="button" className="btn-secondary" onClick={() => { setSourceReviewTarget(item); setSourceReviewDecision('include'); setSourceReviewReason(''); }}>Review</button> : null}
+            {sourceReviewTarget?.article_id === item.article_id ? <div className="evidence-quality-form"><select value={sourceReviewDecision} onChange={(event) => setSourceReviewDecision(event.target.value)}><option value="include">Include next rebuild</option><option value="exclude">Keep excluded</option><option value="needs_review">Needs review</option></select><textarea value={sourceReviewReason} onChange={(event) => setSourceReviewReason(event.target.value)} placeholder="Required reason" rows={2} /><button type="button" className="btn-primary" disabled={savingSourceReview || !sourceReviewReason.trim()} onClick={saveSourceReview}>{savingSourceReview ? 'Saving…' : 'Save review'}</button></div> : null}
+          </article>)}</div> : null}
+          {(data.candidate_review || []).length ? <div className="evidence-quality-list"><h4>Unsupported claim candidates</h4>{data.candidate_review.map((item, index) => <article key={`${item.article_id}-${index}`}><div><strong>{item.claim_text}</strong><span>{item.status.replaceAll('_', ' ')} · {item.topic} · {item.source_title || `Article ${item.article_id}`}</span><p>{item.reason}</p>{item.passage ? <blockquote>{item.passage}</blockquote> : null}</div></article>)}</div> : null}
+        </details>
 
         {(data?.runs || []).length > 1 ? <div className="glass-card evidence-comparison">
           <div><strong>Compare runs</strong><span>See evidence changes separately from rules-only reprocessing.</span></div>

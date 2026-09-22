@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
@@ -7,7 +7,6 @@ import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
 import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
-import ArticleDetailModal from './articles/ArticleDetailModal.jsx';
 import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
@@ -24,7 +23,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, getArticleAnalysis, checkCoverage, reprocessArticle, deleteAllArticles, deleteArticle,
+  listArticles, deleteAllArticles,
   exportArticles, importArticles, getImportStatus,
 } from '../api/articlesApi.js';
 import '../styles/Articles.css';
@@ -54,12 +53,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
   }, [projectId]);
   // Read once on mount (lazy initializers only run on the first render) so a link
   // like /articles?search=EV&project_id=3 (e.g. from the "Trending keywords &
-  // hashtags" card) pre-fills the filters; later edits to these filters
-  // intentionally don't rewrite the URL.
-  const [searchParams] = useSearchParams();
+  // hashtags" card) pre-fills the filters. Later edits to these filters do
+  // get mirrored back into the URL (see the sync effect below), so a round
+  // trip through the article detail page can restore them on return.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
-  const [sentiment, setSentiment] = useState('all');
+  const [sentiment, setSentiment] = useState(() => searchParams.get('sentiment') || 'all');
   const [projectFilter, setProjectFilter] = useState(() => (
     searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
   ));
@@ -71,17 +72,18 @@ export default function ArticlesPage({ project = null, projectId = null, project
     () => searchParams.get('coverage_status') || 'all',
   );
   const [limit, setLimit] = useState(24);
-  const [offset, setOffset] = useState(0);
-  const [sort, setSort] = useState('published.desc');
-  const [addedFrom, setAddedFrom] = useState('');
-  const [addedTo, setAddedTo] = useState('');
+  const [offset, setOffset] = useState(() => {
+    const parsed = Number(searchParams.get('offset'));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  });
+  const [sort, setSort] = useState(() => searchParams.get('sort') || 'published.desc');
+  const [addedFrom, setAddedFrom] = useState(() => searchParams.get('added_from') || '');
+  const [addedTo, setAddedTo] = useState(() => searchParams.get('added_to') || '');
   const [articles, setArticles] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deletingArticle, setDeletingArticle] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importRun, setImportRun] = useState(null);
@@ -98,37 +100,62 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const [detailArticleId, setDetailArticleId] = useState(null);
-  const detailArticleIdRef = useRef(null);
-  useEffect(() => { detailArticleIdRef.current = detailArticleId; }, [detailArticleId]);
-  const [detailData, setDetailData] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState('');
-  const [detailReprocessing, setDetailReprocessing] = useState(false);
-  const [detailCheckingCoverage, setDetailCheckingCoverage] = useState(false);
-  const [detailActionMessage, setDetailActionMessage] = useState('');
   const hasArticlesRef = useRef(false);
   const searchInputRef = useRef(null);
   const importInputRef = useRef(null);
   const importFolderInputRef = useRef(null);
+  const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const canDeleteAll = hasPermission('articles.delete');
   const canImport = hasPermission('articles.import');
-  const canReprocess = hasPermission('pipeline.run');
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // Compares the actual filter *values* against what they were last time,
+  // rather than counting invocations ("have I run before?"): the latter
+  // breaks under React StrictMode, which deliberately double-invokes a
+  // fresh mount's effects (with identical deps both times) to surface
+  // exactly this kind of bug - an invocation-count flag sees the harmless
+  // second invocation as a "real" subsequent change and zeroes offset right
+  // back out, undoing the restore-from-URL below on every single mount in
+  // dev. Comparing values instead of counting runs means the ref only ever
+  // reads as "changed" when a filter actually did.
+  const filtersKeyRef = useRef(null);
   useEffect(() => {
-    setOffset(0);
+    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
+    if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
+      setOffset(0);
+    }
+    filtersKeyRef.current = key;
   }, [search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
     return projects.find((item) => String(item.id) === String(projectFilter)) || null;
   }, [projects, projectFilter]);
+
+  // Keeps the URL's query string mirroring the live filters/offset (a plain
+  // `replace`, so it doesn't grow the back-button history) so that navigating
+  // to /articles/:id and back lands on the same search, filters, and page
+  // instead of resetting to the defaults - the round trip a routed detail
+  // page (as opposed to the old in-place modal) makes possible.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (search) next.set('search', search);
+    if (projectFilter !== 'all') next.set('project_id', projectFilter);
+    if (sourceFilter !== 'all') next.set('source', sourceFilter);
+    if (sentiment !== 'all') next.set('sentiment', sentiment);
+    if (coverageFilter !== 'all') next.set('coverage_status', coverageFilter);
+    if (addedFrom) next.set('added_from', addedFrom);
+    if (addedTo) next.set('added_to', addedTo);
+    if (sort !== 'published.desc') next.set('sort', sort);
+    if (offset > 0) next.set('offset', String(offset));
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, projectFilter, sourceFilter, sentiment, coverageFilter, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -209,29 +236,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
     hasArticlesRef.current = articles.length > 0;
   }, [articles.length]);
 
-  useEffect(() => {
-    if (detailArticleId == null) return undefined;
-    const controller = new AbortController();
-    async function loadDetail() {
-      setDetailLoading(true);
-      setDetailError('');
-      setDetailActionMessage('');
-      try {
-        const data = await getArticleAnalysis(detailArticleId, controller.signal);
-        setDetailData(data?.analysis || null);
-      } catch (err) {
-        if (err?.name !== 'AbortError') {
-          setDetailData(null);
-          setDetailError(err?.message || 'Failed to load analysis details.');
-        }
-      } finally {
-        setDetailLoading(false);
-      }
-    }
-    loadDetail();
-    return () => controller.abort();
-  }, [detailArticleId]);
-
   const changeViewMode = (mode) => {
     setViewMode(mode);
     try {
@@ -248,44 +252,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
       else next.add(id);
       return next;
     });
-  };
-
-  const closeDetailModal = () => {
-    setDetailArticleId(null);
-    setDetailData(null);
-    setDetailError('');
-    setDetailActionMessage('');
-  };
-
-  const handleReprocess = async () => {
-    if (detailArticleId == null || detailReprocessing) return;
-    setDetailReprocessing(true);
-    setDetailActionMessage('');
-    try {
-      await reprocessArticle(detailArticleId);
-      setDetailActionMessage('Reprocessing started - reopen this panel in a moment to see the updated result.');
-    } catch (err) {
-      setDetailActionMessage(err?.message || 'Failed to reprocess article.');
-    } finally {
-      setDetailReprocessing(false);
-    }
-  };
-
-  const handleCheckCoverage = async () => {
-    if (detailArticleId == null || detailCheckingCoverage) return;
-    const checkedId = detailArticleId;
-    setDetailCheckingCoverage(true);
-    setDetailActionMessage('');
-    try {
-      const result = await checkCoverage(detailArticleId);
-      if (detailArticleIdRef.current !== checkedId) return;
-      setDetailData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
-      setDetailActionMessage('Source reliability signals updated.');
-    } catch (err) {
-      if (detailArticleIdRef.current === checkedId) setDetailActionMessage(err?.message || 'Failed to check source reliability signals.');
-    } finally {
-      setDetailCheckingCoverage(false);
-    }
   };
 
   const start = total === 0 ? 0 : offset + 1;
@@ -330,21 +296,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setError(err?.message || 'Failed to delete articles.');
     } finally {
       setDeletingAll(false);
-    }
-  };
-
-  const handleDeleteArticle = async () => {
-    if (!deleteTarget || deletingArticle) return;
-    setDeletingArticle(true);
-    setError('');
-    try {
-      await deleteArticle(deleteTarget.id);
-      setDeleteTarget(null);
-      setReloadToken((value) => value + 1);
-    } catch (err) {
-      setError(err?.message || 'Failed to delete article.');
-    } finally {
-      setDeletingArticle(false);
     }
   };
 
@@ -618,22 +569,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
         />
 
         <ConfirmModal
-          open={Boolean(deleteTarget)}
-          title="Delete this article?"
-          message={deleteTarget ? `"${deleteTarget.title || 'Untitled article'}" will be permanently removed and cannot be undone.` : ''}
-          confirmLabel={deletingArticle ? 'Deleting...' : 'Delete article'}
-          cancelLabel="Keep article"
-          confirmButtonStyle={{
-            background: 'linear-gradient(135deg, #ff4757, #e03131)',
-            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
-          }}
-          onClose={() => {
-            if (!deletingArticle) setDeleteTarget(null);
-          }}
-          onConfirm={handleDeleteArticle}
-        />
-
-        <ConfirmModal
           open={showExportModal}
           title="Export articles?"
           message={`This will export ${total.toLocaleString()} article${total === 1 ? '' : 's'} matching your current filters as a JSONL file.`}
@@ -662,20 +597,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
             setShowImportModal(false);
             importFolderInputRef.current?.click();
           }}
-        />
-
-        <ArticleDetailModal
-          open={detailArticleId != null}
-          canReprocess={canReprocess}
-          loading={detailLoading}
-          error={detailError}
-          data={detailData}
-          actionMessage={detailActionMessage}
-          reprocessing={detailReprocessing}
-          checkingCoverage={detailCheckingCoverage}
-          onClose={closeDetailModal}
-          onReprocess={handleReprocess}
-          onCheckCoverage={handleCheckCoverage}
         />
 
         <div className="articles-filters-row">
@@ -923,10 +844,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       index={i}
                       isExpanded={expandedRows.has(article.id)}
                       isRefreshing={isRefreshing}
-                      canDelete={canDeleteAll}
                       onToggleExpanded={() => toggleRowExpanded(article.id)}
-                      onShowDetails={() => setDetailArticleId(article.id)}
-                      onDelete={() => setDeleteTarget(article)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`, { state: { from: `${location.pathname}${location.search}` } })}
                     />
                   ))}
                 </AnimatePresence>
@@ -941,9 +860,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       search={search}
                       index={i}
                       isRefreshing={isRefreshing}
-                      canDelete={canDeleteAll}
-                      onShowDetails={() => setDetailArticleId(article.id)}
-                      onDelete={() => setDeleteTarget(article)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`, { state: { from: `${location.pathname}${location.search}` } })}
                     />
                   ))}
                 </AnimatePresence>

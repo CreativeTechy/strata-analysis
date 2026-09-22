@@ -93,6 +93,8 @@ export const reviewEvidenceRelevance = (projectId, claimId, body) =>
   request(`/${projectId}/evidence/claims/${claimId}/relevance-review`, { method: 'POST', body });
 export const reviewEvidenceProvenance = (projectId, articleId, body) =>
   request(`/${projectId}/evidence/articles/${articleId}/provenance-review`, { method: 'POST', body });
+export const reviewEvidenceArticleScreening = (projectId, runId, articleId, body) =>
+  request(`/${projectId}/evidence/runs/${runId}/articles/${articleId}/screening-review`, { method: 'POST', body });
 export const retryEvidenceRun = (projectId, runId) =>
   request(`/${projectId}/evidence/runs/${runId}/retry`, { method: 'POST' });
 export const updateEvidenceScope = (projectId, runId, body) =>

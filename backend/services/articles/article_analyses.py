@@ -96,30 +96,36 @@ _PEOPLE_OPINIONS_KEYS = (
     ("sentiment", "po.sentiment"),
     ("category", "po.category"),
     ("gender", "po.gender"),
-    # Added by migration 0019, so it is the one key here that a database may
-    # legitimately not have yet - see _people_opinions_sql().
+    # Added by migration 0019, so it is one of the keys here that a database
+    # may legitimately not have yet - see _people_opinions_sql().
     ("gender_evidence", "po.gender_evidence"),
     ("age_range", "po.age_range"),
+    # Added by migration 0021, same reasoning as gender_evidence above.
+    ("age_evidence", "po.age_evidence"),
     ("region", "po.region"),
     ("segment", "po.segment"),
 )
+
+# Keys whose column may not exist yet on a database mid-migration-rollout -
+# see _people_opinions_sql().
+_OPTIONAL_PEOPLE_OPINIONS_KEYS = ("gender_evidence", "age_evidence")
 
 
 def _people_opinions_sql() -> str:
     """The people-opinions jsonb sub-select, built from the columns this
     database actually has.
 
-    gender_evidence arrived in migration 0019. Naming it unconditionally would
-    make the whole snapshot insert fail on a database that hasn't applied that
-    migration yet (MIGRATE_ON_STARTUP=false, or a replica mid-rollout) - and
-    because record_analysis_snapshot() swallows failures by design, that would
-    silently produce no article_analyses rows at all for every article in the
-    run rather than a snapshot missing one key. Dropping the key keeps the
-    run comparable; the same reasoning guards the write side in
-    store._replace_article_children()."""
+    gender_evidence/age_evidence arrived in migrations 0019/0021. Naming one
+    unconditionally would make the whole snapshot insert fail on a database
+    that hasn't applied that migration yet (MIGRATE_ON_STARTUP=false, or a
+    replica mid-rollout) - and because record_analysis_snapshot() swallows
+    failures by design, that would silently produce no article_analyses rows
+    at all for every article in the run rather than a snapshot missing one
+    key. Dropping the key keeps the run comparable; the same reasoning
+    guards the write side in store._replace_article_children()."""
     pairs = [
         (key, source) for key, source in _PEOPLE_OPINIONS_KEYS
-        if key != "gender_evidence" or _table_has_column("article_people_opinions", "gender_evidence")
+        if key not in _OPTIONAL_PEOPLE_OPINIONS_KEYS or _table_has_column("article_people_opinions", key)
     ]
     fields = ", ".join(f"'{key}', {source}" for key, source in pairs)
     return f"""

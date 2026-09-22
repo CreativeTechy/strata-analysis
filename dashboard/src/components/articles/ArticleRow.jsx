@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion';
-import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info, Trash2 } from 'lucide-react';
-import { computeOverallTone } from '../../lib/tone.js';
+import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info } from 'lucide-react';
 import {
   prettyLabel, articleDate, addedAtLabel, formatMatchScore, highlightMatches,
   articleSourceLink, articleSourceLabel,
@@ -8,7 +7,7 @@ import {
 
 // One row in the ("List") view mode - collapsed to a summary line by
 // default, expanding in place to the same detail an ArticleCard shows.
-export default function ArticleRow({ article, search, index, isExpanded, isRefreshing, canDelete, onToggleExpanded, onShowDetails, onDelete }) {
+export default function ArticleRow({ article, search, index, isExpanded, isRefreshing, onToggleExpanded, onShowDetails }) {
   const sourceLink = articleSourceLink(article);
   return (
     <motion.div
@@ -43,6 +42,16 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
             <span className="badge category">
               {prettyLabel(article.article_category || article.category || 'general_article')}
             </span>
+            {article.author ? (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Author">
+                By {article.author}
+              </span>
+            ) : null}
+            {article.region && article.region !== 'unknown' ? (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Region">
+                Region: {prettyLabel(article.region)}
+              </span>
+            ) : null}
             {article.source_language ? (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Detected source language">
                 Language: {article.source_language.toUpperCase()}
@@ -57,15 +66,6 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
                 Collected: {articleDate(article.source_run_snapshot.started_at)}
               </span>
             ) : null}
-            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Writer tone">
-              Writer: {prettyLabel(article.writer_tone || 'neutral')}
-            </span>
-            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Article tone">
-              Article: {prettyLabel(article.article_tone || 'neutral')}
-            </span>
-            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="Overall tone (derived from writer + article tone)">
-              Overall: {prettyLabel(computeOverallTone(article.article_tone, article.writer_tone))}
-            </span>
             <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title="When this article entered the system">
               <Calendar size={11} style={{ marginRight: 4 }} /> Added: {addedAtLabel(article.fetched_at)}
             </span>
@@ -123,17 +123,6 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
             >
               <Info size={13} /> Analysis details
             </button>
-            {canDelete && (
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
-                onClick={onDelete}
-                title="Delete article"
-              >
-                <Trash2 size={13} /> Delete
-              </button>
-            )}
           </div>
         </div>
       ) : null}

@@ -19,6 +19,7 @@ import CompetitorReportPage from './components/CompetitorReportPage';
 import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
 import ArticlesPage from './components/ArticlesPage';
+import ArticleDetailPage from './components/ArticleDetailPage';
 import AnalysisPage from './components/AnalysisPage';
 import LoginPage from './components/LoginPage';
 import UsersPage from './components/UsersPage';
@@ -86,6 +87,17 @@ export default function App() {
 
 
   const selectedPipelineHealth = useMemo(() => {
+    // With a specific analysis run selected on the Dashboard, the health
+    // card should reflect that run rather than whatever ran most recently
+    // for the project - otherwise picking an older run leaves the card
+    // silently describing a different run than the rest of the page.
+    if (dashboardRunId) {
+      const selectedRun = projectRuns.find((run) => Number(run.id) === Number(dashboardRunId)) || null;
+      return {
+        lastRun: selectedRun,
+        lastFinished: selectedRun?.finished_at ? selectedRun : null,
+      };
+    }
     const scoped = pipelineRuns
       .filter((run) => Number(run?.project_id) === Number(selectedProjectId))
       .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
@@ -93,7 +105,7 @@ export default function App() {
       lastRun: scoped[0] || null,
       lastFinished: scoped.find((run) => run?.finished_at) || null,
     };
-  }, [pipelineRuns, selectedProjectId]);
+  }, [pipelineRuns, projectRuns, selectedProjectId, dashboardRunId]);
 
 
   const coerceProjectId = (value) => {
@@ -396,6 +408,7 @@ export default function App() {
           <Route path="/dashboard" element={renderDashboardView()} />
           <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
+          <Route path="/articles/:articleId" element={<ArticleDetailPage />} />
           <Route path="/sources" element={<SourcesPage projectId={selectedProjectId} projects={opinionMonitorProjects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />

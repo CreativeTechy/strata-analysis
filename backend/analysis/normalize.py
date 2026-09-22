@@ -87,7 +87,53 @@ def normalize_gender(value) -> str:
 
 def normalize_age_range(value) -> str:
     age_range = as_text(value).lower().replace(" ", "")
-    return age_range if age_range in VALID_AGE_RANGES else labels.DEFAULT_AGE_RANGE
+    if age_range in VALID_AGE_RANGES:
+        return age_range
+    return labels.AGE_RANGE_ALIASES.get(age_range, labels.DEFAULT_AGE_RANGE)
+
+
+_MIN_PLAUSIBLE_AGE_YEARS = 5
+_MAX_PLAUSIBLE_AGE_YEARS = 120
+
+
+def _parse_age_years(value):
+    """A plausible human age parsed out of `value`, or None - guards
+    bucket_age_years against non-numeric input and against nonsense numbers
+    (a stray page number, a year like "2024") a model might drop into the
+    field instead of leaving it blank. The lower bound is deliberately above
+    zero: a model that emits "0" as a placeholder for "no age given" (instead
+    of the "" the prompt asks for) must not be read as a stated age of zero -
+    that would silently override a correct model-given age_range/age_evidence
+    with "under_18" (bucket_age_years is preferred over them whenever it
+    resolves - see normalize_people_opinions)."""
+    try:
+        age = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return age if _MIN_PLAUSIBLE_AGE_YEARS <= age <= _MAX_PLAUSIBLE_AGE_YEARS else None
+
+
+_AGE_RANGE_UPPER_BOUNDS = (
+    (18, "under_18"), (25, "18-24"), (35, "25-34"), (45, "35-44"),
+    (55, "45-54"), (65, "55-64"),
+)
+
+
+def bucket_age_years(value) -> str:
+    """Deterministically bucket a person's exact stated age (e.g. the
+    extraction prompt's people_opinions.age_years, "I'm 42") into
+    VALID_AGE_RANGES, instead of trusting the model to also get the bucket
+    boundary right itself - a raw number is far less likely to be wrong than
+    the model's own choice among 7 similarly-worded buckets. Returns "" when
+    `value` isn't a plausible age, so callers fall back to the model's own
+    age_range/age_evidence instead."""
+    age = _parse_age_years(value)
+    if age is None:
+        return ""
+    for upper_bound, bucket in _AGE_RANGE_UPPER_BOUNDS:
+        if age < upper_bound:
+            return bucket
+    return "65_plus"
 
 
 def normalize_region(value) -> str:
@@ -154,6 +200,21 @@ def normalize_gender_evidence(value, gender: str) -> str:
     return as_text(value)[:_GENDER_EVIDENCE_MAX_LEN]
 
 
+_AGE_EVIDENCE_MAX_LEN = 160
+
+
+def normalize_age_evidence(value, age_range: str) -> str:
+    """Mirrors normalize_gender_evidence: an audit trail for `age_range`,
+    dropped whenever age_range itself resolved to "unknown". Populated either
+    from the model's quoted age_evidence phrase, or (see normalize_people_opinions)
+    from the raw age_years number when bucket_age_years resolved the range
+    deterministically - either way this is "what backed the bucket", not a
+    second independent field."""
+    if age_range == labels.DEFAULT_AGE_RANGE:
+        return ""
+    return as_text(value)[:_AGE_EVIDENCE_MAX_LEN]
+
+
 def normalize_people_opinions(value) -> list:
     opinions = []
     if not isinstance(value, list):
@@ -169,6 +230,7 @@ def normalize_people_opinions(value) -> list:
                     "gender": labels.DEFAULT_GENDER,
                     "gender_evidence": "",
                     "age_range": labels.DEFAULT_AGE_RANGE,
+                    "age_evidence": "",
                     "region": labels.DEFAULT_REGION,
                     "segment": labels.DEFAULT_SEGMENT,
                 })
@@ -177,13 +239,21 @@ def normalize_people_opinions(value) -> list:
         if not opinion:
             continue
         gender = normalize_gender(item.get("gender"))
+        # A raw stated age (age_years, e.g. "I'm 42") beats the model's own
+        # bucket choice when both are given - see bucket_age_years. Falls
+        # back to the model's age_range/age_evidence when no plausible
+        # age_years was given.
+        age_years_bucket = bucket_age_years(item.get("age_years"))
+        age_range = age_years_bucket or normalize_age_range(item.get("age_range"))
+        age_evidence_source = item.get("age_years") if age_years_bucket else item.get("age_evidence")
         opinions.append({
             "opinion": opinion,
             "sentiment": normalize_sentiment(item.get("sentiment")),
             "category": as_text(item.get("category")),
             "gender": gender,
             "gender_evidence": normalize_gender_evidence(item.get("gender_evidence"), gender),
-            "age_range": normalize_age_range(item.get("age_range")),
+            "age_range": age_range,
+            "age_evidence": normalize_age_evidence(age_evidence_source, age_range),
             "region": normalize_region(item.get("region")),
             "segment": as_text(item.get("segment")) or labels.DEFAULT_SEGMENT,
         })

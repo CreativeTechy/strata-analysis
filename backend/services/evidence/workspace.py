@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
@@ -22,7 +23,7 @@ from psycopg.types.json import Jsonb
 from services.projects.projects_store import get_project
 from services.articles.publisher_identity import publisher_domain
 
-RULES_VERSION = "evidence-v7"
+RULES_VERSION = "evidence-v8-grounded-accuracy"
 RELEVANCE_LABELS = {"direct", "contextual", "unrelated", "uncertain"}
 DEFAULT_VISIBLE_RELEVANCE = {"direct", "contextual"}
 RELEVANCE_BATCH_SIZE = 20
@@ -39,7 +40,11 @@ _FORECAST = re.compile(r"\b(will|expects?|forecast|projected|plans?|aims?|next (
 _OPINION = re.compile(r"\b(think|believe|feel|in my view|should|best|worst)\b", re.I)
 _CAUSAL = re.compile(r"\b(because|caused|causes|led to|resulted in|due to|drives?)\b", re.I)
 _ATTRIBUTED = re.compile(r"\b(said|stated|announced|according to|reported|claimed)\b", re.I)
-_NEGATION = re.compile(r"\b(no|not|never|didn't|doesn't|won't|without)\b", re.I)
+_NEGATION = re.compile(
+    r"\b(no|not|never|cannot|can't|isn't|aren't|wasn't|weren't|didn't|doesn't|hasn't|haven't|won't|without)\b",
+    re.I,
+)
+_AR_NEGATION = re.compile(r"(?:^|\s)(?:لا|لم|لن|ليس|ليست|ما)(?=\s|$)")
 _UP = re.compile(r"\b(increase[ds]?|increasing|rose|risen|higher|grew|growth|support(?:s|ed)?)\b", re.I)
 _DOWN = re.compile(r"\b(decrease[ds]?|decreasing|fell|fallen|lower|decline[ds]?|declining|oppose[ds]?|ban)\b", re.I)
 _AR_FORECAST = re.compile(r"(?:\bسوف\b|\bمن المتوقع\b|\bيتوقع\b|\bمتوقع\b|\bسي(?=[\u0621-\u064a]))")
@@ -69,6 +74,24 @@ _QUANTITY = re.compile(
     rf"(?:[$£€]\s?\d[\d,.]*|\b\d[\d,.]*(?:\s?(?:%|percent|million|billion|trillion|tonnes?|tons?|barrels?|bpd|days?|months?|years?))?"
     rf"|\b{_NUMBER_WORD}\s+(?:percent|million|billion|trillion)\b)",
     re.I,
+)
+
+_BLOCKED_CONTENT = re.compile(
+    r"(?:access denied|forbidden|page (?:is )?unavailable|content (?:is )?unavailable|"
+    r"login (?:required|error)|sign in to continue|verification code|verify (?:that )?you are human|"
+    r"enable javascript|cloudflare ray id|error\s*(?:401|403|404)|"
+    r"تعذر الوصول|الوصول مرفوض|المحتوى غير متاح|سج[ّ]?ل الدخول|رمز التحقق|تحقق من أنك إنسان)", re.I,
+)
+_BOILERPLATE = re.compile(
+    r"(?:cookie (?:policy|preferences?|settings?)|accept all cookies|privacy policy|terms (?:of|and) conditions|"
+    r"subscribe to (?:our )?newsletter|all rights reserved|skip to (?:main )?content|menu|navigation|"
+    r"سياسة (?:ملفات تعريف الارتباط|الخصوصية)|قبول جميع ملفات تعريف الارتباط|جميع الحقوق محفوظة|القائمة)", re.I,
+)
+_META_CLAIM = re.compile(
+    r"(?:the (?:article|content|page) (?:discusses|covers|notes|is|was)|"
+    r"content (?:provided|is) (?:not accessible|unavailable|incomplete)|"
+    r"unable to (?:access|retrieve)|login error|verification code|cookie policy|"
+    r"المقال (?:يناقش|يتناول)|المحتوى (?:غير متاح|غير مكتمل)|تعذر (?:الوصول|استرجاع))", re.I,
 )
 
 _CLAIM_EQUIVALENTS = {
@@ -132,6 +155,16 @@ def _project_scope(project_id: int, override: dict | None = None) -> dict:
 def _scope_hash(scope: dict) -> str:
     payload = json.dumps(scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _evidence_scope_text(scope: dict) -> str:
+    """Include the evidence question, not only generic project metadata."""
+    parts = [
+        build_project_embedding_text(scope),
+        str(scope.get("direct_relevance") or "").strip(),
+        str(scope.get("contextual_relevance") or "").strip(),
+    ]
+    return "\n".join(part for part in parts if part)[:8000]
 
 
 def get_run_scope(run_id: str, project_id: int) -> dict:
@@ -415,12 +448,14 @@ def _classify_relevance_resilient(scope: dict, groups: list[dict]) -> dict[str, 
 def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
     """Use versioned cache entries and bounded LLM batches."""
     if config.EVIDENCE_RELEVANCE_MODE == "embedding":
-        embedded_scope = get_embedding(build_project_embedding_text(scope), role="query")
+        embedded_scope = get_embedding(_evidence_scope_text(scope), role="query")
         scope_vector = embedded_scope.get("embedding_json") or []
+        concept_words, location_words = _scope_concept_words(scope)
         results = {}
         for group in groups:
             key = group["fingerprint"]
-            claim_vector = (group.get("canonical") or {}).get("embedding") or []
+            canonical = group.get("canonical") or {}
+            claim_vector = canonical.get("embedding") or []
             if not scope_vector or not claim_vector:
                 results[key] = {
                     "relevance": "uncertain",
@@ -430,17 +465,29 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
                 }
                 continue
             score = cosine_similarity(scope_vector, claim_vector)
-            if score >= config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD:
+            candidate_text = "\n".join(str(canonical.get(field) or "") for field in ("claim", "passage"))
+            label, _ = _passage_relevance_label(
+                score, candidate_text, concept_words, location_words,
+                config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD, config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD,
+            ) if candidate_text.strip() else ("uncertain", "")
+            if label != 'unrelated' and score >= config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD:
                 relevance = "uncertain"
                 explanation = "Topic similarity alone cannot establish relevance. Review the claim against the research question."
             else:
-                relevance = "unrelated"
-                explanation = "Local semantic similarity is below the project-relevance threshold."
+                relevance, explanation = "unrelated", "Local semantic similarity is below the project-relevance threshold."
             results[key] = {
                 "relevance": relevance,
                 "explanation": explanation,
                 "score": score,
                 "status": "success",
+                "method": "embedding",
+                "model": config.EMBEDDING_MODEL,
+                "config": {
+                    "direct_threshold": config.EVIDENCE_RELEVANCE_DIRECT_THRESHOLD,
+                    "contextual_threshold": config.EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD,
+                    "score_type": "cosine_similarity",
+                    "calibrated_confidence": False,
+                },
             }
         return results
 
@@ -458,6 +505,8 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
         row["fingerprint"]: {
             "relevance": row["relevance"], "explanation": row.get("explanation") or "",
             "score": float(row.get("score") or 0), "status": row.get("processing_status") or "success",
+            "method": "llm", "model": model,
+            "config": {"batch_size": RELEVANCE_BATCH_SIZE, "calibrated_confidence": False},
         }
         for row in cached_rows
         if content_hashes.get(row["fingerprint"]) == row.get("content_hash")
@@ -467,6 +516,11 @@ def _classify_relevance(scope: dict, groups: list[dict]) -> dict[str, dict]:
     for start in range(0, len(missing), RELEVANCE_BATCH_SIZE):
         batch = missing[start:start + RELEVANCE_BATCH_SIZE]
         classified = _classify_relevance_resilient(scope, batch)
+        for value in classified.values():
+            value.update({
+                "method": "llm", "model": model,
+                "config": {"batch_size": RELEVANCE_BATCH_SIZE, "calibrated_confidence": False},
+            })
         results.update(classified)
         for group in batch:
             key = group["fingerprint"]
@@ -536,6 +590,12 @@ def _origin(row: dict) -> str:
     # Prefer publisher identity so separate stories from one publisher do not
     # masquerade as independent corroboration. Generation-level component
     # grouping below also collapses copies with the same story/origin group.
+    # A deduplicated story is one underlying origin even when several outlets
+    # republished it under different hostnames.
+    # Exact frozen copies are one underlying origin even when importers gave
+    # each syndicated copy a different story or origin identifier.
+    if row.get("_content_duplicate") and row.get("_content_cluster"):
+        return f"content:{row['_content_cluster']}"
     if provenance.get("origin_group"):
         return f"origin:{str(provenance['origin_group']).strip().lower()}"
     publisher = str(provenance.get("publisher") or "").strip().lower()
@@ -626,9 +686,256 @@ def _sentences(row: dict) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?؟۔])\s+|\n+", value) if len(part.strip()) >= 20]
 
 
+def _substantive_passages(row: dict) -> list[str]:
+    """Return source-body passages after removing obvious navigation boilerplate."""
+    passages = []
+    for sentence in _sentences(row):
+        normalized = " ".join(sentence.split())
+        if _BOILERPLATE.search(normalized) and len(normalized) < 320:
+            continue
+        if _BLOCKED_CONTENT.search(normalized) and len(normalized) < 320:
+            continue
+        if len(_words(normalized)) >= 6:
+            # Preserve the exact frozen substring for citation checks. Only
+            # use the normalized copy for classification.
+            passages.append(sentence[:1200])
+    return passages
+
+
+def _content_quality(row: dict) -> dict:
+    """Separate source usability from topical relevance in English and Arabic."""
+    body = " ".join(str(row.get("text") or "").split())
+    if not body:
+        return {"usable": False, "code": "empty_body", "reason": "The frozen source body is empty."}
+    passages = _substantive_passages(row)
+    substantive_length = sum(len(item) for item in passages)
+    if len(body) < 120 or substantive_length < 80:
+        code = "blocked_or_unavailable" if _BLOCKED_CONTENT.search(body) else "insufficient_text"
+        reason = (
+            "The saved page is an access, verification, or unavailable-content response."
+            if code == "blocked_or_unavailable"
+            else "The frozen source has too little substantive body text for evidence."
+        )
+        return {"usable": False, "code": code, "reason": reason}
+    blocked = bool(_BLOCKED_CONTENT.search(body))
+    boilerplate_length = sum(len(part) for part in re.split(r"\n+", str(row.get("text") or "")) if _BOILERPLATE.search(part))
+    if blocked and substantive_length < 320:
+        return {
+            "usable": False, "code": "blocked_or_unavailable",
+            "reason": "Access or verification text dominates the saved page and no substantial article body remains.",
+        }
+    if boilerplate_length > substantive_length * 1.5 and substantive_length < 500:
+        return {
+            "usable": False, "code": "boilerplate_dominated",
+            "reason": "Navigation, cookie, or policy text dominates the saved page.",
+        }
+    return {
+        "usable": True, "code": "usable",
+        "reason": "The frozen source contains enough substantive body text for passage review.",
+        "passages": passages,
+    }
+
+
+def _content_key(row: dict) -> str:
+    normalized = " ".join(str(row.get("text") or "").lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _passage_decision_config() -> dict:
+    return {
+        "direct_threshold": config.EVIDENCE_PASSAGE_DIRECT_THRESHOLD,
+        "contextual_threshold": config.EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD,
+        "score_type": "cosine_similarity",
+        "calibrated_confidence": False,
+        "max_passages": 6,
+    }
+
+
+def _scope_concept_words(scope: dict) -> tuple[set[str], set[str]]:
+    concept = " ".join([
+        str(scope.get("name") or ""), str(scope.get("description") or ""),
+        " ".join(str(item) for item in (scope.get("keywords") or [])),
+        str(scope.get("direct_relevance") or ""),
+    ])
+    return set(_words(concept)), set(_words(scope.get("location") or ""))
+
+
+def _script_families(value: str) -> set[str]:
+    families = set()
+    if re.search(r"[A-Za-z]", value or ""):
+        families.add("latin")
+    if re.search(r"[\u0600-\u06ff]", value or ""):
+        families.add("arabic")
+    return families
+
+
+def _passage_relevance_label(score: float, passage: str, concept_words: set[str],
+                             location_words: set[str], direct_threshold: float | None = None,
+                             contextual_threshold: float | None = None) -> tuple[str, str]:
+    direct_threshold = (
+        config.EVIDENCE_PASSAGE_DIRECT_THRESHOLD if direct_threshold is None else direct_threshold
+    )
+    contextual_threshold = (
+        config.EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD if contextual_threshold is None else contextual_threshold
+    )
+    passage_words = set(_words(passage))
+    material_words = concept_words - location_words
+    concept_overlap = passage_words.intersection(material_words)
+    if score >= direct_threshold:
+        if len(concept_overlap) >= 2:
+            return "direct", "A substantive frozen passage directly matches the research scope."
+        scope_scripts = _script_families(" ".join(material_words))
+        passage_scripts = _script_families(passage)
+        cross_language = bool(scope_scripts and passage_scripts and scope_scripts.isdisjoint(passage_scripts))
+        # Cross-language sources cannot provide lexical overlap. Require a
+        # substantially stronger multilingual embedding match instead.
+        if cross_language and score >= min(1.0, direct_threshold + 0.12):
+            return "direct", "A strong cross-language passage match directly connects to the research scope."
+        return "unrelated", "High topic similarity lacks a concrete non-geographic connection to the project scope."
+    if score >= contextual_threshold:
+        if len(concept_overlap) >= 2:
+            return "contextual", "A substantive frozen passage has a concrete contextual connection to the research scope."
+        return "unrelated", "The passage only shares broad geography or generic terminology with the project scope."
+    return "unrelated", "No substantive frozen passage meets the project relevance threshold."
+
+
+def _screen_articles(rows: list[dict], scope: dict, run_id: str, project_id: int,
+                     generation: int) -> tuple[list[dict], dict]:
+    """Screen frozen bodies and persist every inclusion/exclusion decision."""
+    scope_hash = _scope_hash(scope)
+    decision_config = _passage_decision_config()
+    config_hash = hashlib.sha256(json.dumps(decision_config, sort_keys=True).encode()).hexdigest()
+    scope_text = _evidence_scope_text(scope)
+    scope_vector = (get_embedding(scope_text, role="query") or {}).get("embedding_json") or []
+    scope_words = set(_words(scope_text))
+    concept_words, location_words = _scope_concept_words(scope)
+    article_ids = [int(row["id"]) for row in rows]
+    reviews = db.fetch_all(
+        """select distinct on (article_id) article_id,decision,reason
+             from evidence_article_screening_reviews
+            where project_id=%s and run_id=%s and article_id=any(%s)
+            order by article_id,created_at desc""",
+        (int(project_id), str(run_id), article_ids),
+    ) if article_ids else []
+    review_by_article = {int(item["article_id"]): item for item in (reviews or [])}
+
+    prepared: dict[str, dict] = {}
+    row_quality: dict[int, dict] = {}
+    key_counts = Counter(_content_key(row) for row in rows)
+    for row in rows:
+        quality = _content_quality(row)
+        key = _content_key(row)
+        row["_content_cluster"] = key
+        row["_content_duplicate"] = key_counts[key] > 1
+        row_quality[int(row["id"])] = quality
+        if quality.get("usable") and key not in prepared:
+            ranked = sorted(
+                quality.get("passages") or [],
+                key=lambda passage: len(scope_words.intersection(_words(passage))),
+                reverse=True,
+            )[:decision_config["max_passages"]]
+            prepared[key] = {"row": row, "passages": ranked}
+
+    content_keys = list(prepared)
+    cached = db.fetch_all(
+        """select content_hash,relevance,score,passage,reason
+             from evidence_passage_relevance_cache
+            where scope_hash=%s and rules_version=%s and model=%s
+              and decision_config_hash=%s and content_hash=any(%s)""",
+        (scope_hash, RULES_VERSION, config.EMBEDDING_MODEL, config_hash, content_keys),
+    ) if content_keys else []
+    # Uncertain decisions commonly represent a transient embedding failure;
+    # retry them rather than turning provider downtime into a durable cache hit.
+    decisions = {
+        item["content_hash"]: dict(item) for item in (cached or [])
+        if item.get("relevance") != "uncertain"
+    }
+    missing = [key for key in content_keys if key not in decisions]
+    passages = [passage for key in missing for passage in prepared[key]["passages"]]
+    embedded = get_embeddings(passages, role="passage") if passages else []
+    cursor = 0
+    for key in missing:
+        options = prepared[key]["passages"]
+        vectors = embedded[cursor:cursor + len(options)]
+        cursor += len(options)
+        scored = [
+            (cosine_similarity(scope_vector, vector), passage)
+            for passage, item in zip(options, vectors)
+            if (vector := item.get("embedding_json") or [])
+        ] if scope_vector else []
+        score, passage = max(scored, default=(0.0, ""), key=lambda item: item[0])
+        if not scope_vector or not passage:
+            relevance, reason = "uncertain", "A local passage embedding was unavailable; review this source manually."
+        else:
+            relevance, reason = _passage_relevance_label(score, passage, concept_words, location_words)
+        decisions[key] = {"content_hash": key, "relevance": relevance, "score": score,
+                          "passage": passage, "reason": reason}
+        if relevance != "uncertain":
+            db.execute(
+                """insert into evidence_passage_relevance_cache
+                   (scope_hash,content_hash,rules_version,model,decision_config_hash,relevance,score,passage,reason)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               on conflict (scope_hash,content_hash,rules_version,model,decision_config_hash) do update set
+                 relevance=excluded.relevance,score=excluded.score,passage=excluded.passage,
+                 reason=excluded.reason,updated_at=now()""",
+                (scope_hash, key, RULES_VERSION, config.EMBEDDING_MODEL, config_hash,
+                 relevance, score, passage, reason),
+            )
+
+    included, records = [], []
+    duplicate_count = max(0, len(rows) - len(key_counts))
+    for row in rows:
+        article_id, key = int(row["id"]), row["_content_cluster"]
+        quality = row_quality[article_id]
+        passage_result = decisions.get(key, {"relevance": "uncertain", "score": 0.0, "passage": "",
+                                             "reason": "Source content could not be screened."})
+        review = review_by_article.get(article_id)
+        if review:
+            decision = {"include": "included", "exclude": "excluded", "needs_review": "needs_review"}[review["decision"]]
+            reason, method = review["reason"], "manual_review"
+        elif not quality.get("usable"):
+            decision, reason, method = "excluded", quality["reason"], "content_quality_rules"
+        elif passage_result["relevance"] in {"direct", "contextual"}:
+            decision, reason, method = "included", passage_result["reason"], "passage_embedding"
+        elif passage_result["relevance"] == "unrelated":
+            decision, reason, method = "excluded", passage_result["reason"], "passage_embedding"
+        else:
+            decision, reason, method = "needs_review", passage_result["reason"], "passage_embedding"
+        if decision == "included":
+            included.append(row)
+        records.append((str(run_id), int(generation), int(project_id), article_id,
+                        str(row.get("content_hash") or key), key, decision, quality["code"], reason,
+                        passage_result.get("passage"), passage_result.get("score"),
+                        passage_result["relevance"], method, config.EMBEDDING_MODEL,
+                        Jsonb(decision_config), RULES_VERSION))
+    if records:
+        with db.transaction() as cur:
+            cur.executemany(
+                """insert into evidence_article_screenings
+                       (run_id,generation,project_id,article_id,content_hash,duplicate_key,decision,
+                        quality_code,reason,best_passage,passage_score,relevance,decision_method,
+                        model,decision_config,rules_version)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   on conflict (run_id,generation,article_id) do update set
+                     content_hash=excluded.content_hash,duplicate_key=excluded.duplicate_key,
+                     decision=excluded.decision,quality_code=excluded.quality_code,reason=excluded.reason,
+                     best_passage=excluded.best_passage,passage_score=excluded.passage_score,
+                     relevance=excluded.relevance,decision_method=excluded.decision_method,
+                     model=excluded.model,decision_config=excluded.decision_config,
+                     rules_version=excluded.rules_version""",
+                records,
+            )
+    return included, {
+        "source_articles": len(rows), "usable_articles": sum(1 for item in row_quality.values() if item.get("usable")),
+        "included_articles": len(included), "excluded_articles": sum(1 for item in records if item[6] == "excluded"),
+        "pending_articles": sum(1 for item in records if item[6] == "needs_review"),
+        "duplicate_articles": duplicate_count, "decision_config": decision_config,
+    }
+
+
 def _best_passage(row: dict, claim: str) -> str:
     wanted = set(_words(claim))
-    choices = _sentences(row)
+    choices = _substantive_passages(row)
     if not choices:
         return ""
     return max(choices, key=lambda text: len(wanted.intersection(_words(text))))[:1200]
@@ -649,6 +956,13 @@ def _passage_qualification(claim: str, passage: str) -> tuple[bool, float, str]:
         return False, score, "The quotation does not share enough specific meaning with the extracted claim."
     if not _passage_covers_scope(claim, passage):
         return False, score, "The quotation and claim use incompatible dates or quantities."
+    claim_negated = bool(_NEGATION.search(claim) or _AR_NEGATION.search(claim))
+    passage_negated = bool(_NEGATION.search(passage) or _AR_NEGATION.search(passage))
+    if claim_negated != passage_negated:
+        return False, score, "The quotation and claim have incompatible negation or polarity."
+    claim_direction, passage_direction = _direction(claim), _direction(passage)
+    if {claim_direction, passage_direction} == {"positive", "negative"}:
+        return False, score, "The quotation and claim assert opposite directions."
     return True, score, "The quotation matches the claim scope and contains the claim's key terms."
 
 
@@ -707,6 +1021,34 @@ def _claim_candidates(row: dict) -> list[tuple[str, str]]:
         # assertions. Older snapshots can supply literal document sentences.
         claims.extend((topic, sentence) for sentence in _sentences(row)[:8] if len(sentence) <= 1000)
     return claims
+
+
+def _evaluate_claim_candidate(row: dict, topic: str, claim_text: str) -> dict:
+    """Admit only specific claims grounded in a substantive frozen passage."""
+    passage = _best_passage(row, claim_text)
+    fingerprint = _fingerprint(topic, claim_text)
+    if _META_CLAIM.search(claim_text):
+        return {
+            "fingerprint": fingerprint, "status": "rejected", "passage": passage,
+            "reason": "The candidate describes page access, article metadata, or unavailable content rather than a source assertion.",
+        }
+    content_words = _claim_words(claim_text)
+    if len(content_words) < 5:
+        return {
+            "fingerprint": fingerprint, "status": "needs_review", "passage": passage,
+            "reason": "The candidate is too vague to publish as a specific evidence claim.",
+        }
+    qualifies, score, reason = _passage_qualification(claim_text, passage)
+    if not qualifies:
+        return {
+            "fingerprint": fingerprint, "status": "needs_review", "passage": passage,
+            "reason": reason, "passage_match_score": score,
+        }
+    return {
+        "fingerprint": fingerprint, "status": "accepted", "passage": passage,
+        "reason": "A substantive frozen passage supports the candidate's specific scope.",
+        "passage_match_score": score,
+    }
 
 
 def _assessment(claim_type: str, supporting_origins: set[str], contradicting_origins: set[str]) -> tuple[str, str]:
@@ -856,25 +1198,52 @@ def _snapshot_rows(run_id: str) -> list[dict]:
 
 def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict | None = None) -> dict:
     """Rebuild claims from frozen content plus this run's analysis snapshot."""
+    started_at = time.perf_counter()
     rows = _snapshot_rows(run_id)
     if not rows:
         raise ValueError(
             "This analysis run has no frozen evidence snapshot. Start a new analysis run to capture the project's current articles."
         )
+    scope = scope or _project_scope(project_id)
+    screened_rows, screening_stats = _screen_articles(rows, scope, run_id, project_id, generation)
+    screened_at = time.perf_counter()
     raw_candidates = []
-    for row in rows:
+    candidate_records = []
+    for row in screened_rows:
         if row.get("provenance_status") == "rejected":
             continue
         for topic, claim_text in _claim_candidates(row):
-            raw_candidates.append((row, topic, claim_text))
-    unique_claims = list(dict.fromkeys(claim_text for _, _, claim_text in raw_candidates))
+            evaluation = _evaluate_claim_candidate(row, topic, claim_text)
+            candidate_records.append((
+                str(run_id), int(generation), int(project_id), int(row["id"]), evaluation["fingerprint"],
+                topic, claim_text, evaluation.get("passage"), evaluation["status"], evaluation["reason"],
+                "frozen_passage_rules", RULES_VERSION,
+            ))
+            if evaluation["status"] == "accepted":
+                raw_candidates.append((row, topic, claim_text, evaluation))
+    if candidate_records:
+        with db.transaction() as cur:
+            cur.executemany(
+                """insert into evidence_claim_candidates
+                       (run_id,generation,project_id,article_id,fingerprint,topic,claim_text,passage,
+                        status,reason,decision_method,rules_version)
+                   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   on conflict (run_id,generation,article_id,fingerprint) do update set
+                     topic=excluded.topic,claim_text=excluded.claim_text,passage=excluded.passage,
+                     status=excluded.status,reason=excluded.reason,
+                     decision_method=excluded.decision_method,rules_version=excluded.rules_version""",
+                candidate_records,
+            )
+    unique_claims = list(dict.fromkeys(
+        f"{claim_text}\n{evaluation.get('passage') or ''}" for _, _, claim_text, evaluation in raw_candidates
+    ))
     embedded_claims = get_embeddings(unique_claims) if config.EVIDENCE_RELEVANCE_MODE == 'embedding' else []
     embedding_cache = {
-        claim_text.strip().lower(): embedded.get("embedding_json") or []
-        for claim_text, embedded in zip(unique_claims, embedded_claims)
+        value: embedded.get("embedding_json") or [] for value, embedded in zip(unique_claims, embedded_claims)
     }
     candidates = []
-    for row, topic, claim_text in raw_candidates:
+    for row, topic, claim_text, evaluation in raw_candidates:
+        embedding_text = f"{claim_text}\n{evaluation.get('passage') or ''}"
         candidates.append({
             "row": row,
             "topic": topic,
@@ -882,12 +1251,13 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             "type": _claim_type(claim_text),
             "direction": _direction(claim_text),
             "fingerprint": _fingerprint(topic, claim_text),
-            "embedding": embedding_cache.get(claim_text.strip().lower(), []),
+            "embedding": embedding_cache.get(embedding_text, []),
+            "passage": evaluation.get("passage") or "",
         })
     if not candidates:
         raise ValueError(
-            f"No claims could be extracted from the {len(rows)} frozen article(s). "
-            "Check that analysis summaries or key points exist for this run."
+            f"No passage-supported claims could be extracted from the {len(rows)} frozen article(s). "
+            "The previously published evidence remains visible; review source and candidate exclusions."
         )
     scope = scope or _project_scope(project_id)
     scope_digest = _scope_hash(scope)
@@ -898,7 +1268,9 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
         candidate["relevance_key"] = key
         individual.append({"fingerprint": key, "canonical": candidate, "items": [candidate]})
     individual = list({item['fingerprint']: item for item in individual}.values())
+    candidates_at = time.perf_counter()
     classified = _classify_relevance(scope, individual)
+    classified_at = time.perf_counter()
     grouped = _group_claim_candidates(candidates)
     relevance = {}
     rank = {"direct": 0, "contextual": 1, "uncertain": 2, "unrelated": 3}
@@ -908,12 +1280,21 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             item.get('status') != 'success', rank.get(item['relevance'], 2),
         ))
     relevance_counts = Counter(item["relevance"] for item in relevance.values())
+    unsupported_count = sum(1 for item in candidate_records if item[8] != "accepted")
+    pending_count = sum(1 for item in candidate_records if item[8] == "needs_review") + screening_stats["pending_articles"]
     db.execute(
         """update evidence_generations set candidate_count=%s,classified_count=%s,
-                  direct_count=%s,contextual_count=%s,unrelated_count=%s,uncertain_count=%s
+                  direct_count=%s,contextual_count=%s,unrelated_count=%s,uncertain_count=%s,
+                  source_article_count=%s,usable_article_count=%s,excluded_article_count=%s,
+                  duplicate_article_count=%s,unsupported_candidate_count=%s,pending_review_count=%s,
+                  decision_method=%s,decision_config=%s
              where run_id=%s and generation=%s""",
         (len(grouped), len(relevance), relevance_counts["direct"], relevance_counts["contextual"],
-         relevance_counts["unrelated"], relevance_counts["uncertain"], str(run_id), int(generation)),
+         relevance_counts["unrelated"], relevance_counts["uncertain"], screening_stats["source_articles"],
+         screening_stats["usable_articles"], screening_stats["excluded_articles"], screening_stats["duplicate_articles"],
+         unsupported_count, pending_count, "content_rules+passage_embedding+claim_grounding",
+         Jsonb({"passage": screening_stats["decision_config"], "claim_relevance_mode": config.EVIDENCE_RELEVANCE_MODE}),
+         str(run_id), int(generation)),
     )
     failed_relevance = sum(1 for item in relevance.values() if item.get("status") != "success")
     if failed_relevance:
@@ -938,6 +1319,9 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             relationship = _passage_relationship(canonical["claim"], passage)
             valid = bool(passage and passage in str(row.get("text") or ""))
             aligned, match_score, qualification_reason = _passage_qualification(canonical["claim"], passage)
+            if relationship == 'contradicting' and _passage_covers_scope(canonical['claim'], passage):
+                aligned = True
+                qualification_reason = 'The exact passage explicitly negates the same assertion and scope.'
             source_type = str((row.get("source_provenance") or {}).get("source_type") or "original document").lower()
             is_summary = "summary" in source_type or "synthetic" in source_type
             qualifies = bool(valid and aligned and not is_summary and row.get("provenance_status") != "rejected")
@@ -977,9 +1361,10 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
                 time_scope,dates,quantities,structured_claim,assessment,explanation,limitations,
                 supporting_count,contradicting_count,contextual_count,distinct_origins,
                 independent_origin_count,citation_checked_count,model,rules_version,active,generation,
-                relevance,relevance_explanation,relevance_score,relevance_status,relevance_model,scope_hash)
+                relevance,relevance_explanation,relevance_score,relevance_status,relevance_model,scope_hash,
+                relevance_method,relevance_config)
                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,false,
-                       %s,%s,%s,%s,%s,%s,%s)
+                       %s,%s,%s,%s,%s,%s,%s,%s,%s)
                on conflict (run_id,generation,fingerprint) do update set
                  source_article_id=excluded.source_article_id, claim_text=excluded.claim_text,
                  claim_type=excluded.claim_type, topic=excluded.topic, entities=excluded.entities,
@@ -996,6 +1381,7 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
                  relevance=excluded.relevance,relevance_explanation=excluded.relevance_explanation,
                  relevance_score=excluded.relevance_score,relevance_status=excluded.relevance_status,
                  relevance_model=excluded.relevance_model,scope_hash=excluded.scope_hash,
+                 relevance_method=excluded.relevance_method,relevance_config=excluded.relevance_config,
                  processing_status='success', processing_error=null
                returning id""",
             (int(project_id), str(run_id), int(source_row["id"]), fingerprint, canonical["claim"], canonical["type"],
@@ -1006,7 +1392,8 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
              sum(1 for _r, _rel, _p, valid, _ok, _s, _m, _q in prepared if valid),
              config.LLM_CHAT_MODEL if model_result else None, RULES_VERSION, int(generation),
              relevance_result["relevance"], relevance_result["explanation"], relevance_result["score"],
-             relevance_result["status"], config.LLM_CHAT_MODEL, scope_digest),
+             relevance_result["status"], relevance_result.get("model"), scope_digest,
+             relevance_result.get("method"), Jsonb(relevance_result.get("config") or {})),
         )
         claim_id = int(claim["id"])
         db.execute("delete from evidence_items where claim_id=%s", (claim_id,))
@@ -1045,6 +1432,7 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
         created += 1
     # Publish the completed generation in one transaction. Until this point all
     # replacement claims are inactive and the prior complete generation stays visible.
+    publishing_at = time.perf_counter()
     with db.transaction() as cur:
         # Analyst decisions remain attached to the generation they reviewed.
         # Even equal counts can hide a changed quotation or origin membership.
@@ -1054,9 +1442,16 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
             (str(run_id), int(generation)),
         )
         cur.execute(
-            """update evidence_generations set status='success',finished_at=now(),published_at=now()
+            """update evidence_generations set status='success',finished_at=now(),published_at=now(),timings=%s
                  where run_id=%s and generation=%s""",
-            (str(run_id), int(generation)),
+            (Jsonb({
+                "screening_seconds": round(screened_at - started_at, 3),
+                "candidate_seconds": round(candidates_at - screened_at, 3),
+                "classification_seconds": round(classified_at - candidates_at, 3),
+                "publication_seconds": round(time.perf_counter() - publishing_at, 3),
+                "total_seconds": round(time.perf_counter() - started_at, 3),
+                "measurement": "warm_or_cold_runtime_not_inferred",
+            }), str(run_id), int(generation)),
         )
         cur.execute(
             "update evidence_run_status set active_generation=%s where run_id=%s",
@@ -1064,6 +1459,7 @@ def _generate_for_run(run_id: str, project_id: int, generation: int, scope: dict
         )
     visible_claims = relevance_counts["direct"] + relevance_counts["contextual"]
     return {"claims": visible_claims, "candidate_claims": created, "articles": len(rows),
+            "screening": screening_stats, "unsupported_candidates": unsupported_count,
             "relevance_counts": dict(relevance_counts),
             "scope_hash": scope_digest, "generation": int(generation)}
 
@@ -1086,6 +1482,10 @@ def generate_for_run(run_id: str, project_id: int) -> dict:
     generation = int((status_row or {}).get("generation") or 0)
     scope_record = get_run_scope(run_id, project_id)
     scope, scope_digest = scope_record["scope"], scope_record["scope_hash"]
+    relevance_model = (
+        config.EMBEDDING_MODEL if config.EVIDENCE_RELEVANCE_MODE == "embedding" else config.LLM_CHAT_MODEL
+    )
+    generation_model = f"passage={config.EMBEDDING_MODEL};claim={relevance_model}"
     db.execute(
         """update evidence_run_status set scope_snapshot=%s,scope_hash=%s where run_id=%s""",
         (Jsonb(scope), scope_digest, str(run_id)),
@@ -1098,7 +1498,7 @@ def generate_for_run(run_id: str, project_id: int) -> dict:
                scope_snapshot=excluded.scope_snapshot,scope_hash=excluded.scope_hash,
                rules_version=excluded.rules_version,model=excluded.model,started_at=now(),finished_at=null""",
         (str(run_id), generation, int(project_id), Jsonb(scope), scope_digest,
-         RULES_VERSION, config.LLM_CHAT_MODEL),
+         RULES_VERSION, generation_model),
     )
     try:
         result = _generate_for_run(run_id, project_id, generation, scope)
@@ -1170,7 +1570,10 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
                       'generation',eg.generation,'status',eg.status,'candidate_count',eg.candidate_count,
                       'classified_count',eg.classified_count,'direct_count',eg.direct_count,
                       'contextual_count',eg.contextual_count,'unrelated_count',eg.unrelated_count,
-                      'uncertain_count',eg.uncertain_count,'error',eg.error,'published_at',eg.published_at)
+                      'uncertain_count',eg.uncertain_count,'source_article_count',eg.source_article_count,
+                      'excluded_article_count',eg.excluded_article_count,
+                      'unsupported_candidate_count',eg.unsupported_candidate_count,
+                      'pending_review_count',eg.pending_review_count,'error',eg.error,'published_at',eg.published_at)
                      from evidence_generations eg where eg.run_id=pr.id
                      order by eg.generation desc limit 1) as latest_generation
            from ranked pr left join evidence_run_status ers on ers.run_id=pr.id
@@ -1186,7 +1589,9 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
     generations = db.fetch_all(
         """select generation,status,candidate_count,classified_count,direct_count,
                   contextual_count,unrelated_count,uncertain_count,error,scope_snapshot,
-                  scope_hash,rules_version,model,started_at,finished_at,published_at,created_at
+                  scope_hash,rules_version,model,started_at,finished_at,published_at,created_at,
+                  source_article_count,usable_article_count,excluded_article_count,duplicate_article_count,
+                  unsupported_candidate_count,pending_review_count,decision_method,decision_config,timings
              from evidence_generations
             where run_id=%s and project_id=%s
             order by generation desc limit 20""",
@@ -1345,6 +1750,39 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
             for claim in claims
         ],
     }
+    screening_counts = db.fetch_all(
+        """select decision,quality_code,count(*)::int as count
+             from evidence_article_screenings
+            where project_id=%s and run_id=%s and generation=%s
+            group by decision,quality_code order by decision,quality_code""",
+        (int(project_id), selected, selected_generation),
+    ) or []
+    excluded_articles = db.fetch_all(
+        """select eas.article_id,a.title,a.source,eas.decision,eas.quality_code,eas.reason,
+                  eas.relevance,eas.passage_score,eas.best_passage,eas.decision_method,eas.model,
+                  (select easr.decision from evidence_article_screening_reviews easr
+                    where easr.project_id=eas.project_id and easr.run_id=eas.run_id
+                      and easr.article_id=eas.article_id order by easr.created_at desc limit 1) as review_decision,
+                  (select easr.reason from evidence_article_screening_reviews easr
+                    where easr.project_id=eas.project_id and easr.run_id=eas.run_id
+                      and easr.article_id=eas.article_id order by easr.created_at desc limit 1) as review_reason
+             from evidence_article_screenings eas join articles a on a.id=eas.article_id
+            where eas.project_id=%s and eas.run_id=%s and eas.generation=%s
+              and eas.decision in ('excluded','needs_review')
+            order by case eas.decision when 'needs_review' then 1 else 2 end,eas.quality_code,a.title
+            limit 100""",
+        (int(project_id), selected, selected_generation),
+    ) or []
+    candidate_review = db.fetch_all(
+        """select ecc.article_id,a.title as source_title,ecc.topic,ecc.claim_text,ecc.passage,
+                  ecc.status,ecc.reason,ecc.decision_method
+             from evidence_claim_candidates ecc join articles a on a.id=ecc.article_id
+            where ecc.project_id=%s and ecc.run_id=%s and ecc.generation=%s
+              and ecc.status in ('rejected','needs_review')
+            order by case ecc.status when 'needs_review' then 1 else 2 end,ecc.topic,ecc.article_id
+            limit 100""",
+        (int(project_id), selected, selected_generation),
+    ) or []
     return {"runs": runs, "selected_run_id": selected, "topics": topics,
             "requires_rebuild": (selected_generation_record or {}).get("rules_version") != RULES_VERSION,
             "selected_generation": selected_generation,
@@ -1367,6 +1805,9 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
                 "assessment_counts": dict(counts), **origins,
             },
             "relevance_counts": {row["relevance"]: row["count"] for row in relevance_rows},
+            "quality_summary": screening_counts,
+            "excluded_articles": excluded_articles,
+            "candidate_review": candidate_review,
             "generations": generations,
             "filter_options": {"publishers": [row["publisher"] for row in publishers if row.get("publisher")]},
             "source_matrix": source_matrix,
@@ -1531,6 +1972,31 @@ def review_relevance(project_id: int, claim_id: int, decision: str, reason: str,
          user.get("username") or user.get("email"), decision, reason.strip()[:2000]),
     )
     return get_claim(project_id, claim_id)
+
+
+def review_article_screening(project_id: int, run_id: str, article_id: int,
+                             decision: str, reason: str, user: dict) -> dict | None:
+    if decision not in {"include", "exclude", "needs_review"} or not reason.strip():
+        raise ValueError("A valid source decision and review reason are required.")
+    row = db.fetch_one(
+        """select eas.article_id,eas.decision,eas.quality_code,eas.reason
+             from evidence_article_screenings eas
+            where eas.project_id=%s and eas.run_id=%s and eas.article_id=%s
+            order by eas.generation desc limit 1""",
+        (int(project_id), str(run_id), int(article_id)),
+    )
+    if not row:
+        return None
+    reviewer_name = user.get("username") or user.get("email")
+    db.execute(
+        """insert into evidence_article_screening_reviews
+               (project_id,run_id,article_id,reviewer_id,reviewer_name,decision,reason)
+           values (%s,%s,%s,%s,%s,%s,%s)""",
+        (int(project_id), str(run_id), int(article_id), user.get("id"), reviewer_name,
+         decision, reason.strip()[:2000]),
+    )
+    return {**row, "review_decision": decision, "review_reason": reason.strip()[:2000],
+            "reviewer_name": reviewer_name}
 
 
 def publish_generation(run_id: str, project_id: int, generation: int) -> dict:

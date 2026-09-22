@@ -1,8 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { StrictMode } from 'react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import ArticlesPage from './ArticlesPage'
 import { useAuth } from '../auth/useAuth.js'
+
+// Stands in for ArticleDetailPage: surfaces what onShowDetails actually
+// navigated with (the destination's own search, plus the router `state.from`
+// it carried) so a test can assert on it without rendering the real page.
+function DetailPlaceholder() {
+  const location = useLocation()
+  return (
+    <div>
+      Article detail page
+      <div data-testid="detail-search">{location.search}</div>
+      <div data-testid="detail-from-state">{location.state?.from || ''}</div>
+    </div>
+  )
+}
 
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }))
 vi.mock('../api/projectDocumentsApi.js', () => ({
@@ -30,10 +45,27 @@ function jsonResponse(body) {
   return { ok: true, json: async () => body }
 }
 
+// Surfaces the list route's own current location.search - the URL->router
+// round trip that mirrors filters into the address bar (see ArticlesPage's
+// URL-sync effect) lands one render after the filter state itself updates,
+// so a test that wants to click Details right as a filter "lands" needs to
+// wait on this rather than on the filtered result appearing.
+function ListLocationWatcher() {
+  const location = useLocation()
+  return <div data-testid="list-search">{location.search}</div>
+}
+
 function renderPage(props = {}) {
   return render(
-    <MemoryRouter>
-      <ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} {...props} />
+    <MemoryRouter initialEntries={['/articles']}>
+      <ListLocationWatcher />
+      <Routes>
+        <Route
+          path="/articles"
+          element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} {...props} />}
+        />
+        <Route path="/articles/:articleId" element={<DetailPlaceholder />} />
+      </Routes>
     </MemoryRouter>
   )
 }
@@ -83,33 +115,43 @@ describe('ArticlesPage', () => {
     await waitFor(() => expect(screen.getByText(/1 articles total/)).toBeInTheDocument(), { timeout: 2000 })
   })
 
-  it('opens the analysis detail modal for an article', async () => {
+  it('navigates to the article detail page for an article', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
     fireEvent.click(screen.getAllByTitle('View analysis details')[0])
-    const dialog = await screen.findByRole('dialog')
-    await waitFor(() => expect(within(dialog).getByText('Negative')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Article detail page')).toBeInTheDocument())
   })
 
-  it('does not attach a delayed coverage response to another article', async () => {
-    const originalFetch = fetch.getMockImplementation()
-    let finishCoverage
-    fetch.mockImplementation((url, ...args) => String(url).endsWith('/coverage')
-      ? new Promise((resolve) => { finishCoverage = resolve })
-      : originalFetch(url, ...args))
+  // Regression for F001: the list used to unmount on the way to the detail
+  // page with no memory of its own filters/search, so "Back to Articles"
+  // landed on an unfiltered page 1. It now mirrors its live filters into the
+  // URL and hands that URL to the detail page as router state.
+  it('carries the current search/filter state to the article detail page for the back link to use', async () => {
     renderPage()
-    await screen.findByText('Battery fires spark recall')
-    fireEvent.click(screen.getAllByTitle('View analysis details')[0])
-    fireEvent.click(await screen.findByRole('button', { name: 'Check source reliability signals' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
-    fireEvent.click(screen.getAllByTitle('View analysis details')[1])
-    await screen.findByText('Not assessed', { selector: 'div' })
-    await act(async () => {
-      finishCoverage(jsonResponse({ article_id: 1, coverage: { status: 'some_coverage', reason: 'Result for first article' } }))
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+
+    fetch.mockImplementation((url) => {
+      const href = String(url)
+      if (href.startsWith('/api/articles?')) {
+        if (href.includes('search=battery')) return Promise.resolve(jsonResponse({ articles: [ARTICLES[0]], total: 1 }))
+        return Promise.resolve(jsonResponse({ articles: ARTICLES, total: ARTICLES.length }))
+      }
+      return Promise.resolve(jsonResponse({}))
     })
-    expect(screen.queryByText('Result for first article')).not.toBeInTheDocument()
-    expect(screen.getByText('Not assessed', { selector: 'div' })).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Search title, summary, source...'), { target: { value: 'battery' } })
+    // Wait for the debounced search to actually land (not just any refetch -
+    // only the mock's search=battery branch returns a single result)...
+    await waitFor(() => expect(screen.getByText(/1 articles total/)).toBeInTheDocument(), { timeout: 2000 })
+    // ...and then for the URL-sync effect's own render (one tick behind the
+    // filtered result, since it round-trips through the router) to catch up,
+    // so the click below is guaranteed to happen after it.
+    await waitFor(() => expect(screen.getByTestId('list-search').textContent).toContain('search=battery'))
+
+    fireEvent.click(screen.getAllByTitle('View analysis details')[0])
+    await waitFor(() => expect(screen.getByText('Article detail page')).toBeInTheDocument())
+    expect(screen.getByTestId('detail-from-state').textContent).toContain('search=battery')
   })
+
 
   it('shows an empty state when there are no articles', async () => {
     fetch.mockImplementation((url) => {
@@ -126,5 +168,44 @@ describe('ArticlesPage', () => {
     await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('tab', { name: /List/ }))
     expect(screen.getByRole('tab', { name: /List/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // Regression for F004: React StrictMode (which main.jsx wraps the whole
+  // app in) double-invokes a fresh mount's effects with identical deps, to
+  // surface exactly this kind of bug. An earlier version of the offset-reset
+  // guard used an invocation-count ref ("have I run once?"), which treated
+  // that harmless second invocation as a real subsequent change and zeroed
+  // an offset just restored from the URL right back out - on every single
+  // mount in dev, including the remount that happens when returning from the
+  // article detail page. It's plain `render()`, not wrapped in StrictMode,
+  // everywhere else in this file specifically because that's what let this
+  // regression slip through once already.
+  it('does not reset an offset restored from the URL under React StrictMode', async () => {
+    fetch.mockImplementation((url) => {
+      const href = String(url)
+      if (href.startsWith('/api/articles?')) return Promise.resolve(jsonResponse({ articles: ARTICLES, total: 50 }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/articles?offset=48']}>
+          <Routes>
+            <Route
+              path="/articles"
+              element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>
+    )
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+    // Give any spurious extra effect invocation a chance to fire its own
+    // fetch before asserting none of them ever asked for offset=0.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const offsetsRequested = fetch.mock.calls
+      .map(([url]) => String(url))
+      .filter((href) => href.startsWith('/api/articles?'))
+      .map((href) => new URL(href, 'http://localhost').searchParams.get('offset'))
+    expect(offsetsRequested.every((offset) => offset === '48')).toBe(true)
   })
 })
