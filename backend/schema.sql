@@ -571,6 +571,10 @@ create table if not exists public.article_people_opinions (
     -- wording rather than trusted blind. See normalize.normalize_gender_evidence.
     gender_evidence text not null default '',
     age_range   text not null default 'unknown',
+    -- The exact word/phrase (or raw stated age) the model says signaled
+    -- `age_range` - empty whenever age_range is 'unknown'. Mirrors
+    -- gender_evidence; see normalize.normalize_age_evidence.
+    age_evidence text not null default '',
     region      text not null default 'unknown',
     segment_raw text not null default 'unknown',
     segment     text not null default 'unknown',

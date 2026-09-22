@@ -219,6 +219,102 @@ class ReplaceArticleChildrenTests(unittest.TestCase):
         tag_calls = [c for c in mock_execute.call_args_list if c.args[0].strip().startswith("insert into article_tags")]
         self.assertTrue(tag_calls)
 
+    def test_age_evidence_is_written_when_the_column_exists(self):
+        """Mirrors test_gender_evidence_is_written_when_the_column_exists -
+        the opinions insert names and populates age_evidence when the
+        database actually has that column, alongside gender_evidence."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender": "female", "gender_evidence": "she said",
+                "age_range": "35-44", "age_evidence": "42",
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value={"gender_evidence", "age_evidence"}), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        self.assertEqual(self._opinion_row(mock_execute), [
+            ("article_id", 1),
+            ("opinion", "Loves it"),
+            ("sentiment", "positive"),
+            ("category", "overall"),
+            ("gender", "female"),
+            ("gender_evidence", "she said"),
+            ("age_range", "35-44"),
+            ("age_evidence", "42"),
+            ("region", "unknown"),
+            ("segment_raw", "unknown"),
+            ("segment", "unknown"),
+        ])
+
+    def test_age_evidence_is_forced_empty_when_age_range_is_unknown(self):
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "age_evidence": "42",  # age_range omitted -> "unknown"
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value={"age_evidence"}), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        row = dict(self._opinion_row(mock_execute))
+        self.assertEqual(row["age_range"], "unknown")
+        self.assertEqual(row["age_evidence"], "")
+
+    def test_age_evidence_is_dropped_from_the_insert_when_the_column_is_missing(self):
+        """A database that hasn't had migration 0021 applied yet still has
+        article_people_opinions itself (so _table_exists passes) but not this
+        column - the insert must adapt instead of failing outright, the same
+        way it does for a missing gender_evidence column."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "age_range": "35-44", "age_evidence": "42",
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value=set()), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        self.assertEqual(self._opinion_row(mock_execute), [
+            ("article_id", 1),
+            ("opinion", "Loves it"),
+            ("sentiment", "positive"),
+            ("category", "overall"),
+            ("gender", "unknown"),
+            ("age_range", "35-44"),
+            ("region", "unknown"),
+            ("segment_raw", "unknown"),
+            ("segment", "unknown"),
+        ])
+        sql = self._opinions_insert_call(mock_execute).args[0]
+        self.assertNotIn("age_evidence", sql)
+
+    def test_gender_evidence_and_age_evidence_roll_out_independently(self):
+        """A database can have one column without the other mid-rollout (the
+        two migrations don't have to land in the same deploy) - each column's
+        presence is checked on its own, not as an all-or-nothing pair."""
+        article = {
+            **self.ARTICLE,
+            "people_opinions": [{
+                "opinion": "Loves it", "sentiment": "positive", "category": "overall",
+                "gender": "female", "gender_evidence": "she said",
+                "age_range": "35-44", "age_evidence": "42",
+            }],
+        }
+        with patch("services.articles.store._table_exists", return_value=True), \
+             patch("services.articles.store._table_columns", return_value={"gender_evidence"}), \
+             patch("services.articles.store.db.execute") as mock_execute:
+            store._replace_article_children(1, article)
+        row = dict(self._opinion_row(mock_execute))
+        self.assertEqual(row["gender_evidence"], "she said")
+        self.assertNotIn("age_evidence", row)
+
     def test_a_missing_column_is_rechecked_rather_than_cached_for_the_process(self):
         """The column is only ever added, never dropped. A memoized "absent"
         would keep this process writing no evidence after the migration lands,

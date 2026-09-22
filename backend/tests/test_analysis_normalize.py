@@ -139,6 +139,70 @@ class NormalizeGenderEvidenceTests(unittest.TestCase):
         self.assertEqual(len(result), normalize._GENDER_EVIDENCE_MAX_LEN)
 
 
+class NormalizeAgeRangeAliasTests(unittest.TestCase):
+    """normalize_age_range() accepts common alternate phrasings the model
+    sometimes emits instead of the exact bucket tokens the prompt asks for
+    (labels.AGE_RANGE_ALIASES) - in particular the natural way to write the
+    two irregularly-formatted buckets, which the bare space-stripping the
+    function used to do on its own could never match."""
+
+    def test_exact_values_pass_through(self):
+        for value in ("under_18", "18-24", "25-34", "35-44", "45-54", "55-64", "65_plus", "unknown"):
+            self.assertEqual(normalize.normalize_age_range(value), value)
+
+    def test_natural_phrasing_of_the_irregular_buckets_is_accepted(self):
+        for value in ("65+", "65 plus", "Over 65", "senior", "elderly"):
+            self.assertEqual(normalize.normalize_age_range(value), "65_plus")
+        for value in ("Under 18", "under-18", "minor", "teenager", "kid"):
+            self.assertEqual(normalize.normalize_age_range(value), "under_18")
+
+    def test_to_worded_ranges_canonicalize(self):
+        self.assertEqual(normalize.normalize_age_range("25 to 34"), "25-34")
+
+    def test_bare_decade_words_stay_unknown(self):
+        """"30s" straddles both 25-34 and 35-44 with no correct single
+        bucket, so guessing one would be worse than "unknown"."""
+        self.assertEqual(normalize.normalize_age_range("30s"), "unknown")
+        self.assertEqual(normalize.normalize_age_range("thirties"), "unknown")
+
+    def test_unrecognized_or_blank_falls_back_to_unknown(self):
+        self.assertEqual(normalize.normalize_age_range(""), "unknown")
+        self.assertEqual(normalize.normalize_age_range(None), "unknown")
+
+
+class BucketAgeYearsTests(unittest.TestCase):
+    def test_buckets_land_on_the_right_range(self):
+        self.assertEqual(normalize.bucket_age_years(10), "under_18")
+        self.assertEqual(normalize.bucket_age_years(21), "18-24")
+        self.assertEqual(normalize.bucket_age_years(30), "25-34")
+        self.assertEqual(normalize.bucket_age_years(42), "35-44")
+        self.assertEqual(normalize.bucket_age_years(50), "45-54")
+        self.assertEqual(normalize.bucket_age_years(60), "55-64")
+        self.assertEqual(normalize.bucket_age_years(70), "65_plus")
+
+    def test_boundary_ages(self):
+        self.assertEqual(normalize.bucket_age_years(17), "under_18")
+        self.assertEqual(normalize.bucket_age_years(18), "18-24")
+        self.assertEqual(normalize.bucket_age_years(65), "65_plus")
+
+    def test_implausible_or_non_numeric_returns_empty(self):
+        for value in (-1, 121, "not a number", None, ""):
+            self.assertEqual(normalize.bucket_age_years(value), "")
+
+
+class NormalizeAgeEvidenceTests(unittest.TestCase):
+    def test_evidence_kept_when_age_range_resolved(self):
+        self.assertEqual(normalize.normalize_age_evidence("42", "35-44"), "42")
+
+    def test_evidence_dropped_when_age_range_is_unknown(self):
+        self.assertEqual(normalize.normalize_age_evidence("42", "unknown"), "")
+
+    def test_evidence_is_capped_in_length(self):
+        long_text = "x" * 500
+        result = normalize.normalize_age_evidence(long_text, "25-34")
+        self.assertEqual(len(result), normalize._AGE_EVIDENCE_MAX_LEN)
+
+
 class PeopleOpinionsTests(unittest.TestCase):
     def test_normalizes_and_dedupes(self):
         result = normalize.normalize_people_opinions([
@@ -153,22 +217,25 @@ class PeopleOpinionsTests(unittest.TestCase):
         self.assertEqual(result, [{
             "opinion": "just a plain string", "sentiment": "neutral", "category": "",
             "gender": "unknown", "gender_evidence": "", "age_range": "unknown",
-            "region": "unknown", "segment": "unknown",
+            "age_evidence": "", "region": "unknown", "segment": "unknown",
         }])
 
     def test_demographics_are_normalized_and_default_to_unknown(self):
         result = normalize.normalize_people_opinions([
             {"opinion": "Loves the range", "sentiment": "positive", "category": "performance",
-             "gender": "Female", "gender_evidence": "she said", "age_range": "25-34", "region": "lebanon"},
+             "gender": "Female", "gender_evidence": "she said", "age_range": "25-34",
+             "age_evidence": "in her thirties", "region": "lebanon"},
             {"opinion": "Slow charging", "sentiment": "negative", "category": "charging"},
         ])
         self.assertEqual(result[0]["gender"], "female")
         self.assertEqual(result[0]["gender_evidence"], "she said")
         self.assertEqual(result[0]["age_range"], "25-34")
+        self.assertEqual(result[0]["age_evidence"], "in her thirties")
         self.assertEqual(result[0]["region"], "Lebanon")
         self.assertEqual(result[1]["gender"], "unknown")
         self.assertEqual(result[1]["gender_evidence"], "")
         self.assertEqual(result[1]["age_range"], "unknown")
+        self.assertEqual(result[1]["age_evidence"], "")
         self.assertEqual(result[1]["region"], "unknown")
 
     def test_gender_evidence_is_dropped_when_gender_does_not_normalize(self):
@@ -179,6 +246,30 @@ class PeopleOpinionsTests(unittest.TestCase):
         ])
         self.assertEqual(result[0]["gender"], "unknown")
         self.assertEqual(result[0]["gender_evidence"], "")
+
+    def test_age_years_overrides_the_models_own_bucket_choice(self):
+        """A raw stated age is trusted over the model's own bucket pick -
+        see normalize.bucket_age_years."""
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Loves the range", "age_years": 42, "age_range": "25-34"},
+        ])
+        self.assertEqual(result[0]["age_range"], "35-44")
+        self.assertEqual(result[0]["age_evidence"], "42")
+
+    def test_implausible_age_years_falls_back_to_the_models_bucket(self):
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Loves the range", "age_years": 999, "age_range": "25-34",
+             "age_evidence": "in her late twenties"},
+        ])
+        self.assertEqual(result[0]["age_range"], "25-34")
+        self.assertEqual(result[0]["age_evidence"], "in her late twenties")
+
+    def test_age_evidence_is_dropped_when_age_range_does_not_normalize(self):
+        result = normalize.normalize_people_opinions([
+            {"opinion": "Loves the range", "age_range": "30s", "age_evidence": "in her 30s"},
+        ])
+        self.assertEqual(result[0]["age_range"], "unknown")
+        self.assertEqual(result[0]["age_evidence"], "")
 
     def test_non_list_input_returns_empty(self):
         self.assertEqual(normalize.normalize_people_opinions("not a list"), [])

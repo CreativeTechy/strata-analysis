@@ -82,6 +82,24 @@ GENDER_ALIASES = {
 VALID_AGE_RANGES = ("under_18", "18-24", "25-34", "35-44", "45-54", "55-64", "65_plus", "unknown")
 DEFAULT_AGE_RANGE = "unknown"
 
+# Same problem as GENDER_ALIASES, and worse here: two of the eight buckets
+# ("under_18", "65_plus") are the only ones with an underscore instead of a
+# hyphen, so the natural way to write them ("65+", "under 18") never survives
+# normalize.normalize_age_range's exact-match check even though the model
+# gave a perfectly clear answer. Keyed after the same lower+space-stripped
+# transform normalize_age_range applies, so e.g. "25 to 34" strips to
+# "25to34" here. Deliberately excludes bare decade words ("30s", "thirties")
+# - "30-39" straddles both 25-34 and 35-44 with no correct single bucket, so
+# guessing one would be worse than "unknown".
+AGE_RANGE_ALIASES = {
+    "under18": "under_18", "under-18": "under_18", "below18": "under_18",
+    "minor": "under_18", "minors": "under_18", "child": "under_18", "children": "under_18",
+    "kid": "under_18", "kids": "under_18", "teen": "under_18", "teens": "under_18", "teenager": "under_18",
+    "65+": "65_plus", "65plus": "65_plus", "over65": "65_plus", "above65": "65_plus",
+    "senior": "65_plus", "seniors": "65_plus", "elderly": "65_plus", "seniorcitizen": "65_plus",
+    "18to24": "18-24", "25to34": "25-34", "35to44": "35-44", "45to54": "45-54", "55to64": "55-64",
+}
+
 DEFAULT_REGION = "unknown"
 
 # Open-vocab life-situation/occupation label (e.g. "unemployed", "small

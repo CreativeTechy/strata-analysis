@@ -187,5 +187,41 @@ class SnapshotGenderEvidenceColumnTests(unittest.TestCase):
         self.assertTrue(any("snapshot not recorded" in line for line in logged.output))
 
 
+class SnapshotAgeEvidenceColumnTests(unittest.TestCase):
+    """Mirrors SnapshotGenderEvidenceColumnTests: age_evidence arrived in
+    migration 0021, so the snapshot insert has to survive a database that
+    hasn't applied it yet, independently of whether gender_evidence has."""
+
+    def _snapshot_sql(self, *, gender_evidence, age_evidence):
+        def fake_has_column(table, column):
+            return {"gender_evidence": gender_evidence, "age_evidence": age_evidence}[column]
+
+        executed = []
+        with patch.object(article_analyses, "_table_has_column", side_effect=fake_has_column),              patch.object(article_analyses.db, "execute", side_effect=lambda sql, params: executed.append(sql)):
+            ok = article_analyses.record_analysis_snapshot("run-1", 7)
+        self.assertTrue(ok)
+        self.assertEqual(len(executed), 1)
+        return executed[0]
+
+    def test_evidence_key_is_selected_when_the_column_exists(self):
+        sql = self._snapshot_sql(gender_evidence=True, age_evidence=True)
+        self.assertIn("'age_evidence', po.age_evidence", sql)
+
+    def test_evidence_key_is_omitted_when_the_column_is_missing(self):
+        sql = self._snapshot_sql(gender_evidence=True, age_evidence=False)
+        self.assertNotIn("age_evidence", sql)
+        # the rest of the snapshot, including gender_evidence, is untouched
+        for key in ("'opinion', po.opinion", "'gender_evidence', po.gender_evidence", "'segment', po.segment"):
+            self.assertIn(key, sql)
+
+    def test_the_two_evidence_columns_roll_out_independently(self):
+        """age_evidence (migration 0021) can land on a database before or
+        after gender_evidence (migration 0019) - neither is checked as a
+        stand-in for the other."""
+        sql = self._snapshot_sql(gender_evidence=False, age_evidence=True)
+        self.assertNotIn("gender_evidence", sql)
+        self.assertIn("'age_evidence', po.age_evidence", sql)
+
+
 if __name__ == "__main__":
     unittest.main()
