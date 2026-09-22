@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
 import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
 import { prettyLabel, confidencePct, articleDate } from '../lib/articleHelpers.jsx';
@@ -15,6 +15,13 @@ import ConfirmModal from './ConfirmModal';
 export default function ArticleDetailPage() {
   const { articleId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Where "Back to Articles" (and a successful delete) should return to -
+  // the article list's own path+query at the moment Details was clicked, so
+  // its filters/search/page survive the round trip instead of resetting to
+  // the article library's default view. Falls back to a bare /articles for
+  // any other way of landing on this page (a direct link, a bookmark).
+  const backTo = location.state?.from || '/articles';
   const { hasPermission } = useAuth();
   const canReprocess = hasPermission('pipeline.run');
   const canDelete = hasPermission('articles.delete');
@@ -62,7 +69,10 @@ export default function ArticleDetailPage() {
     setDeleteError('');
     try {
       await deleteArticle(articleId);
-      navigate('/articles');
+      // Replace, not push: the deleted article's own /articles/:id stays
+      // out of the back-button history, so Back from the list can't return
+      // to a 404 for a row that's already gone.
+      navigate(backTo, { replace: true });
     } catch (err) {
       setDeleteError(err?.message || 'Failed to delete article.');
     } finally {
@@ -105,7 +115,7 @@ export default function ArticleDetailPage() {
           ) : null}
         </div>
         <div className="admin-page-toolbar">
-          <Link to="/articles" className="btn-secondary" style={{ textDecoration: 'none' }}>
+          <Link to={backTo} className="btn-secondary" style={{ textDecoration: 'none' }}>
             <ArrowLeft size={16} /> Back to Articles
           </Link>
           {canReprocess ? (
@@ -119,7 +129,12 @@ export default function ArticleDetailPage() {
               className="btn-secondary"
               style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
               onClick={() => setShowDeleteModal(true)}
-              disabled={loading}
+              // Gated on `data`, not just `loading`: a failed/404 load
+              // leaves `data` null with `loading` already false, and
+              // confirming a delete with no article to name and no
+              // confirmed title is worse than just disabling the button.
+              disabled={loading || !data}
+              title={!loading && !data ? 'Analysis details failed to load - cannot confirm what would be deleted.' : undefined}
             >
               <Trash2 size={16} /> Delete
             </button>

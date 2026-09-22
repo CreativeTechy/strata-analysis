@@ -12,9 +12,9 @@ vi.mock('../api/articlesApi.js', () => ({
   deleteArticle: vi.fn(),
 }))
 
-function renderPage(articleId = '1') {
+function renderPage(articleId = '1', { state } = {}) {
   return render(
-    <MemoryRouter initialEntries={[`/articles/${articleId}`]}>
+    <MemoryRouter initialEntries={[{ pathname: `/articles/${articleId}`, state }]}>
       <Routes>
         <Route path="/articles/:articleId" element={<ArticleDetailPage />} />
         <Route path="/articles" element={<div>Article library page</div>} />
@@ -112,6 +112,40 @@ describe('ArticleDetailPage', () => {
     useAuth.mockReturnValue({ hasPermission: () => true })
     renderPage()
     await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete/ }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete article' }))
+
+    await waitFor(() => expect(deleteArticle).toHaveBeenCalledWith('1'))
+    await waitFor(() => expect(screen.getByText('Article library page')).toBeInTheDocument())
+  })
+
+  // Regression for F002: get_article_analysis returns null (and the route
+  // 404s) for any backend failure, not just a genuinely missing article, so
+  // this state is reachable for an article that still exists. Delete used to
+  // stay clickable and confirm against a hardcoded "Untitled article".
+  it('disables the delete button when the analysis failed to load', async () => {
+    getArticleAnalysis.mockRejectedValue(new Error('network down'))
+    useAuth.mockReturnValue({ hasPermission: () => true })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('network down')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Delete/ })).toBeDisabled()
+  })
+
+  // Regression for F001/F003: the back link and the post-delete redirect
+  // used to always go to a bare /articles, discarding whatever search/filter
+  // state the operator had on the list. They now return to the location the
+  // list handed over via router state, and do so with history replacement so
+  // Back from the list can't land on the just-deleted article's dead page.
+  it('returns to the originating list location (not a bare /articles) after deleting', async () => {
+    getArticleAnalysis.mockResolvedValue({ analysis: { analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall' } })
+    deleteArticle.mockResolvedValue({})
+    useAuth.mockReturnValue({ hasPermission: () => true })
+    renderPage('1', { state: { from: '/articles?search=battery' } })
+    await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
+
+    expect(screen.getByRole('link', { name: /Back to Articles/ })).toHaveAttribute('href', '/articles?search=battery')
 
     fireEvent.click(screen.getByRole('button', { name: /Delete/ }))
     const dialog = await screen.findByRole('dialog')

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
@@ -45,12 +45,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
   }, [projectId]);
   // Read once on mount (lazy initializers only run on the first render) so a link
   // like /articles?search=EV&project_id=3 (e.g. from the "Trending keywords &
-  // hashtags" card) pre-fills the filters; later edits to these filters
-  // intentionally don't rewrite the URL.
-  const [searchParams] = useSearchParams();
+  // hashtags" card) pre-fills the filters. Later edits to these filters do
+  // get mirrored back into the URL (see the sync effect below), so a round
+  // trip through the article detail page can restore them on return.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
-  const [sentiment, setSentiment] = useState('all');
+  const [sentiment, setSentiment] = useState(() => searchParams.get('sentiment') || 'all');
   const [projectFilter, setProjectFilter] = useState(() => (
     searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
   ));
@@ -59,10 +61,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // above pre-fill from the URL.
   const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
   const [limit, setLimit] = useState(24);
-  const [offset, setOffset] = useState(0);
-  const [sort, setSort] = useState('published.desc');
-  const [addedFrom, setAddedFrom] = useState('');
-  const [addedTo, setAddedTo] = useState('');
+  const [offset, setOffset] = useState(() => {
+    const parsed = Number(searchParams.get('offset'));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  });
+  const [sort, setSort] = useState(() => searchParams.get('sort') || 'published.desc');
+  const [addedFrom, setAddedFrom] = useState(() => searchParams.get('added_from') || '');
+  const [addedTo, setAddedTo] = useState(() => searchParams.get('added_to') || '');
   const [articles, setArticles] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -98,14 +103,47 @@ export default function ArticlesPage({ project = null, projectId = null, project
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // Compares the actual filter *values* against what they were last time,
+  // rather than counting invocations ("have I run before?"): the latter
+  // breaks under React StrictMode, which deliberately double-invokes a
+  // fresh mount's effects (with identical deps both times) to surface
+  // exactly this kind of bug - an invocation-count flag sees the harmless
+  // second invocation as a "real" subsequent change and zeroes offset right
+  // back out, undoing the restore-from-URL below on every single mount in
+  // dev. Comparing values instead of counting runs means the ref only ever
+  // reads as "changed" when a filter actually did.
+  const filtersKeyRef = useRef(null);
   useEffect(() => {
-    setOffset(0);
+    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
+    if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
+      setOffset(0);
+    }
+    filtersKeyRef.current = key;
   }, [search, sentiment, projectFilter, sourceFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
     return projects.find((item) => String(item.id) === String(projectFilter)) || null;
   }, [projects, projectFilter]);
+
+  // Keeps the URL's query string mirroring the live filters/offset (a plain
+  // `replace`, so it doesn't grow the back-button history) so that navigating
+  // to /articles/:id and back lands on the same search, filters, and page
+  // instead of resetting to the defaults - the round trip a routed detail
+  // page (as opposed to the old in-place modal) makes possible.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (search) next.set('search', search);
+    if (projectFilter !== 'all') next.set('project_id', projectFilter);
+    if (sourceFilter !== 'all') next.set('source', sourceFilter);
+    if (sentiment !== 'all') next.set('sentiment', sentiment);
+    if (addedFrom) next.set('added_from', addedFrom);
+    if (addedTo) next.set('added_to', addedTo);
+    if (sort !== 'published.desc') next.set('sort', sort);
+    if (offset > 0) next.set('offset', String(offset));
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, projectFilter, sourceFilter, sentiment, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -781,7 +819,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       isExpanded={expandedRows.has(article.id)}
                       isRefreshing={isRefreshing}
                       onToggleExpanded={() => toggleRowExpanded(article.id)}
-                      onShowDetails={() => navigate(`/articles/${article.id}`)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`, { state: { from: `${location.pathname}${location.search}` } })}
                     />
                   ))}
                 </AnimatePresence>
@@ -796,7 +834,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                       search={search}
                       index={i}
                       isRefreshing={isRefreshing}
-                      onShowDetails={() => navigate(`/articles/${article.id}`)}
+                      onShowDetails={() => navigate(`/articles/${article.id}`, { state: { from: `${location.pathname}${location.search}` } })}
                     />
                   ))}
                 </AnimatePresence>
