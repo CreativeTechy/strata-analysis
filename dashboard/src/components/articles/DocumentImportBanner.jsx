@@ -1,9 +1,10 @@
 import { Info, X } from 'lucide-react';
 
-/** Live status for a document import (PDF/DOC/XLS/CSV/image/JSON) going
- *  through the project-documents pipeline: upload -> extract -> LLM-split ->
- *  auto-approve. That pipeline has no single progress counter the way a JSONL
- *  import's line count does, so this just shows the current stage's message. */
+/** Live status for a document import (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON)
+ *  going through the project-documents pipeline: upload -> extract/parse ->
+ *  LLM-split (or, for JSON/JSONL/NDJSON, straight to candidates) -> auto-
+ *  approve. That pipeline has no single progress counter, so this just shows
+ *  the current stage's message. */
 export default function DocumentImportBanner({ status, onDismiss }) {
   return (
     <div className="glass-card articles-import-banner">

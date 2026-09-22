@@ -9,16 +9,13 @@ This module owns auth, users/roles, projects, articles, analysis runs, and the
 Intelligence Copilot; the two document domains keep their own routers.
 """
 
-import contextlib
 import json
 import logging
-import os
-import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -47,11 +44,6 @@ from services.articles.articles_store import (
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
     list_project_sources,
-)
-from services.articles.import_jobs import (
-    create_import_run,
-    get_import_run,
-    run_import_job,
 )
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
@@ -1036,89 +1028,6 @@ def export_articles_jsonl(
         "Content-Type": "application/x-ndjson; charset=utf-8",
     }
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
-
-
-MAX_IMPORT_BYTES = 256 * 1024 * 1024
-UPLOAD_CHUNK_BYTES = 1024 * 1024
-
-
-@app.post("/api/articles/import")
-async def import_articles_jsonl(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    project_id: int | None = Form(None),
-    user: dict = Depends(require_permission("articles.import")),
-):
-    """Queue a JSONL export produced by GET /api/articles/export for import.
-
-    Restoring a project means an upsert per article, each of which also writes
-    its project link, story group and idea clusters - minutes of work for a
-    real export, well past any gateway timeout. So the request only spools the
-    upload to disk and returns a run id; the work happens in
-    import_jobs.run_import_job and the UI polls GET .../import/{run_id} for
-    live counts and throughput. Same queued/poll shape as competitor discovery.
-
-    Only what can be judged from the bytes themselves is rejected here, so an
-    oversized or plainly wrong file still fails fast with a real status code.
-    """
-    if project_id is not None:
-        _ensure_project_visible(project_id, user)
-
-    handle, path = tempfile.mkstemp(prefix="articles-import-", suffix=".jsonl")
-    total_bytes = 0
-    total_lines = 0
-    leading = b""
-    last_byte = b""
-
-    try:
-        with os.fdopen(handle, "wb") as spool:
-            while True:
-                chunk = await file.read(UPLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                total_bytes += len(chunk)
-                if total_bytes > MAX_IMPORT_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"File is larger than the {MAX_IMPORT_BYTES // (1024 * 1024)}MB import limit. "
-                            "Split it and import in parts."
-                        ),
-                    )
-                if len(leading) < 64:
-                    leading += chunk[: 64 - len(leading)]
-                # Counting newlines as they stream past costs nothing and gives
-                # the job a record-count estimate for its percentage and ETA.
-                total_lines += chunk.count(b"\n")
-                last_byte = chunk[-1:]
-                spool.write(chunk)
-        if total_bytes and last_byte != b"\n":
-            total_lines += 1
-
-        if not total_bytes:
-            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-        if leading.lstrip()[:1] == b"[":
-            raise HTTPException(
-                status_code=400,
-                detail="Expected JSON Lines (one article object per line), not a JSON array.",
-            )
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.remove(path)
-        raise
-
-    run_id = create_import_run(project_id=project_id, filename=file.filename or "", total_lines=total_lines)
-    background_tasks.add_task(run_import_job, run_id, path, project_id)
-    return {"run_id": run_id, "status": "queued", "total_lines": total_lines, "project_id": project_id}
-
-
-@app.get("/api/articles/import/{run_id}")
-def import_articles_status(run_id: str, user: dict = Depends(require_permission("articles.import"))):
-    """Progress for one import job: counters, throughput and its live logs."""
-    run = get_import_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Import run not found.")
-    return {"run": run}
 
 
 # --- Analysis pipeline: on-demand (re)analysis, status, ideas -------------
