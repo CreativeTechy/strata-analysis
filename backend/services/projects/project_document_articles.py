@@ -302,6 +302,29 @@ def approve_all(project_id: int) -> list[dict]:
     return approved
 
 
+def approve_for_documents(project_id: int, document_ids: list[int]) -> list[dict]:
+    """Approves every still-pending candidate split out of *these* documents,
+    leaving the rest of the project's pending candidates (from a wizard mid-
+    review elsewhere) untouched - the scoped counterpart of approve_all(),
+    for a caller (the Articles page's import) that only wants to auto-approve
+    what it just uploaded.
+
+    One Python-level loop, same as approve_all(), but called once per import
+    batch instead of once per candidate over HTTP: the caller is expected to
+    queue exactly one start_or_reuse_analysis_run() after this returns,
+    rather than one per candidate - see project_documents_api.py's route."""
+    wanted = {int(document_id) for document_id in document_ids}
+    if not wanted:
+        return []
+    approved = []
+    for candidate in list_candidates(project_id):
+        if candidate["status"] == "pending" and int(candidate["document_id"]) in wanted:
+            updated = set_status(candidate["id"], "approved")
+            if updated:
+                approved.append(updated)
+    return approved
+
+
 def approved_article_ids(project_id: int) -> list[int]:
     rows = db.fetch_all(
         "select article_id from project_document_articles "

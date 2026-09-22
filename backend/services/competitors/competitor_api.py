@@ -17,6 +17,7 @@ import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 
+import config
 from services.competitors import analysis_runs_store
 from services.competitors import business_profile_store
 from services.competitors import competitor_analysis
@@ -245,7 +246,10 @@ async def upload_documents(
     for upload in files:
         content = await upload.read()
         if len(content) > competitor_documents_store.MAX_FILE_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail=f"'{upload.filename}' is larger than 25 MB.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{upload.filename}' is larger than {config.DOCUMENT_MAX_FILE_SIZE_MB} MB.",
+            )
         record = competitor_documents_store.save_document(
             project_id, filename=upload.filename, content=content, mime_type=upload.content_type
         )

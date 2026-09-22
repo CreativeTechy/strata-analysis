@@ -44,13 +44,15 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import config
+
 RECORD_EXTENSIONS = {".json", ".jsonl", ".ndjson"}
 
 # Every record becomes a row in the review step's un-paginated candidate list,
-# so a 50,000-line export has to be cut off somewhere or that step becomes
-# unusable. The remainder is reported, never silently dropped - see
-# ParsedRecords.truncated.
-MAX_RECORDS = 500
+# so a file has to be cut off somewhere or that step becomes unusable - see
+# config.RECORD_IMPORT_MAX_RECORDS. The remainder is reported, never silently
+# dropped - see ParsedRecords.truncated.
+MAX_RECORDS = config.RECORD_IMPORT_MAX_RECORDS
 
 # A file with the wrong shape would otherwise report one error per line.
 MAX_ERRORS_REPORTED = 5
@@ -235,8 +237,25 @@ def _iter_raw(text: str, suffix: str):
     # Line-delimited: the .jsonl/.ndjson default, and the fallback for a file
     # the whole-file parse just rejected - which is what a .json that really
     # holds one object per line looks like.
+    if not file_error:
+        # The common case - a genuine .jsonl/.ndjson export never reaches the
+        # branch above, so file_error is always None here. Stay a true
+        # generator: parse_records applies MAX_RECORDS as items arrive, so a
+        # multi-thousand-record file must not have every one of its records
+        # parsed and held in a list before that cap gets to discard most of
+        # them - see the module's MAX_RECORDS note and the memory this used
+        # to cost holding the whole file's records (title/body/embedding_json,
+        # not just the line count) in memory at once for no reason.
+        yield from _line_items(text)
+        return
+
+    # suffix was .json (or the file looked array-shaped) and the whole-file
+    # parse above failed - only in that case do we need to know whether ANY
+    # line parses as JSON, to choose one file-level error over one-per-line.
+    # That means buffering here, but only for a file already known to be
+    # small/malformed, never for a legitimate large export.
     lines = list(_line_items(text))
-    if file_error and not any(isinstance(item, dict) for _, item in lines):
+    if not any(isinstance(item, dict) for _, item in lines):
         # Genuinely malformed: one file-level reason beats one error per line.
         yield "File", file_error
         return

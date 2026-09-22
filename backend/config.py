@@ -213,6 +213,22 @@ COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS = int(
     os.environ.get("COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS", "90") or 90
 )
 
+# .json/.jsonl/.ndjson uploads (backend/services/documents/records.py, shared
+# by both project and competitor document flows) skip the LLM split - each
+# record becomes one candidate directly - so this cap is just memory/review-list
+# size, not model cost. Raise it for operators regularly importing exports in
+# the thousands of records; a file that still exceeds it is truncated, not
+# rejected (see records.py's MAX_ERRORS_REPORTED/truncated handling).
+RECORD_IMPORT_MAX_RECORDS = int(os.environ.get("RECORD_IMPORT_MAX_RECORDS", "5000") or 5000)
+
+# Per-file upload size cap, shared by both document-upload flows
+# (services/projects/project_documents_store.py and
+# services/competitors/competitor_documents_store.py). A single PDF/image
+# rarely needs more than a few MB, but a .json/.jsonl/.ndjson export bundles
+# many records into one file, so the cap has to cover that case rather than
+# being sized for the smallest consumer.
+DOCUMENT_MAX_FILE_SIZE_MB = int(os.environ.get("DOCUMENT_MAX_FILE_SIZE_MB", "100") or 100)
+
 # Naming the companies a competitor study's approved articles are actually
 # about (backend/services/competitors/document_analysis.py) - a full article
 # corpus in the prompt, so it gets the same longer budget as finding

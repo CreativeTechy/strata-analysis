@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
+import config
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible
 from services.pipeline.pipeline import start_or_reuse_analysis_run
@@ -117,7 +118,10 @@ async def upload_documents(
     for upload in files:
         content = await upload.read()
         if len(content) > project_documents_store.MAX_FILE_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail=f"'{upload.filename}' is larger than 25 MB.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{upload.filename}' is larger than {config.DOCUMENT_MAX_FILE_SIZE_MB} MB.",
+            )
         try:
             record = project_documents_store.save_document(
                 project_id,
@@ -200,6 +204,31 @@ def approve_all_document_articles(
     return {"articles": approved, "run_id": run_id}
 
 
+@router.post("/{project_id}/document-articles/approve-for-documents")
+def approve_document_articles_for_documents(
+    project_id: int,
+    payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    """Same as approve-all, scoped to specific document ids - what the
+    Articles page's import uses so approving what it just uploaded can't also
+    sweep up a pending candidate from a wizard mid-review elsewhere in the
+    project (see project_document_articles.approve_for_documents), and so an
+    import of many candidates is one approval call and one run-start instead
+    of one of each per candidate."""
+    _project_or_404(project_id, user)
+    document_ids = (payload or {}).get("document_ids") or []
+    try:
+        document_ids = [int(document_id) for document_id in document_ids]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="document_ids must be a list of integers.")
+    approved = project_document_articles.approve_for_documents(project_id, document_ids)
+    run_id = None
+    if any(candidate.get("article_id") for candidate in approved):
+        run_id = start_or_reuse_analysis_run(project_id)["run_id"]
+    return {"articles": approved, "run_id": run_id}
+
+
 @router.post("/{project_id}/document-articles/reanalyze")
 def reanalyze_document_articles(
     project_id: int,
@@ -216,6 +245,13 @@ def reanalyze_document_articles(
         return {"run_id": None, "queued": 0, "message": "No approved articles to analyze yet."}
 
     run_info = start_or_reuse_analysis_run(project_id)
+    if run_info["run_id"] is None:
+        # start_or_reuse_analysis_run() found an active run, marked this
+        # project for a follow-up, then discovered on its own self-drain
+        # re-check that the run had already finished with nothing left
+        # pending (see pipeline.py's _project_has_pending_articles) - not
+        # "still active", just nothing to do right now.
+        return {"run_id": None, "queued": 0, "message": "Nothing to re-analyze."}
     if not run_info["started"]:
         return {"run_id": run_info["run_id"], "queued": 0, "message": "An analysis run is already active for this project."}
     return {"run_id": run_info["run_id"], "message": "Analysis run started."}

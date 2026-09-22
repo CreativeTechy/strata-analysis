@@ -235,6 +235,11 @@
   min-width: 0;
 }
 
+.articles-page-shell .articles-import-banner.is-warning {
+  color: #92400e;
+  border-left-color: #f5a623;
+}
+
 .articles-page-shell .articles-import-banner.is-failed {
   color: #b42318;
   border-left-color: #ff4757;

@@ -45,18 +45,38 @@ def _export_select():
     so exporting the narrow list and re-importing it would null those out.
     Selecting exactly what the upsert writes keeps export -> import lossless.
 
+    Also unions in ARTICLES_SELECT itself: `segment` (and any other future
+    dashboard-list field) is derived/written outside the upsert - see
+    store.py's _replace_article_children(), which sets it from the
+    per-article-opinion majority vote rather than from ARTICLE_MUTABLE_FIELDS
+    - so it would otherwise be visible on every article card yet silently
+    absent from the export. Whatever the dashboard shows for an article, the
+    export must be able to carry too.
+
     Built from the live table rather than hardcoded so a database that hasn't
     had every migration applied yet exports the columns it does have instead of
-    failing the whole query on one missing name."""
-    from services.articles.store import stored_article_fields
+    failing the whole query on one missing name. stored_article_fields() only
+    filters ARTICLE_MUTABLE_FIELDS this way (the upsert's own write-set), so
+    the names unioned in above from ARTICLES_SELECT - `segment` included -
+    are filtered again here, against _article_table_columns() directly
+    (the raw column list, not ARTICLE_MUTABLE_FIELDS-shaped), so a
+    pre-migration column named here the same way still comes back empty
+    (an unreachable/errored connection) rather than partially filtered - in
+    which case every candidate name is kept, matching stored_article_fields()'s
+    own "can't check, so trust everything" fallback."""
+    from services.articles.store import _article_table_columns, stored_article_fields
 
-    fields = ["id", *stored_article_fields(), "segment", "created_at"]
+    fields = ["id", *stored_article_fields(), *ARTICLES_SELECT.split(","), "created_at"]
+    live_columns = _article_table_columns()
     seen = set()
     ordered = []
     for field in fields:
-        if field not in seen:
-            seen.add(field)
-            ordered.append(field)
+        if field in seen:
+            continue
+        if live_columns and field not in live_columns:
+            continue
+        seen.add(field)
+        ordered.append(field)
     return ",".join(ordered)
 
 

@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
-import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
 import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
@@ -11,20 +10,20 @@ import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import {
-  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, IMPORT_POLL_MS, JSONL_NAME_RE, DOCUMENT_NAME_RE,
-  FULL_IMPORT_ACCEPT, JSONL_ONLY_ACCEPT, getPageNumbers,
+  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
+  FULL_IMPORT_ACCEPT, getPageNumbers,
 } from '../lib/articleHelpers.jsx';
 import {
   uploadDocuments,
   pollDocumentExtraction,
   pollArticleCandidates,
   listDocumentArticles,
-  setDocumentArticleStatus,
+  approveDocumentArticlesForDocuments,
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
   listArticles, deleteAllArticles,
-  exportArticles, importArticles, getImportStatus,
+  exportArticles,
 } from '../api/articlesApi.js';
 import { listProjectSources } from '../api/projectsApi.js';
 import '../styles/Articles.css';
@@ -93,7 +92,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [deletingAll, setDeletingAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importRun, setImportRun] = useState(null);
   const [documentImportStatus, setDocumentImportStatus] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
@@ -374,44 +372,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   };
 
-  // Imports one file end to end: queues the backend job, then polls it to
-  // completion, rendering its counters and throughput as they arrive.
-  // `batchLabel` (e.g. "File 2 of 3: foo.jsonl") is stamped onto each polled
-  // run so the banner can show which file of a multi-file selection is active.
-  const importSingleFile = async (file, batchLabel) => {
-    const body = new FormData();
-    body.append('file', file);
-    // Imported rows land in the project currently in scope, mirroring what a
-    // scrape for that project would have produced. 'all' imports unlinked.
-    if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
-
-    const queued = await importArticles(body);
-
-    let lastSaved = 0;
-    for (;;) {
-      const payload = await getImportStatus(queued.run_id);
-      const run = payload.run || {};
-      setImportRun(batchLabel ? { ...run, _batchLabel: batchLabel } : run);
-      // Refresh the list as rows land, not only at the end, so a long import
-      // visibly fills the page instead of sitting empty until it finishes.
-      if ((run.saved || 0) > lastSaved) {
-        lastSaved = run.saved || 0;
-        setReloadToken((value) => value + 1);
-      }
-      if (run.status === 'success' || run.status === 'failed') {
-        if (run.status === 'failed') throw new Error(run.error || run.message || 'Import failed.');
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
-    }
-  };
-
-  // Imports a batch of non-JSONL documents (PDF/DOC/XLS/CSV/image/JSON) via
+  // Imports a batch of documents (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON) via
   // the same upload -> extract -> LLM-split pipeline the project-create
-  // wizard uses, then auto-approves only the candidates split out of *these*
-  // documents (not every pending candidate in the project - see approve_all's
-  // docstring - a wizard mid-review elsewhere shouldn't get its candidates
-  // silently approved by an Articles-page import).
+  // wizard uses, then approves only the candidates split out of *these*
+  // documents (not every pending candidate in the project - see
+  // approve_for_documents' docstring - a wizard mid-review elsewhere
+  // shouldn't get its candidates silently approved by an Articles-page
+  // import). Every resulting article gets a document_id (via its synthetic
+  // source_url), so it's filterable by document the same way any other
+  // uploaded document's articles are.
   const importDocumentFiles = async (files) => {
     const projectId = projectFilter;
     setDocumentImportStatus({ message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
@@ -423,30 +392,41 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setDocumentImportStatus({ message: 'Splitting into articles...' });
     const afterSplit = await pollArticleCandidates(projectId, documentIds, () => {});
+    const thisBatch = afterSplit.filter((doc) => documentIds.includes(doc.id));
     const failedIds = new Set(
-      afterSplit
-        .filter((doc) => documentIds.includes(doc.id) && (doc.status === 'failed' || doc.articles_status === 'failed'))
-        .map((doc) => doc.id)
+      thisBatch.filter((doc) => doc.status === 'failed' || doc.articles_status === 'failed').map((doc) => doc.id)
     );
+    // A document can finish 'ready' and still leave a note behind:
+    // articles_error also carries a .json/.jsonl/.ndjson upload's truncation
+    // report (records left behind past the per-file cap - see
+    // project_documents_store.py's _process_record_document and
+    // listDocuments' own doc comment). That must not be swallowed just
+    // because the document itself didn't fail outright.
+    const notes = thisBatch
+      .filter((doc) => !failedIds.has(doc.id) && doc.articles_error)
+      .map((doc) => `${doc.original_filename || `Document #${doc.id}`}: ${doc.articles_error}`);
+
+    setDocumentImportStatus({ message: 'Adding articles...' });
+    // One request for the whole batch, scoped to just these documents (see
+    // approve_for_documents' docstring), instead of one approval request per
+    // candidate - process_document already auto-approves each document as it
+    // finishes splitting, so this is also a safety net for whatever that
+    // missed, and it's what starts (or joins) the one analysis run this
+    // import needs rather than a run-start call per document/candidate.
+    await approveDocumentArticlesForDocuments(projectId, documentIds);
+    setReloadToken((value) => value + 1);
 
     const { articles: candidates } = await listDocumentArticles(projectId);
-    const toApprove = candidates.filter((candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'pending');
-
-    setDocumentImportStatus({ message: `Adding ${toApprove.length} article${toApprove.length === 1 ? '' : 's'}...` });
-    let approved = 0;
-    for (const candidate of toApprove) {
-      try {
-        await setDocumentArticleStatus(candidate.id, 'approved');
-        approved += 1;
-        setReloadToken((value) => value + 1);
-      } catch {
-        // Left pending - reviewable from the project's document-review view.
-      }
-    }
+    const approved = candidates.filter(
+      (candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'approved'
+    ).length;
 
     setDocumentImportStatus({
-      message: `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`,
+      message:
+        `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`
+        + (notes.length ? ` ${notes.join(' ')}` : ''),
       done: true,
+      warning: notes.length > 0,
     });
 
     if (failedIds.size) {
@@ -461,27 +441,25 @@ export default function ArticlesPage({ project = null, projectId = null, project
     event.target.value = '';
     if (!picked.length || importing) return;
 
-    // Document formats (PDF/DOC/XLS/CSV/image/JSON) need the project-documents
-    // pipeline, which is project-scoped - so they're only accepted once a
-    // specific project is in the filter, same as project-create requires one.
+    // All supported formats (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON) go
+    // through the project-documents pipeline, which is project-scoped - so
+    // they're only accepted once a specific project is in the filter, same
+    // as project-create requires one.
     const hasProject = projectFilter !== 'all';
-    const jsonlFiles = [];
     const documentFiles = [];
     const skipped = [];
     for (const file of picked) {
       const name = file.webkitRelativePath || file.name;
-      if (JSONL_NAME_RE.test(name)) {
-        jsonlFiles.push(file);
-      } else if (DOCUMENT_NAME_RE.test(name)) {
+      if (DOCUMENT_NAME_RE.test(name)) {
         if (hasProject) documentFiles.push(file);
         else skipped.push(name);
       }
     }
 
-    if (!jsonlFiles.length && !documentFiles.length) {
+    if (!documentFiles.length) {
       setError(
         skipped.length
-          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`
+          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`
           : 'No supported files found in the selection.'
       );
       return;
@@ -489,45 +467,20 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setImporting(true);
     setError('');
-    setImportRun(null);
     setDocumentImportStatus(null);
 
-    // Files are imported one at a time (the backend runs one job per upload)
-    // so failures on one file don't abort the rest of the batch.
     const failures = [];
-    for (let i = 0; i < jsonlFiles.length; i += 1) {
-      const file = jsonlFiles[i];
-      const displayName = file.webkitRelativePath || file.name;
-      const batchLabel = jsonlFiles.length > 1 ? `File ${i + 1} of ${jsonlFiles.length}: ${displayName}` : null;
-      try {
-        await importSingleFile(file, batchLabel);
-      } catch (err) {
-        failures.push({ name: displayName, error: err?.message || 'Failed to import.' });
-      }
-    }
-
-    if (documentFiles.length) {
-      try {
-        await importDocumentFiles(documentFiles);
-      } catch (err) {
-        const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
-        failures.push({ name, error: err?.message || 'Failed to import.' });
-      }
+    try {
+      await importDocumentFiles(documentFiles);
+    } catch (err) {
+      const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
+      failures.push({ name, error: err?.message || 'Failed to import.' });
     }
 
     const messages = [];
-    if (failures.length) {
-      const totalFiles = jsonlFiles.length + documentFiles.length;
-      messages.push(
-        totalFiles > 1
-          ? `${failures.length} of ${totalFiles} file(s) failed to import: ${failures
-              .map((f) => `${f.name} (${f.error})`)
-              .join('; ')}`
-          : failures[0].error
-      );
-    }
+    if (failures.length) messages.push(failures[0].error);
     if (skipped.length) {
-      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`);
+      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`);
     }
     if (messages.length) setError(messages.join(' '));
 
@@ -832,7 +785,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <input
                   ref={importInputRef}
                   type="file"
-                  accept={projectFilter === 'all' ? JSONL_ONLY_ACCEPT : FULL_IMPORT_ACCEPT}
+                  accept={FULL_IMPORT_ACCEPT}
                   multiple
                   onChange={handleImportFile}
                   style={{ display: 'none' }}
@@ -866,7 +819,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
           </div>
         ) : null}
 
-        {importRun ? <ImportProgressBanner run={importRun} onDismiss={() => setImportRun(null)} /> : null}
         {documentImportStatus ? (
           <DocumentImportBanner status={documentImportStatus} onDismiss={() => setDocumentImportStatus(null)} />
         ) : null}

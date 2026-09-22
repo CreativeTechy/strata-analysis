@@ -83,7 +83,7 @@ export async function getArticleStats(params, signal) {
   return data && typeof data === 'object' ? data : null;
 }
 
-// --- export/import -----------------------------------------------------
+// --- export --------------------------------------------------------------
 /** Streams the export as a Blob - the endpoint returns newline-delimited
  *  JSON for direct download, not a parsed JSON body. */
 export async function exportArticles(params) {
@@ -94,8 +94,6 @@ export async function exportArticles(params) {
   }
   return response.blob();
 }
-export const importArticles = (formData) => requestSoftError('/articles/import', { method: 'POST', body: formData, form: true });
-export const getImportStatus = (runId) => requestSoftError(`/articles/import/${runId}`);
 
 // --- copilot -------------------------------------------------------------
 /** Every handled outcome (a real reply, or an LLM failure reported as a soft
