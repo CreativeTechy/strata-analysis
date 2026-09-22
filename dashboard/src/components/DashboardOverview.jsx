@@ -460,7 +460,7 @@ export default function DashboardOverview({
           <article className="glass-card intelligence-card intelligence-language-card intelligence-source-reliability-card">
             <div className="intelligence-card-heading">
               <div>
-                <h3>Cross-source coverage</h3>
+                <h3>Source reliability signals</h3>
                 <span>Matching stories found across other domains</span>
               </div>
             </div>

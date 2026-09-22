@@ -106,7 +106,7 @@ export default function ArticleDetailModal({
             </div>
           ) : null}
           <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
-            <strong>Cross-source coverage:</strong>{' '}
+            <strong>Source reliability signals:</strong>{' '}
             {data.coverage_evidence
               ? (COVERAGE_LABELS[data.coverage_evidence.status] || prettyLabel(data.coverage_evidence.status))
               : 'Not checked'}
@@ -137,7 +137,7 @@ export default function ArticleDetailModal({
                 disabled={checkingCoverage}
                 style={{ marginTop: 8 }}
               >
-                {checkingCoverage ? 'Checking coverage...' : 'Check cross-source coverage'}
+                {checkingCoverage ? 'Checking signals...' : 'Check source reliability signals'}
               </button>
             ) : null}
           </div>

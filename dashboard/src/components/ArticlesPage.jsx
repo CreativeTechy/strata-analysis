@@ -276,9 +276,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
     try {
       const result = await checkCoverage(detailArticleId);
       setDetailData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
-      setDetailActionMessage('Cross-source coverage updated.');
+      setDetailActionMessage('Source reliability signals updated.');
     } catch (err) {
-      setDetailActionMessage(err?.message || 'Failed to check cross-source coverage.');
+      setDetailActionMessage(err?.message || 'Failed to check source reliability signals.');
     } finally {
       setDetailCheckingCoverage(false);
     }
@@ -696,7 +696,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
               className="filter-select"
               value={coverageFilter}
               onChange={(event) => setCoverageFilter(event.target.value)}
-              aria-label="Cross-source coverage"
+              aria-label="Source reliability signals"
             >
               {COVERAGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>

@@ -71,7 +71,7 @@ describe('ArticleDetailModal', () => {
       },
     })} />)
     expect(screen.getByRole('button', { name: 'Reprocess' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Check cross-source coverage' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check source reliability signals' })).toBeInTheDocument()
   })
 
   it('shows cross-source coverage with evidence and its limitation', () => {
