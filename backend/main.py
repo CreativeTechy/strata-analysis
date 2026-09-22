@@ -101,6 +101,7 @@ from services.evidence.workspace import (
     publish_generation as publish_evidence_generation,
     review_claim as save_evidence_review,
     review_relevance as save_evidence_relevance_review,
+    review_article_screening as save_evidence_article_screening_review,
     review_provenance as save_provenance_review,
     update_run_scope as update_evidence_run_scope,
 )
@@ -633,6 +634,24 @@ def review_project_evidence_provenance(
     if not result:
         raise HTTPException(status_code=404, detail="Evidence article not found.")
     return {"article": result}
+
+
+@app.post("/api/projects/{project_id}/evidence/runs/{run_id}/articles/{article_id}/screening-review")
+def review_project_evidence_article_screening(
+    project_id: int, run_id: str, article_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        result = save_evidence_article_screening_review(
+            project_id, run_id, article_id, str(payload.get("decision") or ""),
+            str(payload.get("reason") or ""), user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=404, detail="Evidence source screening was not found.")
+    return {"article": result, "applies_on_next_rebuild": True}
 
 
 @app.post("/api/projects/{project_id}/evidence/runs/{run_id}/retry")

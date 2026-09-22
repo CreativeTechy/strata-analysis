@@ -1,10 +1,176 @@
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from services.evidence import workspace
 
 
 class EvidenceRuleTests(unittest.TestCase):
+    def test_blocked_and_arabic_unavailable_pages_are_excluded(self):
+        english = workspace._content_quality({"text": "Access denied. Sign in to continue. Verification code required."})
+        arabic = workspace._content_quality({"text": "المحتوى غير متاح. سجّل الدخول وأدخل رمز التحقق للمتابعة."})
+        self.assertFalse(english["usable"])
+        self.assertFalse(arabic["usable"])
+        self.assertEqual(english["code"], "blocked_or_unavailable")
+        self.assertEqual(arabic["code"], "blocked_or_unavailable")
+
+    def test_incidental_cookie_notice_does_not_hide_substantive_article(self):
+        text = (
+            "Cookie policy. We use cookies to improve this site.\n"
+            "The energy ministry raised gasoline prices by 40000 pounds on Monday after global oil costs increased. "
+            "The new official schedule also lowered the price of household gas and took effect immediately."
+        )
+        result = workspace._content_quality({"text": text})
+        self.assertTrue(result["usable"])
+
+    def test_meta_claim_is_rejected_even_when_it_mentions_the_topic(self):
+        row = {"text": "Fuel prices increased by 40000 pounds on Monday after the ministry issued its schedule."}
+        result = workspace._evaluate_claim_candidate(
+            row, "Fuel", "The article discusses fuel prices but the content is unavailable due to a login error.",
+        )
+        self.assertEqual(result["status"], "rejected")
+
+    def test_claim_candidates_do_not_fallback_to_summary_or_title(self):
+        row = {"topics": ["Fuel"], "key_points": [], "summary": "The article discusses fuel prices.",
+               "title": "Fuel update"}
+        self.assertEqual(workspace._claim_candidates(row), [])
+
+    def test_exact_duplicate_content_is_one_independent_origin(self):
+        body = "The ministry increased fuel prices by 40000 pounds after international oil prices rose."
+        first = {"text": body, "url": "https://one.example/a"}
+        second = {"text": body, "url": "https://two.example/b"}
+        key = workspace._content_key(first)
+        first["_content_cluster"] = key
+        first["_content_duplicate"] = True
+        second["_content_cluster"] = workspace._content_key(second)
+        second["_content_duplicate"] = True
+        self.assertEqual(workspace._origin(first), workspace._origin(second))
+
+    def test_passage_cache_config_changes_with_thresholds(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72):
+            first = workspace._passage_decision_config()
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.80):
+            second = workspace._passage_decision_config()
+        self.assertNotEqual(first, second)
+
+    def test_uncertain_passage_cache_entry_is_retried(self):
+        row = {
+            "id": 7,
+            "text": (
+                "The energy ministry increased gasoline prices after global oil costs rose on Monday, "
+                "and the official nationwide price schedule took effect immediately at fuel stations."
+            ),
+            "content_hash": "snapshot-hash",
+        }
+        uncertain = {
+            "content_hash": workspace._content_key(row), "relevance": "uncertain", "score": 0,
+            "passage": "", "reason": "Embedding unavailable.",
+        }
+        with patch.object(workspace.db, "fetch_all", side_effect=[[], [uncertain]]), \
+             patch.object(workspace.db, "execute") as execute, \
+             patch.object(workspace.db, "transaction"), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0, 0.0]}]) as embed:
+            included, stats = workspace._screen_articles(
+                [row], {"name": "Fuel prices", "description": "Gasoline price changes"}, "run-1", 3, 1,
+            )
+        embed.assert_called_once()
+        self.assertEqual(included, [row])
+        self.assertEqual(stats["pending_articles"], 0)
+        self.assertTrue(any("evidence_passage_relevance_cache" in call.args[0] for call in execute.call_args_list))
+
+    def test_missing_passage_embedding_is_pending_and_not_cached(self):
+        row = {
+            "id": 8,
+            "text": (
+                "The energy ministry increased gasoline prices after global oil costs rose on Monday, "
+                "and the official nationwide price schedule took effect immediately at fuel stations."
+            ),
+            "content_hash": "snapshot-hash",
+        }
+        with patch.object(workspace.db, "fetch_all", side_effect=[[], []]), \
+             patch.object(workspace.db, "execute") as execute, \
+             patch.object(workspace.db, "transaction"), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
+             patch.object(workspace, "get_embeddings", return_value=[{}]):
+            included, stats = workspace._screen_articles(
+                [row], {"name": "Fuel prices", "description": "Gasoline price changes"}, "run-2", 3, 1,
+            )
+        self.assertEqual(included, [])
+        self.assertEqual(stats["pending_articles"], 1)
+        self.assertFalse(any("evidence_passage_relevance_cache" in call.args[0] for call in execute.call_args_list))
+
+    def test_shared_geography_alone_is_not_contextual_evidence(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.8), \
+             patch.object(workspace.config, "EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD", 0.6):
+            relevance, reason = workspace._passage_relevance_label(
+                0.7, "A football club in Lebanon announced its squad today.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "unrelated")
+        self.assertIn("geography", reason)
+
+    def test_high_similarity_without_material_topic_link_is_unrelated(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72), \
+             patch.object(workspace.config, "EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD", 0.62):
+            relevance, reason = workspace._passage_relevance_label(
+                0.90, "A football club in Lebanon announced its squad today.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "unrelated")
+        self.assertIn("non-geographic", reason)
+
+    def test_one_generic_keyword_does_not_make_a_direct_match(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72):
+            relevance, _ = workspace._passage_relevance_label(
+                0.90, "A retailer announced a price promotion for football shirts in Lebanon.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "unrelated")
+
+    def test_strong_cross_language_match_can_be_direct(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.72):
+            relevance, _ = workspace._passage_relevance_label(
+                0.86, "ارتفع سعر صفيحة البنزين بعد صدور الجدول الرسمي.",
+                {"lebanon", "fuel", "crisis", "price"}, {"lebanon"},
+            )
+        self.assertEqual(relevance, "direct")
+
+    def test_claim_with_opposite_negation_requires_review(self):
+        row = {"text": "The ministry did not increase gasoline prices after the cabinet meeting on Monday."}
+        result = workspace._evaluate_claim_candidate(
+            row, "Fuel", "The ministry increased gasoline prices after the cabinet meeting on Monday.",
+        )
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("negation", result["reason"])
+
+    def test_substantive_passage_preserves_exact_frozen_whitespace(self):
+        body = "The ministry increased  gasoline prices after the cabinet meeting on Monday."
+        passage = workspace._best_passage(
+            {"text": body}, "The ministry increased gasoline prices after the cabinet meeting on Monday.",
+        )
+        self.assertIn(passage, body)
+        self.assertIn("increased  gasoline", passage)
+
+    def test_concrete_scope_connection_can_be_contextual(self):
+        with patch.object(workspace.config, "EVIDENCE_PASSAGE_DIRECT_THRESHOLD", 0.8), \
+             patch.object(workspace.config, "EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD", 0.6):
+            relevance, _ = workspace._passage_relevance_label(
+                0.7, "Transport costs rose after fuel prices increased.",
+                {"fuel", "price", "transport", "cost"}, set(),
+            )
+        self.assertEqual(relevance, "contextual")
+
+    def test_reviewed_content_quality_fixture(self):
+        fixture = Path(__file__).parent / "fixtures" / "evidence_quality_evaluation.json"
+        examples = json.loads(fixture.read_text(encoding="utf-8"))
+        correct = 0
+        for example in examples:
+            predicted = "usable" if workspace._content_quality({"text": example["text"]})["usable"] else "unusable"
+            correct += predicted == example["label"]
+        self.assertEqual(correct, len(examples))
+
     def test_generation_selection_defaults_to_published_not_newest_failed_attempt(self):
         generations = [
             {"generation": 4, "status": "failed", "published_at": None},
@@ -49,6 +215,11 @@ class EvidenceRuleTests(unittest.TestCase):
     def test_story_group_collapses_republished_hosts(self):
         first = {"story_id": 44, "url": "https://one.example/report"}
         second = {"story_id": 44, "url": "https://two.example/reprint"}
+        self.assertEqual(workspace._origin(first), workspace._origin(second))
+
+    def test_duplicate_content_overrides_different_story_ids(self):
+        first = {"story_id": 44, "_content_duplicate": True, "_content_cluster": "same-body"}
+        second = {"story_id": 99, "_content_duplicate": True, "_content_cluster": "same-body"}
         self.assertEqual(workspace._origin(first), workspace._origin(second))
 
     def test_best_passage_is_exact_stored_text(self):
@@ -210,14 +381,18 @@ class EvidenceSnapshotTests(unittest.TestCase):
             "direction": "positive",
             "fingerprint": "fuel-price",
             "embedding": [1.0],
+            "passage": "Fuel prices increased today.",
         }
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
+             patch.object(workspace, "_screen_articles", return_value=([row], {"source_articles": 1, "usable_articles": 1, "included_articles": 1, "excluded_articles": 0, "pending_articles": 0, "duplicate_articles": 0, "decision_config": {}})), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
+             patch.object(workspace, "_evaluate_claim_candidate", return_value={"fingerprint": "fuel-price", "status": "accepted", "passage": candidate["claim"], "reason": "grounded"}), \
              patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
              patch.object(workspace, "_group_claim_candidates", return_value=[{"canonical": candidate, "fingerprint": "fuel-price", "items": [candidate]}]), \
              patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
              patch.object(workspace, "_classify_relevance", return_value={"fuel-price": {"relevance": "direct", "explanation": "Directly addresses fuel prices.", "score": 0.99, "status": "success"}}), \
              patch.object(workspace, "_grounded_model_assessment", side_effect=RuntimeError("interrupted")), \
+             patch.object(workspace.db, "transaction"), \
              patch.object(workspace.db, "execute") as execute:
             with self.assertRaisesRegex(RuntimeError, "interrupted"):
                 workspace._generate_for_run("run-1", 3, 2)
@@ -263,6 +438,23 @@ class EvidenceSnapshotTests(unittest.TestCase):
         self.assertEqual(result["other"]["relevance"], "unrelated")
         chat.assert_not_called()
 
+    def test_claim_embedding_cannot_promote_generic_keyword_only_text(self):
+        groups = [{"fingerprint": "retail", "canonical": {
+            "embedding": [1.0, 0.0],
+            "claim": "A retailer announced a price promotion for football shirts in Lebanon.",
+            "passage": "A retailer announced a price promotion for football shirts in Lebanon.",
+        }}]
+        scope = {
+            "name": "Lebanon Fuel Crisis Monitor", "description": "Fuel supply and gasoline prices",
+            "location": "Lebanon", "keywords": ["fuel", "gasoline"],
+        }
+        with patch.object(workspace.config, "EVIDENCE_RELEVANCE_MODE", "embedding"), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_DIRECT_THRESHOLD", 0.9), \
+             patch.object(workspace.config, "EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD", 0.7), \
+             patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}):
+            result = workspace._classify_relevance(scope, groups)
+        self.assertEqual(result["retail"]["relevance"], "unrelated")
+
     def test_failed_relevance_batch_is_split_to_isolate_transient_failure(self):
         groups = [{"fingerprint": key} for key in ("one", "two")]
         failed = {
@@ -287,20 +479,23 @@ class EvidenceSnapshotTests(unittest.TestCase):
         candidate = {
             "row": row, "topic": "Fuel", "claim": "Fuel prices increased today",
             "type": "factual_assertion", "direction": "positive",
-            "fingerprint": "fuel-price", "embedding": [1.0],
+            "fingerprint": "fuel-price", "embedding": [1.0], "passage": "Fuel prices increased today.",
         }
         failed = {"fuel-price": {
             "relevance": "uncertain", "explanation": "Provider unavailable.",
             "score": 0.0, "status": "failed",
         }}
         with patch.object(workspace, "_snapshot_rows", return_value=[row]), \
+             patch.object(workspace, "_screen_articles", return_value=([row], {"source_articles": 1, "usable_articles": 1, "included_articles": 1, "excluded_articles": 0, "pending_articles": 0, "duplicate_articles": 0, "decision_config": {}})), \
              patch.object(workspace, "_claim_candidates", return_value=[("Fuel", candidate["claim"])]), \
+             patch.object(workspace, "_evaluate_claim_candidate", return_value={"fingerprint": "fuel-price", "status": "accepted", "passage": candidate["claim"], "reason": "grounded"}), \
              patch.object(workspace, "get_embeddings", return_value=[{"embedding_json": [1.0]}]), \
              patch.object(workspace, "_group_claim_candidates", return_value=[{
                  "canonical": candidate, "fingerprint": "fuel-price", "items": [candidate],
              }]), \
              patch.object(workspace, "_project_scope", return_value={"name": "Fuel monitor"}), \
              patch.object(workspace, "_classify_relevance", return_value=failed), \
+             patch.object(workspace.db, "transaction"), \
              patch.object(workspace.db, "execute") as execute:
             with self.assertRaisesRegex(RuntimeError, "previously published evidence generation remains visible"):
                 workspace._generate_for_run("run-1", 3, 2)
