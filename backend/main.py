@@ -43,8 +43,10 @@ from services.articles.articles_store import (
     list_articles,
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
+    list_project_source_keys,
     list_project_sources,
 )
+from services.articles.source_trust import set_tier as set_source_trust_tier
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
@@ -1165,6 +1167,48 @@ def get_project_sources(
     if not get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found.")
     return list_project_sources(project_id, limit=limit, offset=offset)
+
+
+@app.post("/api/projects/{project_id}/sources/trust")
+def set_project_source_trust(
+    project_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    """Operator override for one Sources-tab group's trust tier (see
+    services/articles/source_trust.py) - there is no separate trust-
+    management page, this is the Sources tab's own control. `source_trust`
+    is a global table, so this validates the key against this project's own
+    current source groups first: a user who can only see `project_id` must
+    not blind-write a tier for another project's document, or invent a
+    "real:" host they have never actually seen in their own data."""
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    key = str(payload.get("key") or "").strip()
+    known = list_project_source_keys(project_id)
+    if key not in known:
+        raise HTTPException(status_code=404, detail="Source not found in this project.")
+    # The type is derived from `known` (this project's own current groups),
+    # never trusted from the payload - a caller must not pair a "document:"
+    # key with type="real" (or vice versa) and land a row source_trust's own
+    # type/key-prefix pairing never actually holds for.
+    source_type = known[key]["type"]
+    try:
+        row = set_source_trust_tier(
+            key, source_type, str(payload.get("tier") or ""), str(payload.get("reason") or ""), user,
+            project_id=project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Same shape GET .../sources already attaches as each group's `trust` -
+    # one shape for the dashboard to handle either way.
+    return {
+        "tier": row.get("tier"),
+        "reason": row.get("reason"),
+        "set_by": row.get("set_by_name"),
+        "updated_at": row.get("updated_at"),
+        "is_default": False,
+    }
 
 
 @app.get("/api/projects/{project_id}/idea-clusters/{cluster_id}/articles")

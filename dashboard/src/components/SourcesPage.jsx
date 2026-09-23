@@ -1,12 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { listProjectSources } from '../api/projectsApi.js';
+import {
+  ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, ChevronLeft, ChevronRight, Loader2,
+  ShieldAlert, ShieldCheck, ShieldQuestionMark, ShieldX,
+} from 'lucide-react';
+import { useAuth } from '../auth/useAuth.js';
+import { listProjectSources, setSourceTrust } from '../api/projectsApi.js';
 import { articleDate, getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/IntelligenceDashboard.css';
 import '../styles/Articles.css';
 
 const SOURCES_PAGE_SIZES = [10, 20, 50, 100];
+
+// Offline, operator-set trust tier for a source group - see backend's
+// services/articles/source_trust.py. 'unknown' (not yet assessed) is kept
+// visually distinct from 'untrusted' (assessed and rejected) throughout -
+// collapsing the two is exactly what made the older boolean
+// `articles.verified` column useless as a trust signal.
+const TRUST_TIER_META = {
+  trusted: { label: 'Trusted', chipClass: 'success', icon: ShieldCheck },
+  mixed: { label: 'Mixed', chipClass: 'warning', icon: ShieldAlert },
+  untrusted: { label: 'Untrusted', chipClass: 'danger', icon: ShieldX },
+  unknown: { label: 'Not yet assessed', chipClass: 'muted', icon: ShieldQuestionMark },
+};
+const TRUST_TIER_OPTIONS = ['trusted', 'mixed', 'untrusted', 'unknown'];
 
 // Mirrors backend list_project_sources(): a "real" source is an article's
 // own url grouped by hostname (a JSONL import that carried a genuine url),
@@ -55,6 +72,38 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedKey, setExpandedKey] = useState(null);
+
+  const { hasPermission } = useAuth();
+  const canEditTrust = hasPermission('projects.update');
+  const [trustEditKey, setTrustEditKey] = useState(null);
+  const [trustTierDraft, setTrustTierDraft] = useState('unknown');
+  const [trustReasonDraft, setTrustReasonDraft] = useState('');
+  const [savingTrust, setSavingTrust] = useState(false);
+  const [trustError, setTrustError] = useState('');
+
+  const startEditingTrust = (source) => {
+    setTrustEditKey(source.key);
+    setTrustTierDraft(source.trust?.tier || 'unknown');
+    setTrustReasonDraft('');
+    setTrustError('');
+  };
+
+  const saveTrust = async (source) => {
+    if (!selectedProjectId || !trustReasonDraft.trim()) return;
+    setSavingTrust(true);
+    setTrustError('');
+    try {
+      const trust = await setSourceTrust(selectedProjectId, {
+        key: source.key, type: source.type, tier: trustTierDraft, reason: trustReasonDraft.trim(),
+      });
+      setSources((prev) => prev.map((item) => (item.key === source.key ? { ...item, trust } : item)));
+      setTrustEditKey(null);
+    } catch (err) {
+      setTrustError(err?.message || 'Failed to save trust tier.');
+    } finally {
+      setSavingTrust(false);
+    }
+  };
 
   // A new project or page size invalidates whatever page we were on. Reset
   // and fetch live in the same effect so a project/limit change never fires
@@ -202,6 +251,33 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                           {isReal ? 'Real source' : 'Uploaded document'}
                         </span>
+                        {(() => {
+                          const tierMeta = TRUST_TIER_META[source.trust?.tier] || TRUST_TIER_META.unknown;
+                          const TierIcon = tierMeta.icon;
+                          const trust = source.trust || {};
+                          // A default can still carry a real reason - e.g. a
+                          // hit in the locally imported Iffy.news dataset -
+                          // not just the hand-curated allowlist's plain
+                          // "no override yet" case, so this prefers whatever
+                          // reason is actually there before falling back.
+                          let tooltip;
+                          if (trust.is_default === false) {
+                            tooltip = `Set by ${trust.set_by || 'an operator'}: ${trust.reason || ''}`;
+                          } else if (trust.reason) {
+                            tooltip = `${trust.reason} (starting default${trust.set_by ? ` - ${trust.set_by}` : ''}, not reviewed by an operator yet)`;
+                          } else {
+                            tooltip = 'Not yet reviewed by an operator - a starting default.';
+                          }
+                          return (
+                            <span
+                              className={`panel-chip ${tierMeta.chipClass}`}
+                              style={{ textTransform: 'none', letterSpacing: 0 }}
+                              title={tooltip}
+                            >
+                              <TierIcon size={12} /> {tierMeta.label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: 2 }}>
                         {source.article_count} article{source.article_count === 1 ? '' : 's'}
@@ -239,8 +315,61 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         View articles
                       </Link>
                     ) : null}
+                    {canEditTrust ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          trustEditKey === source.key ? setTrustEditKey(null) : startEditingTrust(source);
+                        }}
+                        className="btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
+                      >
+                        Set trust
+                      </button>
+                    ) : null}
                     <ChevronDown size={16} style={{ flexShrink: 0, transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                   </button>
+
+                  {trustEditKey === source.key ? (
+                    <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
+                        Trust tier
+                        <select
+                          value={trustTierDraft}
+                          onChange={(event) => setTrustTierDraft(event.target.value)}
+                          className="filter-select"
+                        >
+                          {TRUST_TIER_OPTIONS.map((tier) => (
+                            <option key={tier} value={tier}>{TRUST_TIER_META[tier].label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
+                        Reason
+                        <textarea
+                          rows={2}
+                          value={trustReasonDraft}
+                          onChange={(event) => setTrustReasonDraft(event.target.value)}
+                          placeholder="Why this tier - what did you check?"
+                        />
+                      </label>
+                      {trustError ? <span style={{ fontSize: '0.78rem', color: '#ff4757' }}>{trustError}</span> : null}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={savingTrust || !trustReasonDraft.trim()}
+                          onClick={() => saveTrust(source)}
+                        >
+                          {savingTrust ? 'Saving…' : 'Save trust tier'}
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => setTrustEditKey(null)} disabled={savingTrust}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {isExpanded ? (
                     <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
