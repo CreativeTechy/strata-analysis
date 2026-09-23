@@ -1196,6 +1196,7 @@ def set_project_source_trust(
     try:
         row = set_source_trust_tier(
             key, source_type, str(payload.get("tier") or ""), str(payload.get("reason") or ""), user,
+            project_id=project_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

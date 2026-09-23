@@ -69,12 +69,34 @@ def active_dataset_metadata() -> dict | None:
     }
 
 
-@lru_cache(maxsize=1)
-def _active_ratings() -> dict[str, dict]:
+@lru_cache(maxsize=4)
+def _ratings_for_dataset(dataset_id: int) -> dict[str, dict]:
     """{domain: {publisher_name, factual_rating, credibility_rating,
-    review_url}} for the currently active dataset. Cached for the process
-    lifetime - import_records() clears this right after a new import
-    activates, the only way the active dataset ever changes."""
+    review_url}} for one already-identified dataset id. Cached per id, not
+    per "the current active dataset" - import_records() runs in the
+    operator's own script process (see its own docstring), never in this
+    one, so there is no in-process call it can make to invalidate a "current
+    active dataset" cache here. Keying on id instead means a dataset that
+    was already fetched once is still free to re-serve from cache, while a
+    newly activated id (however it was activated) is simply a cache miss the
+    next time _active_ratings() resolves to it - no process restart needed.
+    maxsize=4 is headroom for a rotation in flight, not a working set."""
+    try:
+        rows = db.fetch_all(
+            "select domain, publisher_name, factual_rating, credibility_rating, review_url "
+            "from source_reliability_ratings where dataset_id = %s",
+            (dataset_id,),
+        )
+    except Exception:
+        return {}
+    return {row["domain"]: row for row in rows or [] if row.get("domain")}
+
+
+def _active_ratings() -> dict[str, dict]:
+    """{domain: {...}} for whichever dataset is active *right now* - this
+    lookup itself is never cached (a single indexed row read, same cost
+    class as active_dataset_metadata() above), only the potentially large
+    per-dataset ratings table _ratings_for_dataset() loads for it is."""
     if not config.DATABASE_URL:
         return {}
     try:
@@ -83,16 +105,11 @@ def _active_ratings() -> dict[str, dict]:
             "order by imported_at desc limit 1",
             (PROVIDER,),
         )
-        if not dataset:
-            return {}
-        rows = db.fetch_all(
-            "select domain, publisher_name, factual_rating, credibility_rating, review_url "
-            "from source_reliability_ratings where dataset_id = %s",
-            (dataset["id"],),
-        )
     except Exception:
         return {}
-    return {row["domain"]: row for row in rows or [] if row.get("domain")}
+    if not dataset:
+        return {}
+    return _ratings_for_dataset(dataset["id"])
 
 
 def lookup(domain: str) -> dict | None:
@@ -115,7 +132,11 @@ def lookup(domain: str) -> dict | None:
 
 
 def clear_cache():
-    _active_ratings.cache_clear()
+    """Only needed for the process that actually just called import_records()
+    (or a test) - a *different* running backend process picks up a newly
+    activated dataset on its own next lookup, since _active_ratings() always
+    re-checks which id is active."""
+    _ratings_for_dataset.cache_clear()
 
 
 def _clean_records(records: list[dict]) -> list[dict]:

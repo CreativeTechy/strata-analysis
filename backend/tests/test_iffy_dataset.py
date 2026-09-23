@@ -8,9 +8,9 @@ from services.articles import iffy_dataset
 
 
 class ActiveRatingsCacheMixin:
-    """_active_ratings() is process-lifetime cached (see its own docstring) -
-    every test clears it on both ends so one test's mocked DB rows never
-    leak into another's."""
+    """_ratings_for_dataset() is cached per dataset id (see its own
+    docstring) - every test clears it on both ends so one test's mocked DB
+    rows never leak into another's."""
 
     def setUp(self):
         iffy_dataset.clear_cache()
@@ -70,14 +70,41 @@ class LookupTests(ActiveRatingsCacheMixin, unittest.TestCase):
             result = iffy_dataset.lookup("some-blog.example")
         self.assertIsNone(result)
 
-    def test_result_is_cached_across_calls_until_cleared(self):
+    def test_ratings_for_one_dataset_id_are_cached_across_calls_until_cleared(self):
+        """The (potentially large) per-dataset ratings table is cached per
+        dataset id - two lookups against the same active dataset id must
+        not re-fetch it. The active-dataset-id check itself is deliberately
+        NOT cached (see test_a_newly_activated_dataset_is_picked_up_without_
+        clearing_the_cache below) - that's what lets a different process's
+        import become visible here without a restart."""
         rating = {"domain": "some-blog.example", "factual_rating": "LOW"}
         with patch("services.articles.iffy_dataset.config.DATABASE_URL", "postgresql://x"), \
-             patch("services.articles.iffy_dataset.db.fetch_one", return_value={"id": 1}) as mock_fetch_one, \
-             patch("services.articles.iffy_dataset.db.fetch_all", return_value=[rating]):
+             patch("services.articles.iffy_dataset.db.fetch_one", return_value={"id": 1}), \
+             patch("services.articles.iffy_dataset.db.fetch_all", return_value=[rating]) as mock_fetch_all:
             iffy_dataset.lookup("some-blog.example")
             iffy_dataset.lookup("reuters.com")
-        mock_fetch_one.assert_called_once()
+        mock_fetch_all.assert_called_once()
+
+    def test_a_newly_activated_dataset_is_picked_up_without_clearing_the_cache(self):
+        """Regression test: import_records() runs clear_cache() in the
+        operator script's own process, never in a running backend's - so a
+        backend that already resolved an Iffy lookup before an import must
+        still pick up the newly active dataset on its very next lookup, with
+        no call to clear_cache() in this process at all."""
+        old_rating = {"domain": "old-blog.example", "factual_rating": "LOW"}
+        new_rating = {"domain": "new-blog.example", "factual_rating": "LOW"}
+        with patch("services.articles.iffy_dataset.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.iffy_dataset.db.fetch_one", return_value={"id": 1}), \
+             patch("services.articles.iffy_dataset.db.fetch_all", return_value=[old_rating]):
+            self.assertIsNotNone(iffy_dataset.lookup("old-blog.example"))
+
+        # A second dataset activates - a different id, as a fresh insert
+        # always gets (no clear_cache() call here, simulating another process).
+        with patch("services.articles.iffy_dataset.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.iffy_dataset.db.fetch_one", return_value={"id": 2}), \
+             patch("services.articles.iffy_dataset.db.fetch_all", return_value=[new_rating]):
+            self.assertIsNotNone(iffy_dataset.lookup("new-blog.example"))
+            self.assertIsNone(iffy_dataset.lookup("old-blog.example"))
 
 
 class ActiveDatasetMetadataTests(ActiveRatingsCacheMixin, unittest.TestCase):

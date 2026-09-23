@@ -348,7 +348,7 @@ class SetProjectSourceTrustRouteTests(AnalysisRoutesTestCase):
         })
         # The source's own type is looked up rather than trusted blindly from
         # the request body when the caller doesn't pass one.
-        mock_set.assert_called_once_with("real:reuters.com", "real", "trusted", "Wire service.", ANY)
+        mock_set.assert_called_once_with("real:reuters.com", "real", "trusted", "Wire service.", ANY, project_id=1)
 
 
 class DeleteArticlesRouteTests(AnalysisRoutesTestCase):

@@ -37,11 +37,20 @@ MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
 
 def _download(url: str) -> list[dict]:
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    if len(response.content) > MAX_DOWNLOAD_BYTES:
-        raise ValueError("Iffy response exceeds the 20 MB safety limit.")
-    payload = response.json()
+    # Streamed and capped as it arrives, not after: `requests.get(url)` with
+    # no `stream=True` reads the entire body into `response.content` before
+    # this function gets to look at its length, so the "20 MB safety limit"
+    # would otherwise already have let an oversized (or runaway) response
+    # fully buffer in memory before being rejected - the exact thing the cap
+    # is meant to prevent.
+    body = bytearray()
+    with requests.get(url, timeout=60, stream=True) as response:
+        response.raise_for_status()
+        for chunk in response.iter_content(chunk_size=65536):
+            body.extend(chunk)
+            if len(body) > MAX_DOWNLOAD_BYTES:
+                raise ValueError("Iffy response exceeds the 20 MB safety limit.")
+    payload = json.loads(bytes(body).decode("utf-8"))
     if not isinstance(payload, list):
         raise ValueError("Iffy response must be a JSON list.")
     return payload

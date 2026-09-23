@@ -59,10 +59,37 @@ def _default_tier(source_type: str, label: str) -> tuple[str, str | None, str | 
     return "unknown", None, None
 
 
-def resolve_many(sources: list[dict]) -> dict[str, dict]:
+def _redact_cross_project_override(override: dict, viewer_project_id) -> dict:
+    """An operator override's `reason`/`set_by_name` can name specifics from
+    the project it was made in ("flagged for the Acme engagement") - fine
+    for that project's own viewers, not for a second project that happens to
+    cite the same "real:<host>" and can otherwise see it purely because the
+    tier itself is intentionally global (see migrations/0026 and 0028's own
+    notes). A "document:" override carries no such risk - its key already
+    embeds one project's own document id, so only that project's
+    list_project_sources() ever computes it - and a legacy row with no
+    recorded project_id (saved before 0028) is treated as same-project
+    rather than newly hiding something that was already visible."""
+    if override.get("source_type") != "real":
+        return override
+    override_project_id = override.get("project_id")
+    if override_project_id is None or viewer_project_id is None or override_project_id == viewer_project_id:
+        return override
+    redacted = dict(override)
+    redacted["reason"] = None
+    redacted["set_by_name"] = None
+    return redacted
+
+
+def resolve_many(sources: list[dict], project_id=None) -> dict[str, dict]:
     """{key: {tier, reason, set_by, updated_at, is_default}} for every group
     in `sources` (each a dict carrying at least the key/type/label
     list_project_sources()'s own groups already have).
+
+    `project_id` is the project whose Sources tab is being rendered - used
+    only to redact a cross-project "real:" override's reason/set_by (see
+    _redact_cross_project_override()), never to filter which sources get a
+    tier at all: the tier itself stays visible regardless, by design.
 
     One query for the whole page rather than one per source - the same
     "small enough to stay cheap" reasoning list_project_sources() itself
@@ -74,7 +101,7 @@ def resolve_many(sources: list[dict]) -> dict[str, dict]:
         return {}
     try:
         rows = db.fetch_all(
-            "select source_key, tier, reason, set_by_name, updated_at "
+            "select source_key, source_type, tier, reason, set_by_name, updated_at, project_id "
             "from source_trust where source_key = any(%s)",
             (keys,),
         )
@@ -89,6 +116,7 @@ def resolve_many(sources: list[dict]) -> dict[str, dict]:
             continue
         override = overrides.get(key)
         if override:
+            override = _redact_cross_project_override(override, project_id)
             result[key] = {
                 "tier": override.get("tier"),
                 "reason": override.get("reason"),
@@ -108,13 +136,20 @@ def resolve_many(sources: list[dict]) -> dict[str, dict]:
     return result
 
 
-def set_tier(source_key: str, source_type: str, tier: str, reason: str, user: dict) -> dict:
+def set_tier(source_key: str, source_type: str, tier: str, reason: str, user: dict, project_id=None) -> dict:
     """Record an operator's trust-tier decision for one source group.
 
     Requires a reason for every tier, including 'unknown' (a deliberate
     "return to unassessed", not the same as never having been reviewed) -
     same mandatory-reason rule review_provenance() (evidence workspace)
     already enforces, for the same audit-trail reason.
+
+    `project_id` is the project the operator was looking at when they made
+    this call (main.py's route always supplies it) - resolve_many() uses it
+    to redact this override's reason/set_by for a different project's
+    viewer. The audit row and the current-tier row are written in the same
+    transaction so the append-only trail can never end up recording a
+    change that the live table itself doesn't reflect.
     """
     source_key = str(source_key or "").strip()
     source_type = str(source_type or "").strip()
@@ -132,24 +167,27 @@ def set_tier(source_key: str, source_type: str, tier: str, reason: str, user: di
     set_by_name = (user or {}).get("username") or (user or {}).get("email")
     set_by_user_id = (user or {}).get("id")
 
-    db.execute(
-        """insert into source_trust_reviews
-           (source_key, source_type, tier, reason, set_by_user_id, set_by_name)
-           values (%s, %s, %s, %s, %s, %s)""",
-        (source_key, source_type, tier, reason, set_by_user_id, set_by_name),
-    )
-    return db.fetch_one(
-        """
-        insert into source_trust (source_key, source_type, tier, reason, set_by_user_id, set_by_name)
-        values (%s, %s, %s, %s, %s, %s)
-        on conflict (source_key) do update set
-            source_type = excluded.source_type,
-            tier = excluded.tier,
-            reason = excluded.reason,
-            set_by_user_id = excluded.set_by_user_id,
-            set_by_name = excluded.set_by_name,
-            updated_at = now()
-        returning source_key, source_type, tier, reason, set_by_name, updated_at
-        """,
-        (source_key, source_type, tier, reason, set_by_user_id, set_by_name),
-    )
+    with db.transaction() as cur:
+        cur.execute(
+            """insert into source_trust_reviews
+               (source_key, source_type, tier, reason, set_by_user_id, set_by_name, project_id)
+               values (%s, %s, %s, %s, %s, %s, %s)""",
+            (source_key, source_type, tier, reason, set_by_user_id, set_by_name, project_id),
+        )
+        cur.execute(
+            """
+            insert into source_trust (source_key, source_type, tier, reason, set_by_user_id, set_by_name, project_id)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (source_key) do update set
+                source_type = excluded.source_type,
+                tier = excluded.tier,
+                reason = excluded.reason,
+                set_by_user_id = excluded.set_by_user_id,
+                set_by_name = excluded.set_by_name,
+                project_id = excluded.project_id,
+                updated_at = now()
+            returning source_key, source_type, tier, reason, set_by_name, updated_at
+            """,
+            (source_key, source_type, tier, reason, set_by_user_id, set_by_name, project_id),
+        )
+        return cur.fetchone()

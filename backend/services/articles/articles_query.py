@@ -587,7 +587,7 @@ def list_project_sources(project_id, limit=20, offset=0):
     # Resolved for just this page (bounded by `limit`), not every group, same
     # "small enough to stay cheap" reasoning this function already documents.
     if page:
-        trust_by_key = resolve_source_trust(page)
+        trust_by_key = resolve_source_trust(page, project_id=int(project_id))
         for group in page:
             group["trust"] = trust_by_key.get(group["key"])
 
