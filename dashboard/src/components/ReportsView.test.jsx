@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import ReportsView from './ReportsView.jsx'
+import { exportReportSummaryPdf } from '../api/projectsApi.js'
 
 vi.mock('./StatsOverview', () => ({ default: () => <div data-testid="stats-overview" /> }))
 vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => <div data-testid="competitor-pulse-card" /> }))
+vi.mock('../api/projectsApi.js', () => ({ exportReportSummaryPdf: vi.fn() }))
 
 const PROJECT = { id: 1, name: 'Acme Study', status: 'active' }
 
@@ -67,5 +69,83 @@ describe('ReportsView', () => {
     expect(screen.getByRole('tab', { name: 'Analysis run' })).toBeInTheDocument()
     // Appears twice by design: the run tab strip and the "Range" summary chip.
     expect(screen.getAllByText(/Pipeline #1:/).length).toBeGreaterThan(0)
+  })
+})
+
+describe('ReportsView - Export Summary', () => {
+  let createObjectURL
+  let revokeObjectURL
+
+  beforeEach(() => {
+    exportReportSummaryPdf.mockReset()
+    createObjectURL = vi.fn(() => 'blob:mock-url')
+    revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows a preparing state and downloads the PDF on success', async () => {
+    let resolveExport
+    exportReportSummaryPdf.mockReturnValue(new Promise((resolve) => { resolveExport = resolve }))
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ReportsView {...baseProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+
+    expect(await screen.findByText('Preparing...')).toBeInTheDocument()
+    expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: undefined })
+
+    const fakeBlob = new Blob(['%PDF-1.7'], { type: 'application/pdf' })
+    resolveExport(fakeBlob)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Export Summary/i })).not.toBeDisabled())
+    expect(createObjectURL).toHaveBeenCalledWith(fakeBlob)
+    expect(clickSpy).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
+    clickSpy.mockRestore()
+  })
+
+  it('passes the selected run id instead of the period when a run is selected', async () => {
+    exportReportSummaryPdf.mockResolvedValue(new Blob(['%PDF-1.7']))
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ReportsView {...baseProps({ reportRunId: 'run-42' })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+
+    await waitFor(() => expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: 'run-42' }))
+  })
+
+  it('shows an error message when the export fails, without crashing', async () => {
+    exportReportSummaryPdf.mockRejectedValue(new Error('Report generation failed'))
+
+    render(<ReportsView {...baseProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+
+    expect(await screen.findByText('Report generation failed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export Summary/i })).not.toBeDisabled()
+  })
+
+  it('disables the export button when there are no analyzed articles in scope', () => {
+    render(<ReportsView {...baseProps({ intelligence: { total: 0 } })} />)
+    expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
+  })
+
+  it('prevents a duplicate request while one is already in flight', async () => {
+    let resolveExport
+    exportReportSummaryPdf.mockReturnValue(new Promise((resolve) => { resolveExport = resolve }))
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ReportsView {...baseProps()} />)
+    const button = screen.getByRole('button', { name: /Export Summary/i })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    resolveExport(new Blob(['%PDF-1.7']))
+    await waitFor(() => expect(button).not.toBeDisabled())
+    expect(exportReportSummaryPdf).toHaveBeenCalledTimes(1)
   })
 })

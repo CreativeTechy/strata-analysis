@@ -834,11 +834,25 @@ h1, h2, h3 {
   white-space: nowrap;
 }
 
-.report-refresh-btn:disabled {
+.report-refresh-btn:disabled,
+.report-export-summary-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.report-export-summary-btn {
+  white-space: nowrap;
+}
+
+.report-export-summary-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: #b91c1c;
 }
 
 .report-filter-row {

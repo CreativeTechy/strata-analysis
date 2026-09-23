@@ -34,7 +34,10 @@ save_articles() has returned and both writes have landed.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
+import config
 import db
 
 logger = logging.getLogger(__name__)
@@ -220,6 +223,11 @@ def fetch_run_article_rows(project_id: int, run_id: str) -> list[dict]:
     Analysis fields come from the snapshot; identity fields (url, title, text,
     published, verified) come from the live `articles` row, so a run's numbers
     stay frozen while the article's own metadata stays current.
+
+    relevance_score/analysis_status/topics/key_points are additive columns
+    (services/reports/report_data.py needs them for ranking and status
+    counts) - every existing caller of this function just ignores the extra
+    keys, since Postgres row dicts are read by name.
     """
     if not run_id or not _table_exists("article_analyses"):
         return []
@@ -231,6 +239,7 @@ def fetch_run_article_rows(project_id: int, run_id: str) -> list[dict]:
                    an.summary, an.sentiment, an.writer_tone, an.article_tone,
                    an.region, an.gender, an.age_range, an.segment,
                    an.insight_json, an.source_language, an.source_domain,
+                   an.relevance_score, an.analysis_status, an.topics, an.key_points,
                    an.run_id
             from article_analyses an
             join articles a          on a.id = an.article_id
@@ -285,3 +294,124 @@ def run_article_count(run_id: str) -> int:
     except Exception:
         return 0
     return int((row or {}).get("total") or 0)
+
+
+# --- Point-in-time reconstruction for the Reports "variation from yesterday" ---
+#
+# Every bulk analysis run already snapshots its own conclusions here (above).
+# The gap is one-off single-article (re)analysis - main.py's .../analyze,
+# .../reprocess and batch .../analyze routes call reanalyze_article()/
+# reanalyze_articles() with no run_id, so record_analysis_snapshot() was never
+# called for them and that change to the article's analysis is invisible to
+# any historical query; only the live `articles` row moved. Since
+# article_analyses.run_id is a real foreign key into pipeline_runs (not a free
+# text field), the fix is not a new table - it's giving those one-off saves a
+# real (if synthetic) pipeline_runs row to snapshot against, so every existing
+# snapshot reader (fetch_run_article_rows, sentiment_counts_by_run, and the
+# point-in-time reconstruction below) keeps working unchanged.
+ADHOC_SNAPSHOT_PIPELINE = "report-snapshot"
+
+
+def _report_tz() -> ZoneInfo:
+    try:
+        return ZoneInfo(config.REPORT_TIMEZONE)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def ensure_adhoc_snapshot_run(project_id: int | None, when: datetime | None = None) -> str | None:
+    """Find-or-create today's synthetic pipeline_runs row for one-off
+    (re)analysis snapshots, one per (project, calendar day in
+    config.REPORT_TIMEZONE) so repeated retries the same day share a row
+    instead of piling up one adhoc run per click.
+
+    Returns None (best-effort, same contract as record_analysis_snapshot)
+    when there is no single project to scope it to - an article linked to
+    zero or several projects has no one "project's day" to file the snapshot
+    under (see reanalyze._primary_project_id_for_article).
+
+    Deliberately a different `pipeline` value ('report-snapshot') than the
+    real analysis pipeline ('analysis') - _fetch_pipeline_runs/list_pipeline_
+    runs' run pickers filter on pipeline='analysis', so these synthetic rows
+    never show up as a selectable "Analysis run" anywhere in the dashboard;
+    they exist purely as an FK anchor for article_analyses.
+    """
+    if project_id is None or not config.DATABASE_URL:
+        return None
+    from services.pipeline.pipeline_runs import create_pipeline_run
+
+    moment = when or datetime.now(timezone.utc)
+    day = moment.astimezone(_report_tz()).date().isoformat()
+    run_id = f"snap-{int(project_id)}-{day}"
+    run = create_pipeline_run(
+        run_id=run_id,
+        pipeline=ADHOC_SNAPSHOT_PIPELINE,
+        project_id=int(project_id),
+        status="success",
+        stage="analyze",
+        message="Point-in-time snapshot for historical reporting",
+    )
+    return run["id"] if run else None
+
+
+def earliest_snapshot_at(project_id: int) -> datetime | None:
+    """The oldest article_analyses row this project has, across every run
+    (real or synthetic) - i.e. how far back a "state as of date X" comparison
+    can actually reach. None means no historical snapshot exists at all yet,
+    which is exactly the "Comparison unavailable" case for any date."""
+    if not _table_exists("article_analyses"):
+        return None
+    try:
+        row = db.fetch_one(
+            """
+            select min(an.created_at) as earliest
+            from article_analyses an
+            join article_projects ap on ap.article_id = an.article_id
+            where ap.project_id = %s
+            """,
+            (int(project_id),),
+        )
+    except Exception:
+        return None
+    value = (row or {}).get("earliest")
+    return value
+
+
+def fetch_state_as_of(project_id: int, cutoff: datetime) -> list[dict]:
+    """This project's articles as their analysis stood at or before `cutoff`
+    (a tz-aware instant) - one row per article, its latest snapshot no newer
+    than the cutoff, across every run (real bulk runs and the adhoc one-off
+    rows above). An article with no snapshot at or before the cutoff is
+    simply absent, never backfilled from its current (possibly much later)
+    state - that would be reconstructing an unknown historical result from
+    data that has since been overwritten, which is exactly what this table
+    exists to avoid.
+
+    Shaped like intelligence._fetch_project_rows()'s run-scoped output (see
+    fetch_run_article_rows above) so callers can reuse the same aggregation
+    helpers regardless of which point in time they're looking at.
+    """
+    if not cutoff or not _table_exists("article_analyses"):
+        return []
+    try:
+        return db.fetch_all(
+            """
+            select distinct on (an.article_id)
+                   an.article_id as id, a.url, a.source, a.source_url, a.title, a.text, a.verified,
+                   a.published, a.created_at, a.pipeline_run_id,
+                   an.run_id, an.created_at as snapshot_at,
+                   an.summary, an.sentiment, an.relevance_score, an.writer_tone, an.article_tone,
+                   an.region, an.gender, an.age_range, an.segment,
+                   an.insight_json, an.topics, an.key_points, an.source_language, an.source_domain,
+                   an.analysis_status
+            from article_analyses an
+            join articles a          on a.id = an.article_id
+            join article_projects ap on ap.article_id = a.id
+            where ap.project_id = %s and an.created_at <= %s
+            order by an.article_id, an.created_at desc
+            """,
+            (int(project_id), cutoff),
+        ) or []
+    except Exception:
+        logger.exception("Failed to reconstruct article state as of %s for project %s", cutoff, project_id)
+        return []

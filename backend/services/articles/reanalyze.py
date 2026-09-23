@@ -16,7 +16,7 @@ import db
 from analysis.orchestrator import analyze_article
 from core.logging import reset_run_id, set_run_id
 from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
-from services.articles.article_analyses import record_analysis_snapshot
+from services.articles.article_analyses import ensure_adhoc_snapshot_run, record_analysis_snapshot
 from services.articles.store import save_articles
 
 ARTICLE_SOURCE_FIELDS = ("id", "url", "source", "source_url", "title", "author", "published", "text")
@@ -137,8 +137,16 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
         # earlier would read the pre-analysis value. Failure here is swallowed by
         # record_analysis_snapshot - losing a comparison point must not fail an
         # article the run genuinely analyzed.
-        if run_id and saved:
-            record_analysis_snapshot(run_id, article_id)
+        #
+        # A one-off retry (run_id is None - main.py's .../analyze, .../reprocess,
+        # batch .../analyze) still gets snapshotted, against a synthetic
+        # per-project-per-day run (see ensure_adhoc_snapshot_run) - otherwise this
+        # save is invisible to the Reports "variation from yesterday" comparison,
+        # which can only compare against what article_analyses actually recorded.
+        if saved:
+            snapshot_run_id = run_id or ensure_adhoc_snapshot_run(project_id)
+            if snapshot_run_id:
+                record_analysis_snapshot(snapshot_run_id, article_id)
 
         return {
             "article_id": article_id,

@@ -11,6 +11,7 @@ numbers).
 """
 
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import db
@@ -221,6 +222,98 @@ class SnapshotAgeEvidenceColumnTests(unittest.TestCase):
         sql = self._snapshot_sql(gender_evidence=False, age_evidence=True)
         self.assertNotIn("gender_evidence", sql)
         self.assertIn("'age_evidence', po.age_evidence", sql)
+
+
+class AdhocSnapshotRunTests(unittest.TestCase):
+    """One-off (re)analysis (main.py's .../analyze, .../reprocess, batch
+    .../analyze - none pass run_id) used to be invisible to article_analyses
+    entirely. ensure_adhoc_snapshot_run() gives those saves a real (synthetic)
+    pipeline_runs row to snapshot against, so the Reports "variation from
+    yesterday" comparison can see them too."""
+
+    def test_returns_none_without_a_project_to_scope_it_to(self):
+        with patch("services.articles.article_analyses.config.DATABASE_URL", "postgres://x"), \
+             patch("services.pipeline.pipeline_runs.create_pipeline_run") as create:
+            self.assertIsNone(article_analyses.ensure_adhoc_snapshot_run(None))
+        create.assert_not_called()
+
+    def test_returns_none_without_a_database(self):
+        with patch("services.articles.article_analyses.config.DATABASE_URL", ""), \
+             patch("services.pipeline.pipeline_runs.create_pipeline_run") as create:
+            self.assertIsNone(article_analyses.ensure_adhoc_snapshot_run(3))
+        create.assert_not_called()
+
+    def test_creates_a_deterministic_per_project_per_day_run(self):
+        when = datetime(2026, 3, 5, 10, 30, tzinfo=timezone.utc)
+        with patch("services.articles.article_analyses.config.DATABASE_URL", "postgres://x"), \
+             patch("services.pipeline.pipeline_runs.create_pipeline_run", return_value={"id": "snap-3-2026-03-05"}) as create:
+            run_id = article_analyses.ensure_adhoc_snapshot_run(3, when=when)
+
+        self.assertEqual(run_id, "snap-3-2026-03-05")
+        create.assert_called_once()
+        kwargs = create.call_args.kwargs
+        self.assertEqual(kwargs["run_id"], "snap-3-2026-03-05")
+        self.assertEqual(kwargs["pipeline"], "report-snapshot")
+        self.assertEqual(kwargs["project_id"], 3)
+
+    def test_repeated_calls_the_same_day_reuse_the_same_run_id(self):
+        morning = datetime(2026, 3, 5, 1, 0, tzinfo=timezone.utc)
+        evening = datetime(2026, 3, 5, 23, 0, tzinfo=timezone.utc)
+        with patch("services.articles.article_analyses.config.DATABASE_URL", "postgres://x"), \
+             patch("services.pipeline.pipeline_runs.create_pipeline_run", side_effect=lambda **kw: {"id": kw["run_id"]}):
+            first = article_analyses.ensure_adhoc_snapshot_run(3, when=morning)
+            second = article_analyses.ensure_adhoc_snapshot_run(3, when=evening)
+        self.assertEqual(first, second)
+
+    def test_adhoc_run_never_collides_with_the_real_analysis_pipeline(self):
+        """_fetch_pipeline_runs/list_pipeline_runs filter pipeline='analysis'
+        for the run picker - a snapshot-only row must use a different value
+        so it never appears there."""
+        with patch("services.articles.article_analyses.config.DATABASE_URL", "postgres://x"), \
+             patch("services.pipeline.pipeline_runs.create_pipeline_run", return_value={"id": "x"}) as create:
+            article_analyses.ensure_adhoc_snapshot_run(3, when=datetime.now(timezone.utc))
+        self.assertNotEqual(create.call_args.kwargs["pipeline"], "analysis")
+
+
+class PointInTimeReconstructionTests(unittest.TestCase):
+    def test_fetch_state_as_of_filters_by_cutoff_and_takes_latest_per_article(self):
+        captured = {}
+
+        def fake_fetch_all(sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+            return [{"article_id": 1, "sentiment": "positive"}]
+
+        cutoff = datetime(2026, 3, 5, tzinfo=timezone.utc)
+        with patch.object(article_analyses, "_table_exists", return_value=True), \
+             patch.object(article_analyses.db, "fetch_all", side_effect=fake_fetch_all):
+            rows = article_analyses.fetch_state_as_of(3, cutoff)
+
+        self.assertEqual(rows, [{"article_id": 1, "sentiment": "positive"}])
+        self.assertEqual(captured["params"], (3, cutoff))
+        self.assertIn("distinct on (an.article_id)", captured["sql"])
+        self.assertIn("an.created_at <= %s", captured["sql"])
+        self.assertIn("order by an.article_id, an.created_at desc", captured["sql"])
+
+    def test_no_cutoff_or_missing_table_returns_empty(self):
+        with patch.object(article_analyses, "_table_exists", return_value=False):
+            self.assertEqual(article_analyses.fetch_state_as_of(3, datetime.now(timezone.utc)), [])
+        with patch.object(article_analyses, "_table_exists", return_value=True):
+            self.assertEqual(article_analyses.fetch_state_as_of(3, None), [])
+
+    def test_reconstruction_failure_degrades_to_empty_not_a_raise(self):
+        with patch.object(article_analyses, "_table_exists", return_value=True), \
+             patch.object(article_analyses.db, "fetch_all", side_effect=RuntimeError("boom")):
+            self.assertEqual(article_analyses.fetch_state_as_of(3, datetime.now(timezone.utc)), [])
+
+    def test_earliest_snapshot_at_returns_none_when_nothing_recorded(self):
+        with patch.object(article_analyses, "_table_exists", return_value=True), \
+             patch.object(article_analyses.db, "fetch_one", return_value={"earliest": None}):
+            self.assertIsNone(article_analyses.earliest_snapshot_at(3))
+
+    def test_earliest_snapshot_at_missing_table_degrades_to_none(self):
+        with patch.object(article_analyses, "_table_exists", return_value=False):
+            self.assertIsNone(article_analyses.earliest_snapshot_at(3))
 
 
 if __name__ == "__main__":
