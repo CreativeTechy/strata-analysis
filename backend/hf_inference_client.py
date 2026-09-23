@@ -19,19 +19,24 @@ class HFInferenceError(Exception):
     services/pipeline/pipeline.py) can build one clear
     message regardless of which provider (chat LLM or HF) actually failed.
     `detail` holds the raw provider/exception text for server-side logs
-    only - never send it to the client.
+    only - never send it to the client. `status` is the HTTP status code
+    that produced this error, when known (None for a timeout or an error
+    raised without a response, e.g. an empty zero-shot result) - callers
+    can use it to tell a 400 (bad input, like a request the model's own
+    limits reject) apart from an outage or a config problem.
     """
 
     code = "hf_inference_error"
     user_message = "The Hugging Face Inference API call failed. Please try again."
 
-    def __init__(self, detail="", *, code=None, user_message=None):
+    def __init__(self, detail="", *, code=None, user_message=None, status=None):
         super().__init__(detail or self.user_message)
         self.detail = detail
         if code is not None:
             self.code = code
         if user_message is not None:
             self.user_message = user_message
+        self.status = status
 
 
 class HFConfigError(HFInferenceError):
@@ -69,14 +74,14 @@ def _wrap_http_error(exc: HfHubHTTPError, model: str, action: str) -> HFInferenc
     status = status if isinstance(status, int) else None
     detail = f"HF Inference API {action} call failed for '{model}' (status={status}): {exc}"
     if status in (401, 403):
-        return HFAuthError(detail)
+        return HFAuthError(detail, status=status)
     if status == 402:
-        return HFQuotaError(detail)
+        return HFQuotaError(detail, status=status)
     if status == 429:
-        return HFRateLimitError(detail)
+        return HFRateLimitError(detail, status=status)
     if status is not None and status >= 500:
-        return HFUnavailableError(detail)
-    return HFInferenceError(detail)
+        return HFUnavailableError(detail, status=status)
+    return HFInferenceError(detail, status=status)
 
 
 def _client(timeout: float | None = None) -> InferenceClient:
@@ -138,3 +143,61 @@ def classify_zero_shot(
     if not results:
         raise HFInferenceError(f"Empty zero-shot-classification response for '{model}'")
     return {"labels": [item.label for item in results], "scores": [item.score for item in results]}
+
+
+# Byte-level BPE tokenizers (used by the hosted models this client calls) can
+# need up to one token per raw UTF-8 byte in the worst case - a byte sequence
+# with no learned merge falls back to one token per byte. So a
+# character-count cap isn't a reliable way to stay under a model's max
+# sequence length for scripts it wasn't trained on (CJK, Thai, Arabic...); a
+# UTF-8 byte-count cap is, since it holds regardless of how densely a script
+# tokenizes. Callers retrying a 400 (sequence-too-long) response use these
+# instead of slicing by character count.
+def truncate_to_byte_budget(text: str, max_bytes: int) -> str:
+    """Return a prefix of `text` that encodes to at most `max_bytes` UTF-8
+    bytes, without splitting a multi-byte character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def split_into_byte_budget_pieces(text: str, max_bytes: int) -> list[str]:
+    """Split `text` into consecutive pieces that each encode to at most
+    `max_bytes` UTF-8 bytes, without splitting a multi-byte character or
+    dropping any of `text` (unlike `truncate_to_byte_budget`, which discards
+    everything past the first piece).
+
+    Prefers to cut on a whitespace boundary within the window - same
+    rationale as analysis/article_prep.py's chunk_text ("so words aren't
+    split mid-token for the model"), applied in bytes here since each piece
+    is independently sent to the model rather than reassembled. Falls back
+    to a hard byte cut when the window has no whitespace (e.g. CJK/Thai,
+    which don't space-separate words)."""
+    encoded = text.encode("utf-8")
+    total = len(encoded)
+    pieces = []
+    start = 0
+    while start < total:
+        end = min(start + max_bytes, total)
+        if end < total:
+            window = encoded[start:end].decode("utf-8", errors="ignore")
+            boundary = window.rfind(" ")
+            if boundary > 0:
+                end = start + len(window[:boundary].encode("utf-8"))
+            else:
+                # Back off `end` off a UTF-8 continuation byte (10xxxxxx) so
+                # a multi-byte character never gets split across pieces.
+                while end < total and end > start and (encoded[end] & 0xC0) == 0x80:
+                    end -= 1
+                if end == start:
+                    # The whole max_bytes window landed inside one character
+                    # (only possible if max_bytes is smaller than a single
+                    # UTF-8 char, up to 4 bytes) - extend forward to the next
+                    # boundary instead.
+                    end = min(start + max_bytes, total)
+                    while end < total and (encoded[end] & 0xC0) == 0x80:
+                        end += 1
+        pieces.append(encoded[start:end].decode("utf-8"))
+        start = end
+    return pieces
