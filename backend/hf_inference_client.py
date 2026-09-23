@@ -166,24 +166,38 @@ def split_into_byte_budget_pieces(text: str, max_bytes: int) -> list[str]:
     """Split `text` into consecutive pieces that each encode to at most
     `max_bytes` UTF-8 bytes, without splitting a multi-byte character or
     dropping any of `text` (unlike `truncate_to_byte_budget`, which discards
-    everything past the first piece)."""
+    everything past the first piece).
+
+    Prefers to cut on a whitespace boundary within the window - same
+    rationale as analysis/article_prep.py's chunk_text ("so words aren't
+    split mid-token for the model"), applied in bytes here since each piece
+    is independently sent to the model rather than reassembled. Falls back
+    to a hard byte cut when the window has no whitespace (e.g. CJK/Thai,
+    which don't space-separate words)."""
     encoded = text.encode("utf-8")
     total = len(encoded)
     pieces = []
     start = 0
     while start < total:
         end = min(start + max_bytes, total)
-        # Back off `end` off a UTF-8 continuation byte (10xxxxxx) so a
-        # multi-byte character never gets split across two pieces.
-        while end < total and end > start and (encoded[end] & 0xC0) == 0x80:
-            end -= 1
-        if end == start:
-            # The whole max_bytes window landed inside one character (only
-            # possible if max_bytes is smaller than a single UTF-8 char, up
-            # to 4 bytes) - extend forward to the next boundary instead.
-            end = min(start + max_bytes, total)
-            while end < total and (encoded[end] & 0xC0) == 0x80:
-                end += 1
+        if end < total:
+            window = encoded[start:end].decode("utf-8", errors="ignore")
+            boundary = window.rfind(" ")
+            if boundary > 0:
+                end = start + len(window[:boundary].encode("utf-8"))
+            else:
+                # Back off `end` off a UTF-8 continuation byte (10xxxxxx) so
+                # a multi-byte character never gets split across pieces.
+                while end < total and end > start and (encoded[end] & 0xC0) == 0x80:
+                    end -= 1
+                if end == start:
+                    # The whole max_bytes window landed inside one character
+                    # (only possible if max_bytes is smaller than a single
+                    # UTF-8 char, up to 4 bytes) - extend forward to the next
+                    # boundary instead.
+                    end = min(start + max_bytes, total)
+                    while end < total and (encoded[end] & 0xC0) == 0x80:
+                        end += 1
         pieces.append(encoded[start:end].decode("utf-8"))
         start = end
     return pieces

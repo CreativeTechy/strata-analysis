@@ -136,39 +136,82 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     return {"label": result_labels[0], "score": result_scores[0]}
 
 
+# Optimistic starting piece size for the oversized-chunk fallback below -
+# well above _HF_API_RETRY_MAX_BYTES, the worst-case-guaranteed floor, but
+# realistic hosted-model tokenizers need nowhere near one token per byte for
+# real article text (mDeBERTa's SentencePiece vocabulary covers CJK at
+# roughly one token per 1-1.5 characters, for example), so most oversized
+# chunks classify in a handful of calls at this size instead of the dozen-
+# plus pieces the floor alone would force. A piece that still 400s here is
+# re-split at the floor, which is guaranteed to fit - bounded to that one
+# extra fallback level rather than open-ended recursion, so genuinely
+# pathological content (content that really does need close to one token
+# per byte) costs a fixed, small number of wasted calls instead of an
+# unbounded amount.
+_HF_API_OVERSIZED_CHUNK_OPTIMISTIC_PIECE_BYTES = 1500
+
+
 def _classify_oversized_chunk_via_hf_api(model_name, chunk, candidate_labels, hypothesis_template):
     """Fallback for a chunk whose hosted zero-shot call 400'd even though it
     was within chunk_text's character budget (dense scripts like CJK/Thai/
     Arabic can need close to one token per UTF-8 byte). Splits the whole
-    chunk into byte-safe pieces, classifies each, and averages the score per
-    label across the pieces that picked it - so the whole chunk still gets a
-    say instead of only its first ~400 bytes."""
+    chunk into pieces - optimistically sized first, falling back to the
+    worst-case-safe floor only for a piece that still 400s - classifies each,
+    and averages the score per label across the pieces that picked it, so
+    the whole chunk still gets a say instead of only its first ~400 bytes."""
     from hf_inference_client import HFInferenceError, classify_zero_shot, split_into_byte_budget_pieces
 
-    pieces = split_into_byte_budget_pieces(chunk, _HF_API_RETRY_MAX_BYTES)
     score_by_label = defaultdict(float)
     count_by_label = defaultdict(int)
-    for piece in pieces:
+    piece_count = 0
+    dropped_count = 0
+
+    def classify_piece(piece, *, is_floor_sized):
+        nonlocal piece_count, dropped_count
         piece = piece.strip()
         if not piece:
-            continue
+            return
+        piece_count += 1
         try:
             piece_result = classify_zero_shot(model_name, piece, candidate_labels, hypothesis_template)
         except HFInferenceError as piece_exc:
-            # Only a 400 on this piece (still too dense for its byte budget)
-            # is swallowed and skipped - anything else (auth, quota, rate
-            # limit, outage) is a provider-level failure and must propagate
-            # like it would from the un-split call, not be silently dropped.
-            if piece_exc.status == 400:
-                logger.exception("Zero-shot classification 400'd for a split piece of an oversized chunk")
-                continue
-            raise
+            # Anything other than a 400 (auth, quota, rate limit, outage) is
+            # a provider-level failure and must propagate like it would from
+            # the un-split call, not be silently dropped.
+            if piece_exc.status != 400:
+                raise
+            if is_floor_sized:
+                # Already at the worst-case-guaranteed-safe size and still
+                # 400'd - not a length problem at this point, so retrying
+                # smaller wouldn't help. Log and drop just this piece rather
+                # than looping forever.
+                logger.exception(
+                    "Zero-shot classification 400'd for a %d-byte piece even at the safe floor; dropping it",
+                    len(piece.encode("utf-8")),
+                )
+                dropped_count += 1
+                return
+            for sub_piece in split_into_byte_budget_pieces(piece, _HF_API_RETRY_MAX_BYTES):
+                classify_piece(sub_piece, is_floor_sized=True)
+            return
         piece_labels = piece_result.get("labels") or []
         piece_scores = piece_result.get("scores") or []
         if not piece_labels or not piece_scores:
-            continue
+            return
         score_by_label[piece_labels[0]] += piece_scores[0]
         count_by_label[piece_labels[0]] += 1
+
+    initial_pieces = split_into_byte_budget_pieces(chunk, _HF_API_OVERSIZED_CHUNK_OPTIMISTIC_PIECE_BYTES)
+    if len(initial_pieces) == 1:
+        # The whole chunk already fits within the optimistic size, so that
+        # single "piece" is byte-for-byte identical to the chunk that just
+        # 400'd in _classify_one_via_hf_api - retrying it unchanged would
+        # just repeat the same failure. Go straight to floor-sized pieces.
+        for sub_piece in split_into_byte_budget_pieces(chunk, _HF_API_RETRY_MAX_BYTES):
+            classify_piece(sub_piece, is_floor_sized=True)
+    else:
+        for piece in initial_pieces:
+            classify_piece(piece, is_floor_sized=False)
 
     if not score_by_label:
         return None
@@ -176,11 +219,13 @@ def _classify_oversized_chunk_via_hf_api(model_name, chunk, candidate_labels, hy
     best_label = max(score_by_label, key=lambda label: score_by_label[label])
     avg_score = score_by_label[best_label] / max(1, count_by_label[best_label])
     logger.warning(
-        "Chunk of %d chars needed splitting into %d byte-safe pieces for hosted zero-shot "
-        "classification (model=%s); using their averaged vote instead of a truncated prefix",
+        "Chunk of %d chars needed splitting into %d byte-safe piece(s) for hosted zero-shot "
+        "classification (model=%s, dropped=%d); using their averaged vote instead of a "
+        "truncated prefix",
         len(chunk),
-        len(pieces),
+        piece_count,
         model_name,
+        dropped_count,
     )
     return {"labels": [best_label], "scores": [avg_score]}
 

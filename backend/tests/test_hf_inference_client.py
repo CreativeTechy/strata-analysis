@@ -139,6 +139,31 @@ class ByteBudgetTruncationTests(unittest.TestCase):
     def test_split_of_text_within_budget_returns_single_piece(self):
         self.assertEqual(hf.split_into_byte_budget_pieces("hello", 480), ["hello"])
 
+    def test_split_prefers_a_whitespace_boundary_over_a_hard_cut(self):
+        # Space-separated text should never be split mid-word when a space
+        # falls within the window - matches article_prep.chunk_text's own
+        # "break on whitespace" convention, since each piece here is
+        # independently sent to the model rather than reassembled.
+        text = "The quarterly earnings report demonstrated significant improvement across every business segment. " * 4
+        pieces = hf.split_into_byte_budget_pieces(text, 60)
+        self.assertEqual("".join(pieces), text)
+        for i in range(len(pieces) - 1):
+            self.assertTrue(
+                pieces[i].endswith(" ") or pieces[i + 1].startswith(" "),
+                f"piece boundary split a word: {pieces[i][-15:]!r} | {pieces[i + 1][:15]!r}",
+            )
+
+    def test_split_falls_back_to_a_hard_cut_when_no_whitespace_in_window(self):
+        # CJK has no inter-word spaces, so the whitespace preference can
+        # never find a boundary - it must still fall back to the byte-safe
+        # hard cut rather than getting stuck or producing an oversized piece.
+        text = "中文测试" * 100  # 400 chars, no spaces, 1200 bytes
+        pieces = hf.split_into_byte_budget_pieces(text, 60)
+        self.assertEqual("".join(pieces), text)
+        for piece in pieces:
+            self.assertLessEqual(len(piece.encode("utf-8")), 60)
+            self.assertTrue(set(piece) <= {"中", "文", "测", "试"})
+
 
 if __name__ == "__main__":
     unittest.main()
