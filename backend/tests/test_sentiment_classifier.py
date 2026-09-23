@@ -135,6 +135,46 @@ class ClassifySentimentHfApiTests(unittest.TestCase):
         with patch("hf_inference_client.classify_text", return_value=[{"label": "surprise", "score": 0.9}]):
             self.assertIsNone(sc.classify_sentiment("huh"))
 
+    def test_400_error_retries_once_with_shorter_text_and_succeeds(self):
+        from hf_inference_client import HFInferenceError
+
+        long_text = "x" * 500
+        calls = []
+
+        def fake_classify_text(model_name, text):
+            calls.append(text)
+            if len(calls) == 1:
+                raise HFInferenceError("too long", status=400)
+            return [{"label": "LABEL_2", "score": 0.6}]
+
+        with patch("hf_inference_client.classify_text", side_effect=fake_classify_text):
+            result = sc.classify_sentiment(long_text)
+
+        self.assertEqual(result, {"label": "positive", "score": 0.6})
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(len(calls[1]), sc._HF_API_RETRY_MAX_CHARS)
+
+    def test_400_error_on_already_short_text_propagates(self):
+        from hf_inference_client import HFInferenceError
+
+        with patch("hf_inference_client.classify_text", side_effect=HFInferenceError("too long", status=400)):
+            with self.assertRaises(HFInferenceError):
+                sc.classify_sentiment("short")
+
+    def test_non_400_error_does_not_retry(self):
+        from hf_inference_client import HFInferenceError
+
+        calls = []
+
+        def fake_classify_text(model_name, text):
+            calls.append(text)
+            raise HFInferenceError("rate limited", status=429)
+
+        with patch("hf_inference_client.classify_text", side_effect=fake_classify_text):
+            with self.assertRaises(HFInferenceError):
+                sc.classify_sentiment("x" * 500)
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

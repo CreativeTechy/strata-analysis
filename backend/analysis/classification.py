@@ -85,13 +85,16 @@ def _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_templat
     return {"label": result_labels[0], "score": result_scores[0]}
 
 
+_HF_API_RETRY_MAX_CHARS = 256
+
+
 def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     model_name = (config.CLASSIFICATION_MODEL or "").strip()
     if not model_name:
         logger.warning("CLASSIFICATION_MODEL is empty; classification will fall back to defaults.")
         return None
     try:
-        from hf_inference_client import classify_zero_shot
+        from hf_inference_client import HFInferenceError, classify_zero_shot
     except Exception:
         logger.exception("hf_inference_client import failed")
         return None
@@ -104,7 +107,22 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     # stops the whole pipeline run there (services/pipeline/pipeline.py).
     # Anything else (rate limit, timeout, outage) just fails this one
     # chunk/article.
-    result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
+    #
+    # The one exception: a 400 here usually means this chunk tokenized past
+    # the model's max sequence length - character count isn't token count,
+    # and unlike the local pipeline's `tokenizer_kwargs={"truncation":
+    # True}` backstop above, the hosted API doesn't truncate for us. That's
+    # a property of this one chunk's text, not the provider, so retry once
+    # with a much shorter slice before giving up.
+    try:
+        result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
+    except HFInferenceError as exc:
+        if exc.status == 400 and len(chunk) > _HF_API_RETRY_MAX_CHARS:
+            result = classify_zero_shot(
+                model_name, chunk[:_HF_API_RETRY_MAX_CHARS], candidate_labels, hypothesis_template
+            )
+        else:
+            raise
     result_labels = result.get("labels") or []
     result_scores = result.get("scores") or []
     if not result_labels or not result_scores:

@@ -66,6 +66,16 @@ class HfInferenceClientTests(unittest.TestCase):
             with self.assertRaises(hf.HFInferenceError):
                 hf.classify_text("fake/model", "great")
 
+    def test_400_error_carries_status_on_the_wrapped_exception(self):
+        mock_client = MagicMock()
+        mock_client.text_classification.side_effect = HfHubHTTPError(
+            "400 error", response=MagicMock(status_code=400)
+        )
+        with patch("hf_inference_client.InferenceClient", return_value=mock_client):
+            with self.assertRaises(hf.HFInferenceError) as ctx:
+                hf.classify_text("fake/model", "great")
+        self.assertEqual(ctx.exception.status, 400)
+
     def test_timeout_error_is_wrapped_as_hf_inference_error(self):
         mock_client = MagicMock()
         mock_client.text_classification.side_effect = InferenceTimeoutError("timed out")

@@ -129,6 +129,46 @@ class ClassificationStageHfApiTests(unittest.TestCase):
         self.assertEqual(result["label"], "general_article")
         self.assertTrue(result["low_confidence"])
 
+    def test_400_error_retries_once_with_shorter_chunk_and_succeeds(self):
+        from hf_inference_client import HFInferenceError
+
+        long_chunk = "x" * 500
+        calls = []
+
+        def fake_classify_zero_shot(model_name, text, candidate_labels, hypothesis_template):
+            calls.append(text)
+            if len(calls) == 1:
+                raise HFInferenceError("too long", status=400)
+            return {"labels": ["news"], "scores": [0.9]}
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=fake_classify_zero_shot):
+            result = classification._classify_one_via_hf_api(long_chunk, ["news", "review"], "This is {}.")
+
+        self.assertEqual(result, {"label": "news", "score": 0.9})
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(len(calls[1]), classification._HF_API_RETRY_MAX_CHARS)
+
+    def test_400_error_on_already_short_chunk_propagates(self):
+        from hf_inference_client import HFInferenceError
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=HFInferenceError("too long", status=400)):
+            with self.assertRaises(HFInferenceError):
+                classification._classify_one_via_hf_api("short", ["news", "review"], "This is {}.")
+
+    def test_non_400_error_does_not_retry(self):
+        from hf_inference_client import HFInferenceError
+
+        calls = []
+
+        def fake_classify_zero_shot(model_name, text, candidate_labels, hypothesis_template):
+            calls.append(text)
+            raise HFInferenceError("rate limited", status=429)
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=fake_classify_zero_shot):
+            with self.assertRaises(HFInferenceError):
+                classification._classify_one_via_hf_api("x" * 500, ["news", "review"], "This is {}.")
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

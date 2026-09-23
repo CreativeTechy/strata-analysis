@@ -19,19 +19,24 @@ class HFInferenceError(Exception):
     services/pipeline/pipeline.py) can build one clear
     message regardless of which provider (chat LLM or HF) actually failed.
     `detail` holds the raw provider/exception text for server-side logs
-    only - never send it to the client.
+    only - never send it to the client. `status` is the HTTP status code
+    that produced this error, when known (None for a timeout or an error
+    raised without a response, e.g. an empty zero-shot result) - callers
+    can use it to tell a 400 (bad input, like a request the model's own
+    limits reject) apart from an outage or a config problem.
     """
 
     code = "hf_inference_error"
     user_message = "The Hugging Face Inference API call failed. Please try again."
 
-    def __init__(self, detail="", *, code=None, user_message=None):
+    def __init__(self, detail="", *, code=None, user_message=None, status=None):
         super().__init__(detail or self.user_message)
         self.detail = detail
         if code is not None:
             self.code = code
         if user_message is not None:
             self.user_message = user_message
+        self.status = status
 
 
 class HFConfigError(HFInferenceError):
@@ -69,14 +74,14 @@ def _wrap_http_error(exc: HfHubHTTPError, model: str, action: str) -> HFInferenc
     status = status if isinstance(status, int) else None
     detail = f"HF Inference API {action} call failed for '{model}' (status={status}): {exc}"
     if status in (401, 403):
-        return HFAuthError(detail)
+        return HFAuthError(detail, status=status)
     if status == 402:
-        return HFQuotaError(detail)
+        return HFQuotaError(detail, status=status)
     if status == 429:
-        return HFRateLimitError(detail)
+        return HFRateLimitError(detail, status=status)
     if status is not None and status >= 500:
-        return HFUnavailableError(detail)
-    return HFInferenceError(detail)
+        return HFUnavailableError(detail, status=status)
+    return HFInferenceError(detail, status=status)
 
 
 def _client(timeout: float | None = None) -> InferenceClient:
