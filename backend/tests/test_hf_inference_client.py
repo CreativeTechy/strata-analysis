@@ -102,5 +102,43 @@ class HfInferenceClientTests(unittest.TestCase):
         self.assertNotIn("provider", kwargs)
 
 
+class ByteBudgetTruncationTests(unittest.TestCase):
+    def test_truncate_returns_text_unchanged_when_within_budget(self):
+        self.assertEqual(hf.truncate_to_byte_budget("hello", 480), "hello")
+
+    def test_truncate_caps_ascii_text_by_byte_count(self):
+        text = "x" * 500
+        truncated = hf.truncate_to_byte_budget(text, 480)
+        self.assertEqual(len(truncated.encode("utf-8")), 480)
+
+    def test_truncate_never_splits_a_multibyte_character(self):
+        # Each "中" is 3 UTF-8 bytes; a 481-byte budget doesn't land on a
+        # character boundary, forcing a partial trailing character.
+        text = "中" * 200  # 600 bytes
+        truncated = hf.truncate_to_byte_budget(text, 481)
+        self.assertLessEqual(len(truncated.encode("utf-8")), 481)
+        # No partial character leaked through as a decoding artifact.
+        self.assertTrue(set(truncated) <= {"中"})
+
+    def test_split_into_pieces_preserves_all_content(self):
+        text = "x" * 900
+        pieces = hf.split_into_byte_budget_pieces(text, 400)
+        self.assertEqual("".join(pieces), text)
+        for piece in pieces[:-1]:
+            self.assertEqual(len(piece.encode("utf-8")), 400)
+        self.assertLessEqual(len(pieces[-1].encode("utf-8")), 400)
+
+    def test_split_into_pieces_preserves_multibyte_content_without_splitting_characters(self):
+        text = "中" * 300  # 900 UTF-8 bytes
+        pieces = hf.split_into_byte_budget_pieces(text, 400)
+        self.assertEqual("".join(pieces), text)
+        for piece in pieces:
+            self.assertLessEqual(len(piece.encode("utf-8")), 400)
+            self.assertTrue(set(piece) <= {"中"})
+
+    def test_split_of_text_within_budget_returns_single_piece(self):
+        self.assertEqual(hf.split_into_byte_budget_pieces("hello", 480), ["hello"])
+
+
 if __name__ == "__main__":
     unittest.main()

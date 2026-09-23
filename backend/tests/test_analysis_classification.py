@@ -129,10 +129,14 @@ class ClassificationStageHfApiTests(unittest.TestCase):
         self.assertEqual(result["label"], "general_article")
         self.assertTrue(result["low_confidence"])
 
-    def test_400_error_retries_once_with_shorter_chunk_and_succeeds(self):
+    def test_400_error_retries_by_splitting_the_whole_chunk_into_byte_safe_pieces(self):
+        """A 400 on the first call must not fall back to classifying only a
+        short prefix and throwing the rest of the chunk away - every
+        byte-safe piece of the original chunk should get classified, and the
+        aggregated label/score should come from all of them."""
         from hf_inference_client import HFInferenceError
 
-        long_chunk = "x" * 500
+        long_chunk = "x" * 900  # > 2 * _HF_API_RETRY_MAX_BYTES, so >= 3 pieces
         calls = []
 
         def fake_classify_zero_shot(model_name, text, candidate_labels, hypothesis_template):
@@ -145,8 +149,64 @@ class ClassificationStageHfApiTests(unittest.TestCase):
             result = classification._classify_one_via_hf_api(long_chunk, ["news", "review"], "This is {}.")
 
         self.assertEqual(result, {"label": "news", "score": 0.9})
-        self.assertEqual(len(calls), 2)
-        self.assertLessEqual(len(calls[1]), classification._HF_API_RETRY_MAX_CHARS)
+        # 1 failed whole-chunk call + 1 call per byte-safe piece.
+        self.assertGreater(len(calls), 2)
+        for retried_call in calls[1:]:
+            self.assertLessEqual(len(retried_call.encode("utf-8")), classification._HF_API_RETRY_MAX_BYTES)
+        # No content from the original chunk should have been dropped.
+        self.assertEqual("".join(calls[1:]), long_chunk)
+
+    def test_400_error_retry_averages_scores_across_pieces(self):
+        from hf_inference_client import HFInferenceError
+
+        long_chunk = "x" * 900
+        piece_results = iter(
+            [
+                {"labels": ["news"], "scores": [0.6]},
+                {"labels": ["news"], "scores": [0.8]},
+                {"labels": ["review"], "scores": [0.9]},
+            ]
+        )
+        call_count = {"n": 0}
+
+        def side_effect(model_name, text, candidate_labels, hypothesis_template):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise HFInferenceError("too long", status=400)
+            return next(piece_results, {"labels": ["news"], "scores": [0.6]})
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=side_effect):
+            result = classification._classify_one_via_hf_api(long_chunk, ["news", "review"], "This is {}.")
+
+        # "news" got two votes (0.6, 0.8 -> avg 0.7) and beats "review"'s
+        # single 0.9 vote by total score (1.4 > 0.9).
+        self.assertEqual(result, {"label": "news", "score": 0.7})
+
+    def test_400_error_on_split_piece_is_skipped_not_fatal(self):
+        from hf_inference_client import HFInferenceError
+
+        long_chunk = "x" * 900
+        call_count = {"n": 0}
+
+        def side_effect(model_name, text, candidate_labels, hypothesis_template):
+            call_count["n"] += 1
+            if call_count["n"] in (1, 2):
+                raise HFInferenceError("too long", status=400)
+            return {"labels": ["news"], "scores": [0.9]}
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=side_effect):
+            result = classification._classify_one_via_hf_api(long_chunk, ["news", "review"], "This is {}.")
+
+        self.assertEqual(result, {"label": "news", "score": 0.9})
+
+    def test_400_error_when_every_split_piece_fails_propagates_original_error(self):
+        from hf_inference_client import HFInferenceError
+
+        long_chunk = "x" * 900
+
+        with patch("hf_inference_client.classify_zero_shot", side_effect=HFInferenceError("too long", status=400)):
+            with self.assertRaises(HFInferenceError):
+                classification._classify_one_via_hf_api(long_chunk, ["news", "review"], "This is {}.")
 
     def test_400_error_on_already_short_chunk_propagates(self):
         from hf_inference_client import HFInferenceError

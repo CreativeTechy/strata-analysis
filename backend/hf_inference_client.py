@@ -143,3 +143,47 @@ def classify_zero_shot(
     if not results:
         raise HFInferenceError(f"Empty zero-shot-classification response for '{model}'")
     return {"labels": [item.label for item in results], "scores": [item.score for item in results]}
+
+
+# Byte-level BPE tokenizers (used by the hosted models this client calls) can
+# need up to one token per raw UTF-8 byte in the worst case - a byte sequence
+# with no learned merge falls back to one token per byte. So a
+# character-count cap isn't a reliable way to stay under a model's max
+# sequence length for scripts it wasn't trained on (CJK, Thai, Arabic...); a
+# UTF-8 byte-count cap is, since it holds regardless of how densely a script
+# tokenizes. Callers retrying a 400 (sequence-too-long) response use these
+# instead of slicing by character count.
+def truncate_to_byte_budget(text: str, max_bytes: int) -> str:
+    """Return a prefix of `text` that encodes to at most `max_bytes` UTF-8
+    bytes, without splitting a multi-byte character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def split_into_byte_budget_pieces(text: str, max_bytes: int) -> list[str]:
+    """Split `text` into consecutive pieces that each encode to at most
+    `max_bytes` UTF-8 bytes, without splitting a multi-byte character or
+    dropping any of `text` (unlike `truncate_to_byte_budget`, which discards
+    everything past the first piece)."""
+    encoded = text.encode("utf-8")
+    total = len(encoded)
+    pieces = []
+    start = 0
+    while start < total:
+        end = min(start + max_bytes, total)
+        # Back off `end` off a UTF-8 continuation byte (10xxxxxx) so a
+        # multi-byte character never gets split across two pieces.
+        while end < total and end > start and (encoded[end] & 0xC0) == 0x80:
+            end -= 1
+        if end == start:
+            # The whole max_bytes window landed inside one character (only
+            # possible if max_bytes is smaller than a single UTF-8 char, up
+            # to 4 bytes) - extend forward to the next boundary instead.
+            end = min(start + max_bytes, total)
+            while end < total and (encoded[end] & 0xC0) == 0x80:
+                end += 1
+        pieces.append(encoded[start:end].decode("utf-8"))
+        start = end
+    return pieces

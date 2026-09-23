@@ -152,7 +152,34 @@ class ClassifySentimentHfApiTests(unittest.TestCase):
 
         self.assertEqual(result, {"label": "positive", "score": 0.6})
         self.assertEqual(len(calls), 2)
-        self.assertLessEqual(len(calls[1]), sc._HF_API_RETRY_MAX_CHARS)
+        self.assertLessEqual(len(calls[1].encode("utf-8")), sc._HF_API_RETRY_MAX_BYTES)
+
+    def test_400_error_retry_stays_within_byte_budget_for_multibyte_text(self):
+        """A character-count cap isn't a token-count cap: 500 Chinese
+        characters are 1500 UTF-8 bytes, and a byte-level BPE tokenizer can
+        need close to one token per byte for a script it wasn't trained on.
+        The retried payload must be capped by bytes, not characters, so it
+        reliably fits the model's token limit."""
+        from hf_inference_client import HFInferenceError
+
+        long_text = "中" * 500  # 500 CJK characters = 1500 UTF-8 bytes
+        calls = []
+
+        def fake_classify_text(model_name, text):
+            calls.append(text)
+            if len(calls) == 1:
+                raise HFInferenceError("too long", status=400)
+            return [{"label": "LABEL_2", "score": 0.6}]
+
+        with patch("hf_inference_client.classify_text", side_effect=fake_classify_text):
+            result = sc.classify_sentiment(long_text)
+
+        self.assertEqual(result, {"label": "positive", "score": 0.6})
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(len(calls[1].encode("utf-8")), sc._HF_API_RETRY_MAX_BYTES)
+        # Every character in the retried slice should still be whole, not a
+        # truncated multi-byte sequence.
+        self.assertTrue(set(calls[1]) <= {"中"})
 
     def test_400_error_on_already_short_text_propagates(self):
         from hf_inference_client import HFInferenceError

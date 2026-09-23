@@ -85,7 +85,11 @@ def _classify_one_via_local_pipeline(chunk, candidate_labels, hypothesis_templat
     return {"label": result_labels[0], "score": result_scores[0]}
 
 
-_HF_API_RETRY_MAX_CHARS = 256
+# Smaller than sentiment_classifier's byte budget: here the model's token
+# budget is shared with the hypothesis template + candidate label text, not
+# just the premise, so leave more headroom (see
+# hf_inference_client.split_into_byte_budget_pieces).
+_HF_API_RETRY_MAX_BYTES = 400
 
 
 def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
@@ -112,15 +116,17 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     # the model's max sequence length - character count isn't token count,
     # and unlike the local pipeline's `tokenizer_kwargs={"truncation":
     # True}` backstop above, the hosted API doesn't truncate for us. That's
-    # a property of this one chunk's text, not the provider, so retry once
-    # with a much shorter slice before giving up.
+    # a property of this one chunk's text, not the provider. Rather than
+    # keep only a short prefix of the chunk (throwing most of it away), split
+    # the whole chunk into byte-safe pieces and classify each before giving
+    # up.
     try:
         result = classify_zero_shot(model_name, chunk, candidate_labels, hypothesis_template)
     except HFInferenceError as exc:
-        if exc.status == 400 and len(chunk) > _HF_API_RETRY_MAX_CHARS:
-            result = classify_zero_shot(
-                model_name, chunk[:_HF_API_RETRY_MAX_CHARS], candidate_labels, hypothesis_template
-            )
+        if exc.status == 400 and len(chunk.encode("utf-8")) > _HF_API_RETRY_MAX_BYTES:
+            result = _classify_oversized_chunk_via_hf_api(model_name, chunk, candidate_labels, hypothesis_template)
+            if result is None:
+                raise
         else:
             raise
     result_labels = result.get("labels") or []
@@ -128,6 +134,55 @@ def _classify_one_via_hf_api(chunk, candidate_labels, hypothesis_template):
     if not result_labels or not result_scores:
         return None
     return {"label": result_labels[0], "score": result_scores[0]}
+
+
+def _classify_oversized_chunk_via_hf_api(model_name, chunk, candidate_labels, hypothesis_template):
+    """Fallback for a chunk whose hosted zero-shot call 400'd even though it
+    was within chunk_text's character budget (dense scripts like CJK/Thai/
+    Arabic can need close to one token per UTF-8 byte). Splits the whole
+    chunk into byte-safe pieces, classifies each, and averages the score per
+    label across the pieces that picked it - so the whole chunk still gets a
+    say instead of only its first ~400 bytes."""
+    from hf_inference_client import HFInferenceError, classify_zero_shot, split_into_byte_budget_pieces
+
+    pieces = split_into_byte_budget_pieces(chunk, _HF_API_RETRY_MAX_BYTES)
+    score_by_label = defaultdict(float)
+    count_by_label = defaultdict(int)
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            piece_result = classify_zero_shot(model_name, piece, candidate_labels, hypothesis_template)
+        except HFInferenceError as piece_exc:
+            # Only a 400 on this piece (still too dense for its byte budget)
+            # is swallowed and skipped - anything else (auth, quota, rate
+            # limit, outage) is a provider-level failure and must propagate
+            # like it would from the un-split call, not be silently dropped.
+            if piece_exc.status == 400:
+                logger.exception("Zero-shot classification 400'd for a split piece of an oversized chunk")
+                continue
+            raise
+        piece_labels = piece_result.get("labels") or []
+        piece_scores = piece_result.get("scores") or []
+        if not piece_labels or not piece_scores:
+            continue
+        score_by_label[piece_labels[0]] += piece_scores[0]
+        count_by_label[piece_labels[0]] += 1
+
+    if not score_by_label:
+        return None
+
+    best_label = max(score_by_label, key=lambda label: score_by_label[label])
+    avg_score = score_by_label[best_label] / max(1, count_by_label[best_label])
+    logger.warning(
+        "Chunk of %d chars needed splitting into %d byte-safe pieces for hosted zero-shot "
+        "classification (model=%s); using their averaged vote instead of a truncated prefix",
+        len(chunk),
+        len(pieces),
+        model_name,
+    )
+    return {"labels": [best_label], "scores": [avg_score]}
 
 
 def _classify_one(chunk, candidate_labels, hypothesis_template):
