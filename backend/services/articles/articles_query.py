@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import config
 import db
+from services.articles.source_trust import resolve_many as resolve_source_trust
 from services.projects.projects_store import list_article_ids_for_project
 
 # project_document_articles._materialize() writes this scheme onto every
@@ -207,6 +208,20 @@ def _real_source_host(url: str) -> str:
     fallback list_project_sources always used, now shared instead of
     duplicated with a narrower one that never matched it."""
     return (urlparse(url).hostname or url).lower()
+
+
+def _source_group_identity(url, source, source_url):
+    """(key, type, label, link) for one article row's source group - shared
+    by list_project_sources() (the Sources tab) and list_project_source_keys()
+    (validating a trust-tier write - see source_trust.py - targets a source
+    this project can actually see), so the two can't drift apart."""
+    url = str(url or "")
+    is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
+    if is_real:
+        host = _real_source_host(url)
+        return f"real:{host}", "real", host, f"https://{host}"
+    source_url = source_url or ""
+    return f"document:{source_url}", "document", (source or "Uploaded document"), (source_url or None)
 
 
 def list_article_ids_for_source_host(project_id, host):
@@ -533,21 +548,12 @@ def list_project_sources(project_id, limit=20, offset=0):
     groups: dict[str, dict] = {}
     for row in rows:
         url = str(row.get("url") or "")
-        is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
-        if is_real:
-            host = _real_source_host(url)
-            key = f"real:{host}"
-            label = host
-            link = f"https://{host}"
-        else:
-            source_url = row.get("source_url") or ""
-            key = f"document:{source_url}"
-            label = row.get("source") or "Uploaded document"
-            link = source_url or None
+        key, source_type, label, link = _source_group_identity(url, row.get("source"), row.get("source_url"))
+        is_real = source_type == "real"
 
         group = groups.setdefault(key, {
             "key": key,
-            "type": "real" if is_real else "document",
+            "type": source_type,
             "label": label,
             "url": link,
             "article_count": 0,
@@ -575,7 +581,48 @@ def list_project_sources(project_id, limit=20, offset=0):
     total = len(sources)
     total_articles = len(rows)
     page = sources[offset:offset + limit]
+
+    # Trust tier is attached here, not stored on the group above, so the
+    # Sources tab's one existing request still gets it - see source_trust.py.
+    # Resolved for just this page (bounded by `limit`), not every group, same
+    # "small enough to stay cheap" reasoning this function already documents.
+    if page:
+        trust_by_key = resolve_source_trust(page)
+        for group in page:
+            group["trust"] = trust_by_key.get(group["key"])
+
     return {"sources": page, "total": total, "total_articles": total_articles, "limit": limit, "offset": offset}
+
+
+def list_project_source_keys(project_id) -> dict[str, dict]:
+    """{key: {"type": ..., "label": ...}} for every source group this
+    project's articles currently group into - the same grouping
+    list_project_sources() uses, without the per-source article previews.
+
+    Used to validate a source_key an operator is setting a trust tier for
+    actually belongs to a source this project can see, before source_trust
+    (a global table - see its own module) accepts the write: a user who can
+    only see this project must not blind-write a tier for another project's
+    document, or invent a "real:" host they have never actually seen in
+    their own data.
+    """
+    if not project_id or not config.DATABASE_URL:
+        return {}
+    article_ids = list_article_ids_for_project(project_id)
+    if not article_ids:
+        return {}
+    try:
+        rows = db.fetch_all(
+            "select url, source, source_url from articles where id = any(%s)",
+            (article_ids,),
+        )
+    except Exception:
+        return {}
+    keys: dict[str, dict] = {}
+    for row in rows or []:
+        key, source_type, label, _link = _source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        keys[key] = {"type": source_type, "label": label}
+    return keys
 
 
 def get_analysis_status_counts(project_id=None):

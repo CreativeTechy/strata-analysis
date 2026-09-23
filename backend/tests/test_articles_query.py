@@ -94,7 +94,8 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
-            with patch("services.articles.articles_query.db.fetch_all", return_value=rows) as mock_fetch_all:
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows) as mock_fetch_all, \
+                 patch("services.articles.articles_query.resolve_source_trust", return_value={}):
                 result = articles_query.list_project_sources(1)
 
         mock_fetch_all.assert_called_once()
@@ -136,7 +137,8 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
-            with patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+                 patch("services.articles.articles_query.resolve_source_trust", return_value={}):
                 result = articles_query.list_project_sources(1, limit=1, offset=1)
 
         # Same two groups as above (document first, then the real outlet),
@@ -159,7 +161,8 @@ class ListProjectSourcesTests(unittest.TestCase):
         ]
         rows_reversed = list(reversed(rows_forward))
 
-        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             with patch("services.articles.articles_query.db.fetch_all", return_value=rows_forward):
                 forward = articles_query.list_project_sources(1)
             with patch("services.articles.articles_query.db.fetch_all", return_value=rows_reversed):
@@ -177,9 +180,78 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "https://example.com", "published_at": datetime(2026, 9, 18, 10, 0, tzinfo=timezone.utc)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
-             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             result = articles_query.list_project_sources(1)
         self.assertEqual([item["id"] for item in result["sources"][0]["articles"]], [2, 1])
+
+    def test_attaches_a_trust_tier_to_every_source_group_on_the_page(self):
+        rows = [
+            {"id": 1, "title": "A1", "url": "https://nytimes.com/a1", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 3)},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust") as mock_resolve:
+            mock_resolve.return_value = {"real:nytimes.com": {"tier": "trusted", "is_default": True}}
+            result = articles_query.list_project_sources(1)
+
+        # resolve_source_trust() is handed the actual page of groups, not the
+        # raw rows - one call for the whole page, not one per group.
+        mock_resolve.assert_called_once()
+        (page_arg,), _ = mock_resolve.call_args
+        self.assertEqual([g["key"] for g in page_arg], ["real:nytimes.com"])
+        self.assertEqual(result["sources"][0]["trust"], {"tier": "trusted", "is_default": True})
+
+    def test_no_sources_never_calls_resolve_source_trust(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=[]), \
+             patch("services.articles.articles_query.resolve_source_trust") as mock_resolve:
+            result = articles_query.list_project_sources(1)
+        self.assertEqual(result["sources"], [])
+        mock_resolve.assert_not_called()
+
+
+class ListProjectSourceKeysTests(unittest.TestCase):
+    """list_project_source_keys() - the lighter, preview-free counterpart to
+    list_project_sources() used to validate a trust-tier write (see
+    source_trust.py) targets a source this project can actually see."""
+
+    def test_falsy_project_id_returns_empty_without_querying(self):
+        with patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_project_source_keys(None)
+        self.assertEqual(result, {})
+        mock_fetch_all.assert_not_called()
+
+    def test_no_articles_returns_empty_without_querying_articles_table(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[]), \
+             patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {})
+        mock_fetch_all.assert_not_called()
+
+    def test_query_error_returns_empty_instead_of_raising(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1]), \
+             patch("services.articles.articles_query.db.fetch_all", side_effect=RuntimeError("boom")):
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {})
+
+    def test_matches_the_exact_keys_list_project_sources_would_group_under(self):
+        rows = [
+            {"url": "https://nytimes.com/a1", "source": "doc.pdf", "source_url": "document://project-document/9"},
+            {"url": "document://project-document/1/article/3", "source": "report.pdf",
+             "source_url": "document://project-document/1"},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1, 3]), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {
+            "real:nytimes.com": {"type": "real", "label": "nytimes.com"},
+            "document:document://project-document/1": {"type": "document", "label": "report.pdf"},
+        })
 
 
 class ListArticleIdsForSourceHostTests(unittest.TestCase):
@@ -225,7 +297,8 @@ class ListArticleIdsForSourceHostTests(unittest.TestCase):
         rows = [{"id": 7, "url": url}]
 
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
-             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             sources = articles_query.list_project_sources(1)
         label = sources["sources"][0]["label"]
         self.assertEqual(label, url)

@@ -35,6 +35,7 @@ from services.articles.articles_query import (
     list_article_ids_for_source_host,
     list_articles_for_idea_cluster,  # noqa: F401 - re-exported
     list_idea_clusters_for_project,  # noqa: F401 - re-exported
+    list_project_source_keys,  # noqa: F401 - re-exported
     list_project_sources,  # noqa: F401 - re-exported
 )
 from services.articles.articles_search import search_results

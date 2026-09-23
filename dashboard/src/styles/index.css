@@ -1500,6 +1500,11 @@ h1, h2, h3 {
   color: #d46b08;
 }
 
+.panel-chip.danger {
+  background: rgba(255, 71, 87, 0.14);
+  color: #ff4757;
+}
+
 .panel-chip.muted {
   background: rgba(116, 125, 140, 0.12);
   color: #747d8c;

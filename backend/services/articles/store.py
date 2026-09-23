@@ -11,6 +11,7 @@ import config
 import db
 import dedup
 from embeddings import cosine_similarity
+from services.articles.publisher_identity import publisher_domain
 from services.projects.projects_store import list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
@@ -23,6 +24,7 @@ ARTICLE_COLUMNS = (
     "published_at", "published_precision", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "article_category", "writer_tone", "article_tone", "region", "region_confidence", "gender", "age_range", "verified",
+    "source_domain",
     "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
@@ -58,6 +60,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "gender",
     "age_range",
     "verified",
+    "source_domain",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",
@@ -145,6 +148,7 @@ ENRICHMENT_FIELDS = frozenset({
     "gender",
     "age_range",
     "verified",
+    "source_domain",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",
@@ -361,6 +365,22 @@ def _assign_story_group(article, saved_row):
         return None
 
 
+def _resolved_publisher_url(row):
+    """The URL that actually identifies this article's publisher - not
+    `source_url`, which project_document_articles._materialize() (and its
+    competitor-study counterpart) always set to the uploaded document's own
+    document:// reference, regardless of whether this particular article has
+    a real publisher. Prefers `source_provenance.original_url` - a JSONL
+    record's own url, or an LLM split's document-level "Original publisher
+    URL" from the wizard, both carried in by project_document_articles.py -
+    over the article's own `url`, which is itself synthetic
+    (document://project-document/<id>/article/<candidate>) for an LLM split
+    with no such override."""
+    provenance = row.get("source_provenance")
+    original_url = (provenance or {}).get("original_url") if isinstance(provenance, dict) else None
+    return original_url or row.get("url")
+
+
 def _article_row(article):
     row = _row(article)
     fields = _article_write_fields()
@@ -385,8 +405,20 @@ def _article_row(article):
             # Computed from the article's own resolved publisher URL, not
             # trusted from the caller - so a stale/absent "verified" key on
             # `article` (e.g. a cached enrichment written before this field
-            # existed) can never silently mark something verified.
-            value = is_trusted_domain(row.get("source_url") or row.get("url"))
+            # existed) can never silently mark something verified. NOT
+            # `source_url`: project_document_articles._materialize() (and its
+            # competitor-study counterpart) always set that to the uploaded
+            # document's own document:// reference, never a real outlet's URL
+            # - see _resolved_publisher_url().
+            value = is_trusted_domain(_resolved_publisher_url(row))
+        elif field == "source_domain":
+            # Offline publisher-domain identity (publisher_identity.py) off
+            # the same resolved URL `verified` uses above - the one place
+            # articles.source_domain (read by evidence grounding,
+            # intelligence, and the analyses snapshot) gets populated. See
+            # services/articles/source_trust.py for the richer, operator-
+            # editable trust tier built on top of this.
+            value = publisher_domain(_resolved_publisher_url(row))
         elif field in ("source_run_snapshot", "source_provenance"):
             value = _jsonb_object_param(row.get(field))
         params.append(value)
