@@ -91,6 +91,16 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
         self.assertTrue(params[5])  # diverges
         self.assertEqual(params[7], "eia.gov says $98, Twitter says $120.")
 
+    def test_model_relationship_updates_the_comparison_status(self):
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows), \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "The evidence is compatible.", "diverges": false}'), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            idea_comparisons.generate_idea_comparisons(project_id=1)
+        params = mock_execute.call_args[0][1]
+        self.assertFalse(params[5])
+
     def test_unparsable_llm_response_still_saves_the_card_without_a_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \

@@ -31,7 +31,7 @@ from psycopg.types.json import Jsonb
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "idea-comparison/2"
+PROMPT_VERSION = "idea-comparison/3"
 _SYSTEM_PROMPT = load_prompt("idea_comparison_system_prompt.txt")
 
 MAX_EXCERPT_LENGTH = 300
@@ -534,7 +534,7 @@ def delete_comparison_fact(project_id: int, idea_cluster_id: int, fact_id: int) 
     return True
 
 
-def _synthesize_summary(cluster: dict) -> str | None:
+def _synthesize_comparison(cluster: dict) -> dict:
     user_prompt = f'IDEA: {cluster["idea"]}\n\nSOURCES:\n{_format_sources(cluster["sources"])}'
     raw = chat_completion(
         messages=[
@@ -549,11 +549,15 @@ def _synthesize_summary(cluster: dict) -> str | None:
         parsed = parse_json_response(raw)
     except JSONParseError as exc:
         logger.warning("Idea comparison summary unparsable for cluster %s: %s", cluster["idea_cluster_id"], exc)
-        return None
+        return {"summary": None, "diverges": None}
     if not isinstance(parsed, dict):
-        return None
+        return {"summary": None, "diverges": None}
     summary = str(parsed.get("summary") or "").strip()
-    return summary or None
+    diverges = parsed.get("diverges")
+    return {
+        "summary": summary or None,
+        "diverges": diverges if isinstance(diverges, bool) else None,
+    }
 
 
 def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id: str | None, facts_revision: int = 0) -> None:
@@ -652,8 +656,10 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
         facts = list_comparison_facts(project_id, cluster["idea_cluster_id"])
         revision = _current_facts_revision(project_id, cluster["idea_cluster_id"])
         summary_cluster = {**cluster, "sources": [*cluster["sources"], *[_fact_as_source(fact) for fact in facts]]}
-        summary = _synthesize_summary(summary_cluster)
-        _save_comparison(project_id, cluster, summary, run_id, facts_revision=revision)
+        synthesis = _synthesize_comparison(summary_cluster)
+        if synthesis["diverges"] is not None:
+            cluster = {**cluster, "diverges": synthesis["diverges"]}
+        _save_comparison(project_id, cluster, synthesis["summary"], run_id, facts_revision=revision)
         written += 1
 
     if run_id:
@@ -722,19 +728,21 @@ def regenerate_idea_comparison(project_id: int, idea_cluster_id: int, run_id: st
         return None
     revision = comparison["facts_revision"]
     evidence = [*comparison["sources"], *[_fact_as_source(fact) for fact in comparison["facts"]]]
-    summary = _synthesize_summary({**comparison, "sources": evidence})
+    synthesis = _synthesize_comparison({**comparison, "sources": evidence})
+    summary = synthesis["summary"]
     if not summary:
         raise ValueError("The model did not return a usable summary. Please retry.")
     if _current_facts_revision(project_id, idea_cluster_id) != revision:
         raise ValueError("Facts changed while the summary was being generated. Please retry.")
     values = {str(item.get("value") or "").strip().lower() for item in evidence if str(item.get("value") or "").strip()}
+    diverges = synthesis["diverges"] if synthesis["diverges"] is not None else len(values) >= 2
     db.execute(
         """
         update idea_comparisons set summary = %s, diverges = %s, analysis_model = %s,
             prompt_version = %s, facts_revision = %s, generated_at = now()
         where project_id = %s and idea_cluster_id = %s and run_id = %s
         """,
-        (summary, len(values) >= 2, config.LLM_CHAT_MODEL or None, PROMPT_VERSION, revision,
+        (summary, diverges, config.LLM_CHAT_MODEL or None, PROMPT_VERSION, revision,
          int(project_id), int(idea_cluster_id), str(run_id or "")),
     )
     return get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)

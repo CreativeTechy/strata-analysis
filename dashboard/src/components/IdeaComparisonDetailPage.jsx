@@ -29,6 +29,13 @@ const formatNumericValue = (value, unit) => {
   if (text === '%') return `${number}%`;
   return `${number} ${text}`.trim();
 };
+const formatDifferenceValue = (value, unit) => {
+  if (String(unit || '').trim() === '%') {
+    const number = compactNumber(value);
+    return `${number} percentage point${Math.abs(Number(value)) === 1 ? '' : 's'}`;
+  }
+  return formatNumericValue(value, unit);
+};
 const readableDisplayValue = (value) => {
   const text = String(value || '');
   if (text.startsWith('-.')) return `-0${text.slice(1)}`;
@@ -77,7 +84,11 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
       </div>
       <div className="comparison-benchmark-chart" role="img" aria-label={`Values compared with ${benchmarkLabel}`}>
         <div className="comparison-benchmark-heading">
-          <span>Lower</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? 'Your fact' : 'Average'}</strong><span>Higher</span>
+          <i aria-hidden="true" />
+          <div className="comparison-benchmark-axis-heading">
+            <span>Lower</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? 'Your fact' : 'Average'}</strong><span>Higher</span>
+          </div>
+          <i aria-hidden="true" />
         </div>
         {observations.map((item) => {
           const itemPosition = position(item.numeric_value);
@@ -99,16 +110,24 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
                 {isBenchmark ? <><b>→</b><span>Your comparison baseline</span></> : <>
                   <b>{comparisonChange.direction === 'up' ? '↑' : comparisonChange.direction === 'down' ? '↓' : '→'}</b>
                   {benchmarkItem ? (
-                    <span>Your fact is <strong>{formatNumericValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'higher' : comparisonChange.direction === 'down' ? 'lower' : 'the same'}</span>
+                    comparisonChange.direction === 'flat'
+                      ? <span>Your fact matches this source</span>
+                      : <span>Your fact is <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'higher' : 'lower'}</span>
                   ) : (
-                    <span>This source is <strong>{formatNumericValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'above' : comparisonChange.direction === 'down' ? 'below' : 'at'} the average</span>
+                    comparisonChange.direction === 'flat'
+                      ? <span>Matches the average</span>
+                      : <span>This source is <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'above' : 'below'} the average</span>
                   )}
                 </>}
               </div>
             </a>
           );
         })}
-        <div className="comparison-benchmark-scale"><span>{formatNumericValue(minimum, unit)}</span><span>{formatNumericValue(maximum, unit)}</span></div>
+        <div className="comparison-benchmark-scale">
+          <i aria-hidden="true" />
+          <div><span>{formatNumericValue(minimum, unit)}</span><span>{formatNumericValue(maximum, unit)}</span></div>
+          <i aria-hidden="true" />
+        </div>
       </div>
     </div>
   );
