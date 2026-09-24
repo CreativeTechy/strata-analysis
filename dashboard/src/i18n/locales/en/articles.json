@@ -1,0 +1,221 @@
+{
+  "list": {
+    "kicker": "Article Library",
+    "title": "Articles",
+    "subtitle": "Server-side search, sentiment, project, sort, and pagination powered by the API.",
+    "subtitleProjectSuffix": " Dashboard project: {{name}}.",
+    "subtitleAllProjects": " Showing all projects.",
+    "projectScopeLabel": "Project scope",
+    "projectScopeAriaLabel": "Project scope for articles",
+    "allProjectsOption": "All projects",
+    "draftStatus": "draft",
+    "deleteAllButton": "Delete All Articles",
+    "deletingButton": "Deleting...",
+    "backToDashboard": "Back to Dashboard",
+    "deleteAllModal": {
+      "title": "Delete all articles?",
+      "message": "This will remove every row in the articles table and cannot be undone.",
+      "confirmLabel": "Delete all articles",
+      "confirmLabelBusy": "Deleting...",
+      "cancelLabel": "Keep articles"
+    },
+    "exportModal": {
+      "title": "Export articles?",
+      "message_one": "This will export {{formatted}} article matching your current filters as a JSONL file.",
+      "message_other": "This will export {{formatted}} articles matching your current filters as a JSONL file.",
+      "confirmLabel": "Export",
+      "confirmLabelBusy": "Exporting..."
+    }
+  },
+  "filters": {
+    "allDocuments": "All documents",
+    "selectProjectForDocuments": "Select a project for documents",
+    "allRealSources": "All real sources",
+    "selectProjectForSources": "Select a project for sources",
+    "addedBetween": "Added between",
+    "addedFromTitle": "Only show articles added on or after this date",
+    "addedFromAriaLabel": "Added from date",
+    "addedToTitle": "Only show articles added on or before this date",
+    "addedToAriaLabel": "Added to date",
+    "dateRangeSeparator": "to",
+    "searchPlaceholder": "Search title, summary, source...",
+    "searchAriaLabel": "Search articles",
+    "clearSearchAriaLabel": "Clear search",
+    "allSentiments": "All sentiments"
+  },
+  "sort": {
+    "publishedDesc": "Newest first",
+    "publishedAsc": "Oldest first",
+    "relevanceDesc": "Highest relevance",
+    "relevanceAsc": "Lowest relevance",
+    "createdDesc": "Recently saved"
+  },
+  "viewMode": {
+    "cards": "Cards",
+    "list": "List",
+    "ariaLabel": "Switch article view"
+  },
+  "perPage": {
+    "option_one": "{{count}} per page",
+    "option_other": "{{count}} per page",
+    "ariaLabel": "Articles per page"
+  },
+  "toolbar": {
+    "loading": "Loading articles...",
+    "totalShowing": "{{total}} articles total, showing {{range}}",
+    "allProjectsScope": "All projects",
+    "selectedProjectScope": "Selected project",
+    "addedRange": "Added {{from}} to {{to}}",
+    "any": "any"
+  },
+  "refreshing": {
+    "title": "Refreshing results",
+    "body": "Keeping the current list visible while the new filter set loads."
+  },
+  "emptyState": {
+    "title": "No articles found",
+    "body": "Try adjusting your search, sentiment, source, date range, or project filters."
+  },
+  "pagination": {
+    "ariaLabel": "Articles pagination"
+  },
+  "import": {
+    "uploadingFiles_one": "Uploading {{count}} file...",
+    "uploadingFiles_other": "Uploading {{count}} files...",
+    "extractingText": "Extracting text...",
+    "splittingIntoArticles": "Splitting into articles...",
+    "addingArticles": "Adding articles...",
+    "addedCount_one": "Added {{count}} article",
+    "addedCount_other": "Added {{count}} articles",
+    "fromFileCount_one": "from {{count}} file.",
+    "fromFileCount_other": "from {{count}} files.",
+    "documentNote": "{{name}}: {{error}}",
+    "selectProjectToImport": "Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: {{names}}",
+    "noSupportedFiles": "No supported files found in the selection.",
+    "filesFailedToProcess_one": "{{count}} file failed to process: {{names}}",
+    "filesFailedToProcess_other": "{{count}} files failed to process: {{names}}",
+    "genericFailure": "Failed to import.",
+    "importingButton": "Importing..."
+  },
+  "errors": {
+    "loadFailed": "Failed to load articles.",
+    "deleteAllFailed": "Failed to delete articles.",
+    "exportFailed": "Failed to export articles."
+  },
+  "sentiment": {
+    "positive": "Positive",
+    "negative": "Negative",
+    "neutral": "Neutral",
+    "mixed": "Mixed"
+  },
+  "common": {
+    "byAuthor": "By {{author}}",
+    "authorTitle": "Author",
+    "regionTitle": "Region",
+    "regionLabel": "Region: {{region}}",
+    "languageTitle": "Detected source language",
+    "languageLabel": "Language: {{language}}",
+    "collectedTitle": "Collected by scraper-app pipeline run {{runId}}",
+    "collectedLabel": "Collected: {{date}}",
+    "addedTitle": "When this article entered the system",
+    "addedLabel": "Added: {{date}}",
+    "scoreLabel": "Score: {{score}}/10",
+    "projectMatchLabel": "Project match: {{score}}",
+    "untitledArticle": "Untitled article",
+    "noSummaryAvailable": "No summary available.",
+    "unknownDate": "Unknown date"
+  },
+  "card": {
+    "detailsButton": "Details",
+    "viewAnalysisDetailsTitle": "View analysis details"
+  },
+  "row": {
+    "openOriginal": "Open original",
+    "analysisDetailsButton": "Analysis details"
+  },
+  "importBanner": {
+    "dismissAriaLabel": "Dismiss import summary"
+  },
+  "importModal": {
+    "title": "Import articles",
+    "messageWithProject": "PDF, Word, Excel, CSV, image, JSON, and JSONL/NDJSON files are extracted, split into articles, and added to the project currently in scope - each article is linked to the document it came from.",
+    "messageNoProject": "Select a project scope above to import files - every format is extracted, split into articles, and linked to the project currently in scope.",
+    "uploadFiles": "Upload file(s)",
+    "uploadFilesHint": "Pick one or more files from your computer.",
+    "uploadFolder": "Upload a folder",
+    "uploadFolderHint": "Import every supported file found inside a folder."
+  },
+  "detail": {
+    "kicker": "Article Library",
+    "titleFallback": "Article details",
+    "backToArticles": "Back to Articles",
+    "reprocessButton": "Reprocess",
+    "reprocessingButton": "Reprocessing...",
+    "reprocessSuccess": "Reprocessing started - refresh this page in a moment to see the updated result.",
+    "reprocessFailed": "Failed to reprocess article.",
+    "deleteButton": "Delete",
+    "deleteDisabledTitle": "Analysis details failed to load - cannot confirm what would be deleted.",
+    "deleteModal": {
+      "title": "Delete this article?",
+      "message": "\"{{title}}\" will be permanently removed and cannot be undone.",
+      "confirmLabel": "Delete article",
+      "confirmLabelBusy": "Deleting...",
+      "cancelLabel": "Keep article"
+    },
+    "deleteFailed": "Failed to delete article.",
+    "loading": "Loading analysis details...",
+    "loadFailed": "Failed to load analysis details.",
+    "noData": "No analysis data available for this article.",
+    "sentimentLabel": "Sentiment:",
+    "categoryLabel": "Category:",
+    "writerToneLabel": "Writer tone:",
+    "articleToneLabel": "Article tone:",
+    "overallToneLabel": "Overall tone:",
+    "regionLabel": "Region:",
+    "sourceLanguageLabel": "Source language:",
+    "confidence": "(confidence {{pct}})",
+    "confidenceLowConfidence": "(confidence {{pct}}, low confidence)",
+    "modelsLine": "Models - sentiment: {{sentiment}}, classification: {{classification}}, extraction: {{extraction}}",
+    "notApplicable": "n/a",
+    "attemptsLine": "Attempts: {{count}} - Last run: {{lastRun}}",
+    "notYet": "Not yet",
+    "fullArticleHeading": "Full article"
+  },
+  "topic": {
+    "kicker": "Topic insights",
+    "noTopicSelected": "No topic selected",
+    "noTopicHint": "Open this page by clicking a topic from the dashboard, reports, or a project's frequent ideas.",
+    "backToDashboard": "Back to Dashboard",
+    "topicEvidence": "Topic evidence",
+    "mentions": "Mentions",
+    "firstSeen": "First seen",
+    "lastSeen": "Last seen",
+    "analysisRuns": "Analysis runs",
+    "extractedBy": "Extracted by",
+    "noAnalysisRun": "No analysis run is recorded for these articles.",
+    "loadingAnalysisRun": "Loading analysis run…",
+    "pipelineDetailsUnavailable": "Pipeline details unavailable.",
+    "analysisNumber": "Analysis #{{number}}",
+    "analysisRun": "Analysis run",
+    "unattributedCount_one": "{{count}} article with no recorded pipeline run (manual import or reanalysis).",
+    "unattributedCount_other": "{{count}} articles with no recorded pipeline run (manual import or reanalysis).",
+    "mentionsOverTime": "Mentions over time",
+    "noDatedArticles": "No dated articles to plot yet.",
+    "mentionsTooltipLabel": "Mentions",
+    "undatedCount_one": "{{count}} article without a date not shown above.",
+    "undatedCount_other": "{{count}} articles without a date not shown above.",
+    "articlesHeading": "Articles ({{count}})",
+    "noRepresentativeArticles": "No representative articles found.",
+    "loadingSummary": "Loading summary…",
+    "failedToLoadArticle": "Failed to load article.",
+    "noSummaryAvailable": "No summary available for this article.",
+    "viewOriginalArticle": "View original article",
+    "showingOfArticles": "Showing {{shown}} of {{total}} articles.",
+    "badgeType": {
+      "praise": "praise",
+      "complaint": "complaint",
+      "issue": "issue",
+      "suggestion": "suggestion"
+    }
+  }
+}

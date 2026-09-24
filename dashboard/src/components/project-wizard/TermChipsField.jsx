@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Plus, X } from 'lucide-react';
 
 export default function TermChipsField({ label, placeholder, values, onChange, options = [], disabled, hint }) {
+  const { t } = useTranslation('projects');
   const [manualValue, setManualValue] = useState('');
 
   const availableOptions = useMemo(
@@ -28,6 +30,7 @@ export default function TermChipsField({ label, placeholder, values, onChange, o
             <span
               key={value}
               className="panel-chip"
+              dir="auto"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', overflowWrap: 'anywhere' }}
             >
               {value}
@@ -35,7 +38,7 @@ export default function TermChipsField({ label, placeholder, values, onChange, o
                 type="button"
                 onClick={() => removeValue(value)}
                 disabled={disabled}
-                aria-label={`Remove ${value}`}
+                aria-label={t('termChips.removeAria', { value })}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -67,6 +70,7 @@ export default function TermChipsField({ label, placeholder, values, onChange, o
           value={manualValue}
           onChange={(e) => setManualValue(e.target.value)}
           disabled={disabled}
+          dir="auto"
           style={{ flex: 1 }}
         />
         <button
@@ -87,7 +91,7 @@ export default function TermChipsField({ label, placeholder, values, onChange, o
           }}
           disabled={disabled}
         >
-          <option value="">Add a suggested one...</option>
+          <option value="">{t('termChips.addSuggested')}</option>
           {availableOptions.map((option) => (
             <option key={option} value={option}>
               {option}

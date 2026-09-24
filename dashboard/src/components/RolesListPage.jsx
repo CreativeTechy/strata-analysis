@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { ShieldCheck, ShieldPlus, Trash2, Pencil } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '../auth/useAuth.js';
 import { listRoles, deleteRole } from '../api/adminApi.js';
+import { formatNumber } from '../lib/i18nFormat.js';
 import '../styles/AdminUsers.css';
 
 // List-only: the entry point for role administration. Create/edit happen on
 // their own routed pages (RoleCreatePage/RoleEditPage); this page never
 // renders a form itself.
 export default function RolesListPage() {
+  const { t, i18n } = useTranslation(['admin', 'common']);
   const { hasPermission } = useAuth();
   const canCreate = hasPermission('roles.create');
   const canUpdate = hasPermission('roles.update');
@@ -61,26 +64,26 @@ export default function RolesListPage() {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <ShieldCheck size={14} /> Access control
+            <ShieldCheck size={14} /> {t('kickers.accessControl')}
           </div>
-          <h1 className="admin-page-title">Roles &amp; Permissions</h1>
-          <p className="admin-page-subtitle">Roles are named permission sets assigned to users.</p>
+          <h1 className="admin-page-title">{t('roles.title')}</h1>
+          <p className="admin-page-subtitle">{t('roles.subtitle')}</p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
-            <span>Total roles</span>
-            <strong>{roles.length.toLocaleString()}</strong>
+            <span>{t('roles.totalRoles')}</span>
+            <strong>{formatNumber(roles.length, i18n.language)}</strong>
           </div>
           {canCreate && (
             <Link to="/admin/roles/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-              <ShieldPlus size={16} /> New role
+              <ShieldPlus size={16} /> {t('roles.newRole')}
             </Link>
           )}
         </div>
       </div>
 
       {error && (
-        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
+        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }} dir="auto">
           {error}
         </div>
       )}
@@ -90,10 +93,10 @@ export default function RolesListPage() {
           <table>
             <thead>
               <tr style={{ textAlign: 'left', background: 'rgba(0,0,0,0.03)' }}>
-                <th style={{ padding: 12 }}>Role</th>
-                <th className="admin-table-col-optional" style={{ padding: 12 }}>Description</th>
-                <th style={{ padding: 12 }}>Permissions</th>
-                <th style={{ padding: 12 }}>Actions</th>
+                <th style={{ padding: 12 }}>{t('roles.fields.role')}</th>
+                <th className="admin-table-col-optional" style={{ padding: 12 }}>{t('roles.fields.description')}</th>
+                <th style={{ padding: 12 }}>{t('roles.fields.permissions')}</th>
+                <th style={{ padding: 12 }}>{t('roles.fields.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -101,7 +104,7 @@ export default function RolesListPage() {
                 <tr>
                   <td colSpan={4} style={{ padding: 16 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
-                      <div className="loading-spinner" /> Loading roles...
+                      <div className="loading-spinner" /> {t('roles.table.loading')}
                     </div>
                   </td>
                 </tr>
@@ -113,9 +116,9 @@ export default function RolesListPage() {
                       <div className="admin-empty-state-icon">
                         <ShieldCheck size={18} />
                       </div>
-                      <strong>No roles yet</strong>
+                      <strong>{t('roles.table.emptyTitle')}</strong>
                       <span>
-                        {canCreate ? 'Create a role to start assigning permission sets to users.' : 'No roles have been created yet.'}
+                        {canCreate ? t('roles.table.emptyBodyCanCreate') : t('roles.table.emptyBodyReadOnly')}
                       </span>
                     </div>
                   </td>
@@ -124,15 +127,15 @@ export default function RolesListPage() {
               {!loading && roles.map((role) => (
                 <tr key={role.id} style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
                   <td style={{ padding: 12 }}>
-                    <strong>{role.name}</strong>
-                    {role.is_system && <span className="panel-chip" style={{ marginLeft: 8 }}>System</span>}
+                    <strong dir="auto">{role.name}</strong>
+                    {role.is_system && <span className="panel-chip" style={{ marginLeft: 8 }}>{t('roles.table.systemBadge')}</span>}
                   </td>
-                  <td className="admin-table-col-optional" style={{ padding: 12 }}>{role.description || '-'}</td>
+                  <td className="admin-table-col-optional" style={{ padding: 12 }} dir="auto">{role.description || '-'}</td>
                   <td style={{ padding: 12 }}>
                     {role.full_access ? (
-                      <span className="panel-chip">Full access</span>
+                      <span className="panel-chip">{t('roles.table.fullAccess')}</span>
                     ) : (
-                      `${role.permissions?.length || 0} permission${role.permissions?.length === 1 ? '' : 's'}`
+                      t('roles.table.permissionCount', { count: role.permissions?.length || 0 })
                     )}
                   </td>
                   <td style={{ padding: 12 }}>
@@ -144,23 +147,23 @@ export default function RolesListPage() {
                             to={`/admin/roles/${role.id}/edit`}
                             style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                           >
-                            <Pencil size={14} /> Edit
+                            <Pencil size={14} /> {t('roles.rowActions.edit')}
                           </Link>
                         )}
                         {canDelete && (
                           <button
                             className="btn-secondary"
                             disabled={role.is_system}
-                            title={role.is_system ? 'System roles cannot be deleted.' : undefined}
+                            title={role.is_system ? t('roles.rowActions.systemCannotDelete') : undefined}
                             onClick={() => setDeleteTarget(role)}
                             style={{ padding: '8px 10px', fontSize: '0.8rem', color: role.is_system ? undefined : '#ff4757' }}
                           >
-                            <Trash2 size={14} /> Delete
+                            <Trash2 size={14} /> {t('common:actions.delete')}
                           </button>
                         )}
                       </div>
                     ) : (
-                      <span className="subtitle">View only</span>
+                      <span className="subtitle">{t('roles.table.viewOnly')}</span>
                     )}
                   </td>
                 </tr>
@@ -172,10 +175,10 @@ export default function RolesListPage() {
 
       <ConfirmModal
         open={Boolean(deleteTarget)}
-        title={`Delete role "${deleteTarget?.name || ''}"?`}
-        message="This permanently removes the role. Deletion is blocked while any user is still assigned to it - move those users to another role first."
-        confirmLabel={deleting ? 'Deleting...' : 'Delete role'}
-        cancelLabel="Keep role"
+        title={t('roles.deleteModal.title', { name: deleteTarget?.name || '' })}
+        message={t('roles.deleteModal.message')}
+        confirmLabel={deleting ? t('roles.deleteModal.deleting') : t('roles.deleteModal.confirmLabel')}
+        cancelLabel={t('roles.deleteModal.cancelLabel')}
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',

@@ -1,0 +1,253 @@
+{
+  "list": {
+    "kicker": "مكتبة المقالات",
+    "title": "المقالات",
+    "subtitle": "بحث وتصفية حسب المشاعر والمشروع والترتيب والصفحات من جانب الخادم عبر واجهة البرمجة.",
+    "subtitleProjectSuffix": " مشروع لوحة التحكم: {{name}}.",
+    "subtitleAllProjects": " عرض جميع المشاريع.",
+    "projectScopeLabel": "نطاق المشروع",
+    "projectScopeAriaLabel": "نطاق المشروع للمقالات",
+    "allProjectsOption": "جميع المشاريع",
+    "draftStatus": "مسودة",
+    "deleteAllButton": "حذف جميع المقالات",
+    "deletingButton": "جارٍ الحذف...",
+    "backToDashboard": "العودة إلى لوحة التحكم",
+    "deleteAllModal": {
+      "title": "حذف جميع المقالات؟",
+      "message": "سيؤدي هذا إلى إزالة كل صف في جدول المقالات ولا يمكن التراجع عن ذلك.",
+      "confirmLabel": "حذف جميع المقالات",
+      "confirmLabelBusy": "جارٍ الحذف...",
+      "cancelLabel": "الإبقاء على المقالات"
+    },
+    "exportModal": {
+      "title": "تصدير المقالات؟",
+      "message_zero": "لن يتم تصدير أي مقالة تطابق عوامل التصفية الحالية كملف JSONL.",
+      "message_one": "سيتم تصدير مقالة واحدة تطابق عوامل التصفية الحالية كملف JSONL.",
+      "message_two": "سيتم تصدير مقالتين تطابقان عوامل التصفية الحالية كملف JSONL.",
+      "message_few": "سيتم تصدير {{formatted}} مقالات تطابق عوامل التصفية الحالية كملف JSONL.",
+      "message_many": "سيتم تصدير {{formatted}} مقالةً تطابق عوامل التصفية الحالية كملف JSONL.",
+      "message_other": "سيتم تصدير {{formatted}} مقالة تطابق عوامل التصفية الحالية كملف JSONL.",
+      "confirmLabel": "تصدير",
+      "confirmLabelBusy": "جارٍ التصدير..."
+    }
+  },
+  "filters": {
+    "allDocuments": "جميع المستندات",
+    "selectProjectForDocuments": "اختر مشروعًا لعرض المستندات",
+    "allRealSources": "جميع المصادر الفعلية",
+    "selectProjectForSources": "اختر مشروعًا لعرض المصادر",
+    "addedBetween": "أُضيفت بين",
+    "addedFromTitle": "إظهار المقالات المُضافة في هذا التاريخ أو بعده فقط",
+    "addedFromAriaLabel": "تاريخ الإضافة من",
+    "addedToTitle": "إظهار المقالات المُضافة في هذا التاريخ أو قبله فقط",
+    "addedToAriaLabel": "تاريخ الإضافة إلى",
+    "dateRangeSeparator": "إلى",
+    "searchPlaceholder": "ابحث في العنوان أو الملخص أو المصدر...",
+    "searchAriaLabel": "البحث في المقالات",
+    "clearSearchAriaLabel": "مسح البحث",
+    "allSentiments": "جميع المشاعر"
+  },
+  "sort": {
+    "publishedDesc": "الأحدث أولاً",
+    "publishedAsc": "الأقدم أولاً",
+    "relevanceDesc": "الأعلى صلة",
+    "relevanceAsc": "الأدنى صلة",
+    "createdDesc": "الأحدث حفظًا"
+  },
+  "viewMode": {
+    "cards": "بطاقات",
+    "list": "قائمة",
+    "ariaLabel": "تبديل طريقة عرض المقالات"
+  },
+  "perPage": {
+    "option_zero": "لا عناصر لكل صفحة",
+    "option_one": "عنصر واحد لكل صفحة",
+    "option_two": "عنصران لكل صفحة",
+    "option_few": "{{count}} عناصر لكل صفحة",
+    "option_many": "{{count}} عنصرًا لكل صفحة",
+    "option_other": "{{count}} عنصر لكل صفحة",
+    "ariaLabel": "عدد المقالات في الصفحة"
+  },
+  "toolbar": {
+    "loading": "جارٍ تحميل المقالات...",
+    "totalShowing": "{{total}} مقالة إجمالاً، يتم عرض {{range}}",
+    "allProjectsScope": "جميع المشاريع",
+    "selectedProjectScope": "المشروع المحدد",
+    "addedRange": "أُضيفت {{from}} إلى {{to}}",
+    "any": "أي وقت"
+  },
+  "refreshing": {
+    "title": "جارٍ تحديث النتائج",
+    "body": "يتم إبقاء القائمة الحالية ظاهرة أثناء تحميل مجموعة عوامل التصفية الجديدة."
+  },
+  "emptyState": {
+    "title": "لم يتم العثور على مقالات",
+    "body": "حاول تعديل البحث أو المشاعر أو المصدر أو النطاق الزمني أو عوامل تصفية المشروع."
+  },
+  "pagination": {
+    "ariaLabel": "التنقل بين صفحات المقالات"
+  },
+  "import": {
+    "uploadingFiles_zero": "لا توجد ملفات لرفعها...",
+    "uploadingFiles_one": "جارٍ رفع ملف واحد...",
+    "uploadingFiles_two": "جارٍ رفع ملفين...",
+    "uploadingFiles_few": "جارٍ رفع {{count}} ملفات...",
+    "uploadingFiles_many": "جارٍ رفع {{count}} ملفًا...",
+    "uploadingFiles_other": "جارٍ رفع {{count}} ملف...",
+    "extractingText": "جارٍ استخراج النص...",
+    "splittingIntoArticles": "جارٍ التقسيم إلى مقالات...",
+    "addingArticles": "جارٍ إضافة المقالات...",
+    "addedCount_zero": "لم تتم إضافة أي مقالة",
+    "addedCount_one": "تمت إضافة مقالة واحدة",
+    "addedCount_two": "تمت إضافة مقالتين",
+    "addedCount_few": "تمت إضافة {{count}} مقالات",
+    "addedCount_many": "تمت إضافة {{count}} مقالةً",
+    "addedCount_other": "تمت إضافة {{count}} مقالة",
+    "fromFileCount_zero": "من دون ملفات.",
+    "fromFileCount_one": "من ملف واحد.",
+    "fromFileCount_two": "من ملفين.",
+    "fromFileCount_few": "من {{count}} ملفات.",
+    "fromFileCount_many": "من {{count}} ملفًا.",
+    "fromFileCount_other": "من {{count}} ملف.",
+    "documentNote": "{{name}}: {{error}}",
+    "selectProjectToImport": "اختر مشروعًا لاستيراد المستندات (PDF، Word، Excel، CSV، صور، JSON، JSONL). تم تخطي: {{names}}",
+    "noSupportedFiles": "لم يتم العثور على ملفات مدعومة في التحديد.",
+    "filesFailedToProcess_zero": "لم يفشل أي ملف في المعالجة: {{names}}",
+    "filesFailedToProcess_one": "فشل ملف واحد في المعالجة: {{names}}",
+    "filesFailedToProcess_two": "فشل ملفان في المعالجة: {{names}}",
+    "filesFailedToProcess_few": "فشلت {{count}} ملفات في المعالجة: {{names}}",
+    "filesFailedToProcess_many": "فشل {{count}} ملفًا في المعالجة: {{names}}",
+    "filesFailedToProcess_other": "فشل {{count}} ملف في المعالجة: {{names}}",
+    "genericFailure": "فشل الاستيراد.",
+    "importingButton": "جارٍ الاستيراد..."
+  },
+  "errors": {
+    "loadFailed": "فشل تحميل المقالات.",
+    "deleteAllFailed": "فشل حذف المقالات.",
+    "exportFailed": "فشل تصدير المقالات."
+  },
+  "sentiment": {
+    "positive": "إيجابي",
+    "negative": "سلبي",
+    "neutral": "محايد",
+    "mixed": "متباين"
+  },
+  "common": {
+    "byAuthor": "بقلم {{author}}",
+    "authorTitle": "الكاتب",
+    "regionTitle": "المنطقة",
+    "regionLabel": "المنطقة: {{region}}",
+    "languageTitle": "لغة المصدر المكتشفة",
+    "languageLabel": "اللغة: {{language}}",
+    "collectedTitle": "تم الجمع بواسطة تشغيلة scraper-app رقم {{runId}}",
+    "collectedLabel": "تاريخ الجمع: {{date}}",
+    "addedTitle": "وقت دخول هذه المقالة إلى النظام",
+    "addedLabel": "أُضيفت: {{date}}",
+    "scoreLabel": "الدرجة: {{score}}/10",
+    "projectMatchLabel": "توافق المشروع: {{score}}",
+    "untitledArticle": "مقالة بلا عنوان",
+    "noSummaryAvailable": "لا يوجد ملخص متاح.",
+    "unknownDate": "تاريخ غير معروف"
+  },
+  "card": {
+    "detailsButton": "التفاصيل",
+    "viewAnalysisDetailsTitle": "عرض تفاصيل التحليل"
+  },
+  "row": {
+    "openOriginal": "فتح الأصلي",
+    "analysisDetailsButton": "تفاصيل التحليل"
+  },
+  "importBanner": {
+    "dismissAriaLabel": "إغلاق ملخص الاستيراد"
+  },
+  "importModal": {
+    "title": "استيراد المقالات",
+    "messageWithProject": "يتم استخراج ملفات PDF وWord وExcel وCSV والصور وJSON وJSONL/NDJSON وتقسيمها إلى مقالات وإضافتها إلى المشروع الموجود حاليًا ضمن النطاق - كل مقالة مرتبطة بالمستند الذي جاءت منه.",
+    "messageNoProject": "اختر نطاق مشروع أعلاه لاستيراد الملفات - يتم استخراج كل صيغة وتقسيمها إلى مقالات وربطها بالمشروع الموجود حاليًا ضمن النطاق.",
+    "uploadFiles": "رفع ملف (ملفات)",
+    "uploadFilesHint": "اختر ملفًا واحدًا أو أكثر من جهازك.",
+    "uploadFolder": "رفع مجلد",
+    "uploadFolderHint": "استيراد كل ملف مدعوم موجود داخل مجلد."
+  },
+  "detail": {
+    "kicker": "مكتبة المقالات",
+    "titleFallback": "تفاصيل المقالة",
+    "backToArticles": "العودة إلى المقالات",
+    "reprocessButton": "إعادة المعالجة",
+    "reprocessingButton": "جارٍ إعادة المعالجة...",
+    "reprocessSuccess": "بدأت إعادة المعالجة - أعد تحميل هذه الصفحة بعد لحظة لرؤية النتيجة المحدثة.",
+    "reprocessFailed": "فشلت إعادة معالجة المقالة.",
+    "deleteButton": "حذف",
+    "deleteDisabledTitle": "فشل تحميل تفاصيل التحليل - لا يمكن تأكيد ما سيتم حذفه.",
+    "deleteModal": {
+      "title": "حذف هذه المقالة؟",
+      "message": "سيتم حذف \"{{title}}\" نهائيًا ولا يمكن التراجع عن ذلك.",
+      "confirmLabel": "حذف المقالة",
+      "confirmLabelBusy": "جارٍ الحذف...",
+      "cancelLabel": "الإبقاء على المقالة"
+    },
+    "deleteFailed": "فشل حذف المقالة.",
+    "loading": "جارٍ تحميل تفاصيل التحليل...",
+    "loadFailed": "فشل تحميل تفاصيل التحليل.",
+    "noData": "لا تتوفر بيانات تحليل لهذه المقالة.",
+    "sentimentLabel": "المشاعر:",
+    "categoryLabel": "الفئة:",
+    "writerToneLabel": "نبرة الكاتب:",
+    "articleToneLabel": "نبرة المقالة:",
+    "overallToneLabel": "النبرة العامة:",
+    "regionLabel": "المنطقة:",
+    "sourceLanguageLabel": "لغة المصدر:",
+    "confidence": "(الثقة {{pct}})",
+    "confidenceLowConfidence": "(الثقة {{pct}}، ثقة منخفضة)",
+    "modelsLine": "النماذج - المشاعر: {{sentiment}}، التصنيف: {{classification}}، الاستخراج: {{extraction}}",
+    "notApplicable": "غير متاح",
+    "attemptsLine": "المحاولات: {{count}} - آخر تشغيل: {{lastRun}}",
+    "notYet": "لم يحدث بعد",
+    "fullArticleHeading": "المقالة كاملة"
+  },
+  "topic": {
+    "kicker": "رؤى الموضوع",
+    "noTopicSelected": "لم يتم اختيار موضوع",
+    "noTopicHint": "افتح هذه الصفحة بالنقر على موضوع من لوحة التحكم أو التقارير أو الأفكار المتكررة لأحد المشاريع.",
+    "backToDashboard": "العودة إلى لوحة التحكم",
+    "topicEvidence": "أدلة الموضوع",
+    "mentions": "الإشارات",
+    "firstSeen": "أول ظهور",
+    "lastSeen": "آخر ظهور",
+    "analysisRuns": "تشغيلات التحليل",
+    "extractedBy": "استُخرج بواسطة",
+    "noAnalysisRun": "لا توجد تشغيلة تحليل مسجلة لهذه المقالات.",
+    "loadingAnalysisRun": "جارٍ تحميل تشغيلة التحليل…",
+    "pipelineDetailsUnavailable": "تفاصيل خط الأنابيب غير متاحة.",
+    "analysisNumber": "التحليل رقم {{number}}",
+    "analysisRun": "تشغيلة تحليل",
+    "unattributedCount_zero": "لا توجد مقالات بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "unattributedCount_one": "مقالة واحدة بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "unattributedCount_two": "مقالتان بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "unattributedCount_few": "{{count}} مقالات بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "unattributedCount_many": "{{count}} مقالةً بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "unattributedCount_other": "{{count}} مقالة بلا تشغيلة خط أنابيب مسجلة (استيراد يدوي أو إعادة تحليل).",
+    "mentionsOverTime": "الإشارات عبر الزمن",
+    "noDatedArticles": "لا توجد مقالات مؤرَّخة لعرضها بعد.",
+    "mentionsTooltipLabel": "الإشارات",
+    "undatedCount_zero": "لا توجد مقالات بلا تاريخ غير معروضة أعلاه.",
+    "undatedCount_one": "مقالة واحدة بلا تاريخ غير معروضة أعلاه.",
+    "undatedCount_two": "مقالتان بلا تاريخ غير معروضتين أعلاه.",
+    "undatedCount_few": "{{count}} مقالات بلا تاريخ غير معروضة أعلاه.",
+    "undatedCount_many": "{{count}} مقالةً بلا تاريخ غير معروضة أعلاه.",
+    "undatedCount_other": "{{count}} مقالة بلا تاريخ غير معروضة أعلاه.",
+    "articlesHeading": "المقالات ({{count}})",
+    "noRepresentativeArticles": "لم يتم العثور على مقالات تمثيلية.",
+    "loadingSummary": "جارٍ تحميل الملخص…",
+    "failedToLoadArticle": "فشل تحميل المقالة.",
+    "noSummaryAvailable": "لا يوجد ملخص متاح لهذه المقالة.",
+    "viewOriginalArticle": "عرض المقالة الأصلية",
+    "showingOfArticles": "عرض {{shown}} من {{total}} مقالة.",
+    "badgeType": {
+      "praise": "إشادة",
+      "complaint": "شكوى",
+      "issue": "مشكلة",
+      "suggestion": "اقتراح"
+    }
+  }
+}

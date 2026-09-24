@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { ShieldPlus } from 'lucide-react';
 import RoleForm from './RoleForm';
@@ -9,6 +10,7 @@ const emptyValue = { name: '', description: '', permissions: [] };
 // Create-only: builds a brand new role and its permission set, then hands
 // back to the roles list. Editing an existing role lives in RoleEditPage.
 export default function RoleCreatePage() {
+  const { t } = useTranslation('admin');
   const navigate = useNavigate();
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,22 +53,22 @@ export default function RoleCreatePage() {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <ShieldPlus size={14} /> Access control
+            <ShieldPlus size={14} /> {t('kickers.accessControl')}
           </div>
-          <h1 className="admin-page-title">New role</h1>
-          <p className="admin-page-subtitle">Name the role and choose which permissions it grants.</p>
+          <h1 className="admin-page-title">{t('roles.create.title')}</h1>
+          <p className="admin-page-subtitle">{t('roles.create.subtitle')}</p>
         </div>
       </div>
 
       {loadError && (
-        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
+        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }} dir="auto">
           {loadError}
         </div>
       )}
 
       {loading && (
         <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
-          <div className="loading-spinner" /> Loading permissions...
+          <div className="loading-spinner" /> {t('roles.create.loading')}
         </div>
       )}
 
@@ -75,7 +77,7 @@ export default function RoleCreatePage() {
           value={value}
           onChange={setValue}
           permissions={permissions}
-          submitLabel="Create role"
+          submitLabel={t('roles.create.submitLabel')}
           submitting={submitting}
           error={error}
           onSubmit={handleSubmit}

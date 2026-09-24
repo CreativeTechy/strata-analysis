@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/useAuth.js';
-import { PAGE_SIZE, STATUS_OPTIONS, formatDateTime } from '../lib/projectHelpers.js';
+import { PAGE_SIZE, STATUS_OPTIONS } from '../lib/projectHelpers.js';
+import { formatDateTime, formatNumber } from '../lib/i18nFormat.js';
 import '../styles/Projects.css';
 import { CalendarDays, Eye, Plus, Search, Flag, Layers3, RefreshCw, FileText } from 'lucide-react';
 
@@ -11,8 +13,15 @@ import { CalendarDays, Eye, Plus, Search, Flag, Layers3, RefreshCw, FileText } f
 // (unlike when this lived inside ProjectsPage) it owns nothing wizard-related
 // - no draft, no document pipeline state.
 export default function ProjectsListView({ projects = [], isLoadingProjects }) {
+  const { t, i18n } = useTranslation('projects');
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.create') || hasPermission('projects.update') || hasPermission('projects.delete');
+  const locale = i18n.language;
+  const statusLabels = {
+    draft: t('shared.statusLabels.draft'),
+    active: t('shared.statusLabels.active'),
+    archived: t('shared.statusLabels.archived'),
+  };
 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -71,25 +80,25 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Opinion monitoring
+            <CalendarDays size={14} /> {t('shared.opinionMonitoringKicker')}
           </div>
-          <h1 className="admin-page-title">Opinion Monitor</h1>
+          <h1 className="admin-page-title">{t('list.title')}</h1>
           <p className="admin-page-subtitle">
-            Track what people are saying about each project as its own workspace: upload the documents it covers, approve the articles they hold, and keep every analysis tied to a named project.
+            {t('list.subtitle')}
           </p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
-            <span>Status</span>
-            <strong>{projects.length ? 'Configured' : 'Empty'}</strong>
+            <span>{t('list.toolbar.statusLabel')}</span>
+            <strong>{projects.length ? t('list.toolbar.statusConfigured') : t('list.toolbar.statusEmpty')}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Search</span>
-            <strong>{visibleProjects.length.toLocaleString()} matches</strong>
+            <span>{t('list.toolbar.searchLabel')}</span>
+            <strong>{t('list.toolbar.matchesCount', { count: visibleProjects.length, formattedCount: formatNumber(visibleProjects.length, locale) })}</strong>
           </div>
           {canEdit && (
             <Link to="/projects/new" className="btn-primary" style={{ textDecoration: 'none' }}>
-              <Plus size={16} /> Add Project
+              <Plus size={16} /> {t('list.actions.addProject')}
             </Link>
           )}
         </div>
@@ -101,8 +110,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             <Layers3 size={18} />
           </div>
           <div>
-            <span>Total projects</span>
-            <strong>{stats.total.toLocaleString()}</strong>
+            <span>{t('list.stats.totalProjects')}</span>
+            <strong>{formatNumber(stats.total, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -110,8 +119,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             <Flag size={18} />
           </div>
           <div>
-            <span>Active</span>
-            <strong>{stats.active.toLocaleString()}</strong>
+            <span>{t('list.stats.active')}</span>
+            <strong>{formatNumber(stats.active, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -119,8 +128,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             <FileText size={18} />
           </div>
           <div>
-            <span>Draft</span>
-            <strong>{stats.draftCount.toLocaleString()}</strong>
+            <span>{t('list.stats.draft')}</span>
+            <strong>{formatNumber(stats.draftCount, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -128,8 +137,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             <Layers3 size={18} />
           </div>
           <div>
-            <span>Archived</span>
-            <strong>{stats.archived.toLocaleString()}</strong>
+            <span>{t('list.stats.archived')}</span>
+            <strong>{formatNumber(stats.archived, locale)}</strong>
           </div>
         </div>
       </div>
@@ -141,15 +150,16 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search projects, dates, statuses, or keywords"
+            placeholder={t('list.search.placeholder')}
+            dir="auto"
           />
         </label>
 
         <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">All statuses</option>
+          <option value="all">{t('list.filters.allStatuses')}</option>
           {STATUS_OPTIONS.map((status) => (
             <option key={status} value={status}>
-              {status[0].toUpperCase() + status.slice(1)}
+              {statusLabels[status] || (status[0].toUpperCase() + status.slice(1))}
             </option>
           ))}
         </select>
@@ -157,10 +167,10 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
 
       <div className="glass-card admin-list-panel">
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Tracked Projects</strong>
+          <strong style={{ fontSize: '1rem' }}>{t('list.panel.title')}</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isLoadingProjects && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
-            <span className="panel-chip">{visibleProjects.length} visible</span>
+            {isLoadingProjects && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{t('list.panel.loadingInline')}</span>}
+            <span className="panel-chip">{t('list.panel.visibleCount', { count: visibleProjects.length, formattedCount: formatNumber(visibleProjects.length, locale) })}</span>
           </div>
         </div>
 
@@ -170,8 +180,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
               <div className="admin-empty-state-icon">
                 <RefreshCw size={18} className="spin" />
               </div>
-              <strong>Loading projects...</strong>
-              <span>Fetching the latest project list from the workspace.</span>
+              <strong>{t('list.emptyState.loadingTitle')}</strong>
+              <span>{t('list.emptyState.loadingBody')}</span>
             </div>
           )}
 
@@ -180,11 +190,11 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
               <div className="admin-empty-state-icon">
                 <CalendarDays size={18} />
               </div>
-              <strong>No projects yet</strong>
-              <span>Start by creating a project, then upload the documents it should analyze.</span>
+              <strong>{t('list.emptyState.noProjectsTitle')}</strong>
+              <span>{t('list.emptyState.noProjectsBody')}</span>
               {canEdit && (
                 <Link to="/projects/new" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-                  <Plus size={16} /> Add Project
+                  <Plus size={16} /> {t('list.actions.addProject')}
                 </Link>
               )}
             </div>
@@ -204,29 +214,29 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title project-item-title">{project.name}</strong>
+                      <strong className="admin-item-title project-item-title" dir="auto">{project.name}</strong>
                       <span className={`panel-chip ${isActive ? 'success' : project.status === 'archived' ? 'muted' : 'warning'}`}>
-                        {(project.status || 'draft').toUpperCase()}
+                        {(statusLabels[(project.status || 'draft').toLowerCase()] || project.status || 'draft').toUpperCase()}
                       </span>
                       {project.repeat_enabled && (
                         <span className="panel-chip success">
-                          <RefreshCw size={12} /> Every {project.repeat_interval_value} {project.repeat_interval_unit}
+                          <RefreshCw size={12} /> {t('list.item.repeatEvery', { value: project.repeat_interval_value, unit: project.repeat_interval_unit })}
                         </span>
                       )}
                     </div>
                     <div className="admin-item-meta">
-                      <span>{project.start_date || 'No start date'}</span>
-                      <span>{project.end_date || 'No end date'}</span>
+                      <span>{project.start_date || t('list.item.noStartDate')}</span>
+                      <span>{project.end_date || t('list.item.noEndDate')}</span>
                       <span>
-                        {assignedSourceCount} source{assignedSourceCount === 1 ? '' : 's'}
+                        {t('list.item.sourceCount', { count: assignedSourceCount, formattedCount: formatNumber(assignedSourceCount, locale) })}
                       </span>
                       {project.repeat_enabled && (
-                        <span>Next run: {formatDateTime(project.next_run_at) || 'Pending first run'}</span>
+                        <span>{t('list.item.nextRun', { value: formatDateTime(project.next_run_at, locale) || t('list.item.pendingFirstRun') })}</span>
                       )}
-                      {project.last_run_at && <span>Last run: {formatDateTime(project.last_run_at)}</span>}
+                      {project.last_run_at && <span>{t('list.item.lastRun', { value: formatDateTime(project.last_run_at, locale) })}</span>}
                     </div>
-                    <div style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-                      {project.description || 'Open the project to see assigned sources, tags, and metadata.'}
+                    <div dir="auto" style={{ marginTop: 10, color: 'var(--text-light)', fontSize: '0.88rem', lineHeight: 1.5, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                      {project.description || t('list.item.defaultDescription')}
                     </div>
                   </div>
 
@@ -236,7 +246,7 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
                       to={`/projects/${project.id}`}
                       style={{ padding: '8px 10px', fontSize: '0.8rem', textDecoration: 'none' }}
                     >
-                      <Eye size={14} /> View
+                      <Eye size={14} /> {t('common:actions.view')}
                     </Link>
                   </div>
                 </div>
@@ -249,8 +259,8 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
               <div className="admin-empty-state-icon">
                 <Search size={18} />
               </div>
-              <strong>No matching projects</strong>
-              <span>Try another search term or switch the status filter.</span>
+              <strong>{t('list.emptyState.noMatchesTitle')}</strong>
+              <span>{t('list.emptyState.noMatchesBody')}</span>
             </div>
           )}
         </div>
@@ -269,7 +279,11 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
             }}
           >
             <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleProjects.length)} of {visibleProjects.length}
+              {t('list.pagination.showingRange', {
+                from: formatNumber((safePage - 1) * PAGE_SIZE + 1, locale),
+                to: formatNumber(Math.min(safePage * PAGE_SIZE, visibleProjects.length), locale),
+                total: formatNumber(visibleProjects.length, locale),
+              })}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
@@ -278,10 +292,10 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
                 disabled={safePage <= 1}
                 style={{ padding: '8px 10px', fontSize: '0.8rem' }}
               >
-                Previous
+                {t('common:actions.previous')}
               </button>
               <span className="panel-chip">
-                Page {safePage} of {totalPages}
+                {t('common:pagination.pageOfTotal', { page: formatNumber(safePage, locale), totalPages: formatNumber(totalPages, locale) })}
               </span>
               <button
                 className="btn-secondary"
@@ -289,7 +303,7 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
                 disabled={safePage >= totalPages}
                 style={{ padding: '8px 10px', fontSize: '0.8rem' }}
               >
-                Next
+                {t('common:actions.next')}
               </button>
             </div>
           </div>

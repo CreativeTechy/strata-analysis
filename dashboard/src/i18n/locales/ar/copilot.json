@@ -1,0 +1,93 @@
+{
+  "outputLanguage": {
+    "label": "لغة الرد",
+    "hint": "مستقلة عن لغة الواجهة - اطلب من المساعد الذكي أن يجيب بلغة محددة."
+  },
+  "chatTitle": "المساعد الذكي لتحليلات {{brand}}",
+  "greeting": "مرحبًا! أنا مساعدك الذكي للتحليلات. اختر مشروعًا أو تصفّح كل المشاريع، ثم اطلب مني تلخيص المقالات أو تحليلها.",
+  "chattingOver_zero": "محادثة حول {{count}} مقالة",
+  "chattingOver_one": "محادثة حول مقالة واحدة",
+  "chattingOver_two": "محادثة حول مقالتين",
+  "chattingOver_few": "محادثة حول {{count}} مقالات",
+  "chattingOver_many": "محادثة حول {{count}} مقالة",
+  "chattingOver_other": "محادثة حول {{count}} مقالة",
+  "allProjectsScope": "كل المشاريع",
+  "filters": {
+    "title": "عوامل التصفية",
+    "projectLabel": "المشروع",
+    "allProjects": "كل المشاريع",
+    "byDocument": "حسب المستند",
+    "bySentiment": "حسب المشاعر",
+    "byTopic": "حسب الموضوع",
+    "byDatePublished": "حسب تاريخ النشر",
+    "thisWeek": "هذا الأسبوع",
+    "thisMonth": "هذا الشهر",
+    "from": "من",
+    "to": "إلى"
+  },
+  "matches": {
+    "button": "التطابقات ({{count}})",
+    "title": "التطابقات ({{count}})",
+    "collapsedTooltip_zero": "لا توجد تطابقات",
+    "collapsedTooltip_one": "تطابق واحد",
+    "collapsedTooltip_two": "تطابقان",
+    "collapsedTooltip_few": "{{count}} تطابقات",
+    "collapsedTooltip_many": "{{count}} تطابقًا",
+    "collapsedTooltip_other": "{{count}} تطابق",
+    "expandPanel": "توسيع لوحة التطابقات",
+    "collapsePanel": "طي لوحة التطابقات",
+    "noMatches": "لا توجد مقالات مطابقة لعوامل التصفية الحالية.",
+    "writerTone": "الكاتب",
+    "articleTone": "المقالة",
+    "overallTone": "الإجمالي",
+    "match": "التطابق",
+    "viewDetails": "عرض التفاصيل",
+    "showingOfTotal": "عرض {{from}}-{{to}} من {{total}}"
+  },
+  "chat": {
+    "inputPlaceholderThinking": "جارٍ التفكير...",
+    "inputPlaceholderAsk": "اسأل عن المقالات المصفّاة البالغ عددها {{count}}...",
+    "analyzing": "جارٍ تحليل {{count}} مقالة...",
+    "noResponse": "لا يوجد رد.",
+    "summarizeThemes": "تلخيص المحاور",
+    "summarizeThemesPrompt": "لخّص المشاعر العامة والمحاور الرئيسية في هذه المقالات.",
+    "draftBrief": "صياغة موجز",
+    "draftBriefPrompt": "اكتب موجزًا تنفيذيًا قصيرًا يبرز أهم الإشارات في هذه المقالات.",
+    "networkError": "تعذّر الوصول إلى خدمة المساعد الذكي حاليًا. يرجى التحقق من اتصالك والمحاولة مرة أخرى."
+  },
+  "detail": {
+    "close": "إغلاق",
+    "topicFallback": "موضوع",
+    "writerTone": "نبرة الكاتب",
+    "articleTone": "نبرة المقالة",
+    "overallTone": "النبرة الإجمالية",
+    "score": "النتيجة",
+    "projectMatch": "تطابق المشروع",
+    "byAuthor": "بقلم {{author}}",
+    "viewOriginal": "عرض المصدر الأصلي",
+    "aiAnalysis": "تحليل الذكاء الاصطناعي",
+    "fullText": "النص الكامل"
+  },
+  "sentimentLabels": {
+    "positive": "إيجابي",
+    "negative": "سلبي",
+    "neutral": "محايد",
+    "mixed": "متباين"
+  },
+  "toneLabels": {
+    "neutral": "محايدة",
+    "positive": "إيجابية",
+    "enthusiastic": "متحمسة",
+    "optimistic": "متفائلة",
+    "critical": "نقدية",
+    "skeptical": "متشككة",
+    "negative": "سلبية",
+    "concerned": "قلقة",
+    "angry": "غاضبة",
+    "sarcastic": "ساخرة",
+    "humorous": "فكاهية",
+    "formal": "رسمية",
+    "informal": "غير رسمية",
+    "mixed": "متباينة"
+  }
+}

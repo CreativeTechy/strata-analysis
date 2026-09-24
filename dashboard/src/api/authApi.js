@@ -10,6 +10,8 @@
  * itself succeeded.
  */
 
+import { apiErrorFromPayload } from '../lib/apiError.js';
+
 const BASE = '/api/auth';
 
 export async function getCurrentUser() {
@@ -31,7 +33,7 @@ export async function login(username, password) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data?.error || data?.detail || 'Login failed.');
+    throw apiErrorFromPayload(data, 'Login failed.');
   }
   return data?.user ?? null;
 }

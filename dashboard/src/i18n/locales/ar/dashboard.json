@@ -1,0 +1,257 @@
+{
+  "periods": {
+    "last7d": "آخر 7 أيام",
+    "last30d": "آخر 30 يومًا",
+    "allTime": "كل الوقت"
+  },
+  "change": {
+    "firstRun": "أول عملية تشغيل مكتملة",
+    "vsPrevious": "{{value}}% مقارنة بالفترة السابقة"
+  },
+  "runLabel": {
+    "fallback": "التشغيل",
+    "title": "التحليل رقم {{number}}: {{label}}",
+    "short": "التحليل رقم {{number}}",
+    "showing": "عرض {{run}}."
+  },
+  "ideaType": {
+    "issue": "مشكلة",
+    "complaint": "شكوى",
+    "praise": "إشادة",
+    "suggestion": "اقتراح"
+  },
+  "sentiment": {
+    "positive": "إيجابي",
+    "neutral": "محايد",
+    "negative": "سلبي",
+    "mixed": "متباين"
+  },
+  "emotionAxis": {
+    "joy": "فرح",
+    "trust": "ثقة",
+    "anticipation": "ترقب",
+    "anger": "غضب",
+    "disgust": "اشمئزاز",
+    "fear": "خوف"
+  },
+  "series": {
+    "total": "الإجمالي",
+    "positive": "إيجابي",
+    "negative": "سلبي",
+    "neutral": "محايد"
+  },
+  "counts": {
+    "articlesCount_zero": "لا توجد مقالات",
+    "articlesCount_one": "مقالة واحدة",
+    "articlesCount_two": "مقالتان",
+    "articlesCount_few": "{{count}} مقالات",
+    "articlesCount_many": "{{count}} مقالة",
+    "articlesCount_other": "{{count}} مقالة",
+    "articleUnit_zero": "مقالات",
+    "articleUnit_one": "مقالة",
+    "articleUnit_two": "مقالتان",
+    "articleUnit_few": "مقالات",
+    "articleUnit_many": "مقالة",
+    "articleUnit_other": "مقالة",
+    "recordsCount_zero": "لا توجد سجلات محلَّلة",
+    "recordsCount_one": "سجل محلَّل واحد",
+    "recordsCount_two": "سجلان محلَّلان",
+    "recordsCount_few": "{{count}} سجلات محلَّلة",
+    "recordsCount_many": "{{count}} سجلاً محلَّلاً",
+    "recordsCount_other": "{{count}} سجل محلَّل",
+    "moreValues_zero": "لا توجد قيم إضافية غير معروضة",
+    "moreValues_one": "+قيمة إضافية واحدة غير معروضة",
+    "moreValues_two": "+قيمتان إضافيتان غير معروضتين",
+    "moreValues_few": "+{{count}} قيم إضافية غير معروضة",
+    "moreValues_many": "+{{count}} قيمة إضافية غير معروضة",
+    "moreValues_other": "+{{count}} قيمة إضافية غير معروضة"
+  },
+  "overview": {
+    "eyebrow": "لوحة الذكاء",
+    "title": "ذكاء المشروع",
+    "subtitle": "إشارات مستخلصة من المستندات والمقالات التي تم تحليلها بالفعل لهذا المشروع.",
+    "filterTypeAria": "نوع التصفية",
+    "dateRangeTab": "النطاق الزمني",
+    "analysisRunTab": "عملية تحليل",
+    "filterByRunAria": "التصفية حسب عملية التحليل",
+    "dateRangeAria": "النطاق الزمني للوحة المعلومات",
+    "projectSelectAria": "مشروع لوحة المعلومات",
+    "noProjectTitle": "لم يتم اختيار مشروع",
+    "noProjectBody": "أنشئ مشروعًا لبدء تتبع الذكاء.",
+    "loadErrorTitle": "تعذّر تحميل ذكاء المشروع",
+    "loadingIntelligence": "جارٍ تحميل الذكاء…",
+    "emptyTitle": "لا توجد مقالات محلَّلة في هذه الفترة",
+    "emptyBody": "شغّل تحليلًا أو اختر نطاقًا زمنيًا أوسع لملء هذه اللوحة.",
+    "competitorBackLabel": "العودة إلى لوحة المعلومات"
+  },
+  "metrics": {
+    "analysisHealth": {
+      "label": "سلامة التحليل",
+      "noRuns": "لا توجد عمليات تشغيل",
+      "lastCompleted": "آخر إكمال {{date}}",
+      "noCompletedRuns": "لا توجد عمليات تشغيل مكتملة بعد"
+    },
+    "analyzedArticles": {
+      "label": "المقالات المحلَّلة"
+    },
+    "netSentiment": {
+      "label": "صافي المشاعر",
+      "detail": "الإيجابي ناقص السلبي"
+    },
+    "documents": {
+      "label": "المستندات",
+      "detail": "مرفوعة إلى هذا المشروع"
+    }
+  },
+  "sentimentBreakdown": {
+    "title": "توزيع المشاعر",
+    "netSentimentCaption": "صافي المشاعر"
+  },
+  "volumeOverTime": {
+    "title": "حجم المقالات والمشاعر عبر الزمن"
+  },
+  "emotionalSignature": {
+    "title": "البصمة العاطفية",
+    "description": "مُستخلصة من النبرة العاطفية للمقالات المحلَّلة."
+  },
+  "distributions": {
+    "language": {
+      "title": "توزيع اللغات",
+      "empty": "لم يتم اكتشاف أي لغة في المقالات المحلَّلة بعد.",
+      "unknown": "غير معروف",
+      "other": "أخرى"
+    },
+    "region": {
+      "title": "توزيع المناطق",
+      "empty": "لم يتم اكتشاف أي منطقة في المقالات المحلَّلة بعد."
+    },
+    "gender": {
+      "title": "توزيع الجنس",
+      "empty": "لم يتم اكتشاف الجنس في المقالات المحلَّلة بعد."
+    },
+    "ageRange": {
+      "title": "توزيع الفئات العمرية",
+      "empty": "لم يتم اكتشاف الفئة العمرية في المقالات المحلَّلة بعد."
+    },
+    "segment": {
+      "title": "توزيع الشرائح",
+      "empty": "لم يتم اكتشاف شريحة الوضع المعيشي/المهنة في المقالات المحلَّلة بعد."
+    }
+  },
+  "wherePosted": {
+    "title": "أين يُقال ذلك",
+    "prev": "السابق",
+    "next": "التالي"
+  },
+  "ideas": {
+    "title": "أكثر الأفكار تداولًا",
+    "subtitle": "مجمّعة حسب الموضوع",
+    "empty": "لم يتم اكتشاف أفكار متكررة بعد.",
+    "backLabel": "العودة إلى لوحة المعلومات"
+  },
+  "sentimentByPlatform": {
+    "title": "المشاعر حسب المنصة",
+    "tooltipTitle": "{{tone}}: {{count}}"
+  },
+  "ideaComparisons": {
+    "title": "مقارنات الأفكار عبر المصادر",
+    "subtitle": "حيث يتناول مصدران أو أكثر الفكرة نفسها، جنبًا إلى جنب",
+    "loadError": "تعذّر تحميل مقارنات الأفكار.",
+    "loading": "جارٍ تحميل مقارنات الأفكار…",
+    "emptyBody": "لا توجد مقارنات بين المصادر بعد. شغّل خط المعالجة بمجرد أن يتناول مصدران مختلفان الفكرة نفسها، أو انقر على «إعادة الإنشاء».",
+    "agrees": "المصادر متفقة",
+    "diverges": "المصادر مختلفة",
+    "noValue": "لا رقم مذكور",
+    "sourcesCount": "المصادر ({{count}})",
+    "viewDetails": "عرض تفاصيل {{idea}}",
+    "prev": "السابق",
+    "next": "التالي"
+  },
+  "trending": {
+    "title": "الكلمات المفتاحية والوسوم الرائجة",
+    "linkTitle": "عرض المقالات التي تذكر {{term}}",
+    "empty": "لم يُذكر أي من المصطلحات المُهيَّأة لهذا المشروع خلال هذه الفترة."
+  },
+  "articlesByRun": {
+    "title": "المقالات المحلَّلة حسب عملية التشغيل",
+    "tooltipLabel": "المكتشفة",
+    "empty": "أكمل عملية تحليل ناجحة لمقارنة حجم المقالات."
+  },
+  "sentimentAcrossRuns": {
+    "title": "تفاوت المشاعر عبر عمليات التحليل",
+    "tooltipLabel": "صافي المشاعر",
+    "empty": "أكمل عملية تحليل تتضمن مقالات محلَّلة لمقارنة المشاعر عبر عمليات التشغيل."
+  },
+  "report": {
+    "backLabel": "العودة إلى التقارير",
+    "loading": "جارٍ تحميل الموجز التحليلي المباشر…",
+    "errorTitle": "تعذّر تحميل هذا التقرير",
+    "tryAgain": "حاول مرة أخرى",
+    "noArticlesTitle": "لا توجد مقالات محلَّلة بعد",
+    "noArticlesBody": "شغّل تحليلًا لـ {{scope}} أو وسّع النطاق الزمني لإنشاء تقرير.",
+    "defaultScope": "هذا المشروع",
+    "goToRuns": "الانتقال إلى عمليات التحليل",
+    "headlineWithIdea": "أنتج {{scope}} {{total}} مقالة محلَّلة. الموضوع الأبرز في النقاش هو {{idea}}.",
+    "headlineWithIdeaConcern": "أنتج {{scope}} {{total}} مقالة محلَّلة. الموضوع الأبرز في النقاش هو {{idea}}، بينما يمثّل {{concern}} الشاغل الرئيسي.",
+    "headlineWithoutIdea": "أنتج {{scope}} {{total}} مقالة محلَّلة بصافي مشاعر قدره {{netSentiment}}.",
+    "sections": {
+      "executiveSummary": "الملخص التنفيذي",
+      "sentimentAnalysis": "تحليل المشاعر",
+      "keywordExistence": "وجود الكلمات المفتاحية",
+      "volumeTrend": "اتجاه الحجم",
+      "categorizedFeedback": "الملاحظات المصنَّفة",
+      "sentimentByDemographics": "المشاعر حسب البيانات الديموغرافية"
+    },
+    "regenerateAria": "إعادة إنشاء ملخص الاتجاهات بالذكاء الاصطناعي",
+    "generating": "جارٍ إنشاء ملخص الاتجاهات بالذكاء الاصطناعي…",
+    "generateError": "تعذّر إنشاء ملخص اتجاهات بالذكاء الاصطناعي الآن — يُعرض بدلًا منه ملخص سريع.",
+    "trendSummaryErrorFallback": "تعذّر إنشاء ملخص الاتجاهات",
+    "sentimentNote": "تُحسب المشاعر من محتوى المقالات المحلَّلة المخزَّنة بالفعل لهذا المشروع.",
+    "keyword": {
+      "noKeywordsTitle": "لم يتم تهيئة كلمات مفتاحية",
+      "noKeywordsBody": "أضف كلمات مفتاحية إلى {{scope}} لتتبّع مدى تكرار ظهورها في المقالات المحلَّلة عبر الزمن.",
+      "manageLink": "إدارة الكلمات المفتاحية للمشروع",
+      "documentLabel": "المستند",
+      "documentPlaceholder": "البحث في المستندات…",
+      "allDocuments": "كل المستندات",
+      "keywordLabel": "الكلمة المفتاحية",
+      "keywordPlaceholder": "البحث في الكلمات المفتاحية…",
+      "allKeywords": "كل الكلمات المفتاحية",
+      "loading": "جارٍ تحميل وجود الكلمات المفتاحية…",
+      "errorTitle": "تعذّر تحميل وجود الكلمات المفتاحية",
+      "noMatchesTitle": "لا توجد نتائج مطابقة لهذا الفلتر",
+      "noMatchesBody": "لم تُطابق أي مقالات محلَّلة مزيج المصدر والكلمة المفتاحية المحدَّد ضمن هذا النطاق الزمني.",
+      "loadErrorFallback": "تعذّر تحميل وجود الكلمات المفتاحية"
+    },
+    "feedback": {
+      "positiveDrivers": "الدوافع الإيجابية",
+      "negativeDrivers": "الدوافع السلبية",
+      "neutralMixed": "محايد / متباين",
+      "noSignals": "لا توجد إشارات في هذه الفئة بعد."
+    },
+    "demographics": {
+      "intro": "كيف تتوزّع المشاعر بين الأشخاص المقتبَس منهم أو المذكورين في المقالات المحلَّلة - استنادًا فقط إلى إشارات صريحة في النص، لا إلى استنتاج أو تخمين.",
+      "gender": "الجنس",
+      "region": "المنطقة",
+      "ageRange": "الفئة العمرية",
+      "segment": "الشريحة"
+    }
+  },
+  "demographicChart": {
+    "notEnoughSignalTitle": "لا توجد إشارة كافية بعد",
+    "notEnoughSignalBody": "يحتاج {{title}} إلى قيمتين مختلفتين على الأقل عبر المقالات المحلَّلة قبل أن يصبح مخطط المقارنة ذا معنى.",
+    "coverageNote": "نسبة تصنيفات المشاعر بين السجلات المحلَّلة. التغطية الديموغرافية المعروفة: {{pct}} ({{known}} من {{total}} سجل)."
+  },
+  "carousel": {
+    "emptyDefault": "لم يتم اكتشاف بيانات في المقالات المحلَّلة بعد.",
+    "prevAria": "القيمة السابقة",
+    "nextAria": "القيمة التالية",
+    "showValueAria": "عرض {{value}}"
+  },
+  "survey": {
+    "allAdults": "جميع البالغين",
+    "publishedResults": "نتائج استطلاع منشورة",
+    "populationFallback": "عيّنة الاستطلاع",
+    "note": "هذه النسب هي ملاحظات استطلاع منشورة. وهي منفصلة عن المشاعر المُستنتَجة من السجلات المحلَّلة."
+  }
+}

@@ -1,0 +1,241 @@
+{
+  "periods": {
+    "last7d": "Last 7 days",
+    "last30d": "Last 30 days",
+    "allTime": "All time"
+  },
+  "change": {
+    "firstRun": "First completed run",
+    "vsPrevious": "{{value}}% vs previous"
+  },
+  "runLabel": {
+    "fallback": "Run",
+    "title": "Analysis #{{number}}: {{label}}",
+    "short": "Analysis #{{number}}",
+    "showing": "Showing {{run}}."
+  },
+  "ideaType": {
+    "issue": "issue",
+    "complaint": "complaint",
+    "praise": "praise",
+    "suggestion": "suggestion"
+  },
+  "sentiment": {
+    "positive": "positive",
+    "neutral": "neutral",
+    "negative": "negative",
+    "mixed": "mixed"
+  },
+  "emotionAxis": {
+    "joy": "Joy",
+    "trust": "Trust",
+    "anticipation": "Anticipation",
+    "anger": "Anger",
+    "disgust": "Disgust",
+    "fear": "Fear"
+  },
+  "series": {
+    "total": "Total",
+    "positive": "Positive",
+    "negative": "Negative",
+    "neutral": "Neutral"
+  },
+  "counts": {
+    "articlesCount_one": "{{count}} article",
+    "articlesCount_other": "{{count}} articles",
+    "articleUnit_one": "article",
+    "articleUnit_other": "articles",
+    "recordsCount_one": "{{count}} analyzed record",
+    "recordsCount_other": "{{count}} analyzed records",
+    "moreValues_one": "+{{count}} more value not shown",
+    "moreValues_other": "+{{count}} more values not shown"
+  },
+  "overview": {
+    "eyebrow": "Intelligence dashboard",
+    "title": "Project intelligence",
+    "subtitle": "Signals from the documents and articles already analyzed for this project.",
+    "filterTypeAria": "Filter type",
+    "dateRangeTab": "Date range",
+    "analysisRunTab": "Analysis run",
+    "filterByRunAria": "Filter by analysis run",
+    "dateRangeAria": "Dashboard date range",
+    "projectSelectAria": "Dashboard project",
+    "noProjectTitle": "No project selected",
+    "noProjectBody": "Create a project to begin tracking intelligence.",
+    "loadErrorTitle": "Couldn’t load project intelligence",
+    "loadingIntelligence": "Loading intelligence…",
+    "emptyTitle": "No analyzed articles in this period",
+    "emptyBody": "Run an analysis or choose a broader time range to populate this dashboard.",
+    "competitorBackLabel": "Back to dashboard"
+  },
+  "metrics": {
+    "analysisHealth": {
+      "label": "Analysis health",
+      "noRuns": "No runs",
+      "lastCompleted": "Last completed {{date}}",
+      "noCompletedRuns": "No completed runs yet"
+    },
+    "analyzedArticles": {
+      "label": "Analyzed articles"
+    },
+    "netSentiment": {
+      "label": "Net sentiment",
+      "detail": "Positive minus negative"
+    },
+    "documents": {
+      "label": "Documents",
+      "detail": "Uploaded to this project"
+    }
+  },
+  "sentimentBreakdown": {
+    "title": "Sentiment breakdown",
+    "netSentimentCaption": "net sentiment"
+  },
+  "volumeOverTime": {
+    "title": "Article volume & sentiment over time"
+  },
+  "emotionalSignature": {
+    "title": "Emotional signature",
+    "description": "Derived from the emotional tone of analyzed articles."
+  },
+  "distributions": {
+    "language": {
+      "title": "Language distribution",
+      "empty": "No detected language on analyzed articles yet.",
+      "unknown": "Unknown",
+      "other": "Other"
+    },
+    "region": {
+      "title": "Region distribution",
+      "empty": "No region detected on analyzed articles yet."
+    },
+    "gender": {
+      "title": "Gender distribution",
+      "empty": "No gender detected on analyzed articles yet."
+    },
+    "ageRange": {
+      "title": "Age range distribution",
+      "empty": "No age range detected on analyzed articles yet."
+    },
+    "segment": {
+      "title": "Segment distribution",
+      "empty": "No life-situation/occupation segment detected on analyzed articles yet."
+    }
+  },
+  "wherePosted": {
+    "title": "Where it’s being said",
+    "prev": "Prev",
+    "next": "Next"
+  },
+  "ideas": {
+    "title": "Most talked-about ideas",
+    "subtitle": "Grouped by theme",
+    "empty": "No repeated ideas detected yet.",
+    "backLabel": "Back to Dashboard"
+  },
+  "sentimentByPlatform": {
+    "title": "Sentiment by platform",
+    "tooltipTitle": "{{tone}}: {{count}}"
+  },
+  "ideaComparisons": {
+    "title": "Idea comparisons across sources",
+    "subtitle": "Where two or more sources cover the same idea, side by side",
+    "loadError": "Failed to load idea comparisons.",
+    "loading": "Loading idea comparisons…",
+    "emptyBody": "No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.",
+    "agrees": "Sources agree",
+    "diverges": "Sources disagree",
+    "noValue": "no figure stated",
+    "sourcesCount": "Sources ({{count}})",
+    "viewDetails": "View details for {{idea}}",
+    "prev": "Prev",
+    "next": "Next"
+  },
+  "trending": {
+    "title": "Trending keywords & hashtags",
+    "linkTitle": "See articles mentioning {{term}}",
+    "empty": "None of this project’s configured terms were mentioned in this period."
+  },
+  "articlesByRun": {
+    "title": "Articles analyzed by run",
+    "tooltipLabel": "Discovered",
+    "empty": "Complete a successful analysis run to compare article volume."
+  },
+  "sentimentAcrossRuns": {
+    "title": "Sentiment variation across analysis runs",
+    "tooltipLabel": "Net sentiment",
+    "empty": "Complete an analysis run with analyzed articles to compare sentiment across runs."
+  },
+  "report": {
+    "backLabel": "Back to Reports",
+    "loading": "Loading the live intelligence brief…",
+    "errorTitle": "Couldn’t load this report",
+    "tryAgain": "Try again",
+    "noArticlesTitle": "No analyzed articles yet",
+    "noArticlesBody": "Run an analysis for {{scope}} or broaden the date range to generate a report.",
+    "defaultScope": "this project",
+    "goToRuns": "Go to Analysis Runs",
+    "headlineWithIdea": "{{scope}} generated {{total}} analyzed articles. The leading conversation theme is {{idea}}.",
+    "headlineWithIdeaConcern": "{{scope}} generated {{total}} analyzed articles. The leading conversation theme is {{idea}}, while {{concern}} is the primary concern.",
+    "headlineWithoutIdea": "{{scope}} generated {{total}} analyzed articles with a net sentiment of {{netSentiment}}.",
+    "sections": {
+      "executiveSummary": "Executive summary",
+      "sentimentAnalysis": "Sentiment analysis",
+      "keywordExistence": "Keyword existence",
+      "volumeTrend": "Volume trend",
+      "categorizedFeedback": "Categorized feedback",
+      "sentimentByDemographics": "Sentiment by demographics"
+    },
+    "regenerateAria": "Regenerate the AI trend summary",
+    "generating": "Generating AI trend summary…",
+    "generateError": "Couldn't generate an AI trend summary right now — showing a quick overview instead.",
+    "trendSummaryErrorFallback": "Failed to generate the trend summary",
+    "sentimentNote": "Sentiment is calculated from the analyzed article content already stored for this project.",
+    "keyword": {
+      "noKeywordsTitle": "No keywords configured",
+      "noKeywordsBody": "Add keywords to {{scope}} to track how often they show up in analyzed articles over time.",
+      "manageLink": "Manage project keywords",
+      "documentLabel": "Document",
+      "documentPlaceholder": "Search documents…",
+      "allDocuments": "All documents",
+      "keywordLabel": "Keyword",
+      "keywordPlaceholder": "Search keywords…",
+      "allKeywords": "All keywords",
+      "loading": "Loading keyword existence…",
+      "errorTitle": "Couldn’t load keyword existence",
+      "noMatchesTitle": "No matches for this filter",
+      "noMatchesBody": "No analyzed articles matched the selected source and keyword combination in this date range.",
+      "loadErrorFallback": "Failed to load keyword existence"
+    },
+    "feedback": {
+      "positiveDrivers": "Positive drivers",
+      "negativeDrivers": "Negative drivers",
+      "neutralMixed": "Neutral / mixed",
+      "noSignals": "No signals in this category yet."
+    },
+    "demographics": {
+      "intro": "How sentiment splits across the people quoted or mentioned in analyzed articles - based only on explicit signal in the text, not inferred or guessed.",
+      "gender": "Gender",
+      "region": "Region",
+      "ageRange": "Age range",
+      "segment": "Segment"
+    }
+  },
+  "demographicChart": {
+    "notEnoughSignalTitle": "Not enough signal yet",
+    "notEnoughSignalBody": "{{title}} needs at least two distinct values across analyzed articles before a comparison chart is meaningful.",
+    "coverageNote": "Share of sentiment labels among analyzed records. Known demographic coverage: {{pct}} ({{known}} of {{total}} records)."
+  },
+  "carousel": {
+    "emptyDefault": "No data detected on analyzed articles yet.",
+    "prevAria": "Previous value",
+    "nextAria": "Next value",
+    "showValueAria": "Show {{value}}"
+  },
+  "survey": {
+    "allAdults": "All adults",
+    "publishedResults": "Published survey results",
+    "populationFallback": "Survey population",
+    "note": "These percentages are published survey observations. They are separate from sentiment inferred from analyzed records."
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft, AlertTriangle, ExternalLink, FileText, Globe2, ChevronDown, ChevronLeft, ChevronRight, Loader2,
   ShieldAlert, ShieldCheck, ShieldQuestionMark, ShieldX,
@@ -7,6 +8,7 @@ import {
 import { useAuth } from '../auth/useAuth.js';
 import { listProjectSources, setSourceTrust } from '../api/projectsApi.js';
 import { articleDate, getPageNumbers } from '../lib/articleHelpers.jsx';
+import { formatNumber } from '../lib/i18nFormat.js';
 import '../styles/IntelligenceDashboard.css';
 import '../styles/Articles.css';
 
@@ -16,13 +18,16 @@ const SOURCES_PAGE_SIZES = [10, 20, 50, 100];
 // services/articles/source_trust.py. 'unknown' (not yet assessed) is kept
 // visually distinct from 'untrusted' (assessed and rejected) throughout -
 // collapsing the two is exactly what made the older boolean
-// `articles.verified` column useless as a trust signal.
-const TRUST_TIER_META = {
-  trusted: { label: 'Trusted', chipClass: 'success', icon: ShieldCheck },
-  mixed: { label: 'Mixed', chipClass: 'warning', icon: ShieldAlert },
-  untrusted: { label: 'Untrusted', chipClass: 'danger', icon: ShieldX },
-  unknown: { label: 'Not yet assessed', chipClass: 'muted', icon: ShieldQuestionMark },
-};
+// `articles.verified` column useless as a trust signal. Built from `t` (not a
+// module-level constant) so the labels re-render in the active locale.
+function buildTrustTierMeta(t) {
+  return {
+    trusted: { label: t('sources:trustTier.trusted'), chipClass: 'success', icon: ShieldCheck },
+    mixed: { label: t('sources:trustTier.mixed'), chipClass: 'warning', icon: ShieldAlert },
+    untrusted: { label: t('sources:trustTier.untrusted'), chipClass: 'danger', icon: ShieldX },
+    unknown: { label: t('sources:trustTier.unknown'), chipClass: 'muted', icon: ShieldQuestionMark },
+  };
+}
 const TRUST_TIER_OPTIONS = ['trusted', 'mixed', 'untrusted', 'unknown'];
 
 // Mirrors backend list_project_sources(): a "real" source is an article's
@@ -36,6 +41,8 @@ const TRUST_TIER_OPTIONS = ['trusted', 'mixed', 'untrusted', 'unknown'];
 // so this picks a starting one from `projectId`/`?project_id=` and otherwise
 // lets the dropdown below choose - there's no "all projects" source view.
 export default function SourcesPage({ projectId = null, projects = [] }) {
+  const { t, i18n } = useTranslation(['sources', 'common']);
+  const TRUST_TIER_META = buildTrustTierMeta(t);
   const [searchParams] = useSearchParams();
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
@@ -99,7 +106,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
       setSources((prev) => prev.map((item) => (item.key === source.key ? { ...item, trust } : item)));
       setTrustEditKey(null);
     } catch (err) {
-      setTrustError(err?.message || 'Failed to save trust tier.');
+      setTrustError(err?.message || t('sources:trustEditor.genericError'));
     } finally {
       setSavingTrust(false);
     }
@@ -142,12 +149,12 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
           setSources([]);
           setTotal(0);
           setTotalArticles(0);
-          setError(err?.message || 'Failed to load sources.');
+          setError(err?.message || t('sources:emptyState.loadErrorFallback'));
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedProjectId, limit, offset]);
+  }, [selectedProjectId, limit, offset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasPrev = offset > 0;
   const hasNext = offset + limit < total;
@@ -160,23 +167,24 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
     <div className="admin-page-shell articles-page-shell">
       <div className="admin-page-header">
         <div>
-          <div className="admin-page-kicker"><Globe2 size={14} /> Sources</div>
-          <h1 className="admin-page-title">Sources</h1>
+          <div className="admin-page-kicker"><Globe2 size={14} /> {t('sources:page.kicker')}</div>
+          <h1 className="admin-page-title">{t('sources:page.title')}</h1>
           <p className="admin-page-subtitle">
-            {project ? `${project.name} — ` : ''}where this project's articles actually came from: a real outlet when an
-            article carries its own URL, the uploaded document otherwise.
+            {project ? <span dir="auto">{project.name}</span> : null}
+            {project ? ' — ' : ''}
+            {t('sources:page.subtitle')}
           </p>
         </div>
         <div className="admin-page-toolbar">
           <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ArrowLeft size={16} /> Back to Dashboard
+            <ArrowLeft size={16} className="rtl-mirror" /> {t('sources:page.backToDashboard')}
           </Link>
         </div>
       </div>
 
       <div className="glass-card" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <label htmlFor="sources-project-select" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-light)' }}>
-          Project
+          {t('sources:toolbar.projectLabel')}
         </label>
         <select
           id="sources-project-select"
@@ -185,20 +193,20 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
           className="filter-select"
           style={{ maxWidth: 320 }}
         >
-          {projects.length === 0 && <option value="">No projects yet</option>}
+          {projects.length === 0 && <option value="">{t('sources:toolbar.noProjectsYet')}</option>}
           {projects.map((item) => (
-            <option key={item.id} value={item.id}>{item.name}</option>
+            <option key={item.id} value={item.id} dir="auto">{item.name}</option>
           ))}
         </select>
         <select
           value={limit}
           onChange={(event) => setLimit(Number(event.target.value))}
           className="filter-select"
-          aria-label="Sources per page"
+          aria-label={t('sources:toolbar.perPageAriaLabel')}
           style={{ marginLeft: 'auto' }}
         >
           {SOURCES_PAGE_SIZES.map((size) => (
-            <option key={size} value={size}>{size} per page</option>
+            <option key={size} value={size}>{t('sources:perPageOption', { count: size })}</option>
           ))}
         </select>
       </div>
@@ -206,28 +214,34 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
       {!selectedProjectId ? (
         <div className="glass-card admin-empty-state">
           <div className="admin-empty-state-icon"><Globe2 size={18} /></div>
-          <strong>Pick a project</strong>
-          <span>Sources are scoped to one opinion-monitor project at a time.</span>
+          <strong>{t('sources:emptyState.pickProjectTitle')}</strong>
+          <span>{t('sources:emptyState.pickProjectBody')}</span>
         </div>
       ) : loading ? (
-        <div className="glass-card run-detail-fallback"><Loader2 size={14} className="spin" /> Loading sources…</div>
+        <div className="glass-card run-detail-fallback"><Loader2 size={14} className="spin" /> {t('sources:emptyState.loading')}</div>
       ) : error ? (
         <div className="glass-card admin-empty-state">
           <div className="admin-empty-state-icon"><AlertTriangle size={18} /></div>
-          <strong>Couldn't load sources</strong>
-          <span>{error}</span>
+          <strong>{t('sources:emptyState.loadErrorTitle')}</strong>
+          <span dir="auto">{error}</span>
         </div>
       ) : sources.length === 0 ? (
         <div className="glass-card admin-empty-state">
           <div className="admin-empty-state-icon"><FileText size={18} /></div>
-          <strong>No sources yet</strong>
-          <span>Upload a document or import articles into this project first.</span>
+          <strong>{t('sources:emptyState.noSourcesTitle')}</strong>
+          <span>{t('sources:emptyState.noSourcesBody')}</span>
         </div>
       ) : (
         <>
           <p style={{ margin: '0 0 12px', fontSize: '0.82rem', color: 'var(--text-light)' }}>
-            Showing {offset + 1}–{Math.min(offset + sources.length, total)} of {total.toLocaleString()} source{total === 1 ? '' : 's'}
-            {' '}· {totalArticles.toLocaleString()} article{totalArticles === 1 ? '' : 's'} total
+            {t('sources:summary.sourcesRange', {
+              count: total,
+              from: formatNumber(offset + 1, i18n.language),
+              to: formatNumber(Math.min(offset + sources.length, total), i18n.language),
+              total: formatNumber(total, i18n.language),
+            })}
+            {' · '}
+            {t('sources:summary.articlesTotal', { count: totalArticles, formatted: formatNumber(totalArticles, i18n.language) })}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {sources.map((source) => {
@@ -247,9 +261,9 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                     {isReal ? <Globe2 size={16} style={{ flexShrink: 0, opacity: 0.6 }} /> : <FileText size={16} style={{ flexShrink: 0, opacity: 0.6 }} />}
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <strong className="project-detail-break-text">{source.label}</strong>
+                        <strong className="project-detail-break-text" dir="auto">{source.label}</strong>
                         <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-                          {isReal ? 'Real source' : 'Uploaded document'}
+                          {isReal ? t('sources:sourceRow.realSource') : t('sources:sourceRow.uploadedDocument')}
                         </span>
                         {(() => {
                           const tierMeta = TRUST_TIER_META[source.trust?.tier] || TRUST_TIER_META.unknown;
@@ -262,11 +276,19 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                           // reason is actually there before falling back.
                           let tooltip;
                           if (trust.is_default === false) {
-                            tooltip = `Set by ${trust.set_by || 'an operator'}: ${trust.reason || ''}`;
+                            tooltip = t('sources:trustTooltip.setBy', {
+                              setBy: trust.set_by || t('sources:trustTooltip.setByFallback'),
+                              reason: trust.reason || '',
+                            });
                           } else if (trust.reason) {
-                            tooltip = `${trust.reason} (starting default${trust.set_by ? ` - ${trust.set_by}` : ''}, not reviewed by an operator yet)`;
+                            tooltip = t('sources:trustTooltip.defaultWithReason', {
+                              reason: trust.reason,
+                              setBySuffix: trust.set_by
+                                ? t('sources:trustTooltip.defaultSetBySuffix', { setBy: trust.set_by })
+                                : '',
+                            });
                           } else {
-                            tooltip = 'Not yet reviewed by an operator - a starting default.';
+                            tooltip = t('sources:trustTooltip.defaultNoReason');
                           }
                           return (
                             <span
@@ -280,8 +302,10 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         })()}
                       </div>
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: 2 }}>
-                        {source.article_count} article{source.article_count === 1 ? '' : 's'}
-                        {source.latest_published_at ? ` · latest ${articleDate(source.latest_published_at)}` : ''}
+                        {t('sources:sourceRow.articleCount', { count: source.article_count })}
+                        {source.latest_published_at
+                          ? t('sources:sourceRow.latestPublished', { date: articleDate(source.latest_published_at) })
+                          : ''}
                       </div>
                     </div>
                     {isReal && project ? (
@@ -291,7 +315,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         className="btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '0.72rem', textDecoration: 'none', flexShrink: 0 }}
                       >
-                        View articles
+                        {t('sources:sourceRow.viewArticles')}
                       </Link>
                     ) : null}
                     {isReal && source.url ? (
@@ -303,7 +327,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         className="btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '0.72rem', textDecoration: 'none', flexShrink: 0 }}
                       >
-                        <ExternalLink size={12} /> Visit
+                        <ExternalLink size={12} /> {t('sources:sourceRow.visit')}
                       </a>
                     ) : !isReal && project ? (
                       <Link
@@ -312,7 +336,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         className="btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '0.72rem', textDecoration: 'none', flexShrink: 0 }}
                       >
-                        View articles
+                        {t('sources:sourceRow.viewArticles')}
                       </Link>
                     ) : null}
                     {canEditTrust ? (
@@ -325,7 +349,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         className="btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '0.72rem', flexShrink: 0 }}
                       >
-                        Set trust
+                        {t('sources:trustEditor.setTrust')}
                       </button>
                     ) : null}
                     <ChevronDown size={16} style={{ flexShrink: 0, transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
@@ -334,7 +358,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                   {trustEditKey === source.key ? (
                     <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
-                        Trust tier
+                        {t('sources:trustEditor.trustTierLabel')}
                         <select
                           value={trustTierDraft}
                           onChange={(event) => setTrustTierDraft(event.target.value)}
@@ -346,15 +370,15 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                         </select>
                       </label>
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
-                        Reason
+                        {t('sources:reasonLabel')}
                         <textarea
                           rows={2}
                           value={trustReasonDraft}
                           onChange={(event) => setTrustReasonDraft(event.target.value)}
-                          placeholder="Why this tier - what did you check?"
+                          placeholder={t('sources:trustEditor.reasonPlaceholder')}
                         />
                       </label>
-                      {trustError ? <span style={{ fontSize: '0.78rem', color: '#ff4757' }}>{trustError}</span> : null}
+                      {trustError ? <span style={{ fontSize: '0.78rem', color: '#ff4757' }} dir="auto">{trustError}</span> : null}
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           type="button"
@@ -362,10 +386,10 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                           disabled={savingTrust || !trustReasonDraft.trim()}
                           onClick={() => saveTrust(source)}
                         >
-                          {savingTrust ? 'Saving…' : 'Save trust tier'}
+                          {savingTrust ? t('common:status.saving') : t('sources:trustEditor.save')}
                         </button>
                         <button type="button" className="btn-secondary" onClick={() => setTrustEditKey(null)} disabled={savingTrust}>
-                          Cancel
+                          {t('common:actions.cancel')}
                         </button>
                       </div>
                     </div>
@@ -381,12 +405,12 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                             padding: '8px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.02)', fontSize: '0.82rem',
                           }}
                         >
-                          <span className="project-detail-break-text">{article.title || 'Untitled article'}</span>
+                          <span className="project-detail-break-text" dir="auto">{article.title || t('sources:sourceRow.untitledArticle')}</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, color: 'var(--text-light)' }}>
                             <span>{articleDate(article.published_at)}</span>
                             {article.url ? (
                               <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                Open <ExternalLink size={11} />
+                                {t('sources:sourceRow.open')} <ExternalLink size={11} />
                               </a>
                             ) : null}
                           </span>
@@ -394,7 +418,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                       ))}
                       {source.article_count > (source.articles || []).length ? (
                         <span style={{ fontSize: '0.76rem', color: 'var(--text-light)' }}>
-                          Showing {(source.articles || []).length} of {source.article_count}.
+                          {t('sources:sourceRow.showingOfCount', { shown: (source.articles || []).length, total: source.article_count })}
                         </span>
                       ) : null}
                     </div>
@@ -405,9 +429,9 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
           </div>
 
           {totalPages > 1 ? (
-            <div className="articles-pagination" role="navigation" aria-label="Sources pagination">
+            <div className="articles-pagination" role="navigation" aria-label={t('sources:pagination.ariaLabel')}>
               <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
-                <ChevronLeft size={16} /> Previous
+                <ChevronLeft size={16} className="rtl-mirror" /> {t('common:actions.previous')}
               </button>
               {pageNumbers.map((page, index) =>
                 page === '...' ? (
@@ -423,12 +447,12 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
                     disabled={loading}
                     aria-current={page === currentPage ? 'page' : undefined}
                   >
-                    {page}
+                    {formatNumber(page, i18n.language)}
                   </button>
                 )
               )}
               <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
-                Next <ChevronRight size={16} />
+                {t('common:actions.next')} <ChevronRight size={16} className="rtl-mirror" />
               </button>
             </div>
           ) : null}

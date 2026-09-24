@@ -27,7 +27,7 @@
 .project-wizard-step-btn {
   justify-content: flex-start;
   padding: 14px 16px;
-  text-align: left;
+  text-align: start;
 }
 
 .project-wizard-panel {
@@ -136,7 +136,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  text-align: left;
+  text-align: start;
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 16px;

@@ -22,6 +22,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft, ChevronRight,
@@ -36,12 +37,6 @@ import {
 import { getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/Competitors.css';
 
-const STEPS = [
-  { id: 1, label: 'Add competitors', icon: Layers },
-  { id: 2, label: 'Review & track', icon: Tags },
-  { id: 3, label: 'Add documents', icon: Upload },
-];
-
 // Article candidates are already fetched in full for the study, so review-step
 // pagination just slices the in-memory list - no extra API calls needed.
 const CANDIDATES_PAGE_SIZE = 10;
@@ -55,6 +50,7 @@ const CANDIDATES_PAGE_SIZE = 10;
  *  Exported so CompetitorRunAnalysis.jsx can reuse it, the same way
  *  CompetitorEditPage.jsx reuses ListEditor from this file. */
 export function DiscoveryLog({ logs, active }) {
+  const { t } = useTranslation('competitors');
   const boxRef = useRef(null);
   const [now, setNow] = useState(null);
 
@@ -89,9 +85,9 @@ export function DiscoveryLog({ logs, active }) {
               className={`cs-progress-row${isCurrent ? ' cs-progress-row-active' : ' cs-progress-row-done'}`}
             >
               {isCurrent ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />}
-              <span>
+              <span dir="auto">
                 {entry.message}
-                {isCurrent && elapsed >= 4 ? ` (still working, ${elapsed}s)` : ''}
+                {isCurrent && elapsed >= 4 ? t('onboarding.discoveryLog.stillWorking', { elapsed }) : ''}
               </span>
             </div>
           );
@@ -102,6 +98,7 @@ export function DiscoveryLog({ logs, active }) {
 }
 
 export function ListEditor({ label, hint, values, onChange, placeholder }) {
+  const { t } = useTranslation('competitors');
   const [draft, setDraft] = useState('');
   const items = Array.isArray(values) ? values : [];
 
@@ -123,12 +120,12 @@ export function ListEditor({ label, hint, values, onChange, placeholder }) {
       </label>
       <div className="cs-pills" style={{ marginBottom: items.length ? 9 : 0 }}>
         {items.map((item) => (
-          <span key={item} className="cs-pill">
+          <span key={item} className="cs-pill" dir="auto">
             {item}
             <button
               type="button"
               onClick={() => onChange(items.filter((value) => value !== item))}
-              aria-label={`Remove ${item}`}
+              aria-label={t('onboarding.listEditor.removeAria', { item })}
               style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, display: 'flex', color: 'inherit' }}
             >
               <X size={11} />
@@ -150,7 +147,7 @@ export function ListEditor({ label, hint, values, onChange, placeholder }) {
           }}
         />
         <button type="button" className="cs-btn" onClick={add} disabled={!draft.trim()}>
-          <Plus size={14} /> Add
+          <Plus size={14} /> {t('common:actions.add')}
         </button>
       </div>
     </div>
@@ -158,11 +155,18 @@ export function ListEditor({ label, hint, values, onChange, placeholder }) {
 }
 
 export default function CompetitorOnboarding({ onStudyCreated }) {
+  const { t } = useTranslation(['competitors', 'common']);
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
   const [studyName, setStudyName] = useState('');
   const [studyId, setStudyId] = useState(null);
+
+  const STEPS = [
+    { id: 1, label: t('onboarding.steps.addCompetitors'), icon: Layers },
+    { id: 2, label: t('onboarding.steps.reviewTrack'), icon: Tags },
+    { id: 3, label: t('onboarding.steps.addDocuments'), icon: Upload },
+  ];
 
   // ---- Step 1/2: competitors -------------------------------------------
   const [competitors, setCompetitors] = useState([]);
@@ -493,13 +497,8 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
     <div className="cs-page cs-wizard">
       <div className="cs-head">
         <div>
-          <h1>New competitor study</h1>
-          <p>
-            Name the companies this study tracks — import a list or add them one at a time — then
-            decide which ones get a report. Documents are optional and can be added now or later;
-            approving the articles split out of them is what gives a tracked competitor evidence to
-            report on.
-          </p>
+          <h1>{t('onboarding.title')}</h1>
+          <p>{t('onboarding.subtitle')}</p>
         </div>
       </div>
 
@@ -520,7 +519,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                 aria-current={step === item.id}
                 onClick={clickable ? () => setStep(item.id) : undefined}
                 disabled={!clickable}
-                title={clickable ? `Back to ${item.label}` : undefined}
+                title={clickable ? t('onboarding.backToStep', { label: item.label }) : undefined}
               >
                 <span className="cs-step-num">
                   {step > item.id ? <Check size={12} /> : index + 1}
@@ -528,7 +527,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                 <Icon size={14} />
                 <span>{item.label}</span>
               </button>
-              {index < STEPS.length - 1 ? <ChevronRight size={14} className="cs-step-sep" /> : null}
+              {index < STEPS.length - 1 ? <ChevronRight size={14} className="cs-step-sep rtl-mirror" /> : null}
             </div>
           );
         })}
@@ -537,32 +536,30 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
       {error ? (
         <div className="cs-alert cs-alert-error">
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>{error}</span>
+          <span dir="auto">{error}</span>
         </div>
       ) : null}
 
       {/* ---------------- Step 1: add competitors ---------------- */}
       {step === 1 ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Layers size={16} /> Add your competitors</h2>
-          <p className="cs-panel-hint">
-            Import the tracked-competitors list exported from the scraper app, or add companies by
-            hand. You can add more of either later from the workspace.
-          </p>
+          <h2 className="cs-panel-title"><Layers size={16} /> {t('onboarding.step1.heading')}</h2>
+          <p className="cs-panel-hint">{t('onboarding.step1.hint')}</p>
 
           <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-offline-study-name">Study name</label>
+            <label className="cs-label" htmlFor="cs-offline-study-name">{t('onboarding.step1.studyNameLabel')}</label>
             <input
               id="cs-offline-study-name"
               className="cs-input"
               value={studyName}
-              placeholder="Q3 competitor study"
+              placeholder={t('onboarding.step1.studyNamePlaceholder')}
               onChange={(event) => setStudyName(event.target.value)}
+              dir="auto"
             />
           </div>
 
           <div className="cs-field">
-            <label className="cs-label">Import a list</label>
+            <label className="cs-label">{t('onboarding.step1.importListLabel')}</label>
             <input
               ref={importInputRef}
               type="file"
@@ -575,21 +572,22 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               className="cs-btn"
               onClick={() => importInputRef.current?.click()}
               disabled={importingCompetitors}
-              title="Import the tracked-competitors JSONL exported from the scraper app."
+              title={t('shared.importJsonlTitle')}
             >
               {importingCompetitors ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
-              {importingCompetitors ? 'Importing...' : 'Import JSONL'}
+              {importingCompetitors ? t('shared.importingEllipsis') : t('onboarding.step1.importJsonl')}
             </button>
           </div>
 
           <div className="cs-field">
-            <label className="cs-label">Add one by hand</label>
+            <label className="cs-label">{t('onboarding.step1.addByHandLabel')}</label>
             <div className="cs-grid-2">
               <input
                 className="cs-input"
                 value={manualName}
-                placeholder="Company name"
+                placeholder={t('onboarding.step1.companyNamePlaceholder')}
                 onChange={(event) => setManualName(event.target.value)}
+                dir="auto"
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
@@ -600,8 +598,9 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               <input
                 className="cs-input"
                 value={manualWebsite}
-                placeholder="Website (optional)"
+                placeholder={t('onboarding.step1.websitePlaceholder')}
                 onChange={(event) => setManualWebsite(event.target.value)}
+                dir="ltr"
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
@@ -614,8 +613,9 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               className="cs-textarea"
               style={{ minHeight: 60, marginTop: 8 }}
               value={manualDescription}
-              placeholder="What they do (optional)"
+              placeholder={t('onboarding.step1.whatTheyDoPlaceholder')}
               onChange={(event) => setManualDescription(event.target.value)}
+              dir="auto"
             />
             <button
               type="button"
@@ -625,27 +625,27 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               disabled={addingManual || !manualName.trim()}
             >
               {addingManual ? <Loader2 size={15} className="cs-spin" /> : <Plus size={15} />}
-              {addingManual ? 'Adding...' : 'Add competitor'}
+              {addingManual ? t('onboarding.step1.addingEllipsis') : t('onboarding.step1.addCompetitorBtn')}
             </button>
           </div>
 
           {competitors.length ? (
             <div className="cs-field">
               <label className="cs-label">
-                Added
-                <span className="cs-label-hint">{competitors.length} competitor{competitors.length === 1 ? '' : 's'}</span>
+                {t('onboarding.step1.addedLabel')}
+                <span className="cs-label-hint">{t('onboarding.competitorCount', { count: competitors.length })}</span>
               </label>
               <div className="cs-pills">
                 {competitors.map((competitor) => (
-                  <span key={competitor.id} className="cs-pill">{competitor.name}</span>
+                  <span key={competitor.id} className="cs-pill" dir="auto">{competitor.name}</span>
                 ))}
               </div>
             </div>
           ) : (
             <div className="cs-empty">
               <div className="cs-empty-icon"><Layers size={20} /></div>
-              <h3>No competitors yet</h3>
-              <p>Import a list or add one above to get started.</p>
+              <h3>{t('onboarding.noCompetitorsYet')}</h3>
+              <p>{t('onboarding.step1.emptyBody')}</p>
             </div>
           )}
 
@@ -656,7 +656,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               onClick={goToStep2}
               disabled={!competitors.length}
             >
-              <ArrowRight size={15} /> Continue to review
+              <ArrowRight size={15} className="rtl-mirror" /> {t('onboarding.step1.continueToReview')}
             </button>
           </div>
         </div>
@@ -665,17 +665,14 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
       {/* ---------------- Step 2: review & track competitors ---------------- */}
       {step === 2 ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Tags size={16} /> Review & track</h2>
-          <p className="cs-panel-hint">
-            Only tracked competitors get a report. Untrack anything you added but don&rsquo;t want to
-            follow, or remove it outright.
-          </p>
+          <h2 className="cs-panel-title"><Tags size={16} /> {t('onboarding.step2.heading')}</h2>
+          <p className="cs-panel-hint">{t('onboarding.step2.hint')}</p>
 
           {competitors.length ? (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
               <span style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                <strong style={{ color: 'var(--text-dark)' }}>{trackedCount}</strong> tracked of{' '}
-                <strong style={{ color: 'var(--text-dark)' }}>{competitors.length}</strong> added
+                <strong style={{ color: 'var(--text-dark)' }}>{trackedCount}</strong> {t('onboarding.step2.trackedOfWord')}{' '}
+                <strong style={{ color: 'var(--text-dark)' }}>{competitors.length}</strong> {t('onboarding.step2.addedWord')}
               </span>
               <button
                 type="button"
@@ -684,7 +681,9 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                 disabled={trackingAll || trackedCount === competitors.length}
               >
                 {trackingAll ? <Loader2 size={15} className="cs-spin" /> : <Check size={15} />}
-                {trackingAll ? 'Tracking...' : `Track all${competitors.length - trackedCount ? ` (${competitors.length - trackedCount})` : ''}`}
+                {trackingAll
+                  ? t('onboarding.step2.trackingEllipsis')
+                  : `${t('onboarding.step2.trackAll')}${competitors.length - trackedCount ? ` (${competitors.length - trackedCount})` : ''}`}
               </button>
             </div>
           ) : null}
@@ -692,8 +691,8 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
           {competitors.length === 0 ? (
             <div className="cs-empty">
               <div className="cs-empty-icon"><Tags size={20} /></div>
-              <h3>No competitors yet</h3>
-              <p>Go back and import a list or add one by hand.</p>
+              <h3>{t('onboarding.noCompetitorsYet')}</h3>
+              <p>{t('onboarding.step2.emptyBody')}</p>
             </div>
           ) : (
             <div className="cs-rows">
@@ -703,8 +702,8 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                     {initials(competitor.name)}
                   </div>
                   <div className="cs-row-main">
-                    <div className="cs-row-name">{competitor.name}</div>
-                    {competitor.description ? <div className="cs-row-desc">{competitor.description}</div> : null}
+                    <div className="cs-row-name" dir="auto">{competitor.name}</div>
+                    {competitor.description ? <div className="cs-row-desc" dir="auto">{competitor.description}</div> : null}
                   </div>
                   <div className="cs-row-side">
                     <button
@@ -716,9 +715,9 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                       {trackingBusy[competitor.id] ? (
                         <span className="cs-spinner" />
                       ) : competitor.status === 'tracked' ? (
-                        <><Check size={13} /> Tracking</>
+                        <><Check size={13} /> {t('shared.trackingLabel')}</>
                       ) : (
-                        'Track'
+                        t('shared.trackLabel')
                       )}
                     </button>
                     <button
@@ -727,7 +726,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                       onClick={() => removeCompetitor(competitor.id)}
                       disabled={Boolean(removingCompetitor[competitor.id])}
                     >
-                      <Trash2 size={13} /> Remove
+                      <Trash2 size={13} /> {t('common:actions.remove')}
                     </button>
                   </div>
                 </div>
@@ -737,10 +736,10 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
 
           <div className="cs-wizard-foot">
             <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(1)}>
-              <ArrowLeft size={15} /> Back
+              <ArrowLeft size={15} className="rtl-mirror" /> {t('common:actions.back')}
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={() => setStep(3)}>
-              <ArrowRight size={15} /> Continue to documents
+              <ArrowRight size={15} className="rtl-mirror" /> {t('onboarding.step2.continueToDocuments')}
             </button>
           </div>
         </div>
@@ -749,16 +748,11 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
       {/* ---------------- Step 3: add documents (optional) ---------------- */}
       {step === 3 ? (
         <div className="cs-panel">
-          <h2 className="cs-panel-title"><Upload size={16} /> Add documents <span className="cs-label-hint" style={{ marginLeft: 6 }}>optional</span></h2>
-          <p className="cs-panel-hint">
-            Upload files to give your tracked competitors something to be reported on. Each one is
-            extracted as soon as it uploads — text where the file has any, OCR where it doesn&rsquo;t —
-            split into candidate articles below, and approved automatically. Skip this and add
-            documents later from the workspace if you&rsquo;d rather do that first.
-          </p>
+          <h2 className="cs-panel-title"><Upload size={16} /> {t('onboarding.step3.heading')} <span className="cs-label-hint" style={{ marginLeft: 6 }}>{t('onboarding.step3.optionalBadge')}</span></h2>
+          <p className="cs-panel-hint">{t('onboarding.step3.hint')}</p>
 
           <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-offline-files">Files</label>
+            <label className="cs-label" htmlFor="cs-offline-files">{t('documentsPanel.filesLabel')}</label>
             <div
               className={`cs-dropzone${dropActive ? ' cs-dropzone-active' : ''}`}
               role="button"
@@ -780,8 +774,8 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               }}
             >
               <div className="cs-dropzone-icon"><Upload size={20} /></div>
-              <div className="cs-dropzone-title">Drag files here, or click to browse</div>
-              <div className="cs-dropzone-hint">Multiple files at once are fine</div>
+              <div className="cs-dropzone-title">{t('documentsPanel.dropzoneTitle')}</div>
+              <div className="cs-dropzone-hint">{t('documentsPanel.dropzoneHint')}</div>
               <div className="cs-dropzone-types">
                 {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG', 'JSON', 'JSONL'].map((ext) => (
                   <span key={ext} className="cs-pill cs-pill-signal">{ext}</span>
@@ -791,7 +785,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                   the LLM split entirely - worth saying, since it also means
                   those files keep each record's own link and date. */}
               <div className="cs-dropzone-hint" style={{ marginTop: 6 }}>
-                JSON/JSONL exports are read as articles directly — one record per article, no splitting.
+                {t('documentsPanel.jsonHint')}
               </div>
               <input
                 id="cs-offline-files"
@@ -814,12 +808,12 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               {pendingFiles.map((file, index) => (
                 <div key={`${file.name}-${index}`} className="cs-row">
                   <div className="cs-row-main">
-                    <div className="cs-row-name">{file.name}</div>
-                    <div className="cs-row-desc">{(file.size / 1024).toFixed(0)} KB — not uploaded yet</div>
+                    <div className="cs-row-name" dir="auto">{file.name}</div>
+                    <div className="cs-row-desc">{(file.size / 1024).toFixed(0)} KB {t('documentsPanel.notUploadedYet')}</div>
                   </div>
                   <div className="cs-row-side">
                     <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removePendingFile(index)}>
-                      <Trash2 size={13} /> Remove
+                      <Trash2 size={13} /> {t('common:actions.remove')}
                     </button>
                   </div>
                 </div>
@@ -831,7 +825,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                 disabled={uploadingDocs}
               >
                 {uploadingDocs ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
-                {uploadingDocs ? 'Uploading...' : `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`}
+                {uploadingDocs ? t('documentsPanel.uploadingEllipsis') : t('documentsPanel.uploadFiles', { count: pendingFiles.length })}
               </button>
             </div>
           ) : null}
@@ -839,10 +833,10 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
           {documents.length ? (
             <div className="cs-field">
               <label className="cs-label">
-                Uploaded
+                {t('documentsPanel.uploadedLabel')}
                 <span className="cs-label-hint">
-                  {documents.length} file{documents.length === 1 ? '' : 's'}
-                  {extractingDocs ? ' — reading contents...' : ''}
+                  {t('documentsPanel.fileCount', { count: documents.length })}
+                  {extractingDocs ? ` ${t('documentsPanel.readingContents')}` : ''}
                 </span>
               </label>
               <div className="cs-rows">
@@ -850,14 +844,14 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                   const active = document.status === 'uploaded' || document.status === 'processing';
                   const progress = active && document.total_chunks ? ` (${document.processed_chunks || 0}/${document.total_chunks})` : '';
                   const methodLabel = document.extraction_method === 'ocr'
-                    ? 'Extracted (OCR)'
+                    ? t('documentsPanel.extractedOcr')
                     : document.extraction_method === 'mixed'
-                      ? 'Extracted (mixed)'
-                      : 'Extracted';
+                      ? t('documentsPanel.extractedMixed')
+                      : t('documentsPanel.extracted');
                   return (
                     <div key={document.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
                       <div className="cs-row-main">
-                        <div className="cs-row-name">{document.original_filename}</div>
+                        <div className="cs-row-name" dir="auto">{document.original_filename}</div>
                         <div className="cs-row-desc">{(document.size_bytes / 1024).toFixed(0)} KB</div>
                         {/* Always shown when present — a partial extraction failure
                             (some pages/sheets ok, others not) must not hide behind a
@@ -870,22 +864,22 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                             }}
                           >
                             <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <span>{document.extraction_error}</span>
+                            <span dir="auto">{document.extraction_error}</span>
                           </div>
                         ) : null}
                       </div>
                       <div className="cs-row-side">
                         {active ? (
                           <span className="cs-pill cs-pill-pending">
-                            <span className="cs-spinner" style={{ width: 11, height: 11 }} /> Reading{progress}...
+                            <span className="cs-spinner" style={{ width: 11, height: 11 }} /> {t('documentsPanel.readingWithProgress', { progress })}
                           </span>
                         ) : document.status === 'failed' ? (
-                          <span className="cs-pill cs-pill-rejected"><AlertTriangle size={11} /> Not extracted</span>
+                          <span className="cs-pill cs-pill-rejected"><AlertTriangle size={11} /> {t('documentsPanel.notExtracted')}</span>
                         ) : (
                           <span className="cs-pill cs-pill-valid"><ScanText size={11} /> {methodLabel}</span>
                         )}
                         <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removeDocument(document.id)}>
-                          <Trash2 size={13} /> Remove
+                          <Trash2 size={13} /> {t('common:actions.remove')}
                         </button>
                       </div>
                     </div>
@@ -899,7 +893,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
             <div className="cs-panel" style={{ marginBottom: 16, background: '#fcfdff' }}>
               <div className="cs-progress-row cs-progress-row-active">
                 <span className="cs-spinner" />
-                <span>Reading your documents into articles...</span>
+                <span>{t('documentsPanel.readingIntoArticles')}</span>
               </div>
             </div>
           ) : null}
@@ -908,9 +902,9 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
             <div className="cs-field">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                 <label className="cs-label" style={{ marginBottom: 0 }}>
-                  Review extracted articles
+                  {t('documentsPanel.reviewHeading')}
                   <span className="cs-label-hint">
-                    {approvedCandidateCount} approved, {pendingCandidateCount} pending
+                    {t('documentsPanel.reviewSummary', { approved: approvedCandidateCount, pending: pendingCandidateCount })}
                   </span>
                 </label>
                 <button
@@ -920,29 +914,33 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                   disabled={approvingAll || !pendingCandidateCount}
                 >
                   {approvingAll ? <Loader2 size={15} className="cs-spin" /> : <ListChecks size={15} />}
-                  {approvingAll ? 'Approving...' : `Approve all${pendingCandidateCount ? ` (${pendingCandidateCount})` : ''}`}
+                  {approvingAll
+                    ? t('documentsPanel.approvingEllipsis')
+                    : pendingCandidateCount
+                      ? t('documentsPanel.approveAllWithCount', { count: pendingCandidateCount })
+                      : t('documentsPanel.approveAll')}
                 </button>
               </div>
 
               {[...pagedCandidatesByDocument.entries()].map(([documentId, candidates]) => (
                 <div key={documentId} style={{ marginBottom: 18 }}>
-                  <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    {documentById[documentId]?.original_filename || 'Document'}
+                  <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }} dir="auto">
+                    {documentById[documentId]?.original_filename || t('documentsPanel.documentFallback')}
                   </div>
                   <div className="cs-rows">
                     {candidates.map((candidate) => (
                       <div key={candidate.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
                         <div className="cs-row-main">
-                          <div className="cs-row-name">{candidate.title}</div>
-                          <div className="cs-row-desc" style={{ whiteSpace: 'normal', maxWidth: 'none' }}>
+                          <div className="cs-row-name" dir="auto">{candidate.title}</div>
+                          <div className="cs-row-desc" style={{ whiteSpace: 'normal', maxWidth: 'none' }} dir="auto">
                             {candidate.summary}
                           </div>
                         </div>
                         <div className="cs-row-side">
                           {candidate.status === 'approved' ? (
-                            <span className="cs-pill cs-pill-valid"><Check size={11} /> Approved</span>
+                            <span className="cs-pill cs-pill-valid"><Check size={11} /> {t('documentsPanel.approved')}</span>
                           ) : candidate.status === 'rejected' ? (
-                            <span className="cs-pill cs-pill-rejected"><X size={11} /> Rejected</span>
+                            <span className="cs-pill cs-pill-rejected"><X size={11} /> {t('documentsPanel.rejected')}</span>
                           ) : (
                             <>
                               <button
@@ -951,7 +949,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                                 disabled={decidingCandidate[candidate.id]}
                                 onClick={() => decideCandidate(candidate.id, 'rejected')}
                               >
-                                <X size={13} /> Reject
+                                <X size={13} /> {t('documentsPanel.rejectAction')}
                               </button>
                               <button
                                 type="button"
@@ -959,7 +957,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                                 disabled={decidingCandidate[candidate.id]}
                                 onClick={() => decideCandidate(candidate.id, 'approved')}
                               >
-                                {decidingCandidate[candidate.id] ? <Loader2 size={13} className="cs-spin" /> : <Check size={13} />} Approve
+                                {decidingCandidate[candidate.id] ? <Loader2 size={13} className="cs-spin" /> : <Check size={13} />} {t('documentsPanel.approveAction')}
                               </button>
                             </>
                           )}
@@ -971,14 +969,14 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               ))}
 
               {totalCandidatePages > 1 && (
-                <div className="cs-candidates-pager" role="navigation" aria-label="Articles pagination">
+                <div className="cs-candidates-pager" role="navigation" aria-label={t('documentsPanel.paginationAria')}>
                   <button
                     type="button"
                     className="cs-btn cs-btn-ghost cs-btn-sm"
                     onClick={() => setCandidatesPage((prev) => Math.max(1, prev - 1))}
                     disabled={candidatesPage <= 1}
                   >
-                    <ChevronLeft size={14} /> Previous
+                    <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
                   </button>
                   {candidatePageNumbers.map((page, index) =>
                     page === '...' ? (
@@ -1001,7 +999,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
                     onClick={() => setCandidatesPage((prev) => Math.min(totalCandidatePages, prev + 1))}
                     disabled={candidatesPage >= totalCandidatePages}
                   >
-                    Next <ChevronRight size={14} />
+                    {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
                   </button>
                 </div>
               )}
@@ -1011,17 +1009,17 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
           {!documents.length && !pendingFiles.length ? (
             <div className="cs-empty">
               <div className="cs-empty-icon"><FileCheck size={20} /></div>
-              <h3>No documents yet</h3>
-              <p>Add some above, or finish now and add them later from the workspace.</p>
+              <h3>{t('documentsPanel.emptyTitle')}</h3>
+              <p>{t('onboarding.step3.emptyBody')}</p>
             </div>
           ) : null}
 
           <div className="cs-wizard-foot">
             <button type="button" className="cs-btn cs-btn-ghost" onClick={() => setStep(2)}>
-              <ArrowLeft size={15} /> Back
+              <ArrowLeft size={15} className="rtl-mirror" /> {t('common:actions.back')}
             </button>
             <button type="button" className="cs-btn cs-btn-primary" onClick={finish} disabled={uploadingDocs}>
-              <CheckCircle2 size={15} /> {documents.length ? 'Finish' : 'Skip & finish'}
+              <CheckCircle2 size={15} /> {documents.length ? t('onboarding.step3.finish') : t('onboarding.step3.skipFinish')}
             </button>
           </div>
         </div>

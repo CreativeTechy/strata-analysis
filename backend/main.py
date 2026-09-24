@@ -48,6 +48,7 @@ from services.articles.articles_store import (
     list_project_sources,
 )
 from services.articles.source_trust import set_tier as set_source_trust_tier
+from services.articles.translation import localize_article_analysis
 from services.articles.article_analyses import fetch_run_article_rows
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
@@ -57,6 +58,8 @@ from services.articles.reanalyze import (
     reanalyze_articles,
 )
 from llm_client import LLMError, chat_completion
+from services.common.api_errors import api_error
+from services.i18n.locales import UnsupportedLocaleError, language_instruction, normalize_locale
 from services.projects.projects_store import (
     create_project,
     delete_project,
@@ -901,6 +904,7 @@ def get_project_trend_summary_view(
     period: str = "30d",
     run_id: str | None = None,
     regenerate: bool = False,
+    locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """LLM-generated "overall trend" paragraph for the Reports page -> the
@@ -910,13 +914,25 @@ def get_project_trend_summary_view(
     Cached in `project_trend_summaries`: a plain load returns whatever is
     already stored for this project/period/run scope (generating it once if
     nothing is cached yet), and only `regenerate=true` - the Reports page's
-    refresh button - spends another LLM call to replace it."""
+    refresh button - spends another LLM call to replace it.
+
+    `locale`, when given, is an explicit request for the summary's output
+    language - validated against config.SUPPORTED_LOCALES. A non-default
+    locale is generated and cached separately from the canonical English
+    summary (see generate_trend_summary/services/intelligence/trend_summary.py)
+    and never overwrites it."""
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     try:
-        return generate_trend_summary(project, normalize_period(period), run_id=run_id, force=regenerate)
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
+    try:
+        return generate_trend_summary(
+            project, normalize_period(period), run_id=run_id, force=regenerate, locale=resolved_locale,
+        )
     except LLMError as e:
         logger.warning("Trend summary generation failed (%s): %s", e.code, e.detail or e)
         return {"error": e.user_message, "error_code": e.code}
@@ -1266,14 +1282,31 @@ def reprocess_article_endpoint(
 
 
 @app.get("/api/articles/{article_id}/analysis")
-def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_permission("articles.view"))):
+def get_article_analysis_endpoint(
+    article_id: int,
+    locale: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
     """Full analysis detail for one article: sentiment/tone/category with
     their confidence scores, per-stage model identifiers, and
     analysis_status/analysis_error so a failed or low-confidence result is
-    never mistaken for a confident real one."""
+    never mistaken for a confident real one.
+
+    `locale`, when given, renders the LLM-generated output fields (summary,
+    feedback lists, people opinions, frequent ideas) into that locale -
+    validated against config.SUPPORTED_LOCALES, same as /trend-summary.
+    sentiment/tone/category stay their canonical enum labels regardless (the
+    dashboard's own i18n translates those for display); only the free-text
+    extraction output is rendered. See services/articles/translation.py."""
     analysis = get_article_analysis(article_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Article not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
+    if resolved_locale != config.DEFAULT_LOCALE:
+        analysis = localize_article_analysis(analysis, article_id=article_id, locale=resolved_locale)
     return {"analysis": analysis}
 
 
@@ -1490,10 +1523,26 @@ def delete_article_endpoint(article_id: int, user: dict = Depends(require_permis
 
 @app.post("/api/chat")
 async def chat(payload: dict, user: dict = Depends(require_permission())):
-    """Intelligence Copilot -> the configured LLM provider, over the filtered articles."""
+    """Intelligence Copilot -> the configured LLM provider, over the filtered articles.
+
+    `locale`, when given, is an explicit request for the reply's output
+    language (independent of the interface language and of any article's own
+    detected source_language) - validated against config.SUPPORTED_LOCALES so
+    an unsupported value is a clean 400 rather than reaching the prompt.
+    Omitting it keeps the prior, unsteered behavior unchanged."""
     question = str(payload.get("question", "")).strip()[:2000]
     if not question:
         return {"error": "Empty question"}
+    requested_locale = payload.get("locale")
+    locale = None
+    if requested_locale is not None:
+        try:
+            locale = normalize_locale(requested_locale)
+        except UnsupportedLocaleError:
+            raise api_error(
+                400, "unsupported_locale",
+                {"locale": str(requested_locale), "supported": list(config.SUPPORTED_LOCALES)},
+            )
     articles = (payload.get("articles") or [])[:80]
     total = int(payload.get("total") or len(articles))
     project = payload.get("project") if isinstance(payload, dict) else None
@@ -1531,10 +1580,14 @@ async def chat(payload: dict, user: dict = Depends(require_permission())):
         + f"{context or '(none)'}\n\nQuestion: {question}"
     )
 
+    system_prompt = COPILOT_SYSTEM_PROMPT
+    if locale:
+        system_prompt = f"{COPILOT_SYSTEM_PROMPT}\n\n{language_instruction(locale)}"
+
     try:
         reply = chat_completion(
             messages=[
-                {"role": "system", "content": COPILOT_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,

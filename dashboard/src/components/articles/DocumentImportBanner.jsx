@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, X } from 'lucide-react';
 
 /** Live status for a document import (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON)
@@ -10,16 +11,17 @@ import { AlertTriangle, Info, X } from 'lucide-react';
  *  ArticlesPage's importDocumentFiles) - swaps the icon/border so a partial
  *  import doesn't read identically to a clean one. */
 export default function DocumentImportBanner({ status, onDismiss }) {
+  const { t } = useTranslation('articles');
   return (
     <div className={`glass-card articles-import-banner ${status.warning ? 'is-warning' : ''}`}>
       {status.warning ? <AlertTriangle size={18} /> : <Info size={18} />}
       <div className="articles-import-banner-body">
         <div className="articles-import-headline">
-          <strong>{status.message}</strong>
+          <strong dir="auto">{status.message}</strong>
         </div>
       </div>
       {status.done ? (
-        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label="Dismiss import summary">
+        <button type="button" className="articles-import-banner-close" onClick={onDismiss} aria-label={t('importBanner.dismissAriaLabel')}>
           <X size={16} />
         </button>
       ) : null}

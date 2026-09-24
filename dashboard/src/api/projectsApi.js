@@ -8,6 +8,8 @@
  * their backend routes don't follow that convention exactly.
  */
 
+import { apiErrorFromPayload } from '../lib/apiError.js';
+
 const BASE = '/api/projects';
 
 async function request(path, { method = 'GET', body, signal } = {}) {
@@ -27,8 +29,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   }
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }
@@ -57,8 +58,7 @@ async function requestSoftError(path, { method = 'GET', body } = {}, fallback) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data?.error) {
-    const parts = [data?.error, data?.detail].filter(Boolean);
-    throw new Error(parts.length > 0 ? parts.join(' - ') : `${fallback} (${response.status})`);
+    throw apiErrorFromPayload(data, `${fallback} (${response.status})`);
   }
   return data;
 }

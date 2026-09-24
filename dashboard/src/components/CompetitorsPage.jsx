@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle, Check, ChevronRight, FileText, Layers, Pencil, Tags, Upload,
@@ -23,9 +24,14 @@ import {
 import { useRunAnalysis } from '../useRunAnalysis.js';
 import '../styles/Competitors.css';
 
+function sizeTierLabel(t, tier) {
+  return t(`labels.sizeTier.${tier}`, { defaultValue: SIZE_TIER_LABELS[tier] || tier });
+}
+
 /** Alternate names a competitor is published under, edited as a
  *  comma-separated list. See CompetitorWorkspace for the full rationale. */
 function AliasEditor({ competitor, onSave }) {
+  const { t } = useTranslation('competitors');
   const stored = Array.isArray(competitor.aliases) ? competitor.aliases : [];
   const [value, setValue] = useState(stored.join(', '));
   const [busy, setBusy] = useState(false);
@@ -44,27 +50,29 @@ function AliasEditor({ competitor, onSave }) {
 
   return (
     <div className="cs-alias-editor">
-      <label className="cs-label" htmlFor={`cs-aliases-${competitor.id}`}>Other names</label>
+      <label className="cs-label" htmlFor={`cs-aliases-${competitor.id}`}>{t('competitorsPage.aliasEditor.label')}</label>
       <div className="cs-alias-editor-row">
         <input
           id={`cs-aliases-${competitor.id}`}
           className="cs-input"
           value={value}
-          placeholder="e.g. Younes Bros, قهوة يونس"
+          placeholder={t('competitorsPage.aliasEditor.placeholder')}
           onChange={(event) => { setValue(event.target.value); setSaved(false); }}
+          dir="auto"
         />
         <button type="button" className="cs-btn cs-btn-sm" onClick={save} disabled={busy || !dirty}>
-          {busy ? <span className="cs-spinner" /> : null} {saved && !dirty ? 'Saved' : 'Save'}
+          {busy ? <span className="cs-spinner" /> : null} {saved && !dirty ? t('competitorsPage.aliasEditor.saved') : t('common:actions.save')}
         </button>
       </div>
       <small className="cs-row-desc">
-        Comma separated. Articles naming any of these count as evidence for this competitor.
+        {t('competitorsPage.aliasEditor.hint')}
       </small>
     </div>
   );
 }
 
 export default function CompetitorsPage() {
+  const { t } = useTranslation(['competitors', 'common']);
   const { studyId } = useParams();
   const { hasPermission } = useAuth();
   const canManage = hasPermission('competitors.manage');
@@ -189,16 +197,13 @@ export default function CompetitorsPage() {
       <div className="cs-head">
         <div>
           <Link to={`/competitors/${studyId}`} className="cs-link-back">
-            <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> Reports
+            <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('shared.reports')}
           </Link>
-          <h1>{study?.name || 'Competitor study'} — Competitors</h1>
-          <p>
-            Named from this study&rsquo;s approved document articles. Only tracked competitors get a
-            report; untrack anything the documents mention but you aren&rsquo;t watching.
-          </p>
+          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')} — {t('competitorsPage.titleSuffix')}</h1>
+          <p>{t('competitorsPage.subtitle')}</p>
         </div>
         <div className="cs-head-actions">
-          <RunAnalysisButton run={run} />
+          <RunAnalysisButton run={run} label={t('runAnalysis.runAnalysisLabel')} />
           {canManage ? (
             <>
               <input
@@ -213,16 +218,16 @@ export default function CompetitorsPage() {
                 className="cs-btn"
                 onClick={() => importInputRef.current?.click()}
                 disabled={importingCompetitors}
-                title="Import the tracked-competitors JSONL exported from the scraper app."
+                title={t('shared.importJsonlTitle')}
               >
                 {importingCompetitors ? <span className="cs-spinner" /> : <Upload size={15} />}
-                {importingCompetitors ? 'Importing...' : 'Import Competitors'}
+                {importingCompetitors ? t('shared.importingEllipsis') : t('competitorsPage.importCompetitorsBtn')}
               </button>
             </>
           ) : null}
           {canManage ? (
             <Link to={`/competitors/${studyId}/edit`} className="cs-btn">
-              <Pencil size={15} /> Full edit
+              <Pencil size={15} /> {t('shared.fullEdit')}
             </Link>
           ) : null}
         </div>
@@ -232,7 +237,7 @@ export default function CompetitorsPage() {
 
       {error ? (
         <div className="cs-alert cs-alert-error">
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{error}</span>
         </div>
       ) : null}
 
@@ -242,13 +247,13 @@ export default function CompetitorsPage() {
           <span>
             {notice.imported != null ? (
               <>
-                Imported {notice.imported} competitor{notice.imported === 1 ? '' : 's'} from the scraper export.
-                {notice.skipped ? ` ${notice.skipped} row${notice.skipped === 1 ? '' : 's'} skipped.` : ''}
+                {t('competitorsPage.notice.imported', { count: notice.imported })}
+                {notice.skipped ? ` ${t('competitorsPage.notice.rowsSkipped', { count: notice.skipped })}` : ''}
               </>
             ) : (
               <>
-                Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
-                {notice.scanned} article{notice.scanned === 1 ? '' : 's'}.
+                {t('competitorsPage.notice.reportsGenerated', { count: notice.generated })}{' '}
+                {t('competitorsPage.notice.fromArticles', { count: notice.scanned })}
               </>
             )}
           </span>
@@ -256,13 +261,13 @@ export default function CompetitorsPage() {
       ) : null}
 
       <div className="cs-panel">
-        <h2 className="cs-panel-title"><Layers size={16} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}</h2>
+        <h2 className="cs-panel-title"><Layers size={16} /> {t('competitorsPage.competitorCount', { count: competitors.length })}</h2>
 
         {competitors.length === 0 ? (
           <div className="cs-empty">
             <div className="cs-empty-icon"><FileText size={20} /></div>
-            <h3>No competitors yet</h3>
-            <p>Import a tracked-competitors list above, or add competitors by hand from the new study wizard.</p>
+            <h3>{t('competitorsPage.emptyTitle')}</h3>
+            <p>{t('competitorsPage.emptyBody')}</p>
           </div>
         ) : (
           <div className="cs-rows">
@@ -276,33 +281,35 @@ export default function CompetitorsPage() {
                       {initials(competitor.name)}
                     </div>
                     <div className="cs-row-main">
-                      <div className="cs-row-name">{competitor.name}</div>
+                      <div className="cs-row-name" dir="auto">{competitor.name}</div>
                       <div className="cs-row-desc">
                         {competitor.finding_count
-                          ? `${competitor.finding_count} report${competitor.finding_count === 1 ? '' : 's'}`
-                          : 'No report yet'}
-                        {competitor.aliases?.length ? ` · also known as ${competitor.aliases.join(', ')}` : ''}
+                          ? t('competitorsPage.reportCount', { count: competitor.finding_count })
+                          : t('competitorsPage.noReportYet')}
+                        {competitor.aliases?.length ? (
+                          <span dir="auto"> · {t('competitorsPage.alsoKnownAs', { aliases: competitor.aliases.join(', ') })}</span>
+                        ) : ''}
                       </div>
                     </div>
                     <div className="cs-row-side">
                       {competitor.country ? (
-                        <span className="cs-pill cs-pill-signal" title="Where this company is headquartered">
-                          Based in {countryLabel(competitor.country)}
+                        <span className="cs-pill cs-pill-signal" title={t('competitorsPage.basedInTitle')}>
+                          {t('competitorsPage.basedIn', { country: countryLabel(competitor.country) })}
                         </span>
                       ) : null}
                       {Array.isArray(competitor.operates_in_countries) && competitor.operates_in_countries.length ? (
                         <span
                           className="cs-pill cs-pill-signal"
-                          title="Where this competitor actually competes with your business"
+                          title={t('competitorsPage.competesInTitle')}
                         >
-                          Competes in {competitor.operates_in_countries.map(countryLabel).join(', ')}
+                          {t('competitorsPage.competesIn', { countries: competitor.operates_in_countries.map(countryLabel).join(', ') })}
                         </span>
                       ) : null}
                       <span className={`cs-pill cs-pill-${competitor.size_tier}`}>
-                        {SIZE_TIER_LABELS[competitor.size_tier] || competitor.size_tier}
+                        {sizeTierLabel(t, competitor.size_tier)}
                       </span>
                       <button type="button" className="cs-btn cs-btn-sm" onClick={() => toggleAliases(competitor.id)}>
-                        <Tags size={13} /> {aliasesOpen ? 'Hide names' : 'Other names'}
+                        <Tags size={13} /> {aliasesOpen ? t('competitorsPage.hideNames') : t('competitorsPage.otherNames')}
                       </button>
                       <button
                         type="button"
@@ -313,9 +320,9 @@ export default function CompetitorsPage() {
                         {trackingBusy[competitor.id] ? (
                           <span className="cs-spinner" />
                         ) : competitor.status === 'tracked' ? (
-                          <><Check size={13} /> Tracking</>
+                          <><Check size={13} /> {t('shared.trackingLabel')}</>
                         ) : (
-                          'Track'
+                          t('shared.trackLabel')
                         )}
                       </button>
                     </div>

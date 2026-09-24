@@ -34,6 +34,8 @@ import io
 import logging
 from pathlib import Path
 
+import config
+
 try:
     import fitz  # PyMuPDF
 except Exception:
@@ -136,7 +138,7 @@ def _pdf_chunks(disk_path: Path):
 
             pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-            text = pytesseract.image_to_string(image)
+            text = pytesseract.image_to_string(image, lang=config.OCR_LANGUAGES)
             if text.strip():
                 yield _chunk(index, text=text, method="ocr")
             else:
@@ -222,7 +224,7 @@ def _image_chunks(disk_path: Path):
         return
 
     image = Image.open(disk_path)
-    text = pytesseract.image_to_string(image)
+    text = pytesseract.image_to_string(image, lang=config.OCR_LANGUAGES)
     if text.strip():
         yield _chunk(0, text=text, method="ocr")
     else:

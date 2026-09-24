@@ -1,0 +1,53 @@
+{
+  "outputLanguage": {
+    "label": "Report language",
+    "hint": "Independent of the interface language - generate this summary in a specific language."
+  },
+  "trendSummary": {
+    "fallbackNotice": "Showing the English summary - it couldn't be translated right now."
+  },
+  "header": {
+    "kicker": "Reports",
+    "selectProjectTitle": "Select a project",
+    "subtitle": "Sentiment, categories, and audience insights generated from analyzed articles.",
+    "projectScopeLabel": "Project scope",
+    "projectScopeAriaLabel": "Project scope for this report",
+    "noProjectsYet": "No projects yet",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "filterTypeAriaLabel": "Filter type",
+    "dateRangeTab": "Date range",
+    "analysisRunTab": "Analysis run",
+    "runFilterAriaLabel": "Filter by analysis run",
+    "dateRangeFilterAriaLabel": "Report date range"
+  },
+  "summaryChips": {
+    "ariaLabel": "Report summary",
+    "project": "Project",
+    "noneSelected": "None selected",
+    "articlesAnalyzed": "Articles analyzed",
+    "dominantSentiment": "Dominant sentiment",
+    "range": "Range",
+    "syncFailed": "Sync failed",
+    "syncing": "Syncing",
+    "fetchingLatestData": "Fetching latest data...",
+    "upToDate": "Up to date",
+    "updatedAgo": "Updated {{time}}",
+    "notSyncedYet": "Not synced yet"
+  },
+  "periods": {
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "all": "All time"
+  },
+  "runLabel": "Pipeline #{{number}}: {{date}}",
+  "sentimentLabels": {
+    "positive": "Positive",
+    "negative": "Negative",
+    "neutral": "Neutral",
+    "mixed": "Mixed",
+    "noDataYet": "No data yet"
+  },
+  "backToReports": "Back to reports",
+  "noProjectSelectedScope": "no project selected"
+}

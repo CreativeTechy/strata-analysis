@@ -1,0 +1,33 @@
+{
+  "brand": {
+    "subtitle": "تحليل البيانات"
+  },
+  "sections": {
+    "insights": "الرؤى",
+    "monitoring": "المراقبة",
+    "analysis": "التحليل",
+    "admin": "الإدارة"
+  },
+  "items": {
+    "dashboard": "لوحة المعلومات",
+    "reports": "التقارير",
+    "articles": "المقالات",
+    "sources": "المصادر",
+    "copilot": "المساعد الذكي",
+    "opinionMonitor": "مراقبة الرأي",
+    "competitorAnalysis": "تحليل المنافسين",
+    "analysisRuns": "عمليات التحليل",
+    "performanceLogs": "سجلات الأداء",
+    "users": "المستخدمون",
+    "roles": "الأدوار",
+    "projectAccess": "الوصول إلى المشاريع"
+  },
+  "toggle": {
+    "closeNavigation": "إغلاق التنقل",
+    "expandNavigation": "توسيع شريط التنقل",
+    "collapseNavigation": "طي شريط التنقل"
+  },
+  "profile": {
+    "logout": "تسجيل الخروج"
+  }
+}

@@ -1,0 +1,504 @@
+{
+  "reasonLabel": "السبب",
+  "perPageOption_zero": "لا عناصر لكل صفحة",
+  "perPageOption_one": "عنصر واحد لكل صفحة",
+  "perPageOption_two": "عنصران لكل صفحة",
+  "perPageOption_few": "{{count}} عناصر لكل صفحة",
+  "perPageOption_many": "{{count}} عنصرًا لكل صفحة",
+  "perPageOption_other": "{{count}} عنصر لكل صفحة",
+
+  "trustTier": {
+    "trusted": "موثوق",
+    "mixed": "مختلط",
+    "untrusted": "غير موثوق",
+    "unknown": "لم يُقيَّم بعد"
+  },
+
+  "page": {
+    "kicker": "المصادر",
+    "title": "المصادر",
+    "subtitle": "من أين أتت مقالات هذا المشروع فعليًا: منفذ إعلامي حقيقي عندما يحمل المقال عنوان URL الخاص به، أو المستند المرفوع في الحالات الأخرى.",
+    "backToDashboard": "العودة إلى لوحة التحكم"
+  },
+
+  "toolbar": {
+    "projectLabel": "المشروع",
+    "noProjectsYet": "لا توجد مشاريع بعد",
+    "perPageAriaLabel": "عدد المصادر في الصفحة"
+  },
+
+  "emptyState": {
+    "pickProjectTitle": "اختر مشروعًا",
+    "pickProjectBody": "تقتصر المصادر على مشروع واحد لمراقبة الرأي في كل مرة.",
+    "loading": "جارٍ تحميل المصادر…",
+    "loadErrorTitle": "تعذّر تحميل المصادر",
+    "loadErrorFallback": "فشل تحميل المصادر.",
+    "noSourcesTitle": "لا توجد مصادر بعد",
+    "noSourcesBody": "ارفع مستندًا أو استورد مقالات إلى هذا المشروع أولاً."
+  },
+
+  "summary": {
+    "sourcesRange_zero": "لا تُعرض أي مصادر من أصل {{total}}",
+    "sourcesRange_one": "عرض {{from}}–{{to}} من أصل مصدر واحد",
+    "sourcesRange_two": "عرض {{from}}–{{to}} من أصل مصدرين",
+    "sourcesRange_few": "عرض {{from}}–{{to}} من أصل {{total}} مصادر",
+    "sourcesRange_many": "عرض {{from}}–{{to}} من أصل {{total}} مصدرًا",
+    "sourcesRange_other": "عرض {{from}}–{{to}} من أصل {{total}} مصدر",
+    "articlesTotal_zero": "لا مقالات إجمالًا",
+    "articlesTotal_one": "مقالة واحدة إجمالًا",
+    "articlesTotal_two": "مقالتان إجمالًا",
+    "articlesTotal_few": "{{formatted}} مقالات إجمالًا",
+    "articlesTotal_many": "{{formatted}} مقالةً إجمالًا",
+    "articlesTotal_other": "{{formatted}} مقالة إجمالًا"
+  },
+
+  "sourceRow": {
+    "realSource": "مصدر حقيقي",
+    "uploadedDocument": "مستند مرفوع",
+    "articleCount_zero": "لا مقالات",
+    "articleCount_one": "مقالة واحدة",
+    "articleCount_two": "مقالتان",
+    "articleCount_few": "{{count}} مقالات",
+    "articleCount_many": "{{count}} مقالةً",
+    "articleCount_other": "{{count}} مقالة",
+    "latestPublished": " · آخر نشر {{date}}",
+    "viewArticles": "عرض المقالات",
+    "visit": "زيارة",
+    "showingOfCount": "عرض {{shown}} من {{total}}.",
+    "untitledArticle": "مقالة بلا عنوان",
+    "open": "فتح"
+  },
+
+  "trustTooltip": {
+    "setBy": "حدّده {{setBy}}: {{reason}}",
+    "setByFallback": "أحد المشغّلين",
+    "defaultWithReason": "{{reason}} (إعداد افتراضي مبدئي{{setBySuffix}}، لم تتم مراجعته من قِبل مشغّل بعد)",
+    "defaultSetBySuffix": " - {{setBy}}",
+    "defaultNoReason": "لم تتم مراجعته من قِبل مشغّل بعد - إعداد افتراضي مبدئي."
+  },
+
+  "trustEditor": {
+    "setTrust": "تحديد الثقة",
+    "trustTierLabel": "درجة الثقة",
+    "reasonPlaceholder": "لماذا هذه الدرجة - ما الذي تحققت منه؟",
+    "save": "حفظ درجة الثقة",
+    "genericError": "فشل حفظ درجة الثقة."
+  },
+
+  "pagination": {
+    "ariaLabel": "التنقل بين صفحات المصادر"
+  },
+
+  "evidence": {
+    "header": {
+      "kicker": "مساحة عمل الأدلة",
+      "titleFallback": "أدلة المشروع",
+      "subtitle": "عاين ما يدعمه كل تشغيل، وما يظل غير مؤكد، والمقاطع المستوردة الدقيقة وراء كل تقييم.",
+      "projectLink": "المشروع",
+      "waitTitle": "انتظر حتى تنتهي عملية التحليل هذه.",
+      "buildEvidence": "بناء الأدلة",
+      "rebuildEvidence": "إعادة بناء الأدلة",
+      "starting": "جارٍ البدء…",
+      "analysisRunning": "التحليل قيد التشغيل…"
+    },
+
+    "scopeNote": {
+      "title": "أدلة من المستندات المحفوظة لهذا التشغيل",
+      "body": "تُفحص الادعاءات مقابل نطاق البحث المجمَّد. يُقيَّم مدى الصلة والدعم الاستدلالي بشكل منفصل. لا يتم جلب أي موقع إلكتروني أثناء مراجعتك لهذه الصفحة."
+    },
+
+    "requiresRebuild": "تحتاج هذه النتائج المحفوظة إلى تقييم صلة جديد. أعد بناء الأدلة لعرض الادعاءات ذات الصلة الحالية. تظل النتائج السابقة متاحة ضمن كل المرشحين.",
+
+    "scope": {
+      "frozenTitle": "نطاق البحث المجمَّد",
+      "editedForRun": "عُدِّل لأجل هذا التشغيل",
+      "capturedFromSettings": "مأخوذ من إعدادات المشروع",
+      "editScope": "تعديل النطاق",
+      "questionLabel": "سؤال البحث",
+      "descriptionLabel": "الوصف",
+      "locationLabel": "التركيز الجغرافي",
+      "keywordsLabel": "الكلمات المفتاحية",
+      "keywordsPlaceholder": "إرشادات مفصولة بفواصل",
+      "directRelevanceLabel": "الصلة المباشرة",
+      "allowedContextLabel": "السياق المسموح به",
+      "exclusionsLabel": "الاستثناءات",
+      "saveScope": "حفظ النطاق",
+      "saveHint": "احفظ، ثم أعد بناء الأدلة لإنشاء دفعة معالجة جديدة.",
+      "geography": "الجغرافيا",
+      "keywordsDt": "الكلمات المفتاحية",
+      "relevantContext": "السياق ذو الصلة",
+      "exclude": "استبعاد",
+      "noGeoLimit": "لا يوجد نطاق جغرافي محدد",
+      "noKeywordGuidance": "لا توجد إرشادات للكلمات المفتاحية"
+    },
+
+    "filters": {
+      "analysisRun": "تشغيل التحليل",
+      "runOption": "التشغيل {{number}} · {{date}} · {{claims}} · {{documents}}",
+      "topic": "الموضوع",
+      "allTopics": "كل المواضيع",
+      "searchPlaceholder": "الادعاء أو التفسير",
+      "assessment": "التقييم",
+      "allAssessments": "كل التقييمات",
+      "hideFilters": "إخفاء عوامل التصفية",
+      "moreFilters": "المزيد من عوامل التصفية",
+      "claimType": "نوع الادعاء",
+      "allTypes": "كل الأنواع",
+      "publisher": "الناشر",
+      "allPublishers": "كل الناشرين",
+      "analystReview": "مراجعة المحلل",
+      "anyStatus": "أي حالة",
+      "needsAttention": "يحتاج إلى انتباه",
+      "notReviewedByAnalyst": "لم يراجعه المحلل",
+      "reviewed": "تمت المراجعة",
+      "originReview": "مراجعة المصدر الأصلي",
+      "projectRelevance": "صلة المشروع",
+      "relevantCurrent": "الادعاءات ذات الصلة · التقييم الحالي",
+      "excludedAsUnrelated": "مستبعد كغير ذي صلة",
+      "allCandidates": "كل المرشحين"
+    },
+
+    "claimType": {
+      "factual_assertion": "تأكيد واقعي",
+      "attributed_statement": "تصريح منسوب",
+      "forecast": "توقع",
+      "opinion": "رأي",
+      "causal_explanation": "تفسير سببي"
+    },
+
+    "provenanceFilter": {
+      "unassessed": "غير مقيَّم",
+      "verified": "موثَّق",
+      "rejected": "مرفوض"
+    },
+
+    "provenanceStatus": {
+      "unassessed": "غير مقيَّم",
+      "verified": "موثَّق",
+      "rejected": "مرفوض"
+    },
+
+    "provenanceForm": {
+      "originDecision": "قرار المصدر الأصلي",
+      "returnToUnassessed": "الإعادة إلى غير مقيَّم",
+      "reasonPlaceholder": "دوّن ما تحققت منه وسببه…",
+      "saveOriginReview": "حفظ مراجعة المصدر الأصلي"
+    },
+
+    "count": {
+      "claims_zero": "لا ادعاءات",
+      "claims_one": "ادعاء واحد",
+      "claims_two": "ادعاءان",
+      "claims_few": "{{count}} ادعاءات",
+      "claims_many": "{{count}} ادعاءً",
+      "claims_other": "{{count}} ادعاء",
+      "documents_zero": "لا مستندات",
+      "documents_one": "مستند واحد",
+      "documents_two": "مستندان",
+      "documents_few": "{{count}} مستندات",
+      "documents_many": "{{count}} مستندًا",
+      "documents_other": "{{count}} مستند",
+      "relevantClaims_zero": "لا ادعاءات ذات صلة",
+      "relevantClaims_one": "ادعاء واحد ذو صلة",
+      "relevantClaims_two": "ادعاءان ذوا صلة",
+      "relevantClaims_few": "{{count}} ادعاءات ذات صلة",
+      "relevantClaims_many": "{{count}} ادعاءً ذا صلة",
+      "relevantClaims_other": "{{count}} ادعاء ذو صلة",
+      "sourcesExcluded_zero": "لا مصادر مستبعدة",
+      "sourcesExcluded_one": "مصدر مستبعد واحد",
+      "sourcesExcluded_two": "مصدران مستبعدان",
+      "sourcesExcluded_few": "{{count}} مصادر مستبعدة",
+      "sourcesExcluded_many": "{{count}} مصدرًا مستبعدًا",
+      "sourcesExcluded_other": "{{count}} مصدر مستبعد"
+    },
+
+    "generationTabs": {
+      "title": "عمليات تشغيل الأدلة",
+      "subtitle": "افتح تشغيلاً مكتملاً لمراجعة ادعاءاته المحفوظة. تُبقي إعادة البناء آخر نتيجة منشورة متاحة.",
+      "ariaLabel": "عمليات معالجة الأدلة",
+      "legacyEvidence": "أدلة سابقة",
+      "evidenceNumber": "الأدلة رقم {{number}}",
+      "published": "منشور"
+    },
+
+    "generationStatus": {
+      "queued": "قيد الانتظار في الطابور",
+      "running": "قيد التشغيل",
+      "pending": "معلَّق",
+      "success": "نجاح",
+      "failed": "فشل"
+    },
+
+    "errors": {
+      "loadFailed": "فشل تحميل الأدلة.",
+      "openClaimFailed": "فشل فتح الادعاء.",
+      "openSourceFailed": "فشل فتح أدلة المصدر.",
+      "saveReviewFailed": "فشل حفظ المراجعة.",
+      "saveRelevanceFailed": "فشل حفظ مراجعة الصلة.",
+      "saveSourceReviewFailed": "فشل حفظ مراجعة المصدر.",
+      "saveScopeFailed": "فشل حفظ نطاق البحث.",
+      "provenanceReviewFailed": "فشل مراجعة المصدر الأصلي.",
+      "rebuildFailed": "فشل إعادة بناء الأدلة.",
+      "compareFailed": "فشل مقارنة عمليات تشغيل الأدلة."
+    },
+
+    "notBuilt": {
+      "title": "لم يتم بناء الأدلة لهذا التشغيل بعد",
+      "body": "ابنِها من لقطة المقالات المجمَّدة لهذا التشغيل. إذا كان هذا تشغيلاً قديمًا بلا لقطة، ابدأ عملية تحليل جديدة."
+    },
+
+    "failed": {
+      "prefix": "فشلت معالجة الأدلة: {{error}}. تظل آخر أدلة منشورة متاحة في تبويبها. استخدم إعادة بناء الأدلة لإعادة المحاولة بأمان.",
+      "unknownError": "خطأ غير معروف"
+    },
+
+    "reviewFailedAttempt": {
+      "summary": "مراجعة قرارات المحاولة الفاشلة",
+      "intro": "لم تحلّ المحاولة الفاشلة محل الأدلة المنشورة. توضح هذه الأسباب المحفوظة ما تم استبعاده قبل التوقف.",
+      "excludedSources_zero": "لا مصادر مستبعدة",
+      "excludedSources_one": "مصدر مستبعد واحد",
+      "excludedSources_two": "مصدران مستبعدان",
+      "excludedSources_few": "{{count}} مصادر مستبعدة",
+      "excludedSources_many": "{{count}} مصدرًا مستبعدًا",
+      "excludedSources_other": "{{count}} مصدر مستبعد",
+      "unsupportedCandidatesShown_zero": "لا مرشحين غير مدعومين معروضين",
+      "unsupportedCandidatesShown_one": "مرشح واحد غير مدعوم معروض",
+      "unsupportedCandidatesShown_two": "مرشحان غير مدعومين معروضان",
+      "unsupportedCandidatesShown_few": "{{count}} مرشحات غير مدعومة معروضة",
+      "unsupportedCandidatesShown_many": "{{count}} مرشحًا غير مدعوم معروضًا",
+      "unsupportedCandidatesShown_other": "{{count}} مرشح غير مدعوم معروض"
+    },
+
+    "running": {
+      "title": "معالجة الأدلة قيد التشغيل",
+      "preparing": "جارٍ تجهيز مرشحي الادعاءات…",
+      "progress_zero": "لم يُصنَّف أي مرشح بعد من أصل {{total}}",
+      "progress_one": "تصنيف {{classified}} من أصل مرشح واحد",
+      "progress_two": "تصنيف {{classified}} من أصل مرشحين",
+      "progress_few": "تصنيف {{classified}} من أصل {{total}} مرشحات",
+      "progress_many": "تصنيف {{classified}} من أصل {{total}} مرشحًا",
+      "progress_other": "تصنيف {{classified}} من أصل {{total}} مرشح"
+    },
+
+    "loadingEvidence": "جارٍ تحميل الأدلة…",
+
+    "noRuns": {
+      "title": "لا يوجد تشغيل أدلة بعد",
+      "body": "أكمل عملية تحليل لتجميد أدلة المشروع واستخراج الادعاءات."
+    },
+
+    "relevanceSummary": {
+      "relevant": "ذات صلة",
+      "uncertain": "غير مؤكدة",
+      "excluded": "مستبعدة",
+      "legacy": "قديمة"
+    },
+
+    "overview": {
+      "totalClaims": "إجمالي الادعاءات",
+      "extractedFromRun": "مستخرجة من هذا التشغيل",
+      "corroborated": "مؤكَّدة",
+      "twoOrMoreOrigins": "مصدران مستقلان أو أكثر",
+      "singleSource": "مصدر واحد",
+      "usefulNotConfirmed": "مفيدة، لكن غير مؤكدة بشكل مستقل",
+      "needsReview": "يحتاج إلى مراجعة",
+      "quotationNeedsAttention": "الاقتباس أو المصدر يحتاج إلى انتباه"
+    },
+
+    "quality": {
+      "title": "جودة المصادر والمرشحين",
+      "unsupportedCandidates_zero": "لا مرشحين غير مدعومين",
+      "unsupportedCandidates_one": "مرشح واحد غير مدعوم",
+      "unsupportedCandidates_two": "مرشحان غير مدعومين",
+      "unsupportedCandidates_few": "{{count}} مرشحات غير مدعومة",
+      "unsupportedCandidates_many": "{{count}} مرشحًا غير مدعوم",
+      "unsupportedCandidates_other": "{{count}} مرشح غير مدعوم",
+      "duplicateRecords_zero": "لا سجلات مكررة",
+      "duplicateRecords_one": "سجل واحد مكرر",
+      "duplicateRecords_two": "سجلان مكرران",
+      "duplicateRecords_few": "{{count}} سجلات مكررة",
+      "duplicateRecords_many": "{{count}} سجلًا مكررًا",
+      "duplicateRecords_other": "{{count}} سجل مكرر",
+      "body": "التشابه إشارة ترتيب، وليس نسبة ثقة. تبقى المواد المستبعدة هنا مع سببها. تُطبَّق مراجعة المصدر عند إعادة البناء التالية للأدلة.",
+      "excludedOrPendingTitle": "مصادر مستبعدة أو معلَّقة",
+      "latestReview": "آخر مراجعة: {{decision}} — {{reason}}",
+      "review": "مراجعة",
+      "includeNextRebuild": "التضمين في إعادة البناء التالية",
+      "keepExcluded": "الإبقاء على الاستبعاد",
+      "needsReviewOption": "يحتاج إلى مراجعة",
+      "requiredReasonPlaceholder": "سبب مطلوب",
+      "unsupportedCandidatesTitle": "مرشحو ادعاءات غير مدعومين"
+    },
+
+    "actions": {
+      "saveReview": "حفظ المراجعة"
+    },
+
+    "articleFallback": "مقالة {{id}}",
+
+    "comparison": {
+      "title": "مقارنة عمليات التشغيل",
+      "subtitle": "اطّلع على تغيّرات الأدلة بمعزل عن إعادة المعالجة القائمة على القواعد فقط.",
+      "comparing": "جارٍ المقارنة…",
+      "compare": "مقارنة",
+      "noChanges": "لا توجد تغييرات في الادعاءات أو عدد الأدلة بين هذين التشغيلين.",
+      "notPresent": "غير موجود",
+      "transition": "{{from}} ← {{to}}"
+    },
+
+    "viewSwitch": {
+      "ariaLabel": "عرض الأدلة",
+      "reviewClaims": "مراجعة الادعاءات",
+      "compareSources": "مقارنة المصادر"
+    },
+
+    "matrix": {
+      "title": "الادعاءات حسب المصدر",
+      "onThisPage_zero": "لا عناصر في هذه الصفحة",
+      "onThisPage_one": "عنصر واحد في هذه الصفحة",
+      "onThisPage_two": "عنصران في هذه الصفحة",
+      "onThisPage_few": "{{count}} عناصر في هذه الصفحة",
+      "onThisPage_many": "{{count}} عنصرًا في هذه الصفحة",
+      "onThisPage_other": "{{count}} عنصر في هذه الصفحة",
+      "updating": "جارٍ التحديث…",
+      "subtitle": "قارن اتفاق المصادر وافتح أي خلية معبأة لمعاينة مقطعها المحفوظ الدقيق.",
+      "quickFiltersAriaLabel": "عوامل تصفية سريعة للادعاءات",
+      "quickFilters": {
+        "conflicting": "متعارض",
+        "singleSource": "مصدر واحد"
+      },
+      "sourceColumnsAriaLabel": "أعمدة المصادر",
+      "sourceToggle": {
+        "onPage": "المصادر في هذه الصفحة",
+        "allSources": "كل المصادر"
+      },
+      "truthNoteStrong": "”مدعومة“ تعني أنها مدعومة بمقاطع مؤهَّلة في المستندات المحفوظة.",
+      "truthNoteText": "وهذا لا يثبت بشكل مستقل صحة الادعاء في العالم الواقعي.",
+      "showingRange_zero": "لا تُعرض أي ادعاءات من أصل {{total}}",
+      "showingRange_one": "عرض {{first}}–{{last}} من أصل ادعاء واحد",
+      "showingRange_two": "عرض {{first}}–{{last}} من أصل ادعاءين",
+      "showingRange_few": "عرض {{first}}–{{last}} من أصل {{total}} ادعاءات",
+      "showingRange_many": "عرض {{first}}–{{last}} من أصل {{total}} ادعاءً",
+      "showingRange_other": "عرض {{first}}–{{last}} من أصل {{total}} ادعاء",
+      "hiddenSources_zero": " · لا مصادر غير ذات صلة مخفية",
+      "hiddenSources_one": " · مصدر واحد غير ذي صلة مخفي",
+      "hiddenSources_two": " · مصدران غير ذوي صلة مخفيان",
+      "hiddenSources_few": " · {{count}} مصادر غير ذات صلة مخفية",
+      "hiddenSources_many": " · {{count}} مصدرًا غير ذي صلة مخفيًا",
+      "hiddenSources_other": " · {{count}} مصدر غير ذي صلة مخفي",
+      "claimHeader": "الادعاء",
+      "inViewCount": "{{count}} في هذا العرض",
+      "qualifiedCount": "{{count}} مؤهَّل",
+      "noQualifyingPassage": "لا يوجد مقطع مؤهَّل",
+      "openEvidenceSuffix": ". افتح الأدلة.",
+      "previousPage": "صفحة الادعاء السابقة",
+      "nextPage": "صفحة الادعاء التالية",
+      "paginationNavLabel": "التنقل بين صفحات مصفوفة الادعاءات - {{position}}",
+      "positionTop": "الأعلى",
+      "positionBottom": "الأسفل",
+      "openFullReview": "فتح المراجعة الكاملة للادعاء",
+      "noMatch": "لا توجد أدلة مصدر مطابقة لعوامل التصفية هذه.",
+      "detailAriaLabel": "تفاصيل أدلة المصدر",
+      "detailHeading": "تفاصيل الأدلة",
+      "closeDetailAriaLabel": "إغلاق تفاصيل الأدلة",
+      "loadingPassages": "جارٍ تحميل المقاطع الدقيقة…",
+      "noPassageAvailable": "لا يوجد مقطع محفوظ متاح لهذا المصدر.",
+      "dtPublisher": "الناشر",
+      "dtPublished": "تاريخ النشر",
+      "dtLocator": "الموضع"
+    },
+
+    "claims": {
+      "title": "الادعاءات",
+      "subtitle": "اختر حالة للتركيز على قائمة المراجعة.",
+      "showingRange": "عرض {{first}}–{{last}} من أصل {{total}}",
+      "noMatch": "لا توجد ادعاءات مطابقة لهذا الموضوع.",
+      "originsCount_zero": "لا أصول",
+      "originsCount_one": "أصل واحد",
+      "originsCount_two": "أصلان",
+      "originsCount_few": "{{count}} أصول",
+      "originsCount_many": "{{count}} أصلًا",
+      "originsCount_other": "{{count}} أصل",
+      "supportingCount": "{{count}} مؤيِّد",
+      "conflictingCount": "{{count}} متعارض",
+      "reviewedSuffix": " · تمت المراجعة",
+      "paginationAriaLabel": "التنقل بين صفحات الادعاءات - {{position}}",
+      "tabsAriaLabel": "حالة الادعاء"
+    },
+
+    "claimTabs": {
+      "all": "كل الادعاءات",
+      "needsReview": "يحتاج إلى مراجعة",
+      "mixed": "متفاوت",
+      "insufficient": "غير كافٍ",
+      "unavailable": "غير متاح"
+    },
+
+    "detail": {
+      "selectPrompt": "اختر ادعاءً لمعاينة أدلته.",
+      "automated": "آلي: {{label}}",
+      "analyst": "المحلل: {{label}}",
+      "whyMatches": "لماذا يتوافق مع المشروع",
+      "legacyNotClassified": "لم يُصنَّف هذا الادعاء القديم مقابل نطاق مشروع.",
+      "assessmentMethod": "طريقة التقييم: {{value}}",
+      "independentOrigins": "الأصول المستقلة المؤهَّلة: {{count}}",
+      "quotationsChecked": "الاقتباسات الدقيقة التي تم التحقق منها: {{count}}",
+      "timeScope": "النطاق الزمني: {{value}}",
+      "quantities": "الكميات: {{value}}",
+      "evidencePassages": "مقاطع الأدلة",
+      "exactQuotation": "اقتباس دقيق",
+      "exactQuotationTitle": "تم العثور على المقطع الدقيق في المستند المجمَّد",
+      "quotationUnavailable": "الاقتباس غير متاح",
+      "quotationUnavailableTitle": "لا يوجد مقطع دقيق في المستند",
+      "doesNotQualify": "لا يستوفي الشروط",
+      "unknownSource": "مصدر غير معروف",
+      "published": "تاريخ النشر: {{date}}",
+      "locator": "الموضع: {{value}}",
+      "unavailable": "غير متاح",
+      "contentType": "نوع المحتوى: {{value}}",
+      "analysis": "التحليل: {{value}}",
+      "producedInRun": "تم إنتاجه في هذا التشغيل",
+      "reusedFrozen": "تحليل مجمَّد معاد استخدامه",
+      "originReviewLabel": "مراجعة المصدر الأصلي: {{value}}",
+      "passageMatch": "تطابق المقطع: {{percent}}",
+      "openSource": "فتح المصدر",
+      "storedArticle": "مقالة محفوظة رقم {{id}}",
+      "reviewOrigin": "مراجعة المصدر الأصلي",
+      "analystReviewTitle": "مراجعة المحلل",
+      "explainEvidencePlaceholder": "اشرح الأدلة وحدود هذا القرار…",
+      "relevanceOverrideTitle": "تجاوز صلة المشروع",
+      "explainRelevancePlaceholder": "اشرح سبب انتماء هذا الادعاء إلى المشروع أو خروجه عنه…",
+      "saveRelevanceOverride": "حفظ تجاوز الصلة",
+      "reviewHistoryTitle": "سجل المراجعات",
+      "reviewerFallback": "مراجِع",
+      "relevanceFallbackUnclassified": "غير مصنَّف"
+    },
+
+    "labels": {
+      "supported": "مدعوم",
+      "contradicted": "متناقض",
+      "mixedEvidence": "أدلة متفاوتة",
+      "insufficientEvidence": "أدلة غير كافية",
+      "notYetVerifiable": "غير قابل للتحقق بعد",
+      "assessmentUnavailable": "التقييم غير متاح"
+    },
+
+    "relevanceLabels": {
+      "direct": "ذو صلة مباشرة",
+      "contextual": "سياق ذو صلة",
+      "unrelated": "غير ذي صلة",
+      "uncertain": "غير مؤكد",
+      "unclassified": "قديم / غير مصنَّف"
+    },
+
+    "matrixStates": {
+      "supporting": "يدعم",
+      "contradicting": "يتعارض",
+      "contextual": "سياق",
+      "review": "مراجعة"
+    },
+
+    "unknownDate": "تاريخ غير معروف",
+    "unknownTime": "وقت غير معروف"
+  }
+}

@@ -7,6 +7,8 @@
  * Components then only handle `try/catch`, never response plumbing.
  */
 
+import { apiErrorFromPayload } from '../lib/apiError.js';
+
 const BASE = '/api/competitor';
 
 async function request(path, { method = 'GET', body, signal } = {}) {
@@ -26,9 +28,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   }
 
   if (!response.ok) {
-    const message =
-      payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }
@@ -53,9 +53,7 @@ async function requestForm(path, formData) {
   }
 
   if (!response.ok) {
-    const message =
-      payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }

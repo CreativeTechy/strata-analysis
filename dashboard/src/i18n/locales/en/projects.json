@@ -1,0 +1,262 @@
+{
+  "shared": {
+    "opinionMonitoringKicker": "Opinion monitoring",
+    "locationTypeLabels": {
+      "on_site": "On site",
+      "remote": "Remote",
+      "hybrid": "Hybrid"
+    },
+    "statusLabels": {
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived"
+    }
+  },
+  "list": {
+    "title": "Opinion Monitor",
+    "subtitle": "Track what people are saying about each project as its own workspace: upload the documents it covers, approve the articles they hold, and keep every analysis tied to a named project.",
+    "toolbar": {
+      "statusLabel": "Status",
+      "statusConfigured": "Configured",
+      "statusEmpty": "Empty",
+      "searchLabel": "Search",
+      "matchesCount": "{{formattedCount}} matches"
+    },
+    "actions": {
+      "addProject": "Add Project"
+    },
+    "stats": {
+      "totalProjects": "Total projects",
+      "active": "Active",
+      "draft": "Draft",
+      "archived": "Archived"
+    },
+    "search": {
+      "placeholder": "Search projects, dates, statuses, or keywords"
+    },
+    "filters": {
+      "allStatuses": "All statuses"
+    },
+    "panel": {
+      "title": "Tracked Projects",
+      "loadingInline": "Loading...",
+      "visibleCount": "{{formattedCount}} visible"
+    },
+    "emptyState": {
+      "loadingTitle": "Loading projects...",
+      "loadingBody": "Fetching the latest project list from the workspace.",
+      "noProjectsTitle": "No projects yet",
+      "noProjectsBody": "Start by creating a project, then upload the documents it should analyze.",
+      "noMatchesTitle": "No matching projects",
+      "noMatchesBody": "Try another search term or switch the status filter."
+    },
+    "item": {
+      "repeatEvery": "Every {{value}} {{unit}}",
+      "nextRun": "Next run: {{value}}",
+      "lastRun": "Last run: {{value}}",
+      "pendingFirstRun": "Pending first run",
+      "noStartDate": "No start date",
+      "noEndDate": "No end date",
+      "sourceCount_one": "{{formattedCount}} source",
+      "sourceCount_other": "{{formattedCount}} sources",
+      "defaultDescription": "Open the project to see assigned sources, tags, and metadata."
+    },
+    "pagination": {
+      "showingRange": "Showing {{from}}-{{to}} of {{total}}"
+    }
+  },
+  "detail": {
+    "kicker": "Project details",
+    "subtitle": "Review the sources, tags, and discovery details attached to this project. This page is the best place to inspect the working scope before running the pipeline.",
+    "toolbar": {
+      "statusLabel": "Status",
+      "documentsLabel": "Documents"
+    },
+    "actions": {
+      "evidence": "Evidence",
+      "editProject": "Edit Project"
+    },
+    "notFound": {
+      "title": "Project not found",
+      "body": "The project may have been removed or the link is outdated.",
+      "backToProjects": "Back to Projects"
+    },
+    "overview": {
+      "title": "Overview",
+      "start": "Start",
+      "end": "End",
+      "location": "Location",
+      "audience": "Audience",
+      "notSet": "Not set",
+      "noAudience": "No audience specified"
+    },
+    "analysis": {
+      "title": "Analysis",
+      "neverRun": "Never run",
+      "lastRun": "Last run: {{value}}",
+      "notYet": "Not yet",
+      "allRuns": "All analysis runs",
+      "analyzeButton": "Analyze new articles",
+      "starting": "Starting...",
+      "started": "Analysis run started.",
+      "hint": "Analyzes every approved article that hasn't been analyzed yet.",
+      "statusLabels": {
+        "success": "success",
+        "failed": "failed",
+        "cancelled": "cancelled"
+      }
+    },
+    "description": {
+      "title": "Description",
+      "empty": "No description has been added for this project yet."
+    },
+    "topics": {
+      "title": "Topics of interest",
+      "keywordsLabel": "Keywords",
+      "noKeywords": "No keywords",
+      "hint": "Tracked on the Reports page, which charts how often each keyword shows up across this project's analyzed articles."
+    },
+    "quickFacts": {
+      "title": "Quick Facts",
+      "created": "Created {{value}}",
+      "updated": "Updated {{value}}",
+      "documentCount_one": "{{formattedCount}} document",
+      "documentCount_other": "{{formattedCount}} documents",
+      "keywordCount_one": "{{formattedCount}} keyword",
+      "keywordCount_other": "{{formattedCount}} keywords",
+      "linkedUserCount_one": "{{formattedCount}} linked user",
+      "linkedUserCount_other": "{{formattedCount}} linked users"
+    },
+    "insights": {
+      "title": "Article Insights",
+      "analyzedCount": "{{formattedCount}} analyzed articles",
+      "loading": "Loading article insights...",
+      "emptyTitle": "No analyzed articles yet",
+      "emptyBody": "Upload documents, approve their articles, and run an analysis to see tone and sentiment insights here.",
+      "overallMood": "Overall Mood",
+      "overallTone": "Overall Tone",
+      "writerToneBreakdown": "Writer Tone Breakdown",
+      "articleToneBreakdown": "Article Tone Breakdown",
+      "sentimentByRegion": "Analyzed-record sentiment by region",
+      "sentimentByGender": "Analyzed-record sentiment by gender",
+      "sentimentByAgeRange": "Analyzed-record sentiment by age range",
+      "sentimentBySegment": "Analyzed-record sentiment by segment",
+      "chartTitleRegion": "Sentiment by region",
+      "chartTitleGender": "Sentiment by gender",
+      "chartTitleAgeRange": "Sentiment by age range",
+      "chartTitleSegment": "Sentiment by segment"
+    },
+    "ideas": {
+      "title": "Frequent Ideas",
+      "clusterCount": "{{formattedCount}} clusters",
+      "description": "Ideas repeated across analyzed articles for this project, accumulated across every analysis run.",
+      "loadError": "Couldn't load frequent ideas",
+      "loading": "Loading frequent ideas...",
+      "emptyTitle": "No repeated ideas yet",
+      "emptyBody": "Run the pipeline to build up cross-article idea clusters for this project.",
+      "articlesCount": "{{formattedCount}} articles",
+      "backToDashboard": "Back to Dashboard",
+      "errors": {
+        "loadFailed": "Failed to load frequent ideas.",
+        "openArticlesFailed": "Failed to load articles for this idea."
+      }
+    },
+    "deleteModal": {
+      "title": "Delete project \"{{name}}\"?",
+      "body": "This will permanently remove the project, its uploaded documents, and the articles they produced.",
+      "confirmLabel": "Delete project",
+      "cancelLabel": "Keep project"
+    },
+    "errors": {
+      "startAnalysisFailed": "Failed to start analysis run."
+    }
+  },
+  "wizard": {
+    "heading": {
+      "create": "Create Project",
+      "edit": "Edit Project"
+    },
+    "subheading": {
+      "create": "Build the project in {{steps}} steps, then create the workspace.",
+      "edit": "Update the project in {{steps}} steps. Revisit any step, then save your changes."
+    },
+    "toolbar": {
+      "stepLabel": "Step",
+      "stepOfTotal": "{{step}} of {{total}}",
+      "documentsLabel": "Documents"
+    },
+    "stepNav": {
+      "done": "Done",
+      "basics": { "label": "Project basics", "detail": "Name, description, and topics" },
+      "users": { "label": "Linked users", "detail": "Choose dashboard users to link" },
+      "finish": { "label": "Finish", "detail": "Review analysis and open workspace" }
+    },
+    "actions": {
+      "continue": "Continue",
+      "creatingProject": "Creating project..."
+    },
+    "basics": {
+      "stepHeading": "Step {{step}}. Project basics",
+      "readyChip": "Ready",
+      "requiredChip": "Required",
+      "nameLabel": "Project name",
+      "descriptionLabel": "Description",
+      "descriptionPlaceholder": "Project description",
+      "locationTypeLabel": "Location type",
+      "selectPlaceholder": "Select...",
+      "locationLabel": "Location",
+      "locationPlaceholder": "Location",
+      "audienceLabel": "Target audience",
+      "audiencePlaceholder": "Who this project is about",
+      "keywordsLabel": "Topics of interest",
+      "keywordsPlaceholder": "Keyword or phrase (e.g. delivery times)",
+      "keywordsHint": "Reports charts how often each of these shows up across this project's analyzed articles.",
+      "suggestButton": "Suggest audience and topics",
+      "suggesting": "Suggesting...",
+      "footnote": "Use a clear working title and a short description. They tell the model what this project is about when it analyzes the documents you upload next."
+    },
+    "users": {
+      "stepHeading": "Step {{step}}. Linked users",
+      "selectedCount": "{{formattedCount}} selected"
+    },
+    "finish": {
+      "stepHeading": "Step {{step}}. Finish",
+      "statusChoice": {
+        "label": "Project status",
+        "draftOption": "Draft — save for later",
+        "activeOption": "Active — start monitoring",
+        "activeHelp": "Active projects are ready to use across monitoring, analysis, and reports.",
+        "draftHelp": "Draft projects stay marked as unfinished until you activate them."
+      },
+      "saving": "Saving...",
+      "openWorkspace": "Open workspace",
+      "activateAndOpen": "Activate and open workspace",
+      "saveDraftAndOpen": "Save draft and open workspace"
+    },
+    "cancelModal": {
+      "title": "Discard changes?",
+      "body": "You have unsaved changes on this project. If you cancel now, all edits on this page will be lost.",
+      "confirmLabel": "Discard changes",
+      "cancelLabel": "Keep editing"
+    },
+    "errors": {
+      "createProjectFailed": "Failed to create the project.",
+      "finishProjectFailed": "Failed to finish the project.",
+      "suggestFailed": "Failed to generate AI suggestions."
+    }
+  },
+  "userAssign": {
+    "kicker": "Linked users",
+    "title": "Choose dashboard users linked to this project",
+    "selectedCount": "{{formattedCount}} selected",
+    "searchPlaceholder": "Filter users by username, email, or role",
+    "noUsers": "No dashboard users yet.",
+    "noMatchesTitle": "No matching users",
+    "noMatchesBody": "Try a different search term in this assignment box.",
+    "noEmail": "No email on file"
+  },
+  "termChips": {
+    "removeAria": "Remove {{value}}",
+    "addSuggested": "Add a suggested one..."
+  }
+}

@@ -178,7 +178,7 @@
   border-radius: 18px;
   padding: 0;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   overflow: hidden;
   transition: transform 0.14s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
@@ -287,7 +287,7 @@
 
 .cs-actions-preview {
   margin: 0;
-  padding-left: 17px;
+  padding-inline-start: 17px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -379,7 +379,7 @@
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.04);
   border: 1px solid rgba(15, 23, 42, 0.06);
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .cs-view-tab {
@@ -418,7 +418,7 @@
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.6);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.14s ease;
 }
 
@@ -517,7 +517,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  text-align: left;
+  text-align: start;
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 16px;
@@ -699,7 +699,7 @@
   font-weight: 400;
   color: var(--text-light);
   font-size: 0.78rem;
-  margin-left: 6px;
+  margin-inline-start: 6px;
 }
 
 .cs-input,
@@ -801,8 +801,8 @@
 .cs-dropdown {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   z-index: 10;
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -816,7 +816,7 @@
 .cs-dropdown-item {
   display: block;
   width: 100%;
-  text-align: left;
+  text-align: start;
   border: none;
   background: none;
   padding: 8px 10px;
@@ -1244,7 +1244,7 @@
   .cs-wizard-foot .cs-btn { justify-content: center; }
   .cs-findings-toolbar { flex-direction: column; align-items: stretch; }
   .cs-search-field { flex: 1 1 auto; }
-  .cs-view-tabs { margin-left: 0; }
+  .cs-view-tabs { margin-inline-start: 0; }
   .cs-finding-row { flex-wrap: wrap; }
   .cs-finding-row-meta { width: 100%; }
   .cs-pagination { justify-content: center; text-align: center; }

@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight,
@@ -23,28 +24,38 @@ import {
 } from 'lucide-react';
 import {
   IMPACT_LABELS, SIZE_TIER_LABELS, avatarGradient, getStudy,
-  initials, listCompetitors, listFindings, relativeTime,
+  initials, listCompetitors, listFindings,
 } from '../api/competitorApi.js';
+import { formatDate, formatRelativeTime, formatTime } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
 import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,
 } from './CompetitorRunAnalysis.jsx';
-import { analysisRunTitle, useRunAnalysis } from '../useRunAnalysis.js';
+import { useRunAnalysis } from '../useRunAnalysis.js';
 import '../styles/Competitors.css';
 
-const IMPACT_FILTERS = [
-  { key: '', label: 'All impact' },
-  { key: 'high', label: 'High' },
-  { key: 'medium', label: 'Medium' },
-  { key: 'low', label: 'Low' },
-];
+function impactLabel(t, level) {
+  return t(`labels.impact.${level}`, { defaultValue: IMPACT_LABELS[level] || level });
+}
 
-const VIEW_MODES = [
-  { value: 'card', label: 'Cards', icon: LayoutGrid },
-  { value: 'list', label: 'List', icon: List },
-];
+function sizeTierLabel(t, tier) {
+  return t(`labels.sizeTier.${tier}`, { defaultValue: SIZE_TIER_LABELS[tier] || tier });
+}
 
-function FindingCard({ finding, onOpen }) {
+/** Localized replacement for useRunAnalysis.js's analysisRunTitle() - same
+ *  shape ("Analysis #N: <date> <time>"), but translated and using the shared
+ *  locale-aware date formatters instead of an implicit browser locale.
+ *  useRunAnalysis.js isn't owned by this pass, so this stays local rather
+ *  than changing that shared export. */
+function analysisRunTitle(t, locale, run) {
+  const value = run?.finished_at || run?.started_at;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return t('workspace.analysisRunFallback');
+  const formatted = `${formatDate(date, locale, { month: 'short', day: 'numeric' })} ${formatTime(date, locale)}`;
+  return t('workspace.analysisRunLabel', { number: run?.sequence_number ?? '?', date: formatted });
+}
+
+function FindingCard({ finding, onOpen, t, locale }) {
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
   const signals = Array.isArray(finding.signals) ? finding.signals : [];
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
@@ -59,41 +70,41 @@ function FindingCard({ finding, onOpen }) {
               {initials(finding.competitor_name)}
             </span>
             <div style={{ minWidth: 0 }}>
-              <p className="cs-card-name">{finding.competitor_name}</p>
-              <p className="cs-card-domain">
+              <p className="cs-card-name" dir="auto">{finding.competitor_name}</p>
+              <p className="cs-card-domain" dir="auto">
                 {finding.competitor_domain || '-'}
-                {finding.size_tier ? ` · ${SIZE_TIER_LABELS[finding.size_tier] || finding.size_tier}` : ''}
+                {finding.size_tier ? ` · ${sizeTierLabel(t, finding.size_tier)}` : ''}
               </p>
             </div>
           </div>
           <span className={`cs-pill cs-pill-${finding.impact_level}`}>
-            {IMPACT_LABELS[finding.impact_level] || finding.impact_level}
+            {impactLabel(t, finding.impact_level)}
           </span>
         </div>
 
-        <h3 className="cs-card-headline">{finding.headline}</h3>
+        <h3 className="cs-card-headline" dir="auto">{finding.headline}</h3>
 
         <div className="cs-answer">
-          <span className="cs-answer-label"><Activity size={11} /> What they&rsquo;re up to</span>
-          <p className="cs-answer-text cs-answer-clamp">{finding.whats_up}</p>
+          <span className="cs-answer-label"><Activity size={11} /> {t('shared.whatTheyreUpTo')}</span>
+          <p className="cs-answer-text cs-answer-clamp" dir="auto">{finding.whats_up}</p>
         </div>
 
         <div className="cs-answer">
-          <span className="cs-answer-label"><Target size={11} /> How it affects us</span>
-          <p className="cs-answer-text cs-answer-clamp">{finding.impact}</p>
+          <span className="cs-answer-label"><Target size={11} /> {t('shared.howItAffectsUs')}</span>
+          <p className="cs-answer-text cs-answer-clamp" dir="auto">{finding.impact}</p>
         </div>
 
         {actions.length ? (
           <div className="cs-answer">
-            <span className="cs-answer-label"><Lightbulb size={11} /> Suggested actions</span>
+            <span className="cs-answer-label"><Lightbulb size={11} /> {t('shared.suggestedActions')}</span>
             <ul className="cs-actions-preview">
               {actions.slice(0, 2).map((item, index) => (
-                <li key={index}>{item.action}</li>
+                <li key={index} dir="auto">{item.action}</li>
               ))}
             </ul>
             {actions.length > 2 ? (
               <span style={{ fontSize: '0.79rem', color: 'var(--text-light)', paddingLeft: 17 }}>
-                +{actions.length - 2} more
+                {t('workspace.moreActions', { count: actions.length - 2 })}
               </span>
             ) : null}
           </div>
@@ -102,45 +113,45 @@ function FindingCard({ finding, onOpen }) {
         {signals.length ? (
           <div className="cs-pills">
             {signals.slice(0, 4).map((signal) => (
-              <span key={signal} className="cs-pill cs-pill-signal">{signal}</span>
+              <span key={signal} className="cs-pill cs-pill-signal" dir="auto">{signal}</span>
             ))}
           </div>
         ) : null}
 
         <div className="cs-card-foot">
           <span>
-            {finding.story_count} source{finding.story_count === 1 ? '' : 's'}
-            {evidence.length ? ` · ${evidence.length} cited` : ''}
-            {finding.generated_at ? ` · ${relativeTime(finding.generated_at)}` : ''}
+            {t('workspace.sourceCount', { count: finding.story_count })}
+            {evidence.length ? ` · ${t('workspace.citedCount', { count: evidence.length })}` : ''}
+            {finding.generated_at ? ` · ${formatRelativeTime(finding.generated_at, locale)}` : ''}
           </span>
-          <span className="cs-card-foot-open">Full report <ChevronRight size={13} /></span>
+          <span className="cs-card-foot-open">{t('workspace.fullReport')} <ChevronRight size={13} className="rtl-mirror" /></span>
         </div>
       </div>
     </button>
   );
 }
 
-function FindingRow({ finding, onOpen }) {
+function FindingRow({ finding, onOpen, t, locale }) {
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
 
   return (
     <button type="button" className="cs-finding-row" onClick={() => onOpen(finding.id)}>
       <span className={`cs-pill cs-pill-${finding.impact_level}`}>
-        {IMPACT_LABELS[finding.impact_level] || finding.impact_level}
+        {impactLabel(t, finding.impact_level)}
       </span>
       <span className="cs-avatar cs-finding-row-avatar" style={{ background: avatarGradient(finding.competitor_name) }} aria-hidden="true">
         {initials(finding.competitor_name)}
       </span>
       <span className="cs-finding-row-main">
-        <span className="cs-finding-row-name">{finding.competitor_name}</span>
-        <span className="cs-finding-row-headline">{finding.headline}</span>
+        <span className="cs-finding-row-name" dir="auto">{finding.competitor_name}</span>
+        <span className="cs-finding-row-headline" dir="auto">{finding.headline}</span>
       </span>
       <span className="cs-finding-row-meta">
-        {finding.story_count} source{finding.story_count === 1 ? '' : 's'}
-        {evidence.length ? ` · ${evidence.length} cited` : ''}
-        {finding.generated_at ? ` · ${relativeTime(finding.generated_at)}` : ''}
+        {t('workspace.sourceCount', { count: finding.story_count })}
+        {evidence.length ? ` · ${t('workspace.citedCount', { count: evidence.length })}` : ''}
+        {finding.generated_at ? ` · ${formatRelativeTime(finding.generated_at, locale)}` : ''}
       </span>
-      <ChevronRight size={15} className="cs-finding-row-chevron" />
+      <ChevronRight size={15} className="cs-finding-row-chevron rtl-mirror" />
     </button>
   );
 }
@@ -159,10 +170,24 @@ function StatTile({ icon: Icon, label, value, tone }) {
 }
 
 export default function CompetitorWorkspace() {
+  const { t, i18n } = useTranslation('competitors');
+  const locale = i18n.language;
   const { studyId } = useParams();
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const canManage = hasPermission('competitors.manage');
+
+  const IMPACT_FILTERS = [
+    { key: '', label: t('workspace.impactFilters.all') },
+    { key: 'high', label: t('workspace.impactFilters.high') },
+    { key: 'medium', label: t('workspace.impactFilters.medium') },
+    { key: 'low', label: t('workspace.impactFilters.low') },
+  ];
+
+  const VIEW_MODES = [
+    { value: 'card', label: t('shared.viewModes.card'), icon: LayoutGrid },
+    { value: 'list', label: t('shared.viewModes.list'), icon: List },
+  ];
 
   const [study, setStudy] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -319,34 +344,34 @@ export default function CompetitorWorkspace() {
       <div className="cs-head">
         <div>
           <Link to="/competitors" className="cs-link-back">
-            <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> All studies
+            <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('workspace.backToAllStudies')}
           </Link>
-          <h1>{study?.name || 'Competitor study'}</h1>
+          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')}</h1>
           <p>
             {profile?.name ? (
               <>
-                Measured against <strong>{profile.name}</strong>
-                {profile.market ? ` in ${profile.market}` : ''}. Each card is one competitor: what
-                they are doing, what it means for you, and what to do about it.
+                {t('workspace.measuredAgainstPrefix')} <strong dir="auto">{profile.name}</strong>
+                {profile.market ? t('workspace.inMarket', { market: profile.market }) : ''}
+                {t('workspace.measuredAgainstSuffix')}
               </>
             ) : (
-              'Add your business profile so competitor activity can be judged against it.'
+              t('workspace.noProfileHint')
             )}
           </p>
         </div>
         <div className="cs-head-actions">
-          <RunAnalysisButton run={run} />
+          <RunAnalysisButton run={run} label={t('runAnalysis.runAnalysisLabel')} />
           <Link to={`/competitors/${studyId}/manage`} className="cs-btn">
-            <Layers size={15} /> {competitors.length} competitor{competitors.length === 1 ? '' : 's'}
+            <Layers size={15} /> {t('workspace.competitorCount', { count: competitors.length })}
           </Link>
           {canManage ? (
             <Link to={`/competitors/${studyId}/documents`} className="cs-btn">
-              <Upload size={15} /> Add documents
+              <Upload size={15} /> {t('workspace.addDocuments')}
             </Link>
           ) : null}
           {canManage ? (
             <Link to={`/competitors/${studyId}/edit`} className="cs-btn">
-              <Pencil size={15} /> Full edit
+              <Pencil size={15} /> {t('shared.fullEdit')}
             </Link>
           ) : null}
         </div>
@@ -356,7 +381,7 @@ export default function CompetitorWorkspace() {
 
       {error ? (
         <div className="cs-alert cs-alert-error">
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{error}</span>
         </div>
       ) : null}
 
@@ -364,14 +389,12 @@ export default function CompetitorWorkspace() {
         <div className="cs-alert cs-alert-info">
           <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
-            Generated {notice.generated} report{notice.generated === 1 ? '' : 's'} from{' '}
-            {notice.scanned} article{notice.scanned === 1 ? '' : 's'}
-            {notice.documentCount
-              ? ` across ${notice.documentCount} document${notice.documentCount === 1 ? '' : 's'}`
-              : ''}.
+            {t('workspace.notice.reportsGenerated', { count: notice.generated })}{' '}
+            {t('workspace.notice.fromArticles', { count: notice.scanned })}
+            {notice.documentCount ? ` ${t('workspace.notice.acrossDocuments', { count: notice.documentCount })}` : ''}.
             {Object.keys(notice.reasons || {}).length ? (
               <>
-                {' '}Filtered out:{' '}
+                {' '}{t('workspace.notice.filteredOutPrefix')}{' '}
                 {Object.entries(notice.reasons)
                   .map(([reason, count]) => `${count} ${reason.replace(/_/g, ' ')}`)
                   .join(', ')}
@@ -379,7 +402,7 @@ export default function CompetitorWorkspace() {
               </>
             ) : null}
             {notice.skipped?.length ? (
-              <> {notice.skipped.length} competitor{notice.skipped.length === 1 ? '' : 's'} skipped —{' '}
+              <> {t('workspace.notice.skipped', { count: notice.skipped.length })} —{' '}
                 {notice.skipped.map((item) => `${item.name}: ${item.reason}`).join(' ')}</>
             ) : null}
           </span>
@@ -387,12 +410,12 @@ export default function CompetitorWorkspace() {
       ) : null}
 
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
-        <StatTile icon={Radar} label="Tracked" value={stats.tracked} />
-        <StatTile icon={BarChart3} label="Reports" value={findings.length} />
-        <StatTile icon={TrendingUp} label="High impact" value={stats.highImpact}
+        <StatTile icon={Radar} label={t('workspace.stats.tracked')} value={stats.tracked} />
+        <StatTile icon={BarChart3} label={t('workspace.stats.reports')} value={findings.length} />
+        <StatTile icon={TrendingUp} label={t('workspace.stats.highImpact')} value={stats.highImpact}
           tone={stats.highImpact ? '#b91c1c' : undefined} />
-        <StatTile icon={CalendarClock} label="Last run"
-          value={study?.last_run_at ? relativeTime(study.last_run_at) : 'Never'} />
+        <StatTile icon={CalendarClock} label={t('workspace.stats.lastRun')}
+          value={study?.last_run_at ? formatRelativeTime(study.last_run_at, locale) : t('workspace.stats.never')} />
       </div>
 
       {(findings.length > 0 || hasFindingFilters) ? (
@@ -404,29 +427,29 @@ export default function CompetitorWorkspace() {
                 type="text"
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
-                placeholder="Search headline, summary, competitor..."
+                placeholder={t('workspace.searchPlaceholder')}
               />
             </label>
 
             <select className="cs-select" value={impact} onChange={(event) => setImpact(event.target.value)}
-              aria-label="Filter by impact">
+              aria-label={t('workspace.filterByImpactAria')}>
               {IMPACT_FILTERS.map((option) => (
                 <option key={option.key} value={option.key}>{option.label}</option>
               ))}
             </select>
 
             <div className="filter-tabs-shell" style={{ margin: 0 }}>
-              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter reports by">
+              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('workspace.filterReportsByAria')}>
                 <button type="button" role="tab" aria-selected={!findingsRunId}
                   className={`source-type-tab ${!findingsRunId ? 'active' : ''}`}
                   onClick={() => setFindingsRunId(null)}>
-                  Date range
+                  {t('workspace.dateRangeTab')}
                 </button>
                 {run.analysisRuns.length > 0 ? (
                   <button type="button" role="tab" aria-selected={!!findingsRunId}
                     className={`source-type-tab ${findingsRunId ? 'active' : ''}`}
                     onClick={() => setFindingsRunId(findingsRunId || run.analysisRuns[0].id)}>
-                    Analysis run
+                    {t('workspace.analysisRunTab')}
                   </button>
                 ) : null}
               </div>
@@ -436,20 +459,20 @@ export default function CompetitorWorkspace() {
               run.analysisRuns.length > 3 ? (
                 <select className="cs-select filter-run-select" value={findingsRunId}
                   onChange={(event) => setFindingsRunId(event.target.value)}
-                  aria-label="Filter by analysis run">
+                  aria-label={t('workspace.filterByAnalysisRunAria')}>
                   {run.analysisRuns.map((analysisRun) => (
-                    <option key={analysisRun.id} value={analysisRun.id}>{analysisRunTitle(analysisRun)}</option>
+                    <option key={analysisRun.id} value={analysisRun.id}>{analysisRunTitle(t, locale, analysisRun)}</option>
                   ))}
                 </select>
               ) : (
-                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
+                <div className="filter-tab-buttons scrollable" role="tablist" aria-label={t('workspace.filterByAnalysisRunAria')}>
                   {run.analysisRuns.map((analysisRun, index) => (
                     <span key={analysisRun.id} className="filter-tab-run-item">
-                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow rtl-mirror" aria-hidden="true" /> : null}
                       <button type="button" role="tab" aria-selected={findingsRunId === analysisRun.id}
                         className={`source-type-tab ${findingsRunId === analysisRun.id ? 'active' : ''}`}
                         onClick={() => setFindingsRunId(analysisRun.id)}>
-                        {analysisRunTitle(analysisRun)}
+                        {analysisRunTitle(t, locale, analysisRun)}
                       </button>
                     </span>
                   ))}
@@ -458,20 +481,20 @@ export default function CompetitorWorkspace() {
             ) : (
               <div className="cs-date-range">
                 <input type="date" className="cs-input" value={dateFrom}
-                  onChange={(event) => setDateFrom(event.target.value)} aria-label="From date" />
-                <span>to</span>
+                  onChange={(event) => setDateFrom(event.target.value)} aria-label={t('workspace.fromDateAria')} />
+                <span>{t('shared.to')}</span>
                 <input type="date" className="cs-input" value={dateTo}
-                  onChange={(event) => setDateTo(event.target.value)} aria-label="To date" />
+                  onChange={(event) => setDateTo(event.target.value)} aria-label={t('workspace.toDateAria')} />
               </div>
             )}
 
             {hasFindingFilters ? (
               <button type="button" className="cs-btn cs-btn-sm" onClick={clearFindingFilters}>
-                <X size={13} /> Clear filters
+                <X size={13} /> {t('shared.clearFilters')}
               </button>
             ) : null}
 
-            <div className="cs-view-tabs" role="tablist" aria-label="Switch report view">
+            <div className="cs-view-tabs" role="tablist" aria-label={t('workspace.switchReportViewAria')}>
               {VIEW_MODES.map((mode) => {
                 const Icon = mode.icon;
                 const isActive = viewMode === mode.value;
@@ -490,14 +513,14 @@ export default function CompetitorWorkspace() {
               viewMode === 'list' ? (
                 <div className="cs-finding-list">
                   {findings.map((finding) => (
-                    <FindingRow key={finding.id} finding={finding}
+                    <FindingRow key={finding.id} finding={finding} t={t} locale={locale}
                       onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
                   ))}
                 </div>
               ) : (
                 <div className="cs-card-grid">
                   {findings.map((finding) => (
-                    <FindingCard key={finding.id} finding={finding}
+                    <FindingCard key={finding.id} finding={finding} t={t} locale={locale}
                       onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
                   ))}
                 </div>
@@ -505,10 +528,10 @@ export default function CompetitorWorkspace() {
             ) : (
               <div className="cs-empty">
                 <div className="cs-empty-icon"><Search size={20} /></div>
-                <h3>No matching reports</h3>
-                <p>Try adjusting your search, impact, or date filters.</p>
+                <h3>{t('workspace.noMatchTitle')}</h3>
+                <p>{t('workspace.noMatchBody')}</p>
                 <button type="button" className="cs-btn" onClick={clearFindingFilters}>
-                  <X size={15} /> Clear filters
+                  <X size={15} /> {t('shared.clearFilters')}
                 </button>
               </div>
             )}
@@ -517,18 +540,18 @@ export default function CompetitorWorkspace() {
       ) : (
         <div className="cs-empty">
           <div className="cs-empty-icon"><Sparkles size={20} /></div>
-          <h3>No reports yet</h3>
+          <h3>{t('workspace.emptyTitle')}</h3>
           <p>
             {stats.tracked
-              ? 'Competitors are tracked but nothing has been analysed yet. Run the analysis over the evidence on file.'
-              : 'No competitors are tracked yet. Head to the Competitors page to re-read documents and find the companies they are about.'}
+              ? t('workspace.emptyTrackedBody')
+              : t('workspace.emptyNoCompetitorsBody')}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {stats.tracked ? (
-              <RunAnalysisButton run={run} />
+              <RunAnalysisButton run={run} label={t('runAnalysis.runAnalysisLabel')} />
             ) : (
               <Link to={`/competitors/${studyId}/manage`} className="cs-btn cs-btn-primary">
-                <Layers size={15} /> Go to competitors
+                <Layers size={15} /> {t('workspace.goToCompetitors')}
               </Link>
             )}
           </div>

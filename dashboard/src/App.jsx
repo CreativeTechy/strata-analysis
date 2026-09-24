@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useDocumentLocaleSync } from './i18n/useLocale.js';
 import AppShell from './components/AppShell';
 import DashboardOverview from './components/DashboardOverview';
 import ReportsView from './components/ReportsView';
@@ -40,6 +41,7 @@ import {
 } from './api/projectsApi.js';
 
 export default function App() {
+  useDocumentLocaleSync();
   const location = useLocation();
   const pathname = location.pathname;
   const { user, loading: authLoading } = useAuth();

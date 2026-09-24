@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
   Database,
@@ -15,13 +16,15 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { getPipelineRun } from '../api/pipelineRunsApi.js';
+import { translateApiError } from '../lib/apiError.js';
+import { formatDateTime as formatLocaleDateTime, formatNumber } from '../lib/i18nFormat.js';
 
-function prettyStage(stage) {
-  if (!stage) return 'queued';
-  if (stage === 'done') return 'completed';
-  if (stage === 'prepare') return 'selecting articles';
-  if (stage === 'analyze') return 'analyzing';
-  if (stage === 'no_work') return 'no analysis required';
+function prettyStage(t, stage) {
+  if (!stage) return t('shared.stage.queued');
+  if (stage === 'done') return t('shared.stage.completed');
+  if (stage === 'prepare') return t('shared.stage.selectingArticles');
+  if (stage === 'analyze') return t('shared.stage.analyzing');
+  if (stage === 'no_work') return t('shared.stage.noAnalysisRequired');
   return stage;
 }
 
@@ -33,11 +36,20 @@ function stageColor(status) {
   return '#9aa0aa';
 }
 
-function formatDateTime(iso) {
+// queued/running/success/failed/cancelled are stored run-status enum values -
+// only the displayed label is translated, reusing common:status.* for the
+// two that already match it exactly.
+function runStatusLabel(t, status) {
+  if (status === 'success') return t('common:status.success');
+  if (status === 'failed') return t('common:status.failed');
+  return t(`shared.runStatusLabels.${status}`, status);
+}
+
+function formatDateTime(iso, locale) {
   if (!iso) return '—';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleString();
+  return formatLocaleDateTime(iso, locale) || '—';
 }
 
 function formatDuration(ms) {
@@ -66,46 +78,53 @@ function stageDuration(startIso, endIso) {
   return { text: text || '—', inProgress: !endIso };
 }
 
-function projectNameForRun(run, projectsById) {
+function projectNameForRun(run, projectsById, t) {
   if (!run) return '';
   if (run.project_name) return run.project_name;
   const project = projectsById.get(Number(run.project_id));
   if (project?.name) return project.name;
-  return run.project_id != null ? `Project #${run.project_id}` : 'Unassigned';
+  return run.project_id != null ? t('shared.projectFallback', { id: run.project_id }) : t('shared.projectUnassigned');
 }
 
 // A run has exactly two stages: work out what to analyze, then analyze it.
 // Nearly all of the wall clock is the second one - it is one model pass per
 // article - so showing them separately is what tells "the query is slow" apart
 // from "the model is slow".
-const STAGE_ROWS = [
-  { key: 'prepare', label: 'Selecting articles', startField: 'prepare_started_at', endField: 'prepare_finished_at', Icon: ListChecks },
-  { key: 'analyze', label: 'Analyzing', startField: 'analysis_started_at', endField: 'analysis_finished_at', Icon: Sparkles },
-];
+function buildStageRows(t) {
+  return [
+    { key: 'prepare', label: t('runDetail.stageRows.selectingArticles'), startField: 'prepare_started_at', endField: 'prepare_finished_at', Icon: ListChecks },
+    { key: 'analyze', label: t('runDetail.stageRows.analyzing'), startField: 'analysis_started_at', endField: 'analysis_finished_at', Icon: Sparkles },
+  ];
+}
 
-const TOTAL_STATS = [
-  { key: 'articles_selected', label: 'Articles selected', Icon: ListChecks, tint: 'rgba(46, 134, 222, 0.14)', color: '#2e86de' },
-  { key: 'articles_analyzed', label: 'Articles analyzed', Icon: ScanSearch, tint: 'rgba(46, 213, 115, 0.14)', color: '#2ed573' },
-  { key: 'articles_failed', label: 'Articles failed', Icon: CircleAlert, tint: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' },
-];
+function buildTotalStats(t) {
+  return [
+    { key: 'articles_selected', label: t('runDetail.stats.articlesSelected'), Icon: ListChecks, tint: 'rgba(46, 134, 222, 0.14)', color: '#2e86de' },
+    { key: 'articles_analyzed', label: t('runDetail.stats.articlesAnalyzed'), Icon: ScanSearch, tint: 'rgba(46, 213, 115, 0.14)', color: '#2ed573' },
+    { key: 'articles_failed', label: t('runDetail.stats.articlesFailed'), Icon: CircleAlert, tint: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' },
+  ];
+}
 
-const DOCUMENT_COLUMNS = [
-  { key: 'selected', label: 'Selected' },
-  { key: 'analyzed', label: 'Analyzed' },
-  { key: 'failed', label: 'Failed' },
-];
+function buildDocumentColumns(t) {
+  return [
+    { key: 'selected', label: t('runDetail.columns.selected') },
+    { key: 'analyzed', label: t('runDetail.columns.analyzed') },
+    { key: 'failed', label: t('common:status.failed') },
+  ];
+}
 
-function documentStatusBadge(row) {
+function documentStatusBadge(t, row) {
   if (row.failed) {
-    return { label: `${row.failed} failed`, color: '#ff4757', Icon: CircleAlert };
+    return { label: t('runDetail.documentStatus.failed', { count: row.failed }), color: '#ff4757', Icon: CircleAlert };
   }
   if (row.analyzed < row.selected) {
-    return { label: 'In progress', color: '#ffb13b', Icon: Loader2 };
+    return { label: t('runDetail.documentStatus.inProgress'), color: '#ffb13b', Icon: Loader2 };
   }
-  return { label: 'OK', color: '#2ed573', Icon: CircleCheck };
+  return { label: t('runDetail.documentStatus.ok'), color: '#2ed573', Icon: CircleCheck };
 }
 
 function StatusBadge({ status }) {
+  const { t } = useTranslation(['analysis', 'common']);
   const color = stageColor(status);
   return (
     <span
@@ -122,7 +141,7 @@ function StatusBadge({ status }) {
         letterSpacing: '0.03em',
       }}
     >
-      {status}
+      {runStatusLabel(t, status)}
     </span>
   );
 }
@@ -139,6 +158,9 @@ function SummaryField({ label, children }) {
 }
 
 export default function PipelineRunDetailPage({ projects = [] }) {
+  const { t, i18n } = useTranslation(['analysis', 'common']);
+  const { t: tErrors } = useTranslation('errors');
+  const locale = i18n.language;
   const { runId } = useParams();
   const [run, setRun] = useState(null);
   const [documents, setDocuments] = useState([]);
@@ -171,7 +193,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           return data?.run || null;
         })
         .catch((err) => {
-          if (!cancelled) setError(err?.message || 'Failed to load run details.');
+          if (!cancelled) setError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('runDetail.loadFailed')));
           return null;
         })
         .finally(() => {
@@ -201,7 +223,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [runId]);
+  }, [runId, t, tErrors]);
 
   const toggleDocument = (key) => {
     setExpandedDocuments((prev) => {
@@ -213,44 +235,44 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   };
 
   const total = run ? stageDuration(run.started_at, run.finished_at) : null;
-  const projectName = projectNameForRun(run, projectsById);
+  const projectName = projectNameForRun(run, projectsById, t);
 
   return (
     <div className="admin-page-shell">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <Database size={14} /> Analysis history
+            <Database size={14} /> {t('runDetail.kicker')}
           </div>
-          <h1 className="admin-page-title">Analysis Run Details</h1>
-          {projectName ? <p className="admin-page-subtitle">{projectName}</p> : null}
+          <h1 className="admin-page-title">{t('runDetail.title')}</h1>
+          {projectName ? <p className="admin-page-subtitle" dir="auto">{projectName}</p> : null}
         </div>
         <div className="admin-page-toolbar">
           <Link to="/pipeline-runs" className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ArrowLeft size={16} /> Back to Analysis Runs
+            <ArrowLeft size={16} className="rtl-mirror" /> {t('runDetail.backLink')}
           </Link>
         </div>
       </div>
 
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '24px 0' }}>
-          <Loader2 size={18} className="spin" /> Loading run details...
+          <Loader2 size={18} className="spin" /> {t('runDetail.loading')}
         </div>
       ) : error ? (
-        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#b42318', borderLeft: '4px solid #ff4757' }}>
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#b42318', borderLeft: '4px solid #ff4757' }} dir="auto">
           <AlertTriangle size={18} /> {error}
         </div>
       ) : !run ? null : (
         <>
           <div className="admin-stats-grid">
-            {TOTAL_STATS.map(({ key, label, Icon, tint, color }) => (
+            {buildTotalStats(t).map(({ key, label, Icon, tint, color }) => (
               <div className="admin-stat-card" key={key}>
                 <div className="admin-stat-icon" style={{ background: tint, color }}>
                   <Icon size={18} />
                 </div>
                 <div>
                   <span>{label}</span>
-                  <strong>{(run[key] || 0).toLocaleString()}</strong>
+                  <strong>{formatNumber(run[key] || 0, locale)}</strong>
                 </div>
               </div>
             ))}
@@ -258,17 +280,21 @@ export default function PipelineRunDetailPage({ projects = [] }) {
 
           <div className="glass-card" style={{ marginBottom: 18 }}>
             <div className="run-detail-summary-grid">
-              <SummaryField label="Project">{projectName}</SummaryField>
-              <SummaryField label="Status">
+              <SummaryField label={t('runDetail.summary.project')}><span dir="auto">{projectName}</span></SummaryField>
+              <SummaryField label={t('runDetail.summary.status')}>
                 <StatusBadge status={run.status} />
               </SummaryField>
-              <SummaryField label="Current stage">{prettyStage(run.stage)}</SummaryField>
-              <SummaryField label="Dashboard dataset">{run.analytics_eligible ? `${run.analysis_result_count} saved article result(s)` : 'Not used for analytics'}</SummaryField>
-              <SummaryField label="Started at">{formatDateTime(run.started_at)}</SummaryField>
-              <SummaryField label="Finished at">{formatDateTime(run.finished_at)}</SummaryField>
-              <SummaryField label="Total duration">
+              <SummaryField label={t('runDetail.summary.currentStage')}>{prettyStage(t, run.stage)}</SummaryField>
+              <SummaryField label={t('runDetail.summary.dashboardDataset')}>
+                {run.analytics_eligible
+                  ? t('runDetail.summary.savedResults', { count: run.analysis_result_count })
+                  : t('runDetail.summary.notUsedForAnalytics')}
+              </SummaryField>
+              <SummaryField label={t('runDetail.summary.startedAt')}>{formatDateTime(run.started_at, locale)}</SummaryField>
+              <SummaryField label={t('runDetail.summary.finishedAt')}>{formatDateTime(run.finished_at, locale)}</SummaryField>
+              <SummaryField label={t('runDetail.summary.totalDuration')}>
                 {total.text}
-                {total.inProgress ? ' (in progress)' : ''}
+                {total.inProgress ? t('runDetail.inProgressSuffix') : ''}
               </SummaryField>
             </div>
 
@@ -278,15 +304,15 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                 it, so one long value can't stretch or misalign the rest. */}
             {run.message ? (
               <div className="run-detail-message-box">
-                <div className="run-detail-box-label">Message</div>
-                <div className="run-detail-message-text">{run.message}</div>
+                <div className="run-detail-box-label">{t('runDetail.messageLabel')}</div>
+                <div className="run-detail-message-text" dir="auto">{run.message}</div>
               </div>
             ) : null}
 
             {run.error ? (
               <div className="run-detail-error-box">
                 <div className="run-detail-box-label">
-                  <AlertTriangle size={13} /> Error
+                  <AlertTriangle size={13} /> {t('common:status.error')}
                 </div>
                 <pre className="run-detail-error-text">{run.error}</pre>
               </div>
@@ -294,14 +320,14 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           <div className="glass-card" style={{ marginBottom: 18 }}>
-            <h3 className="run-detail-section-title">Timing</h3>
+            <h3 className="run-detail-section-title">{t('runDetail.timingTitle')}</h3>
             {!run.has_detail ? (
               <div className="run-detail-fallback">
-                Details unavailable for this run — it finished before per-stage timing was tracked.
+                {t('runDetail.timingFallback')}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {STAGE_ROWS.map(({ key, label, startField, endField, Icon }) => {
+                {buildStageRows(t).map(({ key, label, startField, endField, Icon }) => {
                   const duration = stageDuration(run[startField], run[endField]);
                   return (
                     <div
@@ -320,7 +346,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                       </span>
                       <span style={{ fontSize: '0.85rem', color: 'var(--text-light)', fontWeight: duration.inProgress ? 700 : 400 }}>
                         {duration.text}
-                        {duration.inProgress ? ' (in progress)' : ''}
+                        {duration.inProgress ? t('runDetail.inProgressSuffix') : ''}
                       </span>
                     </div>
                   );
@@ -330,22 +356,22 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           <div className="glass-card">
-            <h3 className="run-detail-section-title">Per-document breakdown</h3>
+            <h3 className="run-detail-section-title">{t('runDetail.documentBreakdownTitle')}</h3>
             {!run.has_detail ? (
               <div className="run-detail-fallback">
-                Details unavailable for this run — it finished before per-document stats were tracked.
+                {t('runDetail.documentBreakdownFallback')}
               </div>
             ) : documents.length === 0 ? (
-              <div className="run-detail-fallback">No per-document data recorded for this run yet.</div>
+              <div className="run-detail-fallback">{t('runDetail.noDocumentData')}</div>
             ) : (
               <div className="table-scroll">
                 <table className="run-detail-source-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', background: 'var(--glass-bg)' }}>
                       <th style={{ padding: '8px 10px', width: 28 }} />
-                      <th style={{ padding: '8px 10px' }}>Document</th>
-                      <th style={{ padding: '8px 10px' }}>Status</th>
-                      {DOCUMENT_COLUMNS.map((col) => (
+                      <th style={{ padding: '8px 10px' }}>{t('runDetail.columns.document')}</th>
+                      <th style={{ padding: '8px 10px' }}>{t('runDetail.columns.status')}</th>
+                      {buildDocumentColumns(t).map((col) => (
                         <th key={col.key} style={{ padding: '8px 10px', textAlign: 'right' }}>
                           {col.label}
                         </th>
@@ -356,7 +382,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                     {documents.map((row) => {
                       const key = row.document;
                       const isExpanded = expandedDocuments.has(key);
-                      const badge = documentStatusBadge(row);
+                      const badge = documentStatusBadge(t, row);
                       const hasDetails = Boolean(row.note);
                       return (
                         <Fragment key={key}>
@@ -366,7 +392,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                                 <button
                                   type="button"
                                   onClick={() => toggleDocument(key)}
-                                  aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
+                                  aria-label={isExpanded ? t('runDetail.collapseDetails') : t('runDetail.expandDetails')}
                                   style={{
                                     background: 'none',
                                     border: 'none',
@@ -382,7 +408,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                               ) : null}
                             </td>
                             <td style={{ padding: '8px 10px', wordBreak: 'break-word', maxWidth: 280 }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }} dir="auto">
                                 <FileText size={13} style={{ flexShrink: 0, color: 'var(--text-light)' }} />
                                 {row.document}
                               </span>
@@ -405,7 +431,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                                 <badge.Icon size={13} /> {badge.label}
                               </span>
                             </td>
-                            {DOCUMENT_COLUMNS.map((col) => (
+                            {buildDocumentColumns(t).map((col) => (
                               <td key={col.key} style={{ padding: '8px 10px', textAlign: 'right' }}>
                                 {row[col.key] ?? 0}
                               </td>
@@ -414,7 +440,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                           {isExpanded && hasDetails ? (
                             <tr style={{ background: 'rgba(0,0,0,0.02)' }}>
                               <td />
-                              <td colSpan={DOCUMENT_COLUMNS.length + 2} style={{ padding: '8px 10px 12px', fontSize: '0.8rem', color: 'var(--text-dark)' }}>
+                              <td colSpan={buildDocumentColumns(t).length + 2} style={{ padding: '8px 10px 12px', fontSize: '0.8rem', color: 'var(--text-dark)' }} dir="auto">
                                 {row.note}
                               </td>
                             </tr>

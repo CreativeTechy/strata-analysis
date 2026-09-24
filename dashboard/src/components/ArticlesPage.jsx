@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
@@ -26,14 +27,38 @@ import {
   exportArticles,
 } from '../api/articlesApi.js';
 import { listProjectSources } from '../api/projectsApi.js';
+import { formatNumber } from '../lib/i18nFormat.js';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
-  { value: 'card', label: 'Cards', icon: LayoutGrid },
-  { value: 'list', label: 'List', icon: List },
+  { value: 'card', labelKey: 'viewMode.cards', icon: LayoutGrid },
+  { value: 'list', labelKey: 'viewMode.list', icon: List },
 ];
 
+// SORT_OPTIONS' own `label` (from articleHelpers.jsx, not owned by this
+// localization pass) stays the English fallback if a future sort value isn't
+// in this map yet - the `value` driving the actual sort query is untouched
+// either way.
+const SORT_LABEL_KEYS = {
+  'published.desc': 'sort.publishedDesc',
+  'published.asc': 'sort.publishedAsc',
+  'relevance_score.desc': 'sort.relevanceDesc',
+  'relevance_score.asc': 'sort.relevanceAsc',
+  'created_at.desc': 'sort.createdDesc',
+};
+
+// Bounded enum (positive/negative/neutral/mixed) - only the displayed label
+// is translated, the <option value=""> stays the raw English enum code.
+const SENTIMENT_LABEL_KEYS = {
+  positive: 'sentiment.positive',
+  negative: 'sentiment.negative',
+  neutral: 'sentiment.neutral',
+  mixed: 'sentiment.mixed',
+};
+
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
+  const { t, i18n } = useTranslation(['articles', 'common']);
+  const locale = i18n.language;
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
     if (typeof projectId === 'object') {
@@ -244,7 +269,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         setTotal(Number(data?.total) || 0);
       } catch (err) {
         if (err?.name !== 'AbortError') {
-          setError(err?.message || 'Failed to load articles.');
+          setError(err?.message || t('errors.loadFailed'));
           if (!hasArticlesRef.current) {
             setArticles([]);
             setTotal(0);
@@ -257,7 +282,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -287,7 +312,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const hasNext = offset + limit < total;
   const isInitialLoading = loading && articles.length === 0;
   const isRefreshing = loading && articles.length > 0;
-  const scopeLabel = projectFilter === 'all' ? 'All projects' : (activeProject?.name || 'Selected project');
+  const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.name || t('toolbar.selectedProjectScope'));
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
   const searchBusy = Boolean(searchInput) && (searchInput.trim() !== search || loading);
@@ -320,7 +345,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setOffset(0);
       setReloadToken((value) => value + 1);
     } catch (err) {
-      setError(err?.message || 'Failed to delete articles.');
+      setError(err?.message || t('errors.deleteAllFailed'));
     } finally {
       setDeletingAll(false);
     }
@@ -351,7 +376,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       anchor.remove();
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
-      setError(err?.message || 'Failed to export articles.');
+      setError(err?.message || t('errors.exportFailed'));
     } finally {
       setExporting(false);
     }
@@ -368,14 +393,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // uploaded document's articles are.
   const importDocumentFiles = async (files) => {
     const projectId = projectFilter;
-    setDocumentImportStatus({ message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
+    setDocumentImportStatus({ message: t('import.uploadingFiles', { count: files.length }) });
     const { documents } = await uploadDocuments(projectId, files);
     const documentIds = documents.map((doc) => doc.id);
 
-    setDocumentImportStatus({ message: 'Extracting text...' });
+    setDocumentImportStatus({ message: t('import.extractingText') });
     await pollDocumentExtraction(projectId, documentIds, () => {});
 
-    setDocumentImportStatus({ message: 'Splitting into articles...' });
+    setDocumentImportStatus({ message: t('import.splittingIntoArticles') });
     const afterSplit = await pollArticleCandidates(projectId, documentIds, () => {});
     const thisBatch = afterSplit.filter((doc) => documentIds.includes(doc.id));
     const failedIds = new Set(
@@ -389,9 +414,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
     // because the document itself didn't fail outright.
     const notes = thisBatch
       .filter((doc) => !failedIds.has(doc.id) && doc.articles_error)
-      .map((doc) => `${doc.original_filename || `Document #${doc.id}`}: ${doc.articles_error}`);
+      .map((doc) => t('import.documentNote', { name: doc.original_filename || `Document #${doc.id}`, error: doc.articles_error }));
 
-    setDocumentImportStatus({ message: 'Adding articles...' });
+    setDocumentImportStatus({ message: t('import.addingArticles') });
     // One request for the whole batch, scoped to just these documents (see
     // approve_for_documents' docstring), instead of one approval request per
     // candidate - process_document already auto-approves each document as it
@@ -408,7 +433,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setDocumentImportStatus({
       message:
-        `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`
+        `${t('import.addedCount', { count: approved })} ${t('import.fromFileCount', { count: documents.length })}`
         + (notes.length ? ` ${notes.join(' ')}` : ''),
       done: true,
       warning: notes.length > 0,
@@ -416,7 +441,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     if (failedIds.size) {
       const names = documents.filter((doc) => failedIds.has(doc.id)).map((doc) => doc.original_filename || `Document #${doc.id}`);
-      throw new Error(`${failedIds.size} file(s) failed to process: ${names.join(', ')}`);
+      throw new Error(t('import.filesFailedToProcess', { count: failedIds.size, names: names.join(', ') }));
     }
   };
 
@@ -444,8 +469,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (!documentFiles.length) {
       setError(
         skipped.length
-          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`
-          : 'No supported files found in the selection.'
+          ? t('import.selectProjectToImport', { names: skipped.join(', ') })
+          : t('import.noSupportedFiles')
       );
       return;
     }
@@ -459,13 +484,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
       await importDocumentFiles(documentFiles);
     } catch (err) {
       const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
-      failures.push({ name, error: err?.message || 'Failed to import.' });
+      failures.push({ name, error: err?.message || t('import.genericFailure') });
     }
 
     const messages = [];
     if (failures.length) messages.push(failures[0].error);
     if (skipped.length) {
-      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`);
+      messages.push(t('import.selectProjectToImport', { names: skipped.join(', ') }));
     }
     if (messages.length) setError(messages.join(' '));
 
@@ -481,19 +506,19 @@ export default function ArticlesPage({ project = null, projectId = null, project
           <div>
             <div className="admin-page-kicker" style={{ marginBottom: 10 }}>
               <SlidersHorizontal size={26} color="#ff6b35" />
-              <span>Article Library</span>
+              <span>{t('list.kicker')}</span>
             </div>
-            <h1 className="admin-page-title">Articles</h1>
+            <h1 className="admin-page-title">{t('list.title')}</h1>
             <p className="admin-page-subtitle">
-              Server-side search, sentiment, project, sort, and pagination powered by the API.
-              {project ? ` Dashboard project: ${project.name}.` : ' Showing all projects.'}
+              {t('list.subtitle')}
+              {project ? t('list.subtitleProjectSuffix', { name: project.name }) : t('list.subtitleAllProjects')}
             </p>
           </div>
 
           <div className="dashboard-hero-actions">
             <div className="report-project-control">
               <label className="report-project-control-label" htmlFor="articles-project-select">
-                <FolderKanban size={13} /> Project scope
+                <FolderKanban size={13} /> {t('list.projectScopeLabel')}
               </label>
               <div className="report-project-select-wrap">
                 <FolderKanban size={16} aria-hidden="true" />
@@ -502,12 +527,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   className="filter-select report-project-select"
                   value={projectFilter}
                   onChange={(e) => setProjectFilter(e.target.value)}
-                  aria-label="Project scope for articles"
+                  aria-label={t('list.projectScopeAriaLabel')}
                 >
-                  <option value="all">All projects</option>
+                  <option value="all">{t('list.allProjectsOption')}</option>
                   {projects.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} ({item.status || 'draft'})
+                    <option key={item.id} value={item.id} dir="auto">
+                      {item.name} ({item.status || t('list.draftStatus')})
                     </option>
                   ))}
                 </select>
@@ -521,21 +546,21 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
               >
                 <Trash2 size={16} />
-                {deletingAll ? 'Deleting...' : 'Delete All Articles'}
+                {deletingAll ? t('list.deletingButton') : t('list.deleteAllButton')}
               </button>
             )}
             <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
-              Back to Dashboard
+              {t('list.backToDashboard')}
             </Link>
           </div>
         </div>
 
         <ConfirmModal
           open={showDeleteAllModal}
-          title="Delete all articles?"
-          message="This will remove every row in the articles table and cannot be undone."
-          confirmLabel={deletingAll ? 'Deleting...' : 'Delete all articles'}
-          cancelLabel="Keep articles"
+          title={t('list.deleteAllModal.title')}
+          message={t('list.deleteAllModal.message')}
+          confirmLabel={deletingAll ? t('list.deleteAllModal.confirmLabelBusy') : t('list.deleteAllModal.confirmLabel')}
+          cancelLabel={t('list.deleteAllModal.cancelLabel')}
           confirmButtonStyle={{
             background: 'linear-gradient(135deg, #ff4757, #e03131)',
             boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
@@ -552,10 +577,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
         <ConfirmModal
           open={showExportModal}
-          title="Export articles?"
-          message={`This will export ${total.toLocaleString()} article${total === 1 ? '' : 's'} matching your current filters as a JSONL file.`}
-          confirmLabel={exporting ? 'Exporting...' : 'Export'}
-          cancelLabel="Cancel"
+          title={t('list.exportModal.title')}
+          message={t('list.exportModal.message', { count: total, formatted: formatNumber(total, locale) })}
+          confirmLabel={exporting ? t('list.exportModal.confirmLabelBusy') : t('list.exportModal.confirmLabel')}
+          cancelLabel={t('common:actions.cancel')}
           onClose={() => {
             if (!exporting) setShowExportModal(false);
           }}
@@ -593,10 +618,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
               disabled={!activeProject || sourceOptions.length === 0}
             >
               <option value="all">
-                {activeProject ? 'All documents' : 'Select a project for documents'}
+                {activeProject ? t('filters.allDocuments') : t('filters.selectProjectForDocuments')}
               </option>
               {sourceOptions.map((option) => (
-                <option key={option.value} value={option.value}>
+                <option key={option.value} value={option.value} dir="auto">
                   {option.label}
                 </option>
               ))}
@@ -612,10 +637,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
               disabled={!activeProject || sourceHostOptions.length === 0}
             >
               <option value="all">
-                {activeProject ? 'All real sources' : 'Select a project for sources'}
+                {activeProject ? t('filters.allRealSources') : t('filters.selectProjectForSources')}
               </option>
               {sourceHostOptions.map((option) => (
-                <option key={option.value} value={option.value}>
+                <option key={option.value} value={option.value} dir="ltr">
                   {option.label}
                 </option>
               ))}
@@ -623,7 +648,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
             <div className="articles-date-range">
               <span className="articles-date-range-label">
-                <Calendar size={14} /> Added between
+                <Calendar size={14} /> {t('filters.addedBetween')}
               </span>
               <input
                 type="date"
@@ -631,18 +656,18 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 value={addedFrom}
                 max={addedTo || undefined}
                 onChange={(e) => setAddedFrom(e.target.value)}
-                title="Only show articles added on or after this date"
-                aria-label="Added from date"
+                title={t('filters.addedFromTitle')}
+                aria-label={t('filters.addedFromAriaLabel')}
               />
-              <span className="articles-date-range-sep">to</span>
+              <span className="articles-date-range-sep">{t('filters.dateRangeSeparator')}</span>
               <input
                 type="date"
                 className="filter-select"
                 value={addedTo}
                 min={addedFrom || undefined}
                 onChange={(e) => setAddedTo(e.target.value)}
-                title="Only show articles added on or before this date"
-                aria-label="Added to date"
+                title={t('filters.addedToTitle')}
+                aria-label={t('filters.addedToAriaLabel')}
               />
             </div>
           </div>
@@ -661,8 +686,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
                     clearSearch();
                   }
                 }}
-                placeholder="Search title, summary, source..."
-                aria-label="Search articles"
+                placeholder={t('filters.searchPlaceholder')}
+                aria-label={t('filters.searchAriaLabel')}
+                dir="auto"
                 style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem' }}
               />
               {searchBusy ? (
@@ -672,8 +698,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   type="button"
                   className="articles-search-clear"
                   onClick={clearSearch}
-                  aria-label="Clear search"
-                  title="Clear search"
+                  aria-label={t('filters.clearSearchAriaLabel')}
+                  title={t('filters.clearSearchAriaLabel')}
                 >
                   <X size={14} />
                 </button>
@@ -683,7 +709,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
             <select className="filter-select" value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
               {SENTIMENTS.map((value) => (
                 <option key={value} value={value}>
-                  {value === 'all' ? 'All sentiments' : value[0].toUpperCase() + value.slice(1)}
+                  {value === 'all' ? t('filters.allSentiments') : t(SENTIMENT_LABEL_KEYS[value] || 'sentiment.neutral')}
                 </option>
               ))}
             </select>
@@ -691,7 +717,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
             <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
               {SORT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {SORT_LABEL_KEYS[option.value] ? t(SORT_LABEL_KEYS[option.value]) : option.label}
                 </option>
               ))}
             </select>
@@ -700,19 +726,19 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
         <div className="admin-toolbar-row" style={{ justifyContent: 'space-between' }}>
           <div className="articles-toolbar-summary">
-            <span>{loading ? 'Loading articles...' : `${total.toLocaleString()} articles total, showing ${visibleRange}`}</span>
-            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+            <span>{loading ? t('toolbar.loading') : t('toolbar.totalShowing', { total: formatNumber(total, locale), range: visibleRange })}</span>
+            <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} dir="auto">
               <Filter size={12} />
               {scopeLabel}
             </span>
             {sourceFilter !== 'all' && (
-              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} dir="auto">
                 <Filter size={12} />
                 {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
               </span>
             )}
             {sourceHostFilter !== 'all' && (
-              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} dir="ltr">
                 <Filter size={12} />
                 {sourceHostOptions.find((option) => option.value === sourceHostFilter)?.label || sourceHostFilter}
               </span>
@@ -720,12 +746,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
             {(addedFrom || addedTo) && (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 <Calendar size={12} />
-                Added {addedFrom || 'any'} to {addedTo || 'any'}
+                {t('toolbar.addedRange', { from: addedFrom || t('toolbar.any'), to: addedTo || t('toolbar.any') })}
               </span>
             )}
           </div>
           <div className="articles-pager-actions">
-            <div className="source-type-tabs" role="tablist" aria-label="Switch article view">
+            <div className="source-type-tabs" role="tablist" aria-label={t('viewMode.ariaLabel')}>
               {VIEW_MODES.map((mode) => {
                 const Icon = mode.icon;
                 const isActive = viewMode === mode.value;
@@ -738,21 +764,21 @@ export default function ArticlesPage({ project = null, projectId = null, project
                     className={`source-type-tab ${isActive ? 'active' : ''}`}
                     onClick={() => changeViewMode(mode.value)}
                   >
-                    <Icon size={14} /> {mode.label}
+                    <Icon size={14} /> {t(mode.labelKey)}
                   </button>
                 );
               })}
             </div>
-            <select className="filter-select" value={limit} onChange={(e) => setLimit(Number(e.target.value))} aria-label="Articles per page">
+            <select className="filter-select" value={limit} onChange={(e) => setLimit(Number(e.target.value))} aria-label={t('perPage.ariaLabel')}>
               {PAGE_SIZES.map((size) => (
                 <option key={size} value={size}>
-                  {size} per page
+                  {t('perPage.option', { count: size })}
                 </option>
               ))}
             </select>
             <button className="btn-secondary" onClick={() => setShowExportModal(true)} disabled={loading || exporting || deletingAll}>
               <Upload size={16} />
-              {exporting ? 'Exporting...' : 'Export'}
+              {exporting ? t('list.exportModal.confirmLabelBusy') : t('common:actions.export')}
             </button>
             {canImport && (
               <>
@@ -779,7 +805,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   disabled={loading || importing || deletingAll}
                 >
                   <Download size={16} />
-                  {importing ? 'Importing...' : 'Import'}
+                  {importing ? t('import.importingButton') : t('common:actions.import')}
                 </button>
               </>
             )}
@@ -789,7 +815,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         {error ? (
           <div className="glass-card articles-error-banner">
             <AlertTriangle size={18} />
-            <span>{error}</span>
+            <span dir="auto">{error}</span>
           </div>
         ) : null}
 
@@ -823,9 +849,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
               <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, padding: '14px 18px' }}>
                 <div className="loading-spinner" />
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Refreshing results</div>
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>{t('refreshing.title')}</div>
                   <div style={{ color: 'var(--text-light)', fontSize: '0.9rem' }}>
-                    Keeping the current list visible while the new filter set loads.
+                    {t('refreshing.body')}
                   </div>
                 </div>
               </div>
@@ -871,8 +897,8 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   <div className="admin-empty-state-icon">
                     <Search size={18} />
                   </div>
-                  <strong>No articles found</strong>
-                  <span>Try adjusting your search, sentiment, source, date range, or project filters.</span>
+                  <strong>{t('emptyState.title')}</strong>
+                  <span>{t('emptyState.body')}</span>
                 </div>
               </div>
             )}
@@ -880,9 +906,9 @@ export default function ArticlesPage({ project = null, projectId = null, project
         )}
 
         {!isInitialLoading && articles.length > 0 && (
-          <div className="articles-pagination" role="navigation" aria-label="Articles pagination">
+          <div className="articles-pagination" role="navigation" aria-label={t('pagination.ariaLabel')}>
             <button className="btn-secondary" onClick={() => setOffset((prev) => Math.max(0, prev - limit))} disabled={!hasPrev || loading}>
-              <ChevronLeft size={16} /> Previous
+              <ChevronLeft size={16} className="rtl-mirror" /> {t('common:actions.previous')}
             </button>
             {pageNumbers.map((page, index) =>
               page === '...' ? (
@@ -903,7 +929,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
               )
             )}
             <button className="btn-secondary" onClick={() => setOffset((prev) => prev + limit)} disabled={!hasNext || loading}>
-              Next <ChevronRight size={16} />
+              {t('common:actions.next')} <ChevronRight size={16} className="rtl-mirror" />
             </button>
           </div>
         )}

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Cell, Pie, PieChart, Tooltip } from 'recharts';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
@@ -11,10 +12,18 @@ const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
 
 // Labels the demographic breakdown APIs' bucket values (region/gender/age_range/segment)
 // - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
+// Open-ended DB text, so this stays a plain transform rather than a
+// translation lookup - see DashboardOverview.jsx's distributionLabel().
 function labelize(value) {
   return String(value || 'unknown')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// SENTIMENT_KEYS is a fixed 4-value enum (unlike the open-ended bucket
+// values above), so it goes through a real translation lookup instead.
+function sentimentLabel(t, key) {
+  return t(`dashboard:sentiment.${key}`, labelize(key));
 }
 
 // These breakdowns are open-ended text buckets, so navigation is capped to
@@ -41,11 +50,12 @@ function capBreakdown(entries, limit = 7) {
  * the buckets instead of showing them all at once.
  */
 export default function DemographicPieCarousel({ data, emptyLabel }) {
+  const { t } = useTranslation('dashboard');
   const [index, setIndex] = useState(0);
   const buckets = capBreakdown((Array.isArray(data) ? data : []).filter((entry) => Number(entry?.total) > 0));
 
   if (buckets.length === 0) {
-    return <p className="intelligence-empty">{emptyLabel || 'No data detected on analyzed articles yet.'}</p>;
+    return <p className="intelligence-empty">{emptyLabel || t('dashboard:carousel.emptyDefault')}</p>;
   }
 
   const safeIndex = Math.min(index, buckets.length - 1);
@@ -62,19 +72,19 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
           className="demographic-pie-carousel-arrow"
           onClick={() => goTo(safeIndex - 1)}
           disabled={!canNavigate}
-          aria-label="Previous value"
+          aria-label={t('dashboard:carousel.prevAria')}
         >
-          <ChevronLeft size={22} />
+          <ChevronLeft size={22} className="rtl-mirror" />
         </button>
-        <span className="demographic-pie-carousel-label">{labelize(bucket.value)}</span>
+        <span className="demographic-pie-carousel-label" dir="auto">{labelize(bucket.value)}</span>
         <button
           type="button"
           className="demographic-pie-carousel-arrow"
           onClick={() => goTo(safeIndex + 1)}
           disabled={!canNavigate}
-          aria-label="Next value"
+          aria-label={t('dashboard:carousel.nextAria')}
         >
-          <ChevronRight size={22} />
+          <ChevronRight size={22} className="rtl-mirror" />
         </button>
       </div>
       <div className="intelligence-donut">
@@ -83,11 +93,11 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
             <Pie data={slices} dataKey="value" nameKey="key" outerRadius="88%" paddingAngle={3} stroke="none">
               {slices.map((slice) => <Cell key={slice.key} fill={COLORS[slice.key]} />)}
             </Pie>
-            <Tooltip formatter={(value, name) => [`${value} articles`, labelize(name)]} />
+            <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} />
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <span className="demographic-pie-carousel-count">{bucket.total} article{bucket.total === 1 ? '' : 's'}</span>
+      <span className="demographic-pie-carousel-count">{t('dashboard:counts.articlesCount', { count: bucket.total })}</span>
       {canNavigate && (
         <div className="demographic-pie-carousel-dots">
           {buckets.map((entry, entryIndex) => (
@@ -96,14 +106,14 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
               type="button"
               className={`demographic-pie-carousel-dot ${entryIndex === safeIndex ? 'active' : ''}`}
               onClick={() => goTo(entryIndex)}
-              aria-label={`Show ${labelize(entry.value)}`}
+              aria-label={t('dashboard:carousel.showValueAria', { value: labelize(entry.value) })}
               aria-current={entryIndex === safeIndex}
             />
           ))}
         </div>
       )}
       <div className="report-gender-sentiment-legend">
-        {SENTIMENT_KEYS.map((key) => <span key={key}><i style={{ background: COLORS[key] }} />{key}</span>)}
+        {SENTIMENT_KEYS.map((key) => <span key={key}><i style={{ background: COLORS[key] }} />{sentimentLabel(t, key)}</span>)}
       </div>
     </div>
   );
