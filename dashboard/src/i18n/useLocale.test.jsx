@@ -61,6 +61,25 @@ describe('useLocale', () => {
     });
     expect(i18n.language).toBe('ar');
   });
+
+  it.each(['en-US', 'en-GB'])('normalizes a regional English browser locale (%s) down to the supported base code', async (regional) => {
+    await act(async () => {
+      await i18n.changeLanguage(regional);
+    });
+    // nonExplicitSupportedLngs: false (i18n/index.js) is what makes this
+    // resolve to 'en' instead of staying 'en-US' - the backend's
+    // normalize_locale() rejects anything but exactly 'en'/'ar', so a
+    // first-time visitor with a regional browser locale would otherwise get
+    // 400s from every locale-aware endpoint (article detail, Copilot chat).
+    expect(i18n.language).toBe('en');
+  });
+
+  it.each(['ar-SA', 'ar-EG'])('normalizes a regional Arabic browser locale (%s) down to the supported base code', async (regional) => {
+    await act(async () => {
+      await i18n.changeLanguage(regional);
+    });
+    expect(i18n.language).toBe('ar');
+  });
 });
 
 function DocumentLocaleProbe() {

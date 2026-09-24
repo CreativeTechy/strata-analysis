@@ -114,21 +114,43 @@ class LocalizedTrendSummaryTests(unittest.TestCase):
         self.assertEqual(result["summary"], CANONICAL_ROW["summary"])
         mock_save.assert_not_called()
 
-    def test_force_regenerates_only_the_localized_render_not_the_canonical(self):
-        """Regenerating while viewing a non-default locale must not force a
-        fresh (billable) canonical generation as a side effect."""
+    def test_force_regenerates_the_canonical_summary_from_current_articles_then_rerenders_the_locale(self):
+        """Regenerating while viewing a non-default locale is the only control
+        that project has for refreshing the trend summary at all - it must
+        rebuild the canonical (English) summary from the current articles,
+        not just re-translate whatever canonical text happened to be cached
+        (F003: a localized force-regenerate used to always call `_load_cached`
+        with `force=False` internally, so it could never pick up new
+        articles)."""
         canonical_updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        with patch.object(trend_summary, "_load_cached", return_value=CANONICAL_ROW) as mock_load, \
+        fresh_row = {
+            "id": 1, "summary": "Fresh coverage was mixed this period.",
+            "sentiment": "mixed", "published": "2026-01-01", "created_at": "2026-01-01",
+            "title": "Latest article",
+        }
+        with patch.object(trend_summary, "_load_cached") as mock_load, \
+             patch.object(trend_summary, "_fetch_project_rows", return_value=[fresh_row]), \
+             patch.object(trend_summary, "filter_rows_for_period", return_value=[fresh_row]), \
+             patch.object(trend_summary, "_save_cached") as mock_save_canonical, \
              patch.object(trend_summary, "_canonical_updated_at", return_value=canonical_updated_at), \
              patch.object(trend_summary, "_load_cached_localized") as mock_localized, \
-             patch.object(trend_summary, "_save_cached_localized"), \
-             patch("services.intelligence.trend_summary.chat_completion", return_value="Fresh render."):
-            trend_summary.generate_trend_summary(PROJECT, period="30d", locale="ar", force=True)
+             patch.object(trend_summary, "_save_cached_localized") as mock_save_localized, \
+             patch(
+                 "services.intelligence.trend_summary.chat_completion",
+                 side_effect=["Fresh coverage was mixed this period.", "تغطية جديدة كانت مختلطة هذه الفترة."],
+             ) as mock_chat:
+            result = trend_summary.generate_trend_summary(PROJECT, period="30d", locale="ar", force=True)
 
-        # _load_cached is the canonical lookup; called with force=False internally.
-        mock_load.assert_called_once()
-        # A localized force-regenerate must not even check the localized cache.
+        # force=True on the canonical call means the cache is never consulted.
+        mock_load.assert_not_called()
+        mock_save_canonical.assert_called_once()
+        # A localized force-regenerate must not check the (now-stale) localized cache either.
         mock_localized.assert_not_called()
+        # One call to regenerate the canonical English summary, one to render it into Arabic.
+        self.assertEqual(mock_chat.call_count, 2)
+        mock_save_localized.assert_called_once()
+        self.assertEqual(result["summary"], "تغطية جديدة كانت مختلطة هذه الفترة.")
+        self.assertFalse(result["cached"])
 
 
 if __name__ == "__main__":

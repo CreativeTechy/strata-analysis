@@ -88,7 +88,14 @@ i18n
     defaultNS: 'common',
     fallbackLng: DEFAULT_LOCALE,
     supportedLngs: SUPPORTED_LOCALES,
-    nonExplicitSupportedLngs: true,
+    // false (not the i18next default true) so a regional code ('en-US',
+    // 'ar-SA') resolves i18n.language down to its base language ('en'/'ar')
+    // instead of being kept verbatim. Every consumer - API calls,
+    // <html lang>/dir, the language switcher - reads i18n.language directly,
+    // and the backend's normalize_locale() rejects anything but exactly
+    // 'en'/'ar' (see services/i18n/locales.py), so a first-time visitor with
+    // a regional browser locale needs this to land on a supported code.
+    nonExplicitSupportedLngs: false,
     lng: readStoredLocale() || undefined,
     detection: {
       // localStorage first (an explicit prior choice always wins), then the

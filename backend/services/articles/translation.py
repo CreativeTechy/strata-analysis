@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import config
 import db
@@ -32,6 +33,36 @@ from services.i18n.locales import language_instruction
 logger = logging.getLogger(__name__)
 
 TRANSLATION_SYSTEM_PROMPT = load_prompt("article_translation_system_prompt.txt")
+
+# This runs on GET /api/articles/{id}/analysis - a request path that used to
+# be a single indexed SELECT. A failing/unreachable LLM provider (the most
+# common case with the default LLM_PROVIDER=ollama: the model server just
+# isn't running) means every view of every article in a non-default locale
+# pays the full LLM_REQUEST_TIMEOUT_SECONDS again, on every request, until
+# someone fixes the provider. Remembering a recent failure per
+# (article_id, locale) - invalidated the same way the translation cache
+# itself is, by source_analyzed_at - means a failing provider is retried at
+# most once per window instead of on every view.
+FAILURE_CACHE_SECONDS = 300
+_failure_cache: dict[tuple[int, str], tuple[float, object]] = {}
+
+
+def _recent_failure(article_id: int, locale: str, source_analyzed_at) -> bool:
+    entry = _failure_cache.get((article_id, locale))
+    if entry is None:
+        return False
+    failed_at, failed_source_analyzed_at = entry
+    if failed_source_analyzed_at != source_analyzed_at:
+        return False
+    return (time.monotonic() - failed_at) < FAILURE_CACHE_SECONDS
+
+
+def _record_failure(article_id: int, locale: str, source_analyzed_at) -> None:
+    _failure_cache[(article_id, locale)] = (time.monotonic(), source_analyzed_at)
+
+
+def _clear_failure(article_id: int, locale: str) -> None:
+    _failure_cache.pop((article_id, locale), None)
 
 TEXT_FIELDS = ("topic", "summary")
 LIST_FIELDS = (
@@ -192,11 +223,16 @@ def localize_article_analysis(analysis: dict, *, article_id: int, locale: str, f
         ):
             return _build_result(analysis, insight, cached["translated"], locale, cached=True)
 
+        if _recent_failure(article_id, locale, source_analyzed_at):
+            return {**analysis, "locale": config.DEFAULT_LOCALE, "locale_fallback": True}
+
     try:
         translated_payload = _translate_payload(insight, locale)
     except Exception:
         logger.exception("Article translation failed for article_id=%s locale=%s", article_id, locale)
+        _record_failure(article_id, locale, source_analyzed_at)
         return {**analysis, "locale": config.DEFAULT_LOCALE, "locale_fallback": True}
 
+    _clear_failure(article_id, locale)
     _save_cached(article_id, locale, translated_payload, source_analyzed_at)
     return _build_result(analysis, insight, translated_payload, locale, cached=False)

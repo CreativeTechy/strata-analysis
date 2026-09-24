@@ -206,13 +206,13 @@ def generate_trend_summary(
             return cached
 
     if locale != config.DEFAULT_LOCALE:
-        # The canonical (English) summary is the source of truth this is
-        # rendered from - load it (generating it once if nothing is cached
-        # yet), but never force-regenerate it just because a *localized*
-        # regenerate was requested; `force` below only re-renders this
-        # locale's own text from whatever canonical summary already exists.
+        # An explicit regenerate in any locale has to regenerate the
+        # canonical (English) summary from the current articles first - a
+        # localized regenerate that only re-rendered the existing canonical
+        # text would leave the refresh button unable to ever pick up new
+        # articles for non-default-locale users.
         canonical = generate_trend_summary(
-            project, period, run_id=run_id, force=False, locale=config.DEFAULT_LOCALE,
+            project, period, run_id=run_id, force=force, locale=config.DEFAULT_LOCALE,
         )
         if not canonical.get("summary"):
             return canonical
