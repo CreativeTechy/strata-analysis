@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
@@ -282,6 +282,73 @@ class ProjectSourcesTests(AnalysisRoutesTestCase):
             resp = self.client.get("/api/projects/1/sources?limit=5&offset=10")
         self.assertEqual(resp.json(), page)
         mock_list.assert_called_once_with(1, limit=5, offset=10)
+
+
+class SetProjectSourceTrustRouteTests(AnalysisRoutesTestCase):
+    """Writing a trust tier needs projects.update (same permission
+    provenance-review already uses for a project-scoped write), not the
+    read-only articles.view the rest of this module's fixture grants."""
+
+    KNOWN = {"real:reuters.com": {"type": "real", "label": "reuters.com"}}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._trust_perm_patcher = patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"pipeline.run", "pipeline.view", "articles.view", "projects.update"},
+        )
+        cls._trust_perm_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._trust_perm_patcher.stop()
+        super().tearDownClass()
+
+    def test_404_when_project_not_found(self):
+        with patch("main.get_project", return_value=None):
+            resp = self.client.post("/api/projects/1/sources/trust", json={"key": "real:reuters.com"})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_404_when_key_is_not_one_of_this_projects_sources(self):
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_project_source_keys", return_value=self.KNOWN):
+            resp = self.client.post(
+                "/api/projects/1/sources/trust",
+                json={"key": "real:some-other-host.example", "tier": "trusted", "reason": "why"},
+            )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_400_on_an_invalid_tier(self):
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_project_source_keys", return_value=self.KNOWN), \
+             patch("main.set_source_trust_tier", side_effect=ValueError("Invalid trust tier: 'bogus'")):
+            resp = self.client.post(
+                "/api/projects/1/sources/trust",
+                json={"key": "real:reuters.com", "tier": "bogus", "reason": "why"},
+            )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_sets_the_tier_and_returns_the_shared_trust_shape(self):
+        row = {
+            "source_key": "real:reuters.com", "source_type": "real", "tier": "trusted",
+            "reason": "Wire service.", "set_by_name": "alice", "updated_at": "2026-01-01T00:00:00Z",
+        }
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_project_source_keys", return_value=self.KNOWN), \
+             patch("main.set_source_trust_tier", return_value=row) as mock_set:
+            resp = self.client.post(
+                "/api/projects/1/sources/trust",
+                json={"key": "real:reuters.com", "tier": "trusted", "reason": "Wire service."},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "tier": "trusted", "reason": "Wire service.", "set_by": "alice",
+            "updated_at": "2026-01-01T00:00:00Z", "is_default": False,
+        })
+        # The source's own type is looked up rather than trusted blindly from
+        # the request body when the caller doesn't pass one.
+        mock_set.assert_called_once_with("real:reuters.com", "real", "trusted", "Wire service.", ANY, project_id=1)
 
 
 class DeleteArticlesRouteTests(AnalysisRoutesTestCase):

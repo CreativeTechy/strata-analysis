@@ -102,6 +102,12 @@ export const updateEvidenceScope = (projectId, runId, body) =>
 export const listProjectSources = (projectId, { limit, offset } = {}) => (
   request(`/${projectId}/sources${query({ limit, offset })}`)
 );
+/** Sets one Sources-tab group's trust tier (see backend's source_trust.py).
+ *  `key`/`type` are a source group's own fields, exactly as listProjectSources()
+ *  returns them - there is no separate trust-management page or endpoint. */
+export const setSourceTrust = (projectId, { key, type, tier, reason }) => (
+  request(`/${projectId}/sources/trust`, { method: 'POST', body: { key, type, tier, reason } })
+);
 
 /** Cross-source idea comparison cards (see backend/services/articles/idea_comparisons.py).
  *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`

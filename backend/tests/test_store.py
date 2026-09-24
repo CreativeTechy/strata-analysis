@@ -405,6 +405,61 @@ class ArticleRowFieldHandlingTests(unittest.TestCase):
         value = self._field_value(self._article(), "source_run_snapshot")
         self.assertIsNone(value)
 
+    def test_verified_ignores_source_url_which_is_always_the_document_reference(self):
+        """source_url is set by project_document_articles._materialize() to
+        the uploaded document's own document:// reference for every article
+        in this fork (there is no scraper) - a real, trusted `url` must not
+        be ignored just because a truthy but useless source_url comes first."""
+        article = self._article(
+            url="https://reuters.com/world/a1",
+            source_url="document://project-document/9",
+        )
+        self.assertTrue(self._field_value(article, "verified"))
+
+    def test_verified_prefers_original_url_over_a_synthetic_llm_split_url(self):
+        article = self._article(
+            url="document://project-document/9/article/3",
+            source_url="document://project-document/9",
+            source_provenance={"original_url": "https://apnews.com/x"},
+        )
+        self.assertTrue(self._field_value(article, "verified"))
+
+    def test_verified_is_false_with_no_resolvable_publisher_url(self):
+        article = self._article(url="document://project-document/9/article/3", source_url="document://project-document/9")
+        self.assertFalse(self._field_value(article, "verified"))
+
+    def test_verified_is_false_for_an_untrusted_domain(self):
+        article = self._article(url="https://some-random-blog.example/a1")
+        self.assertFalse(self._field_value(article, "verified"))
+
+    def test_source_domain_resolved_from_the_same_url_verified_uses(self):
+        article = self._article(
+            url="document://project-document/9/article/3",
+            source_provenance={"original_url": "https://www.reuters.com/world/a1"},
+        )
+        self.assertEqual(self._field_value(article, "source_domain"), "reuters.com")
+
+    def test_source_domain_is_none_with_no_resolvable_publisher_url(self):
+        article = self._article(url="document://project-document/9/article/3", source_url="document://project-document/9")
+        self.assertIsNone(self._field_value(article, "source_domain"))
+
+
+class ResolvedPublisherUrlTests(unittest.TestCase):
+    """_resolved_publisher_url() - the shared lookup verified/source_domain
+    both use, since source_url is never a real publisher URL in this fork."""
+
+    def test_prefers_provenance_original_url_over_the_article_url(self):
+        row = {"url": "https://mirror.example/a1", "source_provenance": {"original_url": "https://reuters.com/a1"}}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
+    def test_falls_back_to_url_when_no_provenance(self):
+        row = {"url": "https://reuters.com/a1", "source_provenance": None}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
+    def test_non_dict_provenance_does_not_raise(self):
+        row = {"url": "https://reuters.com/a1", "source_provenance": "not-a-dict"}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
 
 class UpsertArticleRowConflictClauseTests(unittest.TestCase):
     """_upsert_article_row()'s on-conflict clause must not blindly overwrite
