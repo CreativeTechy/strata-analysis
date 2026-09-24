@@ -5,13 +5,14 @@ import {
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
-  CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAuth } from '../auth/useAuth.js';
 import {
   createIdeaComparisonFact, deleteIdeaComparisonFact, getIdeaComparison,
   regenerateIdeaComparison, updateIdeaComparisonFact,
 } from '../api/projectsApi.js';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/IdeaComparisonDetail.css';
 
 const emptyObservation = (metric = '') => ({ metric, numeric_value: '', unit: '', period_label: '', value_kind: 'unknown' });
@@ -168,7 +169,7 @@ function NumericEvidence({ evidence }) {
                 <div><h2>{group.metric}</h2><span>{readableUnit(group.unit)}</span></div>
                 {group.direction ? (
                   <strong className={`comparison-direction ${group.direction}`}>
-                    <DirectionIcon size={15} /> {formatNumericValue(Math.abs(group.change), group.unit)}
+                    <DirectionIcon size={15} /> {formatDifferenceValue(Math.abs(group.change), group.unit)}
                     {group.change_percent != null ? ` (${Math.abs(group.change_percent).toFixed(1)}%)` : ''}
                   </strong>
                 ) : null}
@@ -178,7 +179,7 @@ function NumericEvidence({ evidence }) {
                   <div><span>Lowest</span><strong>{formatNumericValue(group.minimum, group.unit)}</strong></div>
                   <div><span>Highest</span><strong>{formatNumericValue(group.maximum, group.unit)}</strong></div>
                   <div><span>Average</span><strong>{formatNumericValue(average, group.unit)}</strong></div>
-                  <div><span>Range</span><strong>{formatNumericValue(group.spread, group.unit)}</strong></div>
+                  <div><span>Range</span><strong>{formatDifferenceValue(group.spread, group.unit)}</strong></div>
                 </div>
               ) : null}
               {group.display_type === 'single' ? (

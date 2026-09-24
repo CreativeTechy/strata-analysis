@@ -6,10 +6,11 @@ import {
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
-  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;

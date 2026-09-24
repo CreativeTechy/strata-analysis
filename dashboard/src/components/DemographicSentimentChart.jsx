@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from 'recharts';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/DemographicSentimentChart.css';
 
 // Same status palette and fixed series order as StatsOverview.jsx's sentiment
