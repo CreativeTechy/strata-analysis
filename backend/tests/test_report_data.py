@@ -179,5 +179,50 @@ class BuildReportDataTests(unittest.TestCase):
         self.assertTrue(gen.call_args_list[1].kwargs.get("force"))
 
 
+class ExecutiveSummaryLlmFailureTests(unittest.TestCase):
+    """generate_trend_summary() calls the configured LLM with no internal
+    error handling of its own - build_report_data() must not let that
+    failure escape and take down the whole PDF export the way an unguarded
+    call used to (main.py's /trend-summary route already handles this exact
+    failure for the on-screen summary; this mirrors it)."""
+
+    def test_llm_failure_degrades_the_executive_summary_instead_of_raising(self):
+        from llm_client import LLMError
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, status="success", published=datetime(2026, 3, 5, tzinfo=timezone.utc))]
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows), \
+             patch.object(report_data, "generate_trend_summary",
+                          side_effect=LLMError("down", code="llm_connection_error")):
+            data = report_data.build_report_data(project, period="all", run=None)
+        self.assertIsNone(data["executive_summary"]["text"])
+        self.assertIsNotNone(data["executive_summary"]["error"])
+        # The rest of the report must still be fully built despite the LLM outage.
+        self.assertEqual(data["counts"]["total"], 1)
+        self.assertEqual(data["sentiment"]["analyzed_total"], 1)
+
+    def test_unexpected_exception_also_degrades_instead_of_raising(self):
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, status="success", published=datetime(2026, 3, 5, tzinfo=timezone.utc))]
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows), \
+             patch.object(report_data, "generate_trend_summary", side_effect=RuntimeError("boom")):
+            data = report_data.build_report_data(project, period="all", run=None)
+        self.assertIsNone(data["executive_summary"]["text"])
+        self.assertEqual(data["executive_summary"]["error"], "Something went wrong while generating the executive summary.")
+
+    def test_forced_refresh_failure_keeps_the_stale_but_real_summary(self):
+        """A stale-but-real paragraph is still more useful than none at all -
+        don't discard it just because the forced refresh itself hit the same
+        outage that made it stale-worth-refreshing in the first place."""
+        from llm_client import LLMError
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, status="success", published=datetime(2026, 3, 5, tzinfo=timezone.utc))]
+        stale_cache = {"summary": "old but real", "cached": True, "generated_at": "2026-01-01T00:00:00+00:00"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows), \
+             patch.object(report_data, "generate_trend_summary",
+                          side_effect=[stale_cache, LLMError("down", code="llm_connection_error")]):
+            data = report_data.build_report_data(project, period="all", run=None)
+        self.assertEqual(data["executive_summary"]["text"], "old but real")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -300,15 +300,6 @@ def build_variation_from_yesterday(project: dict, report_data: dict, run: dict |
     today_date, yesterday_date = _scope_dates(report_data, tz)
 
     today_rows = report_data.get("_analyzed_rows") or []
-    earliest = earliest_snapshot_at(project_id)
-    yesterday_cutoff = _day_start_utc(today_date, tz)
-    yesterday_rows_raw = fetch_state_as_of(project_id, yesterday_cutoff)
-    yesterday_rows = [r for r in yesterday_rows_raw if str(r.get("analysis_status") or "").lower() == "success"]
-    if scope["type"] == "period" and scope.get("period") and scope["period"] != "all":
-        # Same rolling window as today's report (relative to the real "now",
-        # not re-anchored to yesterday) - so both sides describe the exact
-        # same population definition, just at two different points in time.
-        yesterday_rows = filter_rows_for_period(yesterday_rows, scope["period"])
 
     base_result = {
         "status": "unavailable",
@@ -325,10 +316,38 @@ def build_variation_from_yesterday(project: dict, report_data: dict, run: dict |
     }
 
     if not today_rows:
+        # Bail out before touching article_analyses at all - reconstructing
+        # "yesterday" is pointless work when there's nothing on the "today"
+        # side to compare it against.
         base_result["reason"] = "No analyzed articles in the current report scope."
         return base_result
-    if not earliest or earliest >= yesterday_cutoff or not yesterday_rows:
+
+    earliest = earliest_snapshot_at(project_id)
+    yesterday_cutoff = _day_start_utc(today_date, tz)
+    if not earliest or earliest >= yesterday_cutoff:
         base_result["reason"] = f"No analysis history recorded before {yesterday_date.isoformat()}."
+        base_result["metrics"]["today"] = _sentiment_metrics(today_rows)
+        return base_result
+
+    yesterday_rows_raw = fetch_state_as_of(project_id, yesterday_cutoff)
+    yesterday_success_rows = [r for r in yesterday_rows_raw if str(r.get("analysis_status") or "").lower() == "success"]
+    yesterday_rows = yesterday_success_rows
+    if scope["type"] == "period" and scope.get("period") and scope["period"] != "all":
+        # Same rolling window as today's report (relative to the real "now",
+        # not re-anchored to yesterday) - so both sides describe the exact
+        # same population definition, just at two different points in time.
+        yesterday_rows = filter_rows_for_period(yesterday_success_rows, scope["period"])
+
+    if not yesterday_rows:
+        if yesterday_success_rows:
+            # There *is* recorded history before the cutoff - it's the
+            # period's rolling window (anchored to "now", not "yesterday")
+            # that excludes all of it, not an absence of history. Distinct
+            # from the "no history at all" case above so this doesn't read
+            # as "historical tracking isn't working" when it actually is.
+            base_result["reason"] = "No analyzed articles from yesterday fall within the selected period."
+        else:
+            base_result["reason"] = f"No analysis history recorded before {yesterday_date.isoformat()}."
         base_result["metrics"]["today"] = _sentiment_metrics(today_rows)
         return base_result
 

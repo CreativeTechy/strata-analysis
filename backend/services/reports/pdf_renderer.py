@@ -193,7 +193,18 @@ def _counts_html(report_data: dict) -> str:
 def _executive_summary_html(report_data: dict) -> str:
     summary = report_data.get("executive_summary") or {}
     text = summary.get("text")
-    body = _esc_multiline(text) if text else '<p class="muted">No executive summary available.</p>'
+    error = summary.get("error")
+    if text:
+        body = _esc_multiline(text)
+    elif error:
+        # Distinct from "nothing generated yet" - this is report_data.py's
+        # own build_report_data() disclosing that generating it was actually
+        # attempted and failed (an LLM outage, most commonly), the same way
+        # _comparison_html discloses a failure in its own section rather than
+        # silently rendering nothing.
+        body = f'<div class="unavailable">AI executive summary unavailable - {_esc(error)}</div>'
+    else:
+        body = '<p class="muted">No executive summary available.</p>'
     return f'<h2>Executive Summary</h2>{body}'
 
 

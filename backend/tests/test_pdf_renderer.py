@@ -9,7 +9,7 @@ import unittest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from services.reports.pdf_renderer import render_summary_pdf
+from services.reports.pdf_renderer import _executive_summary_html, render_summary_pdf
 
 MINIMAL_REPORT_DATA = {
     "project": {"id": 1, "name": "Acme"},
@@ -104,6 +104,34 @@ class RenderSummaryPdfTests(unittest.TestCase):
     def test_missing_optional_keys_do_not_crash(self):
         pdf_bytes = render_summary_pdf({}, {})
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_an_executive_summary_llm_failure_still_renders_a_pdf(self):
+        """report_data.build_report_data() degrades an LLM failure to
+        executive_summary={"text": None, "error": ...} rather than raising -
+        the PDF must still build, disclosing the failure instead of just
+        going blank."""
+        report_data = {
+            **MINIMAL_REPORT_DATA,
+            "executive_summary": {"text": None, "cached": False, "error": "The assistant hit an unexpected error."},
+        }
+        pdf_bytes = render_summary_pdf(report_data, MINIMAL_COMPARISON)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+
+class ExecutiveSummaryHtmlTests(unittest.TestCase):
+    def test_renders_the_text_when_present_even_alongside_a_stale_error(self):
+        html = _executive_summary_html({"executive_summary": {"text": "All good.", "error": "stale error"}})
+        self.assertIn("All good.", html)
+        self.assertNotIn("stale error", html)
+
+    def test_renders_the_failure_reason_when_no_text_is_available(self):
+        html = _executive_summary_html({"executive_summary": {"text": None, "error": "Couldn't reach the model."}})
+        self.assertIn("unavailable", html)
+        self.assertIn("Couldn&#x27;t reach the model.", html)
+
+    def test_renders_the_generic_placeholder_when_neither_text_nor_error_is_set(self):
+        html = _executive_summary_html({"executive_summary": {"text": None, "cached": False}})
+        self.assertIn("No executive summary available.", html)
 
 
 if __name__ == "__main__":

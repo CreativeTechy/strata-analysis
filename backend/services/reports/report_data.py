@@ -16,6 +16,7 @@ additive columns for exactly this reason.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -23,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 import config
 import db
+from llm_client import LLMError
 from services.articles.article_analyses import fetch_run_article_rows
 from services.intelligence.intelligence import (
     VALID_SENTIMENTS,
@@ -32,6 +34,8 @@ from services.intelligence.intelligence import (
     normalize_period,
 )
 from services.intelligence.trend_summary import generate_trend_summary
+
+logger = logging.getLogger(__name__)
 
 SHORT_SUMMARY_MAX_CHARS = 280
 
@@ -204,6 +208,28 @@ def _scope_label(scope_type: str, period: str | None, run: dict | None, tz: Zone
     return f"{label} (through {today})", None
 
 
+def _safe_generate_trend_summary(project: dict, period: str, run_id: str | None, force: bool = False) -> dict:
+    """generate_trend_summary() calls out to the configured LLM with no
+    internal error handling of its own (main.py's /trend-summary route wraps
+    it in exactly this try/except) - a provider outage is the most common
+    failure mode for a local model (see CLAUDE.md), and it must degrade the
+    executive-summary section of the PDF, not take down the whole export the
+    way an unguarded call here used to. Shaped like generate_trend_summary's
+    own return value, with `error`/`error_code` added on failure."""
+    try:
+        return generate_trend_summary(project, period, run_id=run_id, force=force)
+    except LLMError as e:
+        logger.warning("Report executive summary generation failed (%s): %s", e.code, e.detail or e)
+        return {"summary": None, "cached": False, "error": e.user_message, "error_code": e.code}
+    except Exception:
+        logger.exception("Report executive summary generation failed unexpectedly")
+        return {
+            "summary": None, "cached": False,
+            "error": "Something went wrong while generating the executive summary.",
+            "error_code": "llm_provider_error",
+        }
+
+
 def build_report_data(project: dict, period: str | None = None, run: dict | None = None) -> dict:
     """`run`, when given, is the already-fetched-and-ownership-validated
     pipeline_runs row (see main.py's endpoint) - this function trusts it
@@ -223,11 +249,16 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
 
     analysis_date_label, run_label = _scope_label(scope_type, period, run, tz)
 
-    cached_summary = generate_trend_summary(project, normalize_period(period or "30d"), run_id=(run["id"] if run else None))
+    cached_summary = _safe_generate_trend_summary(project, normalize_period(period or "30d"), run_id=(run["id"] if run else None))
     if _stale_executive_summary(cached_summary, analyzed_rows):
-        cached_summary = generate_trend_summary(
+        refreshed = _safe_generate_trend_summary(
             project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), force=True,
         )
+        # Keep the stale-but-real paragraph rather than discarding it for
+        # nothing at all when the forced refresh itself fails (e.g. the same
+        # LLM outage that made the first call above return an error too).
+        if refreshed.get("summary") is not None:
+            cached_summary = refreshed
 
     top_articles, fallback_used = _top_articles(analyzed_rows, config.REPORT_TOP_ARTICLES_LIMIT)
 
@@ -247,6 +278,7 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
         "executive_summary": {
             "text": (cached_summary or {}).get("summary"),
             "cached": bool((cached_summary or {}).get("cached")),
+            "error": (cached_summary or {}).get("error"),
         },
         "top_articles": top_articles,
         "top_articles_fallback_used": fallback_used,

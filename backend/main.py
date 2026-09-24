@@ -983,10 +983,11 @@ def export_report_summary_pdf(
     on screen is what gets exported.
 
     A rendering failure is a 500 (nothing partial to fall back to - the PDF
-    itself is the whole response body), but an LLM failure inside the
-    "variation from yesterday" section is not: build_variation_from_yesterday
-    always returns a result (falling back to `status="llm_failed"` with the
-    verified metrics kept), so the rest of the report still exports.
+    itself is the whole response body), but an LLM failure inside either
+    LLM-backed section is not: build_report_data's executive summary and
+    build_variation_from_yesterday's narrative both degrade to a disclosed
+    "unavailable" state on their own (never raise), so a local model being
+    down still yields a full export with just those two sections noting it.
     """
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)

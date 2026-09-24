@@ -208,6 +208,50 @@ class BuildVariationFromYesterdayTests(unittest.TestCase):
         self.assertTrue(result["cached"])
         llm.assert_not_called()
 
+    def test_short_circuits_before_any_history_lookup_when_nothing_is_in_scope_today(self):
+        """No analyzed articles today means there's nothing to compare
+        against - reconstructing yesterday's state (a real article_analyses
+        query) is wasted work that must not run at all in that case."""
+        with patch.object(yc, "earliest_snapshot_at") as earliest, \
+             patch.object(yc, "fetch_state_as_of") as fetch:
+            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data([]))
+        self.assertEqual(result["status"], "unavailable")
+        earliest.assert_not_called()
+        fetch.assert_not_called()
+
+    def test_period_filter_emptying_yesterday_is_distinguished_from_no_history(self):
+        """History exists (fetch_state_as_of returns real rows) but the
+        period's rolling window - anchored to "now", not "yesterday" - excludes
+        all of it. That's a different, more specific situation than no
+        history existing at all before the cutoff, and must say so rather
+        than implying historical tracking isn't working."""
+        today_rows = [_row(1, "positive")]
+        # No published/created_at on these fixture rows -> article_date() is
+        # None -> filter_rows_for_period() drops them for any non-"all" period.
+        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
+        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
+             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows):
+            result = yc.build_variation_from_yesterday(
+                {"id": 1}, self._report_data(today_rows, period="7d"),
+            )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("selected period", result["reason"])
+        self.assertNotIn("No analysis history recorded", result["reason"])
+        self.assertEqual(result["metrics"]["today"]["total"], 1)
+
+    def test_genuinely_no_history_still_reports_the_no_history_reason(self):
+        """The period-filter message above must not swallow the real "no
+        history at all" case - an empty fetch_state_as_of() result (no rows
+        recorded before the cutoff) still gets the original message."""
+        today_rows = [_row(1, "positive")]
+        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
+             patch.object(yc, "fetch_state_as_of", return_value=[]):
+            result = yc.build_variation_from_yesterday(
+                {"id": 1}, self._report_data(today_rows, period="7d"),
+            )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("No analysis history recorded before", result["reason"])
+
     def test_cache_with_mismatched_fingerprint_regenerates(self):
         today_rows = [_row(1, "positive")]
         yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
