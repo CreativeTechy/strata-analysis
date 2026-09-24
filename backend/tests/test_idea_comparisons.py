@@ -65,6 +65,16 @@ class GroupAndQualifyClustersTests(unittest.TestCase):
 
 
 class GenerateIdeaComparisonsTests(unittest.TestCase):
+    def setUp(self):
+        self.facts = patch("services.articles.idea_comparisons.list_comparison_facts", return_value=[])
+        self.revision = patch("services.articles.idea_comparisons._current_facts_revision", return_value=0)
+        self.facts.start()
+        self.revision.start()
+
+    def tearDown(self):
+        self.facts.stop()
+        self.revision.stop()
+
     def test_writes_one_row_per_qualifying_cluster_and_uses_synthesized_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
@@ -173,6 +183,29 @@ class HasRunGenerationAttemptTests(unittest.TestCase):
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
              patch("services.articles.idea_comparisons.db.fetch_one", return_value=None):
             self.assertFalse(idea_comparisons.has_run_generation_attempt(1, "run-123"))
+
+
+class ComparisonFactsTests(unittest.TestCase):
+    def test_fact_becomes_explicit_user_provided_evidence(self):
+        source = idea_comparisons._fact_as_source({
+            "fact_text": "Audited sales grew by 12%.",
+            "reference_label": "Finance review",
+            "stated_value": "12%",
+            "observed_at": "2026-08-31",
+        })
+        self.assertEqual(source["source_label"], "Finance review [user-provided]")
+        self.assertEqual(source["value"], "12%")
+        self.assertIn("2026-08-31", source["title"])
+
+    def test_fact_requires_text_and_valid_reference_url(self):
+        with self.assertRaisesRegex(ValueError, "Fact text"):
+            idea_comparisons._validate_fact({})
+        with self.assertRaisesRegex(ValueError, "Reference URL"):
+            idea_comparisons._validate_fact({"fact_text": "x", "reference_url": "javascript:alert(1)"})
+
+    def test_fact_date_must_be_iso_date(self):
+        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
+            idea_comparisons._validate_fact({"fact_text": "x", "observed_at": "tomorrow"})
 
 
 if __name__ == "__main__":

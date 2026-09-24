@@ -113,6 +113,17 @@ export async function getIdeaComparisons(projectId, { regenerate, run_id } = {},
   return { ok: response.ok && !data?.error, data };
 }
 
+export const getIdeaComparison = (projectId, clusterId, { run_id } = {}, signal) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}${query({ run_id })}`, { signal });
+export const createIdeaComparisonFact = (projectId, clusterId, body) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts`, { method: 'POST', body });
+export const updateIdeaComparisonFact = (projectId, clusterId, factId, body) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'PUT', body });
+export const deleteIdeaComparisonFact = (projectId, clusterId, factId) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'DELETE' });
+export const regenerateIdeaComparison = (projectId, clusterId, { run_id } = {}) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/regenerate${query({ run_id })}`, { method: 'POST' });
+
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic
  *  status-code string rather than anything read from the response body (this

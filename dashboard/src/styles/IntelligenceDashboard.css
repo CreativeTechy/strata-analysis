@@ -27,6 +27,9 @@
 .intelligence-idea-comparison-item.diverges { border-left-color: #f59e0b; }
 .intelligence-idea-comparison-item.agrees { border-left-color: #16a34a; }
 .intelligence-idea-comparison-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.intelligence-idea-comparison-actions { display:flex; align-items:center; gap:7px; }
+.intelligence-idea-comparison-details-link { display:grid; place-items:center; width:29px; height:29px; border:1px solid rgba(15,23,42,.1); border-radius:8px; color:var(--text-light); background:rgba(255,255,255,.65); }
+.intelligence-idea-comparison-details-link:hover,.intelligence-idea-comparison-details-link:focus-visible { color:var(--primary-color); border-color:rgba(37,99,235,.3); }
 .intelligence-idea-comparison-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .intelligence-idea-comparison-title strong { font-size: .88rem; }
 .intelligence-idea-comparison-icon { flex-shrink: 0; color: var(--primary-color); }
@@ -34,7 +37,8 @@
 .intelligence-idea-comparison-tag.diverges { background: #fef3c7; color: #92400e; }
 .intelligence-idea-comparison-tag.agrees { background: #dcfce7; color: #15803d; }
 .intelligence-idea-comparison-summary { margin: 10px 0 0; color: var(--text-light); font-size: .82rem; line-height: 1.5; }
-.intelligence-idea-comparison-sources { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.intelligence-idea-comparison-sources-disclosure { margin-top:12px; }.intelligence-idea-comparison-sources-disclosure > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; border-radius:8px; color:var(--text-light); background:rgba(15,23,42,.035); cursor:pointer; list-style:none; font-size:.76rem; font-weight:700; }.intelligence-idea-comparison-sources-disclosure > summary::-webkit-details-marker { display:none; }.intelligence-idea-comparison-sources-disclosure > summary svg { transition:transform .15s ease; }.intelligence-idea-comparison-sources-disclosure[open] > summary svg { transform:rotate(180deg); }
+.intelligence-idea-comparison-sources { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
 .intelligence-idea-comparison-source { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 9px; background: rgba(15,23,42,.035); color: inherit; text-decoration: none; font-size: .79rem; transition: background .15s ease; }
 a.intelligence-idea-comparison-source:hover, a.intelligence-idea-comparison-source:focus-visible { background: rgba(37,99,235,.09); }
 .intelligence-idea-comparison-source-label { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; font-weight: 700; color: var(--text-dark); }

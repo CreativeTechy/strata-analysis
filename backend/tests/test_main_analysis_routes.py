@@ -30,7 +30,7 @@ class AnalysisRoutesTestCase(unittest.TestCase):
         cls._csrf_patcher.start()
         cls._perm_patcher = patch(
             "services.auth.permissions_store.user_permission_keys",
-            return_value={"pipeline.run", "pipeline.view", "articles.view"},
+            return_value={"pipeline.run", "pipeline.view", "articles.view", "projects.update"},
         )
         cls._perm_patcher.start()
         # _ensure_project_visible() short-circuits on full_access without a
@@ -254,6 +254,29 @@ class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
         body = resp.json()
         self.assertEqual(body["comparisons"], [])
         self.assertEqual(body["error_code"], "llm_connection_error")
+
+    def test_detail_returns_comparison_with_facts(self):
+        comparison = {"idea_cluster_id": 7, "facts": [{"id": 2}], "summary_stale": True}
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.get_idea_comparison", return_value=comparison) as mock_get:
+            resp = self.client.get("/api/projects/1/idea-comparisons/7?run_id=run-123")
+        self.assertEqual(resp.json(), {"comparison": comparison})
+        mock_get.assert_called_once_with(1, 7, run_id="run-123")
+
+    def test_add_fact_returns_saved_fact(self):
+        fact = {"id": 9, "fact_text": "Audited sales rose 12%."}
+        with patch("main.create_comparison_fact", return_value=fact) as mock_create:
+            resp = self.client.post("/api/projects/1/idea-comparisons/7/facts", json={"fact_text": fact["fact_text"]})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"fact": fact})
+        mock_create.assert_called_once_with(1, 7, {"fact_text": fact["fact_text"]}, FAKE_USER)
+
+    def test_regenerate_one_comparison_returns_new_detail(self):
+        comparison = {"idea_cluster_id": 7, "summary": "Updated."}
+        with patch("main.regenerate_idea_comparison", return_value=comparison) as mock_regenerate:
+            resp = self.client.post("/api/projects/1/idea-comparisons/7/regenerate?run_id=run-123")
+        self.assertEqual(resp.json(), {"comparison": comparison})
+        mock_regenerate.assert_called_once_with(1, 7, run_id="run-123")
 
 
 class ProjectSourcesTests(AnalysisRoutesTestCase):

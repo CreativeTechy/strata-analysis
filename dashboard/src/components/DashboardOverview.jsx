@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
-  Activity, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
@@ -171,6 +171,7 @@ export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
   loading, error, pipelineHealth, runs = [], selectedRunId, onRunChange,
 }) {
+  const location = useLocation();
   const data = intelligence || {};
   const total = Number(data.total || 0);
   const sentimentData = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(data[name] || 0) }));
@@ -555,13 +556,24 @@ export default function DashboardOverview({
                         <Lightbulb size={14} className="intelligence-idea-comparison-icon" />
                         <strong>{comparison.idea}</strong>
                       </div>
-                      {comparison.diverges ? (
-                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
-                      ) : (
-                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
-                      )}
+                      <div className="intelligence-idea-comparison-actions">
+                        {comparison.diverges ? (
+                          <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
+                        ) : (
+                          <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
+                        )}
+                        <Link
+                          className="intelligence-idea-comparison-details-link"
+                          to={`/projects/${selectedProjectId}/idea-comparisons/${comparison.idea_cluster_id}${selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : ''}`}
+                          state={{ from: `${location.pathname}${location.search}` }}
+                          aria-label={`View details for ${comparison.idea}`}
+                          title="View comparison details"
+                        ><ChevronRight size={17} /></Link>
+                      </div>
                     </div>
                     {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                    <details className="intelligence-idea-comparison-sources-disclosure">
+                      <summary>Sources ({(comparison.sources || []).length}) <ChevronDown size={14} /></summary>
                     <div className="intelligence-idea-comparison-sources">
                       {(comparison.sources || []).map((source, index) => {
                         const content = (
@@ -594,6 +606,7 @@ export default function DashboardOverview({
                         );
                       })}
                     </div>
+                    </details>
                   </div>
                 ))}
               </div>

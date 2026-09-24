@@ -17,6 +17,7 @@ another LLM call.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from urllib.parse import urlparse
 
 import config
@@ -28,7 +29,7 @@ from psycopg.types.json import Jsonb
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "idea-comparison/1"
+PROMPT_VERSION = "idea-comparison/2"
 _SYSTEM_PROMPT = load_prompt("idea_comparison_system_prompt.txt")
 
 MAX_EXCERPT_LENGTH = 300
@@ -175,6 +176,143 @@ def _format_sources(sources: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def _fact_as_source(fact: dict) -> dict:
+    label = str(fact.get("reference_label") or "User-provided fact").strip()
+    text = str(fact.get("fact_text") or "").strip()
+    date = fact.get("observed_at")
+    date_note = f" (dated {date.isoformat() if hasattr(date, 'isoformat') else date})" if date else ""
+    return {
+        "source_label": f"{label} [user-provided]",
+        "value": str(fact.get("stated_value") or "").strip(),
+        "title": f"User-provided fact{date_note}",
+        "excerpt": text[:MAX_EXCERPT_LENGTH],
+    }
+
+
+def _current_facts_revision(project_id: int, idea_cluster_id: int) -> int:
+    row = db.fetch_one(
+        "select revision from idea_comparison_fact_revisions where project_id = %s and idea_cluster_id = %s",
+        (int(project_id), int(idea_cluster_id)),
+    )
+    return int(row["revision"] or 0) if row else 0
+
+
+def list_comparison_facts(project_id: int, idea_cluster_id: int) -> list[dict]:
+    rows = db.fetch_all(
+        """
+        select id, fact_text, reference_label, reference_url, stated_value,
+               observed_at, created_by_id, created_by_name, created_at, updated_at
+        from idea_comparison_facts
+        where project_id = %s and idea_cluster_id = %s
+        order by created_at asc, id asc
+        """,
+        (int(project_id), int(idea_cluster_id)),
+    )
+    return [
+        {
+            **row,
+            "observed_at": row["observed_at"].isoformat() if row.get("observed_at") else None,
+            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+        }
+        for row in rows or []
+    ]
+
+
+def _validate_fact(payload: dict) -> dict:
+    fact_text = str(payload.get("fact_text") or "").strip()
+    if not fact_text:
+        raise ValueError("Fact text is required.")
+    if len(fact_text) > 4000:
+        raise ValueError("Fact text must be 4,000 characters or fewer.")
+    reference_url = str(payload.get("reference_url") or "").strip()
+    parsed_reference = urlparse(reference_url)
+    if reference_url and (parsed_reference.scheme.lower() not in {"http", "https"} or not parsed_reference.netloc):
+        raise ValueError("Reference URL must be a complete http:// or https:// URL.")
+    observed_at = str(payload.get("observed_at") or "").strip()
+    if observed_at:
+        try:
+            date.fromisoformat(observed_at)
+        except ValueError as exc:
+            raise ValueError("Date must use YYYY-MM-DD format.") from exc
+    return {
+        "fact_text": fact_text,
+        "reference_label": str(payload.get("reference_label") or "").strip()[:200] or None,
+        "reference_url": reference_url[:2000] or None,
+        "stated_value": str(payload.get("stated_value") or "").strip()[:300] or None,
+        "observed_at": observed_at or None,
+    }
+
+
+def _bump_facts_revision(project_id: int, idea_cluster_id: int) -> int:
+    row = db.execute(
+        """
+        insert into idea_comparison_fact_revisions (project_id, idea_cluster_id, revision)
+        values (%s, %s, 1)
+        on conflict (project_id, idea_cluster_id) do update set
+            revision = idea_comparison_fact_revisions.revision + 1,
+            updated_at = now()
+        returning revision
+        """,
+        (int(project_id), int(idea_cluster_id)),
+    )
+    return int(row["revision"])
+
+
+def create_comparison_fact(project_id: int, idea_cluster_id: int, payload: dict, user: dict) -> dict | None:
+    clean = _validate_fact(payload)
+    cluster = db.fetch_one(
+        "select id from idea_clusters where id = %s and project_id = %s",
+        (int(idea_cluster_id), int(project_id)),
+    )
+    if not cluster:
+        return None
+    row = db.execute(
+        """
+        insert into idea_comparison_facts (
+            project_id, idea_cluster_id, fact_text, reference_label, reference_url,
+            stated_value, observed_at, created_by_id, created_by_name
+        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        returning id
+        """,
+        (int(project_id), int(idea_cluster_id), clean["fact_text"], clean["reference_label"],
+         clean["reference_url"], clean["stated_value"], clean["observed_at"], user.get("id"),
+         str(user.get("username") or "").strip() or None),
+    )
+    _bump_facts_revision(project_id, idea_cluster_id)
+    return next((fact for fact in list_comparison_facts(project_id, idea_cluster_id) if fact["id"] == row["id"]), None)
+
+
+def update_comparison_fact(project_id: int, idea_cluster_id: int, fact_id: int, payload: dict) -> dict | None:
+    clean = _validate_fact(payload)
+    row = db.execute(
+        """
+        update idea_comparison_facts set
+            fact_text = %s, reference_label = %s, reference_url = %s,
+            stated_value = %s, observed_at = %s, updated_at = now()
+        where id = %s and project_id = %s and idea_cluster_id = %s
+        returning id
+        """,
+        (clean["fact_text"], clean["reference_label"], clean["reference_url"], clean["stated_value"],
+         clean["observed_at"], int(fact_id), int(project_id), int(idea_cluster_id)),
+    )
+    if not row:
+        return None
+    _bump_facts_revision(project_id, idea_cluster_id)
+    return next((fact for fact in list_comparison_facts(project_id, idea_cluster_id) if fact["id"] == row["id"]), None)
+
+
+def delete_comparison_fact(project_id: int, idea_cluster_id: int, fact_id: int) -> bool:
+    row = db.execute(
+        "delete from idea_comparison_facts where id = %s and project_id = %s and idea_cluster_id = %s returning id",
+        (int(fact_id), int(project_id), int(idea_cluster_id)),
+    )
+    if not row:
+        return False
+    _bump_facts_revision(project_id, idea_cluster_id)
+    return True
+
+
 def _synthesize_summary(cluster: dict) -> str | None:
     user_prompt = f'IDEA: {cluster["idea"]}\n\nSOURCES:\n{_format_sources(cluster["sources"])}'
     raw = chat_completion(
@@ -197,14 +335,14 @@ def _synthesize_summary(cluster: dict) -> str | None:
     return summary or None
 
 
-def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id: str | None) -> None:
+def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id: str | None, facts_revision: int = 0) -> None:
     db.execute(
         """
         insert into idea_comparisons (
             project_id, idea_cluster_id, run_id, idea, type, diverges, sources, summary,
-            article_count, analysis_model, prompt_version, generated_at
+            article_count, analysis_model, prompt_version, facts_revision, generated_at
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         on conflict (project_id, idea_cluster_id, run_id) do update set
             idea = excluded.idea,
             type = excluded.type,
@@ -214,6 +352,7 @@ def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id
             article_count = excluded.article_count,
             analysis_model = excluded.analysis_model,
             prompt_version = excluded.prompt_version,
+            facts_revision = excluded.facts_revision,
             generated_at = excluded.generated_at
         """,
         (
@@ -228,6 +367,7 @@ def _save_comparison(project_id: int, cluster: dict, summary: str | None, run_id
             len(cluster["sources"]),
             config.LLM_CHAT_MODEL or None,
             PROMPT_VERSION,
+            int(facts_revision),
         ),
     )
 
@@ -288,8 +428,11 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
 
     written = 0
     for cluster in clusters:
-        summary = _synthesize_summary(cluster)
-        _save_comparison(project_id, cluster, summary, run_id)
+        facts = list_comparison_facts(project_id, cluster["idea_cluster_id"])
+        revision = _current_facts_revision(project_id, cluster["idea_cluster_id"])
+        summary_cluster = {**cluster, "sources": [*cluster["sources"], *[_fact_as_source(fact) for fact in facts]]}
+        summary = _synthesize_summary(summary_cluster)
+        _save_comparison(project_id, cluster, summary, run_id, facts_revision=revision)
         written += 1
 
     if run_id:
@@ -303,7 +446,7 @@ def list_idea_comparisons(project_id: int, run_id: str | None = None) -> list[di
     rows = db.fetch_all(
         """
         select idea_cluster_id, idea, type, diverges, sources, summary,
-               article_count, generated_at
+               article_count, facts_revision, generated_at
         from idea_comparisons
         where project_id = %s and run_id = %s
         order by diverges desc, article_count desc, generated_at desc
@@ -320,6 +463,55 @@ def list_idea_comparisons(project_id: int, run_id: str | None = None) -> list[di
             "summary": row["summary"],
             "article_count": int(row["article_count"] or 0),
             "generated_at": row["generated_at"].isoformat() if row["generated_at"] else None,
+            "facts_revision": int(row.get("facts_revision") or 0),
         }
         for row in rows or []
     ]
+
+
+def get_idea_comparison(project_id: int, idea_cluster_id: int, run_id: str | None = None) -> dict | None:
+    row = db.fetch_one(
+        """
+        select idea_cluster_id, idea, type, diverges, sources, summary,
+               article_count, facts_revision, generated_at
+        from idea_comparisons
+        where project_id = %s and idea_cluster_id = %s and run_id = %s
+        """,
+        (int(project_id), int(idea_cluster_id), str(run_id or "")),
+    )
+    if not row:
+        return None
+    revision = _current_facts_revision(project_id, idea_cluster_id)
+    facts = list_comparison_facts(project_id, idea_cluster_id)
+    return {
+        "idea_cluster_id": row["idea_cluster_id"], "idea": row["idea"], "type": row["type"],
+        "diverges": bool(row["diverges"]), "sources": row["sources"] or [], "summary": row["summary"],
+        "article_count": int(row["article_count"] or 0), "facts": facts,
+        "facts_revision": revision, "summary_facts_revision": int(row.get("facts_revision") or 0),
+        "summary_stale": revision != int(row.get("facts_revision") or 0),
+        "generated_at": row["generated_at"].isoformat() if row.get("generated_at") else None,
+    }
+
+
+def regenerate_idea_comparison(project_id: int, idea_cluster_id: int, run_id: str | None = None) -> dict | None:
+    comparison = get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)
+    if not comparison:
+        return None
+    revision = comparison["facts_revision"]
+    evidence = [*comparison["sources"], *[_fact_as_source(fact) for fact in comparison["facts"]]]
+    summary = _synthesize_summary({**comparison, "sources": evidence})
+    if not summary:
+        raise ValueError("The model did not return a usable summary. Please retry.")
+    if _current_facts_revision(project_id, idea_cluster_id) != revision:
+        raise ValueError("Facts changed while the summary was being generated. Please retry.")
+    values = {str(item.get("value") or "").strip().lower() for item in evidence if str(item.get("value") or "").strip()}
+    db.execute(
+        """
+        update idea_comparisons set summary = %s, diverges = %s, analysis_model = %s,
+            prompt_version = %s, facts_revision = %s, generated_at = now()
+        where project_id = %s and idea_cluster_id = %s and run_id = %s
+        """,
+        (summary, len(values) >= 2, config.LLM_CHAT_MODEL or None, PROMPT_VERSION, revision,
+         int(project_id), int(idea_cluster_id), str(run_id or "")),
+    )
+    return get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)

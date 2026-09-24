@@ -20,6 +20,7 @@ import PipelineRunsPage from './components/PipelineRunsPage';
 import PipelineRunDetailPage from './components/PipelineRunDetailPage';
 import ArticlesPage from './components/ArticlesPage';
 import ArticleDetailPage from './components/ArticleDetailPage';
+import IdeaComparisonDetailPage from './components/IdeaComparisonDetailPage';
 import AnalysisPage from './components/AnalysisPage';
 import LoginPage from './components/LoginPage';
 import UsersPage from './components/UsersPage';
@@ -409,6 +410,7 @@ export default function App() {
           <Route path="/reports" element={renderReportsView()} />
           <Route path="/articles" element={<ArticlesPage project={selectedProject} projectId={selectedProjectId} projects={projects} />} />
           <Route path="/articles/:articleId" element={<ArticleDetailPage />} />
+          <Route path="/projects/:projectId/idea-comparisons/:clusterId" element={<IdeaComparisonDetailPage />} />
           <Route path="/sources" element={<SourcesPage projectId={selectedProjectId} projects={opinionMonitorProjects} />} />
           <Route path="/pipeline-runs" element={<PipelineRunsPage projects={projects} />} />
           <Route path="/pipeline-runs/:runId" element={<PipelineRunDetailPage projects={projects} />} />
