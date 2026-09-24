@@ -231,7 +231,8 @@ class GetProjectIntelligenceTests(unittest.TestCase):
         ]
         with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
              patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
-             patch.object(intelligence, "_fetch_document_count", return_value=0):
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             result = get_project_intelligence(
                 {"id": 1, "hashtags": [], "keywords": []}, period="all"
             )
@@ -250,7 +251,8 @@ class GetProjectIntelligenceTests(unittest.TestCase):
         }]
         with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
              patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
-             patch.object(intelligence, "_fetch_document_count", return_value=0):
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             for run_id in (None, "run-123"):
                 with self.subTest(run_id=run_id):
                     result = get_project_intelligence(

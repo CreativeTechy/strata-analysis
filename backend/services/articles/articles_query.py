@@ -651,7 +651,11 @@ def source_trust_summary_for_rows(rows: list[dict], project_id=None) -> dict:
 
     tiers = {tier: {"sources": 0, "articles": 0} for tier in TRUST_TIERS}
     if groups:
-        trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id else None)
+        # Same "no DB, nothing to resolve" short-circuit as list_project_sources()'s
+        # other DB-backed helpers - every group falls back to 'unknown' rather than
+        # attempting a connection, so an unconfigured/unreachable DATABASE_URL fails
+        # fast instead of blocking the whole intelligence response on a pool timeout.
+        trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id else None) if config.DATABASE_URL else {}
         for group in groups.values():
             tier = (trust_by_key.get(group["key"]) or {}).get("tier") or "unknown"
             if tier not in tiers:
