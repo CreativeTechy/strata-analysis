@@ -144,6 +144,7 @@ def classify_platform(row: dict) -> str:
         return PLATFORM_ALIASES[normalized]
 
     values = [
+        provenance.get("collection_source_url"),
         row.get("url"),
         row.get("source_url"),
         provenance.get("original_url"),

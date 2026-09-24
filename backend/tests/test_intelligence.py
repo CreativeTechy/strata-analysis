@@ -61,6 +61,16 @@ class IntelligenceHelpersTests(unittest.TestCase):
         }
         self.assertEqual(classify_platform(row), "Threads")
 
+    def test_scraper_collection_source_url_wins_over_external_article_url(self):
+        row = {
+            "url": "https://publisher.example/article",
+            "source_url": "document://project-document/2",
+            "source_provenance": {
+                "collection_source_url": "https://www.facebook.com/example/posts/1",
+            },
+        }
+        self.assertEqual(classify_platform(row), "Facebook")
+
     def test_scraper_platform_aliases_are_normalized(self):
         self.assertEqual(classify_platform({"collection_platform": "tweet"}), "X")
         self.assertEqual(classify_platform({"collection_platform": "rss"}), "Web")
