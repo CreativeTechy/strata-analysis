@@ -185,6 +185,8 @@ class ParseRecordsTests(unittest.TestCase):
     def test_nested_collection_source_url_survives_reimport(self):
         text = json.dumps({
             "title": "Post", "text": "A social post.",
+            "url": "https://publisher.example/article",
+            "source_url": "document://project-document/2",
             "source_provenance": {
                 "collection_source_url": "https://www.instagram.com/example/",
             },
@@ -195,6 +197,15 @@ class ParseRecordsTests(unittest.TestCase):
             provenance["collection_source_url"],
             "https://www.instagram.com/example/",
         )
+
+    def test_document_source_url_is_not_treated_as_collection_provenance(self):
+        text = json.dumps({
+            "title": "Post", "text": "A social post.",
+            "source_url": "document://project-document/2",
+        })
+        parsed = records.parse_records(_write("export.jsonl", text), "export.jsonl")
+        provenance = parsed.records[0]["metadata"]["source_provenance"]
+        self.assertNotIn("collection_source_url", provenance)
 
     def test_source_run_snapshot_missing_id_is_dropped(self):
         """Not scraper-app's shape - e.g. a hand-made file that happens to use

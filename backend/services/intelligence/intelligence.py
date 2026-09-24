@@ -152,7 +152,13 @@ def classify_platform(row: dict) -> str:
     ]
     for value in values:
         text = str(value or "").strip().lower()
-        host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
+        try:
+            host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
+        except ValueError:
+            # Imported provenance is operator-supplied metadata. One malformed
+            # hint must not make the project's complete intelligence response
+            # unavailable; later candidates may still identify the platform.
+            continue
         for platform, domains in PLATFORM_HOSTS:
             if any(host == domain or host.endswith(f".{domain}") for domain in domains):
                 return platform

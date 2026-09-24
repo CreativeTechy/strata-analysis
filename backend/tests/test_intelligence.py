@@ -54,6 +54,13 @@ class IntelligenceHelpersTests(unittest.TestCase):
         self.assertEqual(classify_platform({"url": "https://instagram.com.example.test/post"}), "Web")
         self.assertEqual(classify_platform({"url": "https://notlinkedin.com/post"}), "Web")
 
+    def test_malformed_collection_url_falls_through_to_article_url(self):
+        row = {
+            "url": "https://www.facebook.com/example/posts/1",
+            "source_provenance": {"collection_source_url": "https://[broken"},
+        }
+        self.assertEqual(classify_platform(row), "Facebook")
+
     def test_explicit_collection_platform_wins_over_url(self):
         row = {
             "url": "https://example.com/post",
@@ -234,6 +241,26 @@ class GetProjectIntelligenceTests(unittest.TestCase):
             "Web", "X", "Reddit", "Telegram", "LinkedIn", "Threads", "Facebook", "Instagram",
         ):
             self.assertEqual(totals[platform], 1)
+
+    def test_malformed_collection_url_does_not_break_current_or_run_intelligence(self):
+        rows = [{
+            "url": "https://publisher.example/article",
+            "sentiment": "neutral",
+            "source_provenance": {"collection_source_url": "https://[broken"},
+        }]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0):
+            for run_id in (None, "run-123"):
+                with self.subTest(run_id=run_id):
+                    result = get_project_intelligence(
+                        {"id": 1, "hashtags": [], "keywords": []},
+                        period="all",
+                        run_id=run_id,
+                    )
+                    self.assertEqual(result["total"], 1)
+                    totals = {item["platform"]: item["total"] for item in result["platforms"]}
+                    self.assertEqual(totals["Web"], 1)
 
 
 if __name__ == "__main__":
