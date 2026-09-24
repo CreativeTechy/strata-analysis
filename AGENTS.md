@@ -2,6 +2,18 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## Required pull request workflow
+
+- Every feature or fix, including small fixes and urgent hotfixes, must have a pull request before merging.
+- Implement and test changes on a separate branch, open a PR containing the actual changes, and share its link for review before merging.
+- Never push feature or fix commits directly to `main` or bypass the PR with a local merge pushed to `main`.
+- A retrospective documentation PR is not a substitute for reviewing the implementation before it is merged.
+- Do not treat a request to fix, merge, or deploy as permission to skip this workflow. Merge and deployment still require user authorization.
+
+## Branch naming
+
+- Never create a branch with `codex` in its name, including a `codex/` prefix.
+
 ## Architecture
 
 Pipeline: uploaded document → text extraction → LLM splits it into articles → human review → AI analysis stage pipeline → Postgres → FastAPI → React dashboard.
