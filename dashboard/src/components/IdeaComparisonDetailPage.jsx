@@ -5,8 +5,7 @@ import {
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
-  Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart,
-  ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAuth } from '../auth/useAuth.js';
 import {
@@ -19,6 +18,11 @@ const emptyObservation = (metric = '') => ({ metric, numeric_value: '', unit: ''
 const emptyFact = () => ({ fact_text: '', reference_label: '', reference_url: '', observed_at: '', observations: [] });
 
 const compactNumber = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
+const readableDisplayValue = (value) => {
+  const text = String(value || '');
+  if (text.startsWith('-.')) return `-0${text.slice(1)}`;
+  return text.startsWith('.') ? `0${text}` : text;
+};
 
 const changeDetails = (value, reference) => {
   const difference = value - reference;
@@ -40,6 +44,56 @@ function ChangeIndicator({ change, unit, referenceLabel }) {
       {change.direction === 'flat' ? `Matches ${referenceLabel}` : `${compactNumber(Math.abs(change.difference))} ${unit} ${relation} ${referenceLabel}`}
       {change.direction !== 'flat' && change.percentage != null ? ` (${Math.abs(change.percentage).toFixed(1)}%)` : ''}
     </span>
+  );
+}
+
+function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benchmarkLabel, unit }) {
+  const values = observations.map((item) => item.numeric_value);
+  const rawMinimum = Math.min(...values, benchmark);
+  const rawMaximum = Math.max(...values, benchmark);
+  const rawRange = rawMaximum - rawMinimum;
+  const padding = rawRange ? rawRange * 0.14 : Math.max(Math.abs(benchmark) * 0.08, 1);
+  const minimum = rawMinimum - padding;
+  const maximum = rawMaximum + padding;
+  const position = (value) => Math.min(100, Math.max(0, (value - minimum) / (maximum - minimum) * 100));
+  const benchmarkPosition = position(benchmark);
+
+  return (
+    <div className="comparison-benchmark-view">
+      <div className="comparison-user-benchmark">
+        <div className="comparison-user-benchmark-icon"><UserRound size={17} /></div>
+        <div><span>{benchmarkItem ? 'Your fact · comparison baseline' : 'Evidence average · comparison baseline'}</span><strong>{compactNumber(benchmark)} {unit}</strong><small>{benchmarkLabel}</small></div>
+      </div>
+      <div className="comparison-benchmark-chart" role="img" aria-label={`Values compared with ${benchmarkLabel}`}>
+        <div className="comparison-benchmark-heading">
+          <span>Lower</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? 'Your fact' : 'Average'}</strong><span>Higher</span>
+        </div>
+        {observations.map((item) => {
+          const itemPosition = position(item.numeric_value);
+          const start = Math.min(itemPosition, benchmarkPosition);
+          const width = Math.abs(itemPosition - benchmarkPosition);
+          const userDifference = changeDetails(benchmark, item.numeric_value);
+          const isBenchmark = benchmarkItem?.id === item.id;
+          return (
+            <a className={`comparison-benchmark-row ${isBenchmark ? 'is-benchmark' : ''}`} href={`#${item.evidence_id}`} key={item.id}>
+              <div className="comparison-benchmark-source"><i className={`comparison-origin-dot ${item.origin}`} /><span>{item.source_label}</span><strong>{readableDisplayValue(item.display_value)}</strong></div>
+              <div className="comparison-benchmark-track">
+                <i className="comparison-benchmark-line" style={{ left: `${benchmarkPosition}%` }} />
+                {!isBenchmark ? <i className={`comparison-distance-line ${userDifference.direction}`} style={{ left: `${start}%`, width: `${Math.max(width, 0.6)}%` }} /> : null}
+                <i className={`comparison-value-point ${item.origin} ${isBenchmark ? 'benchmark' : ''}`} style={{ left: `${itemPosition}%` }} />
+              </div>
+              <div className={`comparison-benchmark-difference ${userDifference.direction}`}>
+                {isBenchmark ? <><b>→</b><span>Your comparison baseline</span></> : <>
+                  <b>{userDifference.direction === 'up' ? '↑' : userDifference.direction === 'down' ? '↓' : '→'}</b>
+                  <span>Your fact is <strong>{compactNumber(Math.abs(userDifference.difference))} {unit}</strong> {userDifference.direction === 'up' ? 'higher' : userDifference.direction === 'down' ? 'lower' : 'the same'}</span>
+                </>}
+              </div>
+            </a>
+          );
+        })}
+        <div className="comparison-benchmark-scale"><span>{compactNumber(minimum)} {unit}</span><span>{compactNumber(maximum)} {unit}</span></div>
+      </div>
+    </div>
   );
 }
 
@@ -71,7 +125,6 @@ function NumericEvidence({ evidence }) {
               estimate: !['actual', 'forecast', 'target'].includes(item.value_kind) ? item.numeric_value : null,
             };
           });
-          const largestDifference = Math.max(...chartData.map((item) => Math.abs(item.difference)), 0.01);
           const DirectionIcon = group.direction === 'up' ? TrendingUp : group.direction === 'down' ? TrendingDown : Minus;
           return (
             <article className="comparison-numeric-group" key={group.id}>
@@ -98,9 +151,9 @@ function NumericEvidence({ evidence }) {
                   <span>{group.observations[0].source_label}</span>
                 </a>
               ) : (
-                <div className="comparison-chart" role="img" aria-label={`${group.metric} ${group.display_type} chart`}>
-                  <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 48)}>
-                    {group.display_type === 'trend' ? (
+                group.display_type === 'trend' ? (
+                  <div className="comparison-chart" role="img" aria-label={`${group.metric} trend chart`}>
+                    <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 48)}>
                       <LineChart data={chartData} margin={{ top: 12, right: 18, bottom: 8, left: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 12 }} />
@@ -112,35 +165,18 @@ function NumericEvidence({ evidence }) {
                         <Line type="monotone" dataKey="estimate" name="Estimate" stroke="#7c3aed" strokeWidth={3} strokeDasharray="5 4" connectNulls />
                         <Line type="monotone" dataKey="forecast" name="Forecast / target" stroke="#f97316" strokeWidth={3} strokeDasharray="5 4" connectNulls />
                       </LineChart>
-                    ) : (
-                      <BarChart data={chartData} layout="vertical" margin={{ top: 20, right: 110, bottom: 4, left: 18 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                        <XAxis type="number" domain={[-largestDifference * 1.2, largestDifference * 1.2]} tick={{ fontSize: 12 }} tickFormatter={(value) => `${value > 0 ? '+' : ''}${compactNumber(value)}`} />
-                        <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(value) => [`${value > 0 ? '+' : ''}${compactNumber(value)} ${group.unit}`, `Difference from ${benchmarkLabel}`]} />
-                        <ReferenceLine x={0} stroke="#475569" strokeWidth={2} label={{ value: benchmarkLabel, position: 'top', fill: '#475569', fontSize: 11 }} />
-                        {userBenchmark ? <ReferenceDot x={0} y={userBenchmark.source_label} r={7} fill="#f97316" stroke="#fff" strokeWidth={2} isFront /> : null}
-                        <Bar dataKey="difference" radius={[6, 6, 6, 6]}>
-                          {chartData.map((item) => <Cell key={item.id} fill={item.origin === 'user' ? '#f97316' : '#2563eb'} />)}
-                          <LabelList dataKey="display_value" position="right" fill="#334155" fontSize={11} />
-                        </Bar>
-                      </BarChart>
-                    )}
-                  </ResponsiveContainer>
-                </div>
+                    </ResponsiveContainer>
+                  </div>
+                ) : <BenchmarkComparisonChart observations={group.observations} benchmarkItem={userBenchmark} benchmark={benchmark} benchmarkLabel={benchmarkLabel} unit={group.unit} />
               )}
-              {group.observations.length > 1 ? (
+              {group.observations.length > 1 && group.display_type === 'trend' ? (
                 <div className="comparison-number-table">
                   {chartData.map((item, index) => (
                     <a href={`#${item.evidence_id}`} key={item.id}>
                       <span><i className={`comparison-origin-dot ${item.origin}`} />{item.source_label}</span>
                       <strong>{item.display_value}</strong>
                       <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || 'Period not specified'}</small>
-                      <ChangeIndicator
-                        change={item.change}
-                        unit={group.unit}
-                        referenceLabel={group.display_type === 'trend' && index > 0 ? 'previous value' : benchmarkLabel}
-                      />
+                      {group.display_type === 'trend' ? <ChangeIndicator change={item.change} unit={group.unit} referenceLabel={index > 0 ? 'previous value' : benchmarkLabel} /> : null}
                     </a>
                   ))}
                 </div>
