@@ -5,8 +5,8 @@ import {
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart,
+  ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useAuth } from '../auth/useAuth.js';
 import {
@@ -20,6 +20,29 @@ const emptyFact = () => ({ fact_text: '', reference_label: '', reference_url: ''
 
 const compactNumber = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
 
+const changeDetails = (value, reference) => {
+  const difference = value - reference;
+  const percentage = reference ? difference / Math.abs(reference) * 100 : null;
+  return {
+    difference,
+    percentage,
+    direction: difference > 0 ? 'up' : difference < 0 ? 'down' : 'flat',
+  };
+};
+
+function ChangeIndicator({ change, unit, referenceLabel }) {
+  const Icon = change.direction === 'up' ? TrendingUp : change.direction === 'down' ? TrendingDown : Minus;
+  const symbol = change.direction === 'up' ? '↑' : change.direction === 'down' ? '↓' : '→';
+  const relation = change.direction === 'up' ? 'above' : change.direction === 'down' ? 'below' : 'matches';
+  return (
+    <span className={`comparison-value-change ${change.direction}`}>
+      <Icon size={13} /> <b>{symbol}</b>
+      {change.direction === 'flat' ? `Matches ${referenceLabel}` : `${compactNumber(Math.abs(change.difference))} ${unit} ${relation} ${referenceLabel}`}
+      {change.direction !== 'flat' && change.percentage != null ? ` (${Math.abs(change.percentage).toFixed(1)}%)` : ''}
+    </span>
+  );
+}
+
 function NumericEvidence({ evidence }) {
   if (!evidence?.groups?.length) return null;
   return (
@@ -29,13 +52,26 @@ function NumericEvidence({ evidence }) {
       </div>
       <div className="comparison-numeric-groups">
         {evidence.groups.map((group) => {
-          const chartData = group.observations.map((item) => ({
-            ...item,
-            label: group.display_type === 'trend' ? item.period_label : item.source_label,
-            actual: item.value_kind === 'actual' ? item.numeric_value : null,
-            forecast: item.value_kind === 'forecast' || item.value_kind === 'target' ? item.numeric_value : null,
-            estimate: !['actual', 'forecast', 'target'].includes(item.value_kind) ? item.numeric_value : null,
-          }));
+          const userBenchmark = [...group.observations].reverse().find((item) => item.origin === 'user');
+          const average = group.observations.reduce((sum, item) => sum + item.numeric_value, 0) / group.observations.length;
+          const benchmark = userBenchmark?.numeric_value ?? average;
+          const benchmarkLabel = userBenchmark ? `${userBenchmark.source_label} (user fact)` : 'Evidence average';
+          const chartData = group.observations.map((item, index) => {
+            const reference = group.display_type === 'trend' && index > 0
+              ? group.observations[index - 1].numeric_value
+              : benchmark;
+            const change = changeDetails(item.numeric_value, reference);
+            return {
+              ...item,
+              label: group.display_type === 'trend' ? item.period_label : item.source_label,
+              difference: change.difference,
+              change,
+              actual: item.value_kind === 'actual' ? item.numeric_value : null,
+              forecast: item.value_kind === 'forecast' || item.value_kind === 'target' ? item.numeric_value : null,
+              estimate: !['actual', 'forecast', 'target'].includes(item.value_kind) ? item.numeric_value : null,
+            };
+          });
+          const largestDifference = Math.max(...chartData.map((item) => Math.abs(item.difference)), 0.01);
           const DirectionIcon = group.direction === 'up' ? TrendingUp : group.direction === 'down' ? TrendingDown : Minus;
           return (
             <article className="comparison-numeric-group" key={group.id}>
@@ -48,6 +84,14 @@ function NumericEvidence({ evidence }) {
                   </strong>
                 ) : null}
               </div>
+              {group.observations.length > 1 ? (
+                <div className="comparison-stat-strip">
+                  <div><span>Lowest</span><strong>{compactNumber(group.minimum)} {group.unit}</strong></div>
+                  <div><span>Highest</span><strong>{compactNumber(group.maximum)} {group.unit}</strong></div>
+                  <div><span>Average</span><strong>{compactNumber(average)} {group.unit}</strong></div>
+                  <div><span>Range</span><strong>{compactNumber(group.spread)} {group.unit}</strong></div>
+                </div>
+              ) : null}
               {group.display_type === 'single' ? (
                 <a className="comparison-single-value" href={`#${group.observations[0].evidence_id}`}>
                   <strong>{group.observations[0].display_value}</strong>
@@ -69,13 +113,16 @@ function NumericEvidence({ evidence }) {
                         <Line type="monotone" dataKey="forecast" name="Forecast / target" stroke="#f97316" strokeWidth={3} strokeDasharray="5 4" connectNulls />
                       </LineChart>
                     ) : (
-                      <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 18 }}>
+                      <BarChart data={chartData} layout="vertical" margin={{ top: 20, right: 110, bottom: 4, left: 18 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 12 }} />
+                        <XAxis type="number" domain={[-largestDifference * 1.2, largestDifference * 1.2]} tick={{ fontSize: 12 }} tickFormatter={(value) => `${value > 0 ? '+' : ''}${compactNumber(value)}`} />
                         <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(value) => [`${compactNumber(value)} ${group.unit}`, 'Value']} />
-                        <Bar dataKey="numeric_value" radius={[0, 6, 6, 0]}>
+                        <Tooltip formatter={(value) => [`${value > 0 ? '+' : ''}${compactNumber(value)} ${group.unit}`, `Difference from ${benchmarkLabel}`]} />
+                        <ReferenceLine x={0} stroke="#475569" strokeWidth={2} label={{ value: benchmarkLabel, position: 'top', fill: '#475569', fontSize: 11 }} />
+                        {userBenchmark ? <ReferenceDot x={0} y={userBenchmark.source_label} r={7} fill="#f97316" stroke="#fff" strokeWidth={2} isFront /> : null}
+                        <Bar dataKey="difference" radius={[6, 6, 6, 6]}>
                           {chartData.map((item) => <Cell key={item.id} fill={item.origin === 'user' ? '#f97316' : '#2563eb'} />)}
+                          <LabelList dataKey="display_value" position="right" fill="#334155" fontSize={11} />
                         </Bar>
                       </BarChart>
                     )}
@@ -84,11 +131,16 @@ function NumericEvidence({ evidence }) {
               )}
               {group.observations.length > 1 ? (
                 <div className="comparison-number-table">
-                  {group.observations.map((item) => (
+                  {chartData.map((item, index) => (
                     <a href={`#${item.evidence_id}`} key={item.id}>
                       <span><i className={`comparison-origin-dot ${item.origin}`} />{item.source_label}</span>
                       <strong>{item.display_value}</strong>
                       <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || 'Period not specified'}</small>
+                      <ChangeIndicator
+                        change={item.change}
+                        unit={group.unit}
+                        referenceLabel={group.display_type === 'trend' && index > 0 ? 'previous value' : benchmarkLabel}
+                      />
                     </a>
                   ))}
                 </div>
