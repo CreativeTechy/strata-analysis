@@ -399,6 +399,7 @@ def _fetch_document_count(project_id: int) -> int:
 
 def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
     from services.articles.articles_analytics import _topic_summary
+    from services.articles.articles_query import source_trust_summary_for_rows
     period = normalize_period(period)
     if run_id:
         rows = _fetch_project_rows(project["id"], run_id=run_id)
@@ -437,6 +438,7 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
         "document_count": _fetch_document_count(project["id"]),
+        "source_trust": source_trust_summary_for_rows(rows, project_id=project["id"]),
         "sentiment_over_time": [
             {"date": date, "total": values["total"], **{key: values[key] for key in VALID_SENTIMENTS}}
             for date, values in sorted(daily.items())
