@@ -226,7 +226,8 @@ def fetch_run_article_rows(project_id: int, run_id: str) -> list[dict]:
     try:
         return db.fetch_all(
             """
-            select a.id, a.url, a.source, a.source_url, a.title, a.text, a.verified,
+            select a.id, a.url, a.source, a.source_url, a.source_provenance,
+                   a.title, a.text, a.verified,
                    a.published, a.created_at, a.pipeline_run_id,
                    an.summary, an.sentiment, an.writer_tone, an.article_tone,
                    an.region, an.gender, an.age_range, an.segment,

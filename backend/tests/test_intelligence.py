@@ -39,6 +39,49 @@ class IntelligenceHelpersTests(unittest.TestCase):
         self.assertEqual(classify_platform({"url": "https://t.me/somechannel/1"}), "Telegram")
         self.assertEqual(classify_platform({"source": "t.me/somechannel"}), "Telegram")
 
+    def test_platform_classification_uses_new_social_hosts(self):
+        cases = {
+            "https://www.linkedin.com/posts/example": "LinkedIn",
+            "https://threads.net/@example/post/1": "Threads",
+            "https://m.facebook.com/example/posts/1": "Facebook",
+            "https://www.instagram.com/p/example/": "Instagram",
+        }
+        for url, expected in cases.items():
+            with self.subTest(url=url):
+                self.assertEqual(classify_platform({"url": url}), expected)
+
+    def test_platform_classification_does_not_match_misleading_domains(self):
+        self.assertEqual(classify_platform({"url": "https://instagram.com.example.test/post"}), "Web")
+        self.assertEqual(classify_platform({"url": "https://notlinkedin.com/post"}), "Web")
+
+    def test_malformed_collection_url_falls_through_to_article_url(self):
+        row = {
+            "url": "https://www.facebook.com/example/posts/1",
+            "source_provenance": {"collection_source_url": "https://[broken"},
+        }
+        self.assertEqual(classify_platform(row), "Facebook")
+
+    def test_explicit_collection_platform_wins_over_url(self):
+        row = {
+            "url": "https://example.com/post",
+            "source_provenance": {"collection_platform": "threads"},
+        }
+        self.assertEqual(classify_platform(row), "Threads")
+
+    def test_scraper_collection_source_url_wins_over_external_article_url(self):
+        row = {
+            "url": "https://publisher.example/article",
+            "source_url": "document://project-document/2",
+            "source_provenance": {
+                "collection_source_url": "https://www.facebook.com/example/posts/1",
+            },
+        }
+        self.assertEqual(classify_platform(row), "Facebook")
+
+    def test_scraper_platform_aliases_are_normalized(self):
+        self.assertEqual(classify_platform({"collection_platform": "tweet"}), "X")
+        self.assertEqual(classify_platform({"collection_platform": "rss"}), "Web")
+
     def test_emotions_are_mapped_from_existing_tones(self):
         signature = {item["axis"]: item["count"] for item in emotion_signature([
             {"article_tone": "optimistic", "writer_tone": "neutral"},
@@ -174,6 +217,50 @@ class GetProjectIntelligenceTests(unittest.TestCase):
             result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, run_id="run-123")
         self.assertEqual(result["run_id"], "run-123")
         self.assertEqual(result["total"], 0)
+
+    def test_platform_totals_include_every_supported_social_platform(self):
+        rows = [
+            {"url": "https://example.com/a", "sentiment": "neutral"},
+            {"url": "https://x.com/a/status/1", "sentiment": "positive"},
+            {"url": "https://reddit.com/r/a/comments/1", "sentiment": "negative"},
+            {"url": "https://t.me/a/1", "sentiment": "neutral"},
+            {"url": "https://linkedin.com/posts/a", "sentiment": "mixed"},
+            {"url": "https://threads.net/@a/post/1", "sentiment": "positive"},
+            {"url": "https://facebook.com/a/posts/1", "sentiment": "neutral"},
+            {"url": "https://instagram.com/p/a", "sentiment": "positive"},
+        ]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0):
+            result = get_project_intelligence(
+                {"id": 1, "hashtags": [], "keywords": []}, period="all"
+            )
+        totals = {item["platform"]: item["total"] for item in result["platforms"]}
+        self.assertEqual(sum(totals.values()), result["total"])
+        for platform in (
+            "Web", "X", "Reddit", "Telegram", "LinkedIn", "Threads", "Facebook", "Instagram",
+        ):
+            self.assertEqual(totals[platform], 1)
+
+    def test_malformed_collection_url_does_not_break_current_or_run_intelligence(self):
+        rows = [{
+            "url": "https://publisher.example/article",
+            "sentiment": "neutral",
+            "source_provenance": {"collection_source_url": "https://[broken"},
+        }]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0):
+            for run_id in (None, "run-123"):
+                with self.subTest(run_id=run_id):
+                    result = get_project_intelligence(
+                        {"id": 1, "hashtags": [], "keywords": []},
+                        period="all",
+                        run_id=run_id,
+                    )
+                    self.assertEqual(result["total"], 1)
+                    totals = {item["platform"]: item["total"] for item in result["platforms"]}
+                    self.assertEqual(totals["Web"], 1)
 
 
 if __name__ == "__main__":
