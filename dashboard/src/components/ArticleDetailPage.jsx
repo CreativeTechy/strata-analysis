@@ -67,14 +67,14 @@ export default function ArticleDetailPage() {
     setLoading(true);
     setError('');
     setActionMessage('');
-    getArticleAnalysis(articleId, controller.signal)
+    getArticleAnalysis(articleId, { locale }, controller.signal)
       .then((res) => setData(res?.analysis || null))
       .catch((err) => {
         if (err?.name !== 'AbortError') setError(err?.message || t('detail.loadFailed'));
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [articleId, t]);
+  }, [articleId, locale, t]);
 
   const handleReprocess = async () => {
     if (reprocessing) return;

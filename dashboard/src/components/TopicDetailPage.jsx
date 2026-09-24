@@ -151,7 +151,7 @@ export default function TopicDetailPage() {
     let cancelled = false;
     displayedArticleIds.forEach((id) => {
       setArticleDetails((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), loading: true } }));
-      getArticleAnalysis(id)
+      getArticleAnalysis(id, { locale })
         .then((data) => {
           if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: data?.analysis || null, loading: false, error: '' } }));
         })
@@ -163,7 +163,7 @@ export default function TopicDetailPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayedArticleIds.join(',')]);
+  }, [displayedArticleIds.join(','), locale]);
 
   const totalMentions = sources.length || Number(state?.frequencyEstimate || 0);
   const firstSeen = sortedSources.length ? sourceDate(sortedSources[sortedSources.length - 1]) : null;

@@ -47,6 +47,7 @@ from services.articles.articles_store import (
     list_project_sources,
 )
 from services.articles.source_trust import set_tier as set_source_trust_tier
+from services.articles.translation import localize_article_analysis
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
@@ -1112,14 +1113,31 @@ def reprocess_article_endpoint(
 
 
 @app.get("/api/articles/{article_id}/analysis")
-def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_permission("articles.view"))):
+def get_article_analysis_endpoint(
+    article_id: int,
+    locale: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
     """Full analysis detail for one article: sentiment/tone/category with
     their confidence scores, per-stage model identifiers, and
     analysis_status/analysis_error so a failed or low-confidence result is
-    never mistaken for a confident real one."""
+    never mistaken for a confident real one.
+
+    `locale`, when given, renders the LLM-generated output fields (summary,
+    feedback lists, people opinions, frequent ideas) into that locale -
+    validated against config.SUPPORTED_LOCALES, same as /trend-summary.
+    sentiment/tone/category stay their canonical enum labels regardless (the
+    dashboard's own i18n translates those for display); only the free-text
+    extraction output is rendered. See services/articles/translation.py."""
     analysis = get_article_analysis(article_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Article not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
+    if resolved_locale != config.DEFAULT_LOCALE:
+        analysis = localize_article_analysis(analysis, article_id=article_id, locale=resolved_locale)
     return {"analysis": analysis}
 
 
