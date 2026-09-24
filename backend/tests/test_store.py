@@ -405,6 +405,61 @@ class ArticleRowFieldHandlingTests(unittest.TestCase):
         value = self._field_value(self._article(), "source_run_snapshot")
         self.assertIsNone(value)
 
+    def test_verified_ignores_source_url_which_is_always_the_document_reference(self):
+        """source_url is set by project_document_articles._materialize() to
+        the uploaded document's own document:// reference for every article
+        in this fork (there is no scraper) - a real, trusted `url` must not
+        be ignored just because a truthy but useless source_url comes first."""
+        article = self._article(
+            url="https://reuters.com/world/a1",
+            source_url="document://project-document/9",
+        )
+        self.assertTrue(self._field_value(article, "verified"))
+
+    def test_verified_prefers_original_url_over_a_synthetic_llm_split_url(self):
+        article = self._article(
+            url="document://project-document/9/article/3",
+            source_url="document://project-document/9",
+            source_provenance={"original_url": "https://apnews.com/x"},
+        )
+        self.assertTrue(self._field_value(article, "verified"))
+
+    def test_verified_is_false_with_no_resolvable_publisher_url(self):
+        article = self._article(url="document://project-document/9/article/3", source_url="document://project-document/9")
+        self.assertFalse(self._field_value(article, "verified"))
+
+    def test_verified_is_false_for_an_untrusted_domain(self):
+        article = self._article(url="https://some-random-blog.example/a1")
+        self.assertFalse(self._field_value(article, "verified"))
+
+    def test_source_domain_resolved_from_the_same_url_verified_uses(self):
+        article = self._article(
+            url="document://project-document/9/article/3",
+            source_provenance={"original_url": "https://www.reuters.com/world/a1"},
+        )
+        self.assertEqual(self._field_value(article, "source_domain"), "reuters.com")
+
+    def test_source_domain_is_none_with_no_resolvable_publisher_url(self):
+        article = self._article(url="document://project-document/9/article/3", source_url="document://project-document/9")
+        self.assertIsNone(self._field_value(article, "source_domain"))
+
+
+class ResolvedPublisherUrlTests(unittest.TestCase):
+    """_resolved_publisher_url() - the shared lookup verified/source_domain
+    both use, since source_url is never a real publisher URL in this fork."""
+
+    def test_prefers_provenance_original_url_over_the_article_url(self):
+        row = {"url": "https://mirror.example/a1", "source_provenance": {"original_url": "https://reuters.com/a1"}}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
+    def test_falls_back_to_url_when_no_provenance(self):
+        row = {"url": "https://reuters.com/a1", "source_provenance": None}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
+    def test_non_dict_provenance_does_not_raise(self):
+        row = {"url": "https://reuters.com/a1", "source_provenance": "not-a-dict"}
+        self.assertEqual(store._resolved_publisher_url(row), "https://reuters.com/a1")
+
 
 class UpsertArticleRowConflictClauseTests(unittest.TestCase):
     """_upsert_article_row()'s on-conflict clause must not blindly overwrite
@@ -481,6 +536,120 @@ class UpsertArticleRowConflictClauseTests(unittest.TestCase):
         )
         self.assertNotIn("project-document/%", captured["sql"])
         self.assertNotIn("source_url = excluded.source_url", captured["sql"])
+
+    def test_enrichment_fields_are_guarded_when_analysis_status_is_in_the_write(self):
+        """project_document_articles._materialize() and its competitor-study
+        counterpart both save a freshly-approved candidate with
+        analysis_status='pending' and every enrichment field still at
+        DEFAULT_ENRICHMENT's neutral placeholder - real analysis for *that
+        candidate* hasn't run yet. If the candidate's url already belongs to a
+        successfully-analyzed article (the same export re-imported, or a
+        shared real-world url approved into a second project), that
+        placeholder write must not blank out analysis already on file - see
+        store.ENRICHMENT_FIELDS."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "analysis_status": "pending", "sentiment": "neutral"}
+        fields = ["url", "analysis_status", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success' "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
+        self.assertNotIn("sentiment = excluded.sentiment,", captured["sql"])
+        # analysis_status itself must still move forward unconditionally - the
+        # whole point is that this candidate needs (re)analysis.
+        self.assertIn("analysis_status = excluded.analysis_status", captured["sql"])
+
+    def test_enrichment_fields_fall_back_to_plain_overwrite_without_analysis_status(self):
+        """A caller that never writes analysis_status (none exists today, but
+        nothing should silently stop updating enrichment fields if one
+        didn't) has no 'pending' placeholder to guard against."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "sentiment": "positive"}
+        fields = ["url", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn("sentiment = excluded.sentiment", captured["sql"])
+        self.assertNotIn("case when excluded.analysis_status", captured["sql"])
+
+    def test_enrichment_guard_also_requires_unchanged_content_when_content_hash_is_available(self):
+        """A materialize-as-pending write whose url matches an existing
+        successfully-analyzed article, but whose body differs (a re-scrape, a
+        different tool's export of the same URL), must not preserve analysis
+        that was derived from a *different* body while text/summary still
+        take the new one - that would pair analysis with content it was never
+        run on. content_hash (when the write includes it) is what tells the
+        two cases apart from analysis_status alone."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {
+            "url": "https://example.com/a", "analysis_status": "pending",
+            "sentiment": "neutral", "text": "new body", "content_hash": "newhash",
+        }
+        fields = ["url", "analysis_status", "sentiment", "text", "content_hash"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success'"
+            " and articles.content_hash is not distinct from excluded.content_hash "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
+        # content_hash itself is not an enrichment field - it always tracks
+        # the row's own (possibly new) text, same as before this guard.
+        self.assertIn("content_hash = excluded.content_hash", captured["sql"])
+
+    def test_enrichment_guard_omits_the_content_check_when_content_hash_is_unavailable(self):
+        """A database without the content_hash column (pre-migration) has
+        nothing to compare - falls back to the analysis_status-only guard
+        this shipped with, not to no guard at all."""
+        captured = {}
+
+        def _fake_fetch_one(sql, params):
+            captured["sql"] = sql
+            return {"id": 1, "source_url": "https://example.com"}
+
+        article = {"url": "https://example.com/a", "analysis_status": "pending", "sentiment": "neutral"}
+        fields = ["url", "analysis_status", "sentiment"]
+        with patch("services.articles.store._article_write_fields", return_value=fields):
+            with patch("services.articles.store._article_columns", return_value=set(fields)):
+                with patch("services.articles.store.db.fetch_one", side_effect=_fake_fetch_one):
+                    store._upsert_article_row(article)
+
+        self.assertNotIn("content_hash", captured["sql"])
+        self.assertIn(
+            "sentiment = case when excluded.analysis_status = 'pending' "
+            "and articles.analysis_status = 'success' "
+            "then articles.sentiment else excluded.sentiment end",
+            captured["sql"],
+        )
 
 
 if __name__ == "__main__":

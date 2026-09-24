@@ -58,7 +58,6 @@ function query(params = {}) {
 // --- articles ----------------------------------------------------------
 export const listArticles = (params, signal) => request(`/articles${query(params)}`, { signal });
 export const getArticleAnalysis = (articleId, signal) => request(`/articles/${articleId}/analysis`, { signal });
-export const checkCoverage = (articleId) => request(`/articles/${articleId}/coverage`, { method: 'POST' });
 export const reprocessArticle = (articleId) => request(`/articles/${articleId}/reprocess`, { method: 'POST' });
 /** Batch retry: force-reruns analysis for the given article ids regardless of
  *  their current status. */
@@ -83,7 +82,7 @@ export async function getArticleStats(params, signal) {
   return data && typeof data === 'object' ? data : null;
 }
 
-// --- export/import -----------------------------------------------------
+// --- export --------------------------------------------------------------
 /** Streams the export as a Blob - the endpoint returns newline-delimited
  *  JSON for direct download, not a parsed JSON body. */
 export async function exportArticles(params) {
@@ -94,8 +93,6 @@ export async function exportArticles(params) {
   }
   return response.blob();
 }
-export const importArticles = (formData) => requestSoftError('/articles/import', { method: 'POST', body: formData, form: true });
-export const getImportStatus = (runId) => requestSoftError(`/articles/import/${runId}`);
 
 // --- copilot -------------------------------------------------------------
 /** Every handled outcome (a real reply, or an LLM failure reported as a soft

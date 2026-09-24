@@ -11,6 +11,7 @@ import config
 import db
 import dedup
 from embeddings import cosine_similarity
+from services.articles.publisher_identity import publisher_domain
 from services.projects.projects_store import list_projects, set_article_projects
 from psycopg.types.json import Jsonb
 from timestamps import parse_published
@@ -23,6 +24,7 @@ ARTICLE_COLUMNS = (
     "published_at", "published_precision", "text",
     "fetched_at", "summary", "sentiment", "relevance_score", "category",
     "article_category", "writer_tone", "article_tone", "region", "region_confidence", "gender", "age_range", "verified",
+    "source_domain",
     "insight_json", "analysis_model", "analysis_prompt_version", "analyzed_at",
     "organizations", "entities", "topics", "key_points", "risks", "opportunities",
     "brands", "car_models", "embedding_json", "embedding_model", "embedding_source", "embedded_at",
@@ -58,6 +60,7 @@ ARTICLE_MUTABLE_FIELDS = (
     "gender",
     "age_range",
     "verified",
+    "source_domain",
     "insight_json",
     "analysis_model",
     "analysis_prompt_version",
@@ -109,6 +112,66 @@ ARTICLE_JSON_FIELDS = {
     "car_models",
     "embedding_json",
 }
+
+# The AI-derived output columns, as opposed to the article's own identity/
+# content fields (url, title, text, author, published, ...). Guarded
+# separately in _upsert_article_row(): project_document_articles.py and
+# competitor_document_articles.py both materialize a freshly-approved
+# candidate by calling save_articles() with these fields still at
+# DEFAULT_ENRICHMENT's neutral placeholders and analysis_status='pending' -
+# real analysis for *that candidate* hasn't run yet. If the candidate's url
+# happens to already belong to a successfully-analyzed article (the same
+# export re-imported, or a real-world URL approved into a second project),
+# `on conflict (url) do update` would otherwise blank out that existing
+# analysis the moment the placeholder lands - and if the analysis run queued
+# right after doesn't get around to re-analyzing this particular article
+# (e.g. it was materialized after that run's own work was already selected),
+# the neutral placeholder is what a viewer sees, indefinitely, in place of
+# analysis that used to be there. A genuine reanalysis result is never
+# written with analysis_status='pending' (see reanalyze.py), so gating on
+# that incoming value only ever protects against the placeholder case.
+ENRICHMENT_FIELDS = frozenset({
+    "sentiment",
+    "sentiment_score",
+    "sentiment_low_confidence",
+    "sentiment_model",
+    "relevance_score",
+    "category",
+    "category_confidence",
+    "article_category",
+    "writer_tone",
+    "writer_tone_confidence",
+    "article_tone",
+    "article_tone_confidence",
+    "region",
+    "region_confidence",
+    "gender",
+    "age_range",
+    "verified",
+    "source_domain",
+    "insight_json",
+    "analysis_model",
+    "analysis_prompt_version",
+    "analyzed_at",
+    "organizations",
+    "entities",
+    "topics",
+    "key_points",
+    "risks",
+    "opportunities",
+    "brands",
+    "car_models",
+    "embedding_json",
+    "embedding_model",
+    "embedding_source",
+    "embedded_at",
+    "embedding_dimensions",
+    "classification_model",
+    "extraction_model",
+    "analysis_pipeline_version",
+    "source_language",
+    "source_language_confidence",
+})
 
 
 def _row(article):
@@ -302,6 +365,22 @@ def _assign_story_group(article, saved_row):
         return None
 
 
+def _resolved_publisher_url(row):
+    """The URL that actually identifies this article's publisher - not
+    `source_url`, which project_document_articles._materialize() (and its
+    competitor-study counterpart) always set to the uploaded document's own
+    document:// reference, regardless of whether this particular article has
+    a real publisher. Prefers `source_provenance.original_url` - a JSONL
+    record's own url, or an LLM split's document-level "Original publisher
+    URL" from the wizard, both carried in by project_document_articles.py -
+    over the article's own `url`, which is itself synthetic
+    (document://project-document/<id>/article/<candidate>) for an LLM split
+    with no such override."""
+    provenance = row.get("source_provenance")
+    original_url = (provenance or {}).get("original_url") if isinstance(provenance, dict) else None
+    return original_url or row.get("url")
+
+
 def _article_row(article):
     row = _row(article)
     fields = _article_write_fields()
@@ -326,8 +405,20 @@ def _article_row(article):
             # Computed from the article's own resolved publisher URL, not
             # trusted from the caller - so a stale/absent "verified" key on
             # `article` (e.g. a cached enrichment written before this field
-            # existed) can never silently mark something verified.
-            value = is_trusted_domain(row.get("source_url") or row.get("url"))
+            # existed) can never silently mark something verified. NOT
+            # `source_url`: project_document_articles._materialize() (and its
+            # competitor-study counterpart) always set that to the uploaded
+            # document's own document:// reference, never a real outlet's URL
+            # - see _resolved_publisher_url().
+            value = is_trusted_domain(_resolved_publisher_url(row))
+        elif field == "source_domain":
+            # Offline publisher-domain identity (publisher_identity.py) off
+            # the same resolved URL `verified` uses above - the one place
+            # articles.source_domain (read by evidence grounding,
+            # intelligence, and the analyses snapshot) gets populated. See
+            # services/articles/source_trust.py for the richer, operator-
+            # editable trust tier built on top of this.
+            value = publisher_domain(_resolved_publisher_url(row))
         elif field in ("source_run_snapshot", "source_provenance"):
             value = _jsonb_object_param(row.get(field))
         params.append(value)
@@ -348,7 +439,37 @@ def _upsert_article_row(article):
         if field not in (
             "url", "source", "source_url", "pipeline_run_id", "source_run_snapshot", "source_provenance",
         )
+        and field not in ENRICHMENT_FIELDS
     ]
+    if "analysis_status" in fields:
+        # When content_hash is available, only preserve when the body is
+        # actually the same one the analysis was derived from - otherwise a
+        # materialize call whose url matches an existing article but whose
+        # text differs (a re-scrape, a different tool's export of the same
+        # URL) would keep sentiment/topics/embeddings computed from the OLD
+        # body while text/summary below still take the new one, pairing
+        # analysis with content it was never run on. Without content_hash
+        # (a pre-migration database) there is nothing to compare, so this
+        # falls back to guarding on analysis_status alone - the same
+        # conservative behavior this guard shipped with.
+        content_unchanged = (
+            " and articles.content_hash is not distinct from excluded.content_hash" if "content_hash" in fields else ""
+        )
+        for field in fields:
+            if field in ENRICHMENT_FIELDS:
+                # See ENRICHMENT_FIELDS' docstring: a materialize-as-pending
+                # write must not blank out analysis that already succeeded.
+                updates.append(
+                    f"{field} = case when excluded.analysis_status = 'pending' "
+                    f"and articles.analysis_status = 'success'"
+                    f"{content_unchanged} "
+                    f"then articles.{field} else excluded.{field} end"
+                )
+    else:
+        # analysis_status itself isn't in this write (a caller that never
+        # touches it), so there is no 'pending' placeholder to guard against -
+        # fall back to the plain overwrite for every enrichment field present.
+        updates.extend(f"{field} = excluded.{field}" for field in fields if field in ENRICHMENT_FIELDS)
     if "source_url" in fields:
         # An approved uploaded-document record may carry a real per-article URL,
         # so a later import or reanalysis can collide on `url`. Keep the document

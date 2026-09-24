@@ -19,12 +19,13 @@ from services.articles.articles_query import (
     DEFAULT_SORT,
     _fetch_articles,
     _normalize_text,
+    list_article_ids_for_source_host,
 )
 
 SEARCH_SCAN_LIMIT = 1000
 
 
-def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, coverage_status=None):
+def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=None, *, select=ARTICLES_SELECT, order=DEFAULT_SORT, limit=SEARCH_SCAN_LIMIT, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None):
     if not config.DATABASE_URL:
         return []
 
@@ -32,6 +33,15 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
     page_size = 500
     offset = 0
     limit = max(1, min(int(limit or SEARCH_SCAN_LIMIT), SEARCH_SCAN_LIMIT))
+
+    # Resolved once up front rather than inside the loop below: source_host
+    # has no index to filter on, so resolving it is a full scan of the
+    # project's articles (see list_article_ids_for_source_host) - paying
+    # that cost again on every page of this scan would turn one search into
+    # several full-project scans.
+    source_host_ids = None
+    if project_id is not None and _normalize_text(source_host):
+        source_host_ids = list_article_ids_for_source_host(project_id, source_host)
 
     while len(rows) < limit:
         want = min(page_size, limit - len(rows))
@@ -47,9 +57,10 @@ def _fetch_all_articles(search=None, sentiment=None, category=None, project_id=N
             date_from=date_from,
             date_to=date_to,
             source_url=source_url,
+            source_host=source_host,
+            source_host_ids=source_host_ids,
             added_from=added_from,
             added_to=added_to,
-            coverage_status=coverage_status,
             max_limit=page_size,
         )
         if not batch:
@@ -163,7 +174,7 @@ def _rank_search_rows(rows, search: str):
     return ranked_rows, matched_rows
 
 
-def search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, coverage_status=None, select=ARTICLES_SELECT):
+def search_results(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, added_from=None, added_to=None, select=ARTICLES_SELECT):
     rows = _fetch_all_articles(
         sentiment=sentiment,
         category=category,
@@ -174,9 +185,9 @@ def search_results(search=None, sentiment=None, category=None, project_id=None, 
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
+        source_host=source_host,
         added_from=added_from,
         added_to=added_to,
-        coverage_status=coverage_status,
     )
     ranked_rows, matched_rows = _rank_search_rows(rows, search)
     if _normalize_text(search):

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import config
 import db
+from services.articles.source_trust import resolve_many as resolve_source_trust
 from services.projects.projects_store import list_article_ids_for_project
 
 # project_document_articles._materialize() writes this scheme onto every
@@ -45,18 +46,38 @@ def _export_select():
     so exporting the narrow list and re-importing it would null those out.
     Selecting exactly what the upsert writes keeps export -> import lossless.
 
+    Also unions in ARTICLES_SELECT itself: `segment` (and any other future
+    dashboard-list field) is derived/written outside the upsert - see
+    store.py's _replace_article_children(), which sets it from the
+    per-article-opinion majority vote rather than from ARTICLE_MUTABLE_FIELDS
+    - so it would otherwise be visible on every article card yet silently
+    absent from the export. Whatever the dashboard shows for an article, the
+    export must be able to carry too.
+
     Built from the live table rather than hardcoded so a database that hasn't
     had every migration applied yet exports the columns it does have instead of
-    failing the whole query on one missing name."""
-    from services.articles.store import stored_article_fields
+    failing the whole query on one missing name. stored_article_fields() only
+    filters ARTICLE_MUTABLE_FIELDS this way (the upsert's own write-set), so
+    the names unioned in above from ARTICLES_SELECT - `segment` included -
+    are filtered again here, against _article_table_columns() directly
+    (the raw column list, not ARTICLE_MUTABLE_FIELDS-shaped), so a
+    pre-migration column named here the same way still comes back empty
+    (an unreachable/errored connection) rather than partially filtered - in
+    which case every candidate name is kept, matching stored_article_fields()'s
+    own "can't check, so trust everything" fallback."""
+    from services.articles.store import _article_table_columns, stored_article_fields
 
-    fields = ["id", *stored_article_fields(), "segment", "created_at"]
+    fields = ["id", *stored_article_fields(), *ARTICLES_SELECT.split(","), "created_at"]
+    live_columns = _article_table_columns()
     seen = set()
     ordered = []
     for field in fields:
-        if field not in seen:
-            seen.add(field)
-            ordered.append(field)
+        if field in seen:
+            continue
+        if live_columns and field not in live_columns:
+            continue
+        seen.add(field)
+        ordered.append(field)
     return ",".join(ordered)
 
 
@@ -96,7 +117,6 @@ MAX_LIMIT = 100
 BULK_PAGE_SIZE = 500
 DEFAULT_LIMIT = 24
 DEFAULT_SORT = "published.desc"
-VALID_COVERAGE_STATUSES = {"broad_coverage", "some_coverage", "no_coverage_found", "not_checked"}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -178,7 +198,63 @@ def _normalize_sort(value: str | None):
     return field, direction
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, coverage_status=None):
+def _real_source_host(url: str) -> str:
+    """The "real source" grouping key for one article's own `url` - shared by
+    list_project_sources() (which shows it as a label) and
+    list_article_ids_for_source_host() (which matches against it), so the two
+    can't drift apart. `urlparse` can't find a hostname in a scheme-less URL
+    (e.g. "example.com/a", common in hand-typed or JSONL-imported data), in
+    which case the whole URL stands in as its own grouping key - same
+    fallback list_project_sources always used, now shared instead of
+    duplicated with a narrower one that never matched it."""
+    return (urlparse(url).hostname or url).lower()
+
+
+def source_group_identity(url, source, source_url):
+    """(key, type, label, link) for one article row's source group - shared
+    by list_project_sources() (the Sources tab) and list_project_source_keys()
+    (validating a trust-tier write - see source_trust.py - targets a source
+    this project can actually see), so the two can't drift apart. Also how the
+    Export Summary PDF (services/reports/report_data.py) looks up the same
+    tier the Sources tab shows for an article's source."""
+    url = str(url or "")
+    is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
+    if is_real:
+        host = _real_source_host(url)
+        return f"real:{host}", "real", host, f"https://{host}"
+    source_url = source_url or ""
+    return f"document:{source_url}", "document", (source or "Uploaded document"), (source_url or None)
+
+
+def list_article_ids_for_source_host(project_id, host):
+    """Article ids, scoped to `project_id`, whose own `url` (a "real" source -
+    see SYNTHETIC_SOURCE_PREFIX) resolves to this hostname - the query-side
+    counterpart to list_project_sources()'s "real" grouping below, used by the
+    Articles page's source filter. Hostname isn't a stored column (it's
+    derived from `url` the same way list_project_sources derives it), so
+    matching it means reading each candidate row rather than an indexed
+    lookup - bounded to one project's articles, same as list_project_sources."""
+    host_value = (host or "").strip().lower()
+    if not project_id or not host_value or not config.DATABASE_URL:
+        return []
+    article_ids = list_article_ids_for_project(project_id)
+    if not article_ids:
+        return []
+    try:
+        rows = db.fetch_all("select id, url from articles where id = any(%s)", (article_ids,))
+    except Exception:
+        return []
+    matches = []
+    for row in rows:
+        url = str(row.get("url") or "")
+        if not url or url.startswith(SYNTHETIC_SOURCE_PREFIX):
+            continue
+        if _real_source_host(url) == host_value:
+            matches.append(row["id"])
+    return matches
+
+
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None):
     clauses = []
     params = []
 
@@ -217,10 +293,28 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         clauses.append("lower(source_url) = %s")
         params.append(source_url_value.lower())
 
-    coverage_value = _normalize_text(coverage_status).lower()
-    if coverage_value in VALID_COVERAGE_STATUSES:
-        clauses.append("coalesce(coverage_evidence->>'status', 'not_checked') = %s")
-        params.append(coverage_value)
+    # A caller that already resolved source_host to ids (see
+    # list_article_ids_for_source_host's docstring on why that resolution
+    # isn't a cheap indexed lookup) passes them in directly via
+    # source_host_ids so a multi-page reader doesn't redo that full-project
+    # scan on every page - see articles_search._fetch_all_articles and
+    # articles_store.export_articles.
+    if source_host_ids is not None:
+        matching_ids = source_host_ids
+        if not matching_ids:
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(matching_ids)
+    else:
+        source_host_value = _normalize_text(source_host)
+        if source_host_value:
+            matching_ids = list_article_ids_for_source_host(project_id, source_host_value)
+            if not matching_ids:
+                clauses.append("id = -1")
+            else:
+                clauses.append("id = any(%s)")
+                params.append(matching_ids)
 
     date_from_value = _normalize_date_bound(date_from)
     if date_from_value:
@@ -247,7 +341,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, added_from=None, added_to=None, coverage_status=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -262,9 +356,10 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         date_from=date_from,
         date_to=date_to,
         source_url=source_url,
+        source_host=source_host,
+        source_host_ids=source_host_ids,
         added_from=added_from,
         added_to=added_to,
-        coverage_status=coverage_status,
     )
 
     try:
@@ -455,21 +550,12 @@ def list_project_sources(project_id, limit=20, offset=0):
     groups: dict[str, dict] = {}
     for row in rows:
         url = str(row.get("url") or "")
-        is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
-        if is_real:
-            host = (urlparse(url).hostname or url).lower()
-            key = f"real:{host}"
-            label = host
-            link = f"https://{host}"
-        else:
-            source_url = row.get("source_url") or ""
-            key = f"document:{source_url}"
-            label = row.get("source") or "Uploaded document"
-            link = source_url or None
+        key, source_type, label, link = source_group_identity(url, row.get("source"), row.get("source_url"))
+        is_real = source_type == "real"
 
         group = groups.setdefault(key, {
             "key": key,
-            "type": "real" if is_real else "document",
+            "type": source_type,
             "label": label,
             "url": link,
             "article_count": 0,
@@ -497,7 +583,48 @@ def list_project_sources(project_id, limit=20, offset=0):
     total = len(sources)
     total_articles = len(rows)
     page = sources[offset:offset + limit]
+
+    # Trust tier is attached here, not stored on the group above, so the
+    # Sources tab's one existing request still gets it - see source_trust.py.
+    # Resolved for just this page (bounded by `limit`), not every group, same
+    # "small enough to stay cheap" reasoning this function already documents.
+    if page:
+        trust_by_key = resolve_source_trust(page, project_id=int(project_id))
+        for group in page:
+            group["trust"] = trust_by_key.get(group["key"])
+
     return {"sources": page, "total": total, "total_articles": total_articles, "limit": limit, "offset": offset}
+
+
+def list_project_source_keys(project_id) -> dict[str, dict]:
+    """{key: {"type": ..., "label": ...}} for every source group this
+    project's articles currently group into - the same grouping
+    list_project_sources() uses, without the per-source article previews.
+
+    Used to validate a source_key an operator is setting a trust tier for
+    actually belongs to a source this project can see, before source_trust
+    (a global table - see its own module) accepts the write: a user who can
+    only see this project must not blind-write a tier for another project's
+    document, or invent a "real:" host they have never actually seen in
+    their own data.
+    """
+    if not project_id or not config.DATABASE_URL:
+        return {}
+    article_ids = list_article_ids_for_project(project_id)
+    if not article_ids:
+        return {}
+    try:
+        rows = db.fetch_all(
+            "select url, source, source_url from articles where id = any(%s)",
+            (article_ids,),
+        )
+    except Exception:
+        return {}
+    keys: dict[str, dict] = {}
+    for row in rows or []:
+        key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        keys[key] = {"type": source_type, "label": label}
+    return keys
 
 
 def get_analysis_status_counts(project_id=None):
@@ -575,7 +702,7 @@ _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "region_confidence",
     "classification_model", "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
-    "source_domain", "coverage_evidence",
+    "source_domain",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
     "analysis_attempt_count", "reprocess_requested_at",
 )
@@ -644,7 +771,6 @@ def _shape_article_analysis(row: dict) -> dict:
         },
         "source_language": row.get("source_language"),
         "source_language_confidence": row.get("source_language_confidence"),
-        "coverage_evidence": row.get("coverage_evidence") if isinstance(row.get("coverage_evidence"), dict) and row.get("coverage_evidence") else None,
         "models": {
             "sentiment": row.get("sentiment_model"),
             "classification": row.get("classification_model"),

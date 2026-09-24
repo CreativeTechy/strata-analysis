@@ -126,6 +126,17 @@ class BulkPagingTests(unittest.TestCase):
         self.assertEqual(len(result["articles"]), articles_store.MAX_LIMIT)
         self.assertEqual(result["limit"], articles_store.MAX_LIMIT)
 
+    def test_export_resolves_source_host_once_not_once_per_page(self):
+        """list_article_ids_for_source_host has no index to work with - it
+        scans every one of the project's articles. A 900-row export spans two
+        BULK_PAGE_SIZE pages and must not redo that full scan on each one -
+        see the comment above export_articles's bulk loop."""
+        with patch(
+            "services.articles.articles_store.list_article_ids_for_source_host", return_value=[1, 2, 3],
+        ) as mock_resolve:
+            self._run(900, lambda: list(articles_store.export_articles(project_id=1, source_host="nytimes.com")))
+        mock_resolve.assert_called_once_with(1, "nytimes.com")
+
 
 class ListArticlesSearchRoutingTests(unittest.TestCase):
     """list_articles()'s one remaining piece of real logic: deciding whether a

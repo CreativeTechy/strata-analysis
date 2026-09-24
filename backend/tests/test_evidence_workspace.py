@@ -491,20 +491,22 @@ class EvidenceSnapshotTests(unittest.TestCase):
 
     def test_embedding_relevance_mode_classifies_without_llm(self):
         groups = [
-            {"fingerprint": "direct", "canonical": {"embedding": [1.0, 0.0]}},
-            {"fingerprint": "context", "canonical": {"embedding": [0.75, 0.66]}},
-            {"fingerprint": "other", "canonical": {"embedding": [0.0, 1.0]}},
+            {"fingerprint": "direct", "canonical": {"embedding": [1.0, 0.0], "claim": "Fuel prices increased during the latest reporting month."}},
+            {"fingerprint": "context", "canonical": {"embedding": [0.75, 0.66], "claim": "Fuel prices affected household spending during the reporting month."}},
+            {"fingerprint": "other", "canonical": {"embedding": [0.0, 1.0], "claim": "The football club won its final match."}},
+            {"fingerprint": "missing", "canonical": {"embedding": [1.0, 0.0]}},
         ]
         with patch.object(workspace.config, "EVIDENCE_RELEVANCE_MODE", "embedding"), \
              patch.object(workspace.config, "EVIDENCE_RELEVANCE_DIRECT_THRESHOLD", 0.9), \
              patch.object(workspace.config, "EVIDENCE_RELEVANCE_CONTEXTUAL_THRESHOLD", 0.7), \
              patch.object(workspace, "get_embedding", return_value={"embedding_json": [1.0, 0.0]}), \
              patch.object(workspace, "chat_completion") as chat:
-            result = workspace._classify_relevance({"name": "Fuel"}, groups)
+            result = workspace._classify_relevance({"name": "Fuel prices"}, groups)
 
-        self.assertEqual(result["direct"]["relevance"], "uncertain")
-        self.assertEqual(result["context"]["relevance"], "uncertain")
+        self.assertEqual(result["direct"]["relevance"], "direct")
+        self.assertEqual(result["context"]["relevance"], "contextual")
         self.assertEqual(result["other"]["relevance"], "unrelated")
+        self.assertEqual(result["missing"]["relevance"], "uncertain")
         chat.assert_not_called()
 
     def test_claim_embedding_cannot_promote_generic_keyword_only_text(self):

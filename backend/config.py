@@ -213,6 +213,22 @@ COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS = int(
     os.environ.get("COMPETITOR_DOCUMENT_SPLIT_TIMEOUT_SECONDS", "90") or 90
 )
 
+# .json/.jsonl/.ndjson uploads (backend/services/documents/records.py, shared
+# by both project and competitor document flows) skip the LLM split - each
+# record becomes one candidate directly - so this cap is just memory/review-list
+# size, not model cost. Raise it for operators regularly importing exports in
+# the thousands of records; a file that still exceeds it is truncated, not
+# rejected (see records.py's MAX_ERRORS_REPORTED/truncated handling).
+RECORD_IMPORT_MAX_RECORDS = int(os.environ.get("RECORD_IMPORT_MAX_RECORDS", "5000") or 5000)
+
+# Per-file upload size cap, shared by both document-upload flows
+# (services/projects/project_documents_store.py and
+# services/competitors/competitor_documents_store.py). A single PDF/image
+# rarely needs more than a few MB, but a .json/.jsonl/.ndjson export bundles
+# many records into one file, so the cap has to cover that case rather than
+# being sized for the smallest consumer.
+DOCUMENT_MAX_FILE_SIZE_MB = int(os.environ.get("DOCUMENT_MAX_FILE_SIZE_MB", "100") or 100)
+
 # Naming the companies a competitor study's approved articles are actually
 # about (backend/services/competitors/document_analysis.py) - a full article
 # corpus in the prompt, so it gets the same longer budget as finding
@@ -228,39 +244,6 @@ EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 ).strip()
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
-
-# Article-to-project relevance screening runs before the expensive analysis and
-# evidence stages. "observe" records what would be excluded without skipping
-# it; switch to "enforce" after reviewing real project results. "off" bypasses
-# screening entirely. Cosine similarity is not a probability, so these values
-# are deliberately configurable rather than presented as confidence percent.
-ARTICLE_RELEVANCE_SCREENING_MODE = os.environ.get(
-    "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"
-).strip().lower()
-if ARTICLE_RELEVANCE_SCREENING_MODE not in {"off", "observe", "enforce"}:
-    ARTICLE_RELEVANCE_SCREENING_MODE = "observe"
-try:
-    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = float(
-        os.environ.get("ARTICLE_RELEVANCE_ACCEPT_THRESHOLD", "0.82")
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = 0.82
-ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_ACCEPT_THRESHOLD))
-try:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = float(
-        os.environ.get("ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD", "0.65")
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = 0.65
-ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD))
-if ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD > ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:
-    ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = ARTICLE_RELEVANCE_ACCEPT_THRESHOLD
-try:
-    ARTICLE_RELEVANCE_BATCH_SIZE = max(
-        1, int(os.environ.get("ARTICLE_RELEVANCE_BATCH_SIZE", "50") or 50)
-    )
-except ValueError:
-    ARTICLE_RELEVANCE_BATCH_SIZE = 50
 
 EVIDENCE_RELEVANCE_MODE = os.environ.get("EVIDENCE_RELEVANCE_MODE", "llm").strip().lower()
 if EVIDENCE_RELEVANCE_MODE not in {"llm", "embedding"}:
@@ -290,6 +273,33 @@ EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD = max(-1.0, min(
 # same project is allowed to start anyway. Without this, a backend that died
 # mid-run would block that project's analysis forever.
 STALE_RUN_MINUTES = int(os.environ.get("STALE_RUN_MINUTES", "180") or 180)
+
+
+# --- Reports: Export Summary PDF ---------------------------------------------
+# The timezone used to display analysis-run dates in the Reports PDF. IANA
+# name, e.g. "UTC" or "Africa/Cairo" - resolved via zoneinfo, so
+# an invalid value fails fast at first use rather than silently drifting.
+REPORT_TIMEZONE = os.environ.get("REPORT_TIMEZONE", "UTC").strip() or "UTC"
+
+# How many of a report's ranked articles make the "Top articles" section.
+REPORT_TOP_ARTICLES_LIMIT = int(os.environ.get("REPORT_TOP_ARTICLES_LIMIT", "10") or 10)
+
+# Per-side cap on how many articles' evidence (summary/topics/key points) is
+# fed into the "variation from last run" LLM prompt. A project with a large
+# corpus would otherwise blow past context limits long before it added useful
+# signal - see services/reports/yesterday_comparison.py's sampling, which
+# discloses when this truncates either side rather than doing it silently.
+REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE = int(
+    os.environ.get("REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE", "40") or 40
+)
+
+# The "variation from last run" narrative is one structured-JSON call over a
+# larger evidence bundle than the plain trend summary (two runs' worth of
+# articles' summaries/topics/key points), so it gets a longer budget than the
+# general chat_completion() default.
+REPORT_VARIATION_LLM_TIMEOUT_SECONDS = int(
+    os.environ.get("REPORT_VARIATION_LLM_TIMEOUT_SECONDS", "120") or 120
+)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -451,17 +461,6 @@ SEARCH_SEMANTIC_MATCH_THRESHOLD = float(
     os.environ.get("SEARCH_SEMANTIC_MATCH_THRESHOLD", "0.78") or 0.78
 )
 
-# GDELT is only contacted when an operator explicitly requests a coverage
-# check for an article. It is not part of ingestion or the analysis pipeline.
-GDELT_DOC_API_URL = os.environ.get(
-    "GDELT_DOC_API_URL", "https://api.gdeltproject.org/api/v2/doc/doc"
-).strip()
-GDELT_TIMEOUT_SECONDS = max(1, int(os.environ.get("GDELT_TIMEOUT_SECONDS", "12") or 12))
-GDELT_MAX_RECORDS = min(250, max(10, int(os.environ.get("GDELT_MAX_RECORDS", "75") or 75)))
-GDELT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-GDELT_MIN_TITLE_OVERLAP = min(1.0, max(0.0, float(os.environ.get("GDELT_MIN_TITLE_OVERLAP", "0.6") or 0.6)))
-GDELT_BROAD_COVERAGE_DOMAINS = max(2, int(os.environ.get("GDELT_BROAD_COVERAGE_DOMAINS", "3") or 3))
-GDELT_STORED_MATCHES = min(20, max(1, int(os.environ.get("GDELT_STORED_MATCHES", "8") or 8)))
 
 # services/competitors/competitor_analysis.py's semantic-mention fallback:
 # only ever consulted when no literal name/alias was found in the text, so

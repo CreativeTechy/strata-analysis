@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
-import { getArticleAnalysis, reprocessArticle, deleteArticle, checkCoverage } from '../api/articlesApi.js';
+import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
 import { prettyLabel, confidencePct, articleDate } from '../lib/articleHelpers.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
@@ -33,31 +33,12 @@ export default function ArticleDetailPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-  const [checkingCoverage, setCheckingCoverage] = useState(false);
   const activeArticle = useRef(articleId);
 
   useEffect(() => {
     activeArticle.current = articleId;
-    setCheckingCoverage(false);
     return () => { activeArticle.current = null; };
   }, [articleId]);
-
-  const handleCheckCoverage = async () => {
-    if (checkingCoverage) return;
-    const checkedId = articleId;
-    setCheckingCoverage(true);
-    setActionMessage('');
-    try {
-      const result = await checkCoverage(checkedId);
-      if (activeArticle.current !== checkedId) return;
-      setData((current) => current ? { ...current, coverage_evidence: result.coverage } : current);
-      setActionMessage('Source reliability signals updated.');
-    } catch (err) {
-      if (activeArticle.current === checkedId) setActionMessage(err?.message || 'Failed to check source reliability signals.');
-    } finally {
-      if (activeArticle.current === checkedId) setCheckingCoverage(false);
-    }
-  };
 
   useEffect(() => {
     if (!articleId) return undefined;
@@ -193,20 +174,6 @@ export default function ArticleDetailPage() {
           </div>
 
           {data.summary ? <p className="article-summary">{data.summary}</p> : null}
-          <section aria-label="Source reliability signals">
-            <strong>Source reliability signals:</strong>{' '}
-            {data.coverage_evidence?.status === 'some_coverage' ? 'Needs review' : 'Not assessed'}
-            {data.coverage_evidence?.reason ? <p>{data.coverage_evidence.reason}</p> : null}
-            {data.coverage_evidence?.matches?.slice(0, 5).map((match) => (
-              <div key={`${match.domain}-${match.url}`}>
-                <a href={match.url} target="_blank" rel="noreferrer">{match.domain} — {match.title || 'Matching article'}</a>
-              </div>
-            ))}
-            {data.coverage_evidence?.caveat ? <p>{data.coverage_evidence.caveat}</p> : null}
-            {canReprocess ? <button type="button" className="btn-secondary" onClick={handleCheckCoverage} disabled={checkingCoverage}>
-              {checkingCoverage ? 'Checking…' : 'Check source reliability signals'}
-            </button> : null}
-          </section>
 
           <div>
             <strong>Sentiment:</strong> {prettyLabel(data.sentiment)}

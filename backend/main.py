@@ -9,16 +9,14 @@ This module owns auth, users/roles, projects, articles, analysis runs, and the
 Intelligence Copilot; the two document domains keep their own routers.
 """
 
-import contextlib
 import json
 import logging
-import os
-import tempfile
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -46,13 +44,11 @@ from services.articles.articles_store import (
     list_articles,
     list_articles_for_idea_cluster,
     list_idea_clusters_for_project,
+    list_project_source_keys,
     list_project_sources,
 )
-from services.articles.import_jobs import (
-    create_import_run,
-    get_import_run,
-    run_import_job,
-)
+from services.articles.source_trust import set_tier as set_source_trust_tier
+from services.articles.article_analyses import fetch_run_article_rows
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
@@ -60,8 +56,6 @@ from services.articles.reanalyze import (
     reanalyze_article,
     reanalyze_articles,
 )
-from services.articles.relevance_screening import set_relevance_override
-from services.articles.gdelt_corroboration import GdeltError, check_article as check_gdelt_article
 from llm_client import LLMError, chat_completion
 from services.projects.projects_store import (
     create_project,
@@ -83,6 +77,8 @@ from services.articles.idea_comparisons import (
     regenerate_idea_comparison, update_comparison_fact,
 )
 from services.intelligence.trend_summary import generate_trend_summary
+from services.reports.report_data import build_report_data
+from services.reports.yesterday_comparison import build_variation_from_last_run
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
@@ -91,7 +87,6 @@ from services.pipeline.pipeline_runs import (
     get_active_run_for_project,
     get_pipeline_run,
     get_pipeline_run_documents,
-    get_pipeline_run_screenings,
     list_pipeline_runs,
     update_pipeline_run,
 )
@@ -750,32 +745,7 @@ def get_pipeline_run_detail(run_id: str, user: dict = Depends(require_permission
     return {
         "run": run,
         "documents": get_pipeline_run_documents(run_id) if run.get("has_detail") else [],
-        "screenings": get_pipeline_run_screenings(run_id),
     }
-
-
-@app.post("/api/projects/{project_id}/articles/{article_id}/relevance-override")
-def save_article_relevance_override(
-    project_id: int,
-    article_id: int,
-    payload: dict,
-    user: dict = Depends(require_permission("projects.update")),
-):
-    """Include or exclude one project article on subsequent analysis runs."""
-    _ensure_project_visible(project_id, user)
-    try:
-        saved = set_relevance_override(
-            project_id,
-            article_id,
-            payload.get("decision"),
-            payload.get("reason"),
-            user,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not saved:
-        raise HTTPException(status_code=404, detail="Article is not linked to this project.")
-    return {"override": saved}
 
 
 @app.post("/api/pipeline-runs/{run_id}/stop")
@@ -854,7 +824,7 @@ def get_articles(
     category: str | None = None,
     project_id: int | None = None,
     source_url: str | None = None,
-    coverage_status: str | None = None,
+    source_host: str | None = None,
     limit: int = 24,
     offset: int = 0,
     sort: str = "published.desc",
@@ -870,7 +840,7 @@ def get_articles(
         category=category,
         project_id=project_id,
         source_url=source_url,
-        coverage_status=coverage_status,
+        source_host=source_host,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -956,6 +926,40 @@ def get_project_trend_summary_view(
             "error": "Something went wrong while generating the trend summary. Please try again.",
             "error_code": "llm_provider_error",
         }
+
+
+@app.get("/api/projects/{project_id}/reports/variation")
+def get_report_variation_from_last_run(
+    project_id: int,
+    run_id: str,
+    regenerate: bool = False,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """The Reports page's selected-run versus previous-run comparison.
+
+    This uses the same frozen run snapshots, verified metrics, narrative, and
+    cache as the PDF. `regenerate=true` bypasses the narrative cache without
+    changing which two runs are compared.
+    """
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    run = get_pipeline_run(run_id)
+    if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
+        raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
+
+    current_rows = [
+        row for row in fetch_run_article_rows(project_id, run_id)
+        if str(row.get("analysis_status") or "").lower() == "success"
+    ]
+    report_data = {
+        "project": {"id": project_id, "name": project.get("name") or f"Project {project_id}"},
+        "scope": {"type": "run", "run_id": run_id},
+        "_analyzed_rows": current_rows,
+    }
+    return build_variation_from_last_run(project, report_data, run=run, force=regenerate)
 
 
 @app.get("/api/projects/{project_id}/idea-comparisons")
@@ -1075,6 +1079,63 @@ def regenerate_project_idea_comparison(
     return {"comparison": comparison}
 
 
+@app.post("/api/projects/{project_id}/reports/summary.pdf")
+def export_report_summary_pdf(
+    project_id: int,
+    period: str = "30d",
+    run_id: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Reports page's "Export Summary" button: one PDF built from the exact
+    same report-data snapshot (services/reports/report_data.py) the on-page
+    report is derived from, plus an LLM-grounded "variation from last run"
+    section. When `run_id` is selected, its frozen results are compared with
+    the immediately preceding eligible analysis run regardless of elapsed time.
+    `period`/`run_id`
+    mirror /trend-summary and /idea-comparisons above so the same scope shown
+    on screen is what gets exported.
+
+    A rendering failure is a 500 (nothing partial to fall back to - the PDF
+    itself is the whole response body), but an LLM failure inside either
+    LLM-backed section is not: build_report_data's executive summary and
+    build_variation_from_last_run's narrative both degrade to a disclosed
+    "unavailable" state on their own (never raise), so a local model being
+    down still yields a full export with just those two sections noting it.
+    """
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    run = None
+    if run_id:
+        run = get_pipeline_run(run_id)
+        if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
+            raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
+
+    report_data = build_report_data(project, normalize_period(period), run=run)
+    comparison = build_variation_from_last_run(project, report_data, run=run)
+
+    from services.reports.pdf_renderer import render_summary_pdf
+    try:
+        pdf_bytes = render_summary_pdf(report_data, comparison)
+    except Exception:
+        logger.exception("Failed to render report summary PDF for project %s", project_id)
+        raise HTTPException(status_code=500, detail="Failed to generate the report PDF.")
+
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "-", project.get("name") or f"project-{project_id}").strip("-")
+    safe_project = safe_project or f"project-{project_id}"
+    scope_label = f"run-{run['id'][:8]}" if run else normalize_period(period)
+    date_label = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"{safe_project}-summary-{scope_label}-{date_label}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/articles/export")
 def export_articles_jsonl(
     search: str | None = None,
@@ -1082,7 +1143,7 @@ def export_articles_jsonl(
     category: str | None = None,
     project_id: int | None = None,
     source_url: str | None = None,
-    coverage_status: str | None = None,
+    source_host: str | None = None,
     sort: str = "published.desc",
     added_from: str | None = None,
     added_to: str | None = None,
@@ -1101,7 +1162,7 @@ def export_articles_jsonl(
             category=category,
             project_id=project_id,
             source_url=source_url,
-            coverage_status=coverage_status,
+            source_host=source_host,
             sort=sort,
             added_from=added_from,
             added_to=added_to,
@@ -1115,89 +1176,6 @@ def export_articles_jsonl(
         "Content-Type": "application/x-ndjson; charset=utf-8",
     }
     return StreamingResponse(line_stream(), headers=headers, media_type="application/x-ndjson")
-
-
-MAX_IMPORT_BYTES = 256 * 1024 * 1024
-UPLOAD_CHUNK_BYTES = 1024 * 1024
-
-
-@app.post("/api/articles/import")
-async def import_articles_jsonl(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    project_id: int | None = Form(None),
-    user: dict = Depends(require_permission("articles.import")),
-):
-    """Queue a JSONL export produced by GET /api/articles/export for import.
-
-    Restoring a project means an upsert per article, each of which also writes
-    its project link, story group and idea clusters - minutes of work for a
-    real export, well past any gateway timeout. So the request only spools the
-    upload to disk and returns a run id; the work happens in
-    import_jobs.run_import_job and the UI polls GET .../import/{run_id} for
-    live counts and throughput. Same queued/poll shape as competitor discovery.
-
-    Only what can be judged from the bytes themselves is rejected here, so an
-    oversized or plainly wrong file still fails fast with a real status code.
-    """
-    if project_id is not None:
-        _ensure_project_visible(project_id, user)
-
-    handle, path = tempfile.mkstemp(prefix="articles-import-", suffix=".jsonl")
-    total_bytes = 0
-    total_lines = 0
-    leading = b""
-    last_byte = b""
-
-    try:
-        with os.fdopen(handle, "wb") as spool:
-            while True:
-                chunk = await file.read(UPLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                total_bytes += len(chunk)
-                if total_bytes > MAX_IMPORT_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"File is larger than the {MAX_IMPORT_BYTES // (1024 * 1024)}MB import limit. "
-                            "Split it and import in parts."
-                        ),
-                    )
-                if len(leading) < 64:
-                    leading += chunk[: 64 - len(leading)]
-                # Counting newlines as they stream past costs nothing and gives
-                # the job a record-count estimate for its percentage and ETA.
-                total_lines += chunk.count(b"\n")
-                last_byte = chunk[-1:]
-                spool.write(chunk)
-        if total_bytes and last_byte != b"\n":
-            total_lines += 1
-
-        if not total_bytes:
-            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-        if leading.lstrip()[:1] == b"[":
-            raise HTTPException(
-                status_code=400,
-                detail="Expected JSON Lines (one article object per line), not a JSON array.",
-            )
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.remove(path)
-        raise
-
-    run_id = create_import_run(project_id=project_id, filename=file.filename or "", total_lines=total_lines)
-    background_tasks.add_task(run_import_job, run_id, path, project_id)
-    return {"run_id": run_id, "status": "queued", "total_lines": total_lines, "project_id": project_id}
-
-
-@app.get("/api/articles/import/{run_id}")
-def import_articles_status(run_id: str, user: dict = Depends(require_permission("articles.import"))):
-    """Progress for one import job: counters, throughput and its live logs."""
-    run = get_import_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Import run not found.")
-    return {"run": run}
 
 
 # --- Analysis pipeline: on-demand (re)analysis, status, ideas -------------
@@ -1299,33 +1277,6 @@ def get_article_analysis_endpoint(article_id: int, user: dict = Depends(require_
     return {"analysis": analysis}
 
 
-@app.post("/api/articles/{article_id}/coverage")
-def check_article_coverage(
-    article_id: int,
-    user: dict = Depends(require_permission("pipeline.run")),
-):
-    """Explicit external lookup for cross-source coverage.
-
-    This is deliberately separate from analysis: uploaded text does not leave
-    the machine merely because an article was imported or analyzed.
-    """
-    visible_ids = _visible_project_ids_or_none(user)
-    if visible_ids is not None and not db.fetch_one(
-        'select article_id from article_projects where article_id=%s and project_id=any(%s) limit 1',
-        (int(article_id), visible_ids),
-    ):
-        raise HTTPException(status_code=404, detail='Article not found.')
-    try:
-        result = check_gdelt_article(article_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except GdeltError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"article_id": article_id, "coverage": result}
-
-
 @app.get("/api/analysis/status")
 def get_analysis_status_endpoint(
     project_id: int | None = None,
@@ -1385,6 +1336,48 @@ def get_project_sources(
     if not get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found.")
     return list_project_sources(project_id, limit=limit, offset=offset)
+
+
+@app.post("/api/projects/{project_id}/sources/trust")
+def set_project_source_trust(
+    project_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    """Operator override for one Sources-tab group's trust tier (see
+    services/articles/source_trust.py) - there is no separate trust-
+    management page, this is the Sources tab's own control. `source_trust`
+    is a global table, so this validates the key against this project's own
+    current source groups first: a user who can only see `project_id` must
+    not blind-write a tier for another project's document, or invent a
+    "real:" host they have never actually seen in their own data."""
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    key = str(payload.get("key") or "").strip()
+    known = list_project_source_keys(project_id)
+    if key not in known:
+        raise HTTPException(status_code=404, detail="Source not found in this project.")
+    # The type is derived from `known` (this project's own current groups),
+    # never trusted from the payload - a caller must not pair a "document:"
+    # key with type="real" (or vice versa) and land a row source_trust's own
+    # type/key-prefix pairing never actually holds for.
+    source_type = known[key]["type"]
+    try:
+        row = set_source_trust_tier(
+            key, source_type, str(payload.get("tier") or ""), str(payload.get("reason") or ""), user,
+            project_id=project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Same shape GET .../sources already attaches as each group's `trust` -
+    # one shape for the dashboard to handle either way.
+    return {
+        "tier": row.get("tier"),
+        "reason": row.get("reason"),
+        "set_by": row.get("set_by_name"),
+        "updated_at": row.get("updated_at"),
+        "is_default": False,
+    }
 
 
 @app.get("/api/projects/{project_id}/idea-clusters/{cluster_id}/articles")

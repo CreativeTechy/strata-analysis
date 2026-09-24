@@ -38,19 +38,6 @@ class ListIdeaClustersForProjectTests(unittest.TestCase):
         self.assertEqual(result["clusters"], [])
 
 
-class ArticleFilterTests(unittest.TestCase):
-    def test_coverage_filter_is_allowlisted_and_parameterized(self):
-        sql, params = articles_query._where_parts(coverage_status="broad_coverage")
-        self.assertIn("coverage_evidence->>'status'", sql)
-        self.assertEqual(params, ["broad_coverage"])
-
-        invalid_sql, invalid_params = articles_query._where_parts(
-            coverage_status="verified'; drop table articles; --"
-        )
-        self.assertEqual(invalid_sql, "")
-        self.assertEqual(invalid_params, [])
-
-
 class ListArticlesForIdeaClusterTests(unittest.TestCase):
     def test_no_database_configured_returns_none(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", ""):
@@ -107,7 +94,8 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
-            with patch("services.articles.articles_query.db.fetch_all", return_value=rows) as mock_fetch_all:
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows) as mock_fetch_all, \
+                 patch("services.articles.articles_query.resolve_source_trust", return_value={}):
                 result = articles_query.list_project_sources(1)
 
         mock_fetch_all.assert_called_once()
@@ -149,7 +137,8 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "document://project-document/1", "published_at": datetime(2024, 1, 2)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
-            with patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+                 patch("services.articles.articles_query.resolve_source_trust", return_value={}):
                 result = articles_query.list_project_sources(1, limit=1, offset=1)
 
         # Same two groups as above (document first, then the real outlet),
@@ -172,7 +161,8 @@ class ListProjectSourcesTests(unittest.TestCase):
         ]
         rows_reversed = list(reversed(rows_forward))
 
-        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             with patch("services.articles.articles_query.db.fetch_all", return_value=rows_forward):
                 forward = articles_query.list_project_sources(1)
             with patch("services.articles.articles_query.db.fetch_all", return_value=rows_reversed):
@@ -190,9 +180,170 @@ class ListProjectSourcesTests(unittest.TestCase):
              "source_url": "https://example.com", "published_at": datetime(2026, 9, 18, 10, 0, tzinfo=timezone.utc)},
         ]
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
-             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
             result = articles_query.list_project_sources(1)
         self.assertEqual([item["id"] for item in result["sources"][0]["articles"]], [2, 1])
+
+    def test_attaches_a_trust_tier_to_every_source_group_on_the_page(self):
+        rows = [
+            {"id": 1, "title": "A1", "url": "https://nytimes.com/a1", "source": "doc.pdf",
+             "source_url": "document://project-document/9", "published_at": datetime(2024, 1, 3)},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust") as mock_resolve:
+            mock_resolve.return_value = {"real:nytimes.com": {"tier": "trusted", "is_default": True}}
+            result = articles_query.list_project_sources(1)
+
+        # resolve_source_trust() is handed the actual page of groups, not the
+        # raw rows - one call for the whole page, not one per group.
+        mock_resolve.assert_called_once()
+        (page_arg,), _ = mock_resolve.call_args
+        self.assertEqual([g["key"] for g in page_arg], ["real:nytimes.com"])
+        self.assertEqual(result["sources"][0]["trust"], {"tier": "trusted", "is_default": True})
+
+    def test_no_sources_never_calls_resolve_source_trust(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=[]), \
+             patch("services.articles.articles_query.resolve_source_trust") as mock_resolve:
+            result = articles_query.list_project_sources(1)
+        self.assertEqual(result["sources"], [])
+        mock_resolve.assert_not_called()
+
+
+class ListProjectSourceKeysTests(unittest.TestCase):
+    """list_project_source_keys() - the lighter, preview-free counterpart to
+    list_project_sources() used to validate a trust-tier write (see
+    source_trust.py) targets a source this project can actually see."""
+
+    def test_falsy_project_id_returns_empty_without_querying(self):
+        with patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_project_source_keys(None)
+        self.assertEqual(result, {})
+        mock_fetch_all.assert_not_called()
+
+    def test_no_articles_returns_empty_without_querying_articles_table(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[]), \
+             patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {})
+        mock_fetch_all.assert_not_called()
+
+    def test_query_error_returns_empty_instead_of_raising(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1]), \
+             patch("services.articles.articles_query.db.fetch_all", side_effect=RuntimeError("boom")):
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {})
+
+    def test_matches_the_exact_keys_list_project_sources_would_group_under(self):
+        rows = [
+            {"url": "https://nytimes.com/a1", "source": "doc.pdf", "source_url": "document://project-document/9"},
+            {"url": "document://project-document/1/article/3", "source": "report.pdf",
+             "source_url": "document://project-document/1"},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1, 3]), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            result = articles_query.list_project_source_keys(1)
+        self.assertEqual(result, {
+            "real:nytimes.com": {"type": "real", "label": "nytimes.com"},
+            "document:document://project-document/1": {"type": "document", "label": "report.pdf"},
+        })
+
+
+class ListArticleIdsForSourceHostTests(unittest.TestCase):
+    """The query-side counterpart to ListProjectSourcesTests above - it must
+    match every article that list_project_sources() would group/label under
+    the same "real source" key, or the Articles page's source-host filter and
+    the Sources tab's "View articles" link silently disagree."""
+
+    def test_falsy_project_id_returns_empty_without_querying(self):
+        with patch("services.articles.articles_query.db.fetch_all") as mock_fetch_all:
+            result = articles_query.list_article_ids_for_source_host(None, "nytimes.com")
+        self.assertEqual(result, [])
+        mock_fetch_all.assert_not_called()
+
+    def test_matches_articles_by_hostname_case_insensitively(self):
+        rows = [
+            {"id": 1, "url": "https://NYTimes.com/a1"},
+            {"id": 2, "url": "https://example.com/a2"},
+        ]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1, 2]), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            result = articles_query.list_article_ids_for_source_host(1, "nytimes.com")
+        self.assertEqual(result, [1])
+
+    def test_excludes_document_sourced_articles(self):
+        rows = [{"id": 1, "url": "document://project-document/9/article/1"}]
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1]), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            result = articles_query.list_article_ids_for_source_host(1, "project-document")
+        self.assertEqual(result, [])
+
+    def test_matches_the_exact_label_list_project_sources_would_show_for_a_schemeless_url(self):
+        """A url with no scheme (e.g. hand-typed or JSONL-imported data) has no
+        parseable hostname, so list_project_sources() falls back to the whole
+        url as its grouping label/link - see _real_source_host(). This filter
+        must recognize that exact same fallback label, or clicking "View
+        articles" for such a source (or picking it from the Articles page's
+        dropdown) always comes back with zero results despite the source
+        having articles - the bug this test pins."""
+        url = "example.com/press-release"
+        rows = [{"id": 7, "url": url}]
+
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
+            sources = articles_query.list_project_sources(1)
+        label = sources["sources"][0]["label"]
+        self.assertEqual(label, url)
+
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[7]), \
+             patch("services.articles.articles_query.db.fetch_all", return_value=rows):
+            matches = articles_query.list_article_ids_for_source_host(1, label)
+        self.assertEqual(matches, [7])
+
+    def test_query_error_returns_empty_instead_of_raising(self):
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"), \
+             patch("services.articles.articles_query.list_article_ids_for_project", return_value=[1]), \
+             patch("services.articles.articles_query.db.fetch_all", side_effect=RuntimeError("boom")):
+            result = articles_query.list_article_ids_for_source_host(1, "nytimes.com")
+        self.assertEqual(result, [])
+
+
+class WherePartsSourceHostTests(unittest.TestCase):
+    """source_host_ids lets a multi-page reader (articles_search's scan loop,
+    articles_store.export_articles's bulk loop) resolve source_host once and
+    reuse it, instead of paying list_article_ids_for_source_host's full
+    project scan again on every page."""
+
+    def test_precomputed_ids_are_used_without_recomputing(self):
+        with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
+             patch("services.articles.articles_query.list_article_ids_for_source_host") as mock_resolve:
+            where_sql, params = articles_query._where_parts(project_id=1, source_host="nytimes.com", source_host_ids=[5, 9])
+        mock_resolve.assert_not_called()
+        self.assertIn("id = any(%s)", where_sql)
+        self.assertIn([5, 9], params)
+
+    def test_empty_precomputed_ids_short_circuits_to_no_rows(self):
+        with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
+             patch("services.articles.articles_query.list_article_ids_for_source_host") as mock_resolve:
+            where_sql, _ = articles_query._where_parts(project_id=1, source_host="nytimes.com", source_host_ids=[])
+        mock_resolve.assert_not_called()
+        self.assertIn("id = -1", where_sql)
+
+    def test_no_precomputed_ids_falls_back_to_resolving_from_source_host(self):
+        with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
+             patch("services.articles.articles_query.list_article_ids_for_source_host", return_value=[3]) as mock_resolve:
+            where_sql, params = articles_query._where_parts(project_id=1, source_host="nytimes.com")
+        mock_resolve.assert_called_once_with(1, "nytimes.com")
+        self.assertIn([3], params)
 
 
 class GetAnalysisStatusCountsTests(unittest.TestCase):
@@ -281,7 +432,6 @@ class GetArticleAnalysisTests(unittest.TestCase):
             "analysis_status": "success", "analysis_error": None,
             "sentiment_score": 0.9, "sentiment_low_confidence": False,
             "sentiment_model": "fake-sentiment-model",
-            "coverage_evidence": {"status": "some_coverage", "matching_domain_count": 2},
         }
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
             with patch("services.articles.articles_query.db.fetch_all", return_value=[{"column_name": k} for k in row]):
@@ -295,8 +445,6 @@ class GetArticleAnalysisTests(unittest.TestCase):
         self.assertEqual(result["confidence"]["sentiment"], 0.9)
         self.assertFalse(result["confidence"]["sentiment_low_confidence"])
         self.assertEqual(result["models"]["sentiment"], "fake-sentiment-model")
-        self.assertEqual(result["coverage_evidence"]["status"], "some_coverage")
-        self.assertEqual(result["coverage_evidence"]["matching_domain_count"], 2)
 
     def test_malformed_insight_json_does_not_leak_through(self):
         row = {

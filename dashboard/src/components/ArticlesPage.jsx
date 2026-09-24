@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { AnimatePresence } from 'framer-motion';
 import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2, Filter, Download, Upload, AlertTriangle, LayoutGrid, List, FolderKanban, X } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
-import ImportProgressBanner from './articles/ImportProgressBanner.jsx';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
 import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
@@ -11,34 +10,27 @@ import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import {
-  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, IMPORT_POLL_MS, JSONL_NAME_RE, DOCUMENT_NAME_RE,
-  FULL_IMPORT_ACCEPT, JSONL_ONLY_ACCEPT, getPageNumbers,
+  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
+  FULL_IMPORT_ACCEPT, getPageNumbers,
 } from '../lib/articleHelpers.jsx';
 import {
   uploadDocuments,
   pollDocumentExtraction,
   pollArticleCandidates,
   listDocumentArticles,
-  setDocumentArticleStatus,
+  approveDocumentArticlesForDocuments,
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
   listArticles, deleteAllArticles,
-  exportArticles, importArticles, getImportStatus,
+  exportArticles,
 } from '../api/articlesApi.js';
+import { listProjectSources } from '../api/projectsApi.js';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
   { value: 'card', label: 'Cards', icon: LayoutGrid },
   { value: 'list', label: 'List', icon: List },
-];
-
-const COVERAGE_OPTIONS = [
-  { value: 'all', label: 'All source signals' },
-  { value: 'broad_coverage', label: 'Higher confidence' },
-  { value: 'some_coverage', label: 'Needs review' },
-  { value: 'no_coverage_found', label: 'Low confidence' },
-  { value: 'not_checked', label: 'Not assessed' },
 ];
 
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
@@ -68,9 +60,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // into the matching document's articles, the same way `search`/`project_id`
   // above pre-fill from the URL.
   const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || 'all');
-  const [coverageFilter, setCoverageFilter] = useState(
-    () => searchParams.get('coverage_status') || 'all',
-  );
+  // The real-source counterpart to sourceFilter above: a "real" source (an
+  // article whose own url isn't the document:// scheme, grouped by hostname -
+  // see list_project_sources()) instead of an uploaded document. The two are
+  // mutually exclusive by construction (an article is either a document split
+  // or has its own real url, never both), so picking one clears the other.
+  const [sourceHostFilter, setSourceHostFilter] = useState(() => searchParams.get('source_host') || 'all');
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(() => {
     const parsed = Number(searchParams.get('offset'));
@@ -86,7 +81,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [deletingAll, setDeletingAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importRun, setImportRun] = useState(null);
   const [documentImportStatus, setDocumentImportStatus] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
@@ -125,12 +119,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -147,15 +141,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (search) next.set('search', search);
     if (projectFilter !== 'all') next.set('project_id', projectFilter);
     if (sourceFilter !== 'all') next.set('source', sourceFilter);
+    if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
-    if (coverageFilter !== 'all') next.set('coverage_status', coverageFilter);
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
     if (sort !== 'published.desc') next.set('sort', sort);
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sentiment, coverageFilter, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -182,9 +176,41 @@ export default function ArticlesPage({ project = null, projectId = null, project
     [documents],
   );
 
-  // Skips the mount-time run so a `?source=` deep link (see sourceFilter's
-  // initializer above) survives instead of being wiped by this effect firing
-  // once on the very render that set it.
+  // The real (hostname-grouped) sources for the same project - see
+  // list_project_sources()'s "real" groups, whose `label` is already the
+  // plain hostname. A generous limit rather than real pagination: this feeds
+  // a dropdown, and a project's distinct real hostnames are few compared to
+  // its articles.
+  const [realSources, setRealSources] = useState([]);
+
+  useEffect(() => {
+    const id = activeProject?.id;
+    if (id == null) {
+      setRealSources([]);
+      return undefined;
+    }
+    let cancelled = false;
+    listProjectSources(id, { limit: 500 })
+      .then((data) => {
+        if (cancelled) return;
+        const sources = Array.isArray(data?.sources) ? data.sources : [];
+        setRealSources(sources.filter((source) => source.type === 'real'));
+      })
+      .catch(() => { if (!cancelled) setRealSources([]); });
+    return () => { cancelled = true; };
+  }, [activeProject?.id]);
+
+  const sourceHostOptions = useMemo(
+    () => realSources.map((source) => ({
+      value: source.label,
+      label: `${source.label} (${source.article_count})`,
+    })),
+    [realSources],
+  );
+
+  // Skips the mount-time run so a `?source=`/`?source_host=` deep link (see
+  // sourceFilter/sourceHostFilter's initializers above) survives instead of
+  // being wiped by this effect firing once on the very render that set it.
   const skipNextSourceReset = useRef(true);
   useEffect(() => {
     if (skipNextSourceReset.current) {
@@ -192,6 +218,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       return;
     }
     setSourceFilter('all');
+    setSourceHostFilter('all');
   }, [projectFilter]);
 
   useEffect(() => {
@@ -205,7 +232,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
           sentiment: sentiment !== 'all' ? sentiment : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
-          coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
+          source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
           limit,
@@ -230,7 +257,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, coverageFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
+  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -287,7 +314,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSentiment('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
-      setCoverageFilter('all');
+      setSourceHostFilter('all');
       setAddedFrom('');
       setAddedTo('');
       setOffset(0);
@@ -309,7 +336,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         sentiment: sentiment !== 'all' ? sentiment : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
-        coverage_status: coverageFilter !== 'all' ? coverageFilter : undefined,
+        source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
         sort,
@@ -330,44 +357,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
     }
   };
 
-  // Imports one file end to end: queues the backend job, then polls it to
-  // completion, rendering its counters and throughput as they arrive.
-  // `batchLabel` (e.g. "File 2 of 3: foo.jsonl") is stamped onto each polled
-  // run so the banner can show which file of a multi-file selection is active.
-  const importSingleFile = async (file, batchLabel) => {
-    const body = new FormData();
-    body.append('file', file);
-    // Imported rows land in the project currently in scope, mirroring what a
-    // scrape for that project would have produced. 'all' imports unlinked.
-    if (projectFilter !== 'all') body.append('project_id', String(projectFilter));
-
-    const queued = await importArticles(body);
-
-    let lastSaved = 0;
-    for (;;) {
-      const payload = await getImportStatus(queued.run_id);
-      const run = payload.run || {};
-      setImportRun(batchLabel ? { ...run, _batchLabel: batchLabel } : run);
-      // Refresh the list as rows land, not only at the end, so a long import
-      // visibly fills the page instead of sitting empty until it finishes.
-      if ((run.saved || 0) > lastSaved) {
-        lastSaved = run.saved || 0;
-        setReloadToken((value) => value + 1);
-      }
-      if (run.status === 'success' || run.status === 'failed') {
-        if (run.status === 'failed') throw new Error(run.error || run.message || 'Import failed.');
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
-    }
-  };
-
-  // Imports a batch of non-JSONL documents (PDF/DOC/XLS/CSV/image/JSON) via
+  // Imports a batch of documents (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON) via
   // the same upload -> extract -> LLM-split pipeline the project-create
-  // wizard uses, then auto-approves only the candidates split out of *these*
-  // documents (not every pending candidate in the project - see approve_all's
-  // docstring - a wizard mid-review elsewhere shouldn't get its candidates
-  // silently approved by an Articles-page import).
+  // wizard uses, then approves only the candidates split out of *these*
+  // documents (not every pending candidate in the project - see
+  // approve_for_documents' docstring - a wizard mid-review elsewhere
+  // shouldn't get its candidates silently approved by an Articles-page
+  // import). Every resulting article gets a document_id (via its synthetic
+  // source_url), so it's filterable by document the same way any other
+  // uploaded document's articles are.
   const importDocumentFiles = async (files) => {
     const projectId = projectFilter;
     setDocumentImportStatus({ message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
@@ -379,30 +377,41 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setDocumentImportStatus({ message: 'Splitting into articles...' });
     const afterSplit = await pollArticleCandidates(projectId, documentIds, () => {});
+    const thisBatch = afterSplit.filter((doc) => documentIds.includes(doc.id));
     const failedIds = new Set(
-      afterSplit
-        .filter((doc) => documentIds.includes(doc.id) && (doc.status === 'failed' || doc.articles_status === 'failed'))
-        .map((doc) => doc.id)
+      thisBatch.filter((doc) => doc.status === 'failed' || doc.articles_status === 'failed').map((doc) => doc.id)
     );
+    // A document can finish 'ready' and still leave a note behind:
+    // articles_error also carries a .json/.jsonl/.ndjson upload's truncation
+    // report (records left behind past the per-file cap - see
+    // project_documents_store.py's _process_record_document and
+    // listDocuments' own doc comment). That must not be swallowed just
+    // because the document itself didn't fail outright.
+    const notes = thisBatch
+      .filter((doc) => !failedIds.has(doc.id) && doc.articles_error)
+      .map((doc) => `${doc.original_filename || `Document #${doc.id}`}: ${doc.articles_error}`);
+
+    setDocumentImportStatus({ message: 'Adding articles...' });
+    // One request for the whole batch, scoped to just these documents (see
+    // approve_for_documents' docstring), instead of one approval request per
+    // candidate - process_document already auto-approves each document as it
+    // finishes splitting, so this is also a safety net for whatever that
+    // missed, and it's what starts (or joins) the one analysis run this
+    // import needs rather than a run-start call per document/candidate.
+    await approveDocumentArticlesForDocuments(projectId, documentIds);
+    setReloadToken((value) => value + 1);
 
     const { articles: candidates } = await listDocumentArticles(projectId);
-    const toApprove = candidates.filter((candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'pending');
-
-    setDocumentImportStatus({ message: `Adding ${toApprove.length} article${toApprove.length === 1 ? '' : 's'}...` });
-    let approved = 0;
-    for (const candidate of toApprove) {
-      try {
-        await setDocumentArticleStatus(candidate.id, 'approved');
-        approved += 1;
-        setReloadToken((value) => value + 1);
-      } catch {
-        // Left pending - reviewable from the project's document-review view.
-      }
-    }
+    const approved = candidates.filter(
+      (candidate) => documentIds.includes(candidate.document_id) && candidate.status === 'approved'
+    ).length;
 
     setDocumentImportStatus({
-      message: `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`,
+      message:
+        `Added ${approved} article${approved === 1 ? '' : 's'} from ${documents.length} file${documents.length === 1 ? '' : 's'}.`
+        + (notes.length ? ` ${notes.join(' ')}` : ''),
       done: true,
+      warning: notes.length > 0,
     });
 
     if (failedIds.size) {
@@ -417,27 +426,25 @@ export default function ArticlesPage({ project = null, projectId = null, project
     event.target.value = '';
     if (!picked.length || importing) return;
 
-    // Document formats (PDF/DOC/XLS/CSV/image/JSON) need the project-documents
-    // pipeline, which is project-scoped - so they're only accepted once a
-    // specific project is in the filter, same as project-create requires one.
+    // All supported formats (PDF/DOC/XLS/CSV/image/JSON/JSONL/NDJSON) go
+    // through the project-documents pipeline, which is project-scoped - so
+    // they're only accepted once a specific project is in the filter, same
+    // as project-create requires one.
     const hasProject = projectFilter !== 'all';
-    const jsonlFiles = [];
     const documentFiles = [];
     const skipped = [];
     for (const file of picked) {
       const name = file.webkitRelativePath || file.name;
-      if (JSONL_NAME_RE.test(name)) {
-        jsonlFiles.push(file);
-      } else if (DOCUMENT_NAME_RE.test(name)) {
+      if (DOCUMENT_NAME_RE.test(name)) {
         if (hasProject) documentFiles.push(file);
         else skipped.push(name);
       }
     }
 
-    if (!jsonlFiles.length && !documentFiles.length) {
+    if (!documentFiles.length) {
       setError(
         skipped.length
-          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`
+          ? `Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`
           : 'No supported files found in the selection.'
       );
       return;
@@ -445,45 +452,20 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     setImporting(true);
     setError('');
-    setImportRun(null);
     setDocumentImportStatus(null);
 
-    // Files are imported one at a time (the backend runs one job per upload)
-    // so failures on one file don't abort the rest of the batch.
     const failures = [];
-    for (let i = 0; i < jsonlFiles.length; i += 1) {
-      const file = jsonlFiles[i];
-      const displayName = file.webkitRelativePath || file.name;
-      const batchLabel = jsonlFiles.length > 1 ? `File ${i + 1} of ${jsonlFiles.length}: ${displayName}` : null;
-      try {
-        await importSingleFile(file, batchLabel);
-      } catch (err) {
-        failures.push({ name: displayName, error: err?.message || 'Failed to import.' });
-      }
-    }
-
-    if (documentFiles.length) {
-      try {
-        await importDocumentFiles(documentFiles);
-      } catch (err) {
-        const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
-        failures.push({ name, error: err?.message || 'Failed to import.' });
-      }
+    try {
+      await importDocumentFiles(documentFiles);
+    } catch (err) {
+      const name = documentFiles.length > 1 ? `${documentFiles.length} document(s)` : (documentFiles[0].webkitRelativePath || documentFiles[0].name);
+      failures.push({ name, error: err?.message || 'Failed to import.' });
     }
 
     const messages = [];
-    if (failures.length) {
-      const totalFiles = jsonlFiles.length + documentFiles.length;
-      messages.push(
-        totalFiles > 1
-          ? `${failures.length} of ${totalFiles} file(s) failed to import: ${failures
-              .map((f) => `${f.name} (${f.error})`)
-              .join('; ')}`
-          : failures[0].error
-      );
-    }
+    if (failures.length) messages.push(failures[0].error);
     if (skipped.length) {
-      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON). Skipped: ${skipped.join(', ')}`);
+      messages.push(`Select a project to import documents (PDF, Word, Excel, CSV, images, JSON, JSONL). Skipped: ${skipped.join(', ')}`);
     }
     if (messages.length) setError(messages.join(' '));
 
@@ -604,7 +586,10 @@ export default function ArticlesPage({ project = null, projectId = null, project
             <select
               className="filter-select"
               value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value)}
+              onChange={(e) => {
+                setSourceFilter(e.target.value);
+                if (e.target.value !== 'all') setSourceHostFilter('all');
+              }}
               disabled={!activeProject || sourceOptions.length === 0}
             >
               <option value="all">
@@ -619,12 +604,20 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
             <select
               className="filter-select"
-              value={coverageFilter}
-              onChange={(event) => setCoverageFilter(event.target.value)}
-              aria-label="Source reliability signals"
+              value={sourceHostFilter}
+              onChange={(e) => {
+                setSourceHostFilter(e.target.value);
+                if (e.target.value !== 'all') setSourceFilter('all');
+              }}
+              disabled={!activeProject || sourceHostOptions.length === 0}
             >
-              {COVERAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+              <option value="all">
+                {activeProject ? 'All real sources' : 'Select a project for sources'}
+              </option>
+              {sourceHostOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
               ))}
             </select>
 
@@ -718,6 +711,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 {sourceOptions.find((option) => option.value === sourceFilter)?.label || sourceFilter}
               </span>
             )}
+            {sourceHostFilter !== 'all' && (
+              <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                <Filter size={12} />
+                {sourceHostOptions.find((option) => option.value === sourceHostFilter)?.label || sourceHostFilter}
+              </span>
+            )}
             {(addedFrom || addedTo) && (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 <Calendar size={12} />
@@ -760,7 +759,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <input
                   ref={importInputRef}
                   type="file"
-                  accept={projectFilter === 'all' ? JSONL_ONLY_ACCEPT : FULL_IMPORT_ACCEPT}
+                  accept={FULL_IMPORT_ACCEPT}
                   multiple
                   onChange={handleImportFile}
                   style={{ display: 'none' }}
@@ -794,7 +793,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
           </div>
         ) : null}
 
-        {importRun ? <ImportProgressBanner run={importRun} onDismiss={() => setImportRun(null)} /> : null}
         {documentImportStatus ? (
           <DocumentImportBanner status={documentImportStatus} onDismiss={() => setDocumentImportStatus(null)} />
         ) : null}

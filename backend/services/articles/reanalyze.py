@@ -16,10 +16,22 @@ import db
 from analysis.orchestrator import analyze_article
 from core.logging import reset_run_id, set_run_id
 from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
-from services.articles.article_analyses import record_analysis_snapshot
+from services.articles.article_analyses import ensure_adhoc_snapshot_run, record_analysis_snapshot
 from services.articles.store import save_articles
 
-ARTICLE_SOURCE_FIELDS = ("id", "url", "source", "source_url", "title", "author", "published", "text")
+# source_provenance carries `original_url` (a JSONL record's own url, or an
+# LLM split's document-level "Original publisher URL") - store.py's
+# _resolved_publisher_url() prefers it over `url` (which is itself synthetic,
+# document://project-document/<id>/article/<candidate>, for an LLM split with
+# no such override) when (re)computing `verified`/`source_domain`. Without it
+# here, a reanalysis pass would resolve off the synthetic `url` instead and
+# blank out both fields the very first time an approved candidate is
+# reanalyzed - see test_reanalyze.py's ArticleSourceFieldsTests and
+# ReanalyzeArticleTests.test_reanalysis_carries_source_provenance_into_the_saved_article.
+ARTICLE_SOURCE_FIELDS = (
+    "id", "url", "source", "source_url", "title", "author", "published", "text",
+    "source_provenance",
+)
 
 
 def load_article_for_reanalysis(article_id: int) -> dict | None:
@@ -137,8 +149,16 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
         # earlier would read the pre-analysis value. Failure here is swallowed by
         # record_analysis_snapshot - losing a comparison point must not fail an
         # article the run genuinely analyzed.
-        if run_id and saved:
-            record_analysis_snapshot(run_id, article_id)
+        #
+        # A one-off retry (run_id is None - main.py's .../analyze, .../reprocess,
+        # batch .../analyze) still gets snapshotted, against a synthetic
+        # per-project-per-day run (see ensure_adhoc_snapshot_run) - otherwise this
+        # save is invisible to point-in-time historical reporting,
+        # which can only compare against what article_analyses actually recorded.
+        if saved:
+            snapshot_run_id = run_id or ensure_adhoc_snapshot_run(project_id)
+            if snapshot_run_id:
+                record_analysis_snapshot(snapshot_run_id, article_id)
 
         return {
             "article_id": article_id,

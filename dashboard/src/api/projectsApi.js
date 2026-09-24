@@ -102,6 +102,12 @@ export const updateEvidenceScope = (projectId, runId, body) =>
 export const listProjectSources = (projectId, { limit, offset } = {}) => (
   request(`/${projectId}/sources${query({ limit, offset })}`)
 );
+/** Sets one Sources-tab group's trust tier (see backend's source_trust.py).
+ *  `key`/`type` are a source group's own fields, exactly as listProjectSources()
+ *  returns them - there is no separate trust-management page or endpoint. */
+export const setSourceTrust = (projectId, { key, type, tier, reason }) => (
+  request(`/${projectId}/sources/trust`, { method: 'POST', body: { key, type, tier, reason } })
+);
 
 /** Cross-source idea comparison cards (see backend/services/articles/idea_comparisons.py).
  *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`
@@ -142,4 +148,27 @@ export async function getTrendSummary(projectId, params) {
   const response = await fetch(`${BASE}/${projectId}/trend-summary${query(params)}`);
   const data = await response.json().catch(() => ({}));
   return { ok: response.ok && !data?.error, data };
+}
+
+/** Selected analysis run compared with the immediately preceding eligible
+ * run. The response may be `unavailable` or `llm_failed` while still carrying
+ * verified metrics, so callers inspect its status rather than treating those
+ * states as transport failures. */
+export const getReportVariation = (projectId, params, signal) =>
+  request(`/${projectId}/reports/variation${query(params)}`, { signal });
+
+/** Reports page's "Export Summary" button. Like exportArticles() in
+ *  articlesApi.js, this streams a Blob (the PDF itself) rather than a parsed
+ *  JSON body on success - a non-ok response is still plain JSON (the usual
+ *  {error, detail} shape), so that branch mirrors this module's request(). */
+export async function exportReportSummaryPdf(projectId, params) {
+  const response = await fetch(`${BASE}/${projectId}/reports/summary.pdf${query(params)}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.detail || data?.error || `Failed to export the report summary (${response.status})`);
+  }
+  return response.blob();
 }

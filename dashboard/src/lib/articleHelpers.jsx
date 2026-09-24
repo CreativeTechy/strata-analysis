@@ -14,21 +14,13 @@ export const SORT_OPTIONS = [
 
 export const PAGE_SIZES = [12, 24, 48, 96];
 
-// How often to poll a running import for its counters. Matches the cadence the
-// competitor workspace polls its discovery/analysis jobs at.
-export const IMPORT_POLL_MS = 900;
-
-// Folder pickers hand back every file under the folder regardless of the
-// input's `accept` filter, so JSONL exports have to be picked out client-side.
-export const JSONL_NAME_RE = /\.(jsonl|ndjson)$/i;
-
-// The broader formats the project-create wizard accepts (see ProjectWizard.jsx's
-// dropzone) - these need extraction/LLM-splitting via the project-documents
-// pipeline, so they only work once a specific project is in scope (see
-// ArticlesPage's importDocumentFiles), unlike JSONL exports which import unlinked too.
-export const DOCUMENT_NAME_RE = /\.(pdf|docx?|xlsx?|csv|png|jpe?g|json)$/i;
+// The formats the project-create wizard accepts (see ProjectWizard.jsx's
+// dropzone) - all of them, including JSONL/NDJSON exports, go through the
+// project-documents extraction/LLM-split pipeline (see ArticlesPage's
+// importDocumentFiles), so they only work once a specific project is in
+// scope and every resulting article gets a document_id to filter on.
+export const DOCUMENT_NAME_RE = /\.(pdf|docx?|xlsx?|csv|png|jpe?g|json|jsonl|ndjson)$/i;
 export const FULL_IMPORT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.json,.jsonl,.ndjson';
-export const JSONL_ONLY_ACCEPT = '.jsonl,.ndjson,application/x-ndjson';
 
 // project_document_articles._materialize() (backend) writes this scheme onto
 // article.url whenever an article has no real one of its own (an LLM split

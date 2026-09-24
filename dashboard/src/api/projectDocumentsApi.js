@@ -101,6 +101,16 @@ export const setDocumentArticleStatus = (candidateId, status) =>
   request(`/document-articles/${candidateId}/status`, { method: 'POST', body: { status } });
 export const approveAllDocumentArticles = (projectId) =>
   request(`/${projectId}/document-articles/approve-all`, { method: 'POST' });
+/** Same as approveAllDocumentArticles, scoped to specific document ids - one
+ *  request that approves every pending candidate split out of *these*
+ *  documents and starts (or joins) one analysis run, instead of one request
+ *  per candidate. Used by ArticlesPage's import so a batch of thousands of
+ *  imported records doesn't fire thousands of sequential approval calls. */
+export const approveDocumentArticlesForDocuments = (projectId, documentIds) =>
+  request(`/${projectId}/document-articles/approve-for-documents`, {
+    method: 'POST',
+    body: { document_ids: documentIds },
+  });
 /** Starts a tracked analysis run over this project's approved articles that
  *  haven't been analyzed successfully — a manual retry for whichever ones
  *  failed. Returns { run_id }, visible on the Analysis Runs page. */

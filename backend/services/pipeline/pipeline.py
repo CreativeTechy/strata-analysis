@@ -38,7 +38,6 @@ import config
 import db
 from core.logging import reset_run_id, set_run_id
 from services.articles.idea_comparisons import generate_idea_comparisons
-from services.articles.relevance_screening import screen_project_articles
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.pipeline.pipeline_runs import (
     create_pipeline_run,
@@ -65,6 +64,16 @@ UNATTRIBUTED = "Imported articles"
 # boundary rather than mid-analysis.
 _cancel_requested = set()
 _registry_lock = threading.Lock()
+
+# Projects whose start_or_reuse_analysis_run() call landed while a run was
+# already active for them - see that function's docstring and
+# _maybe_start_followup() below. A run's own work set is frozen once at
+# `prepare` (_select_articles, called from _run_analysis_pipeline), so an
+# article materialized afterward - another document finishing its LLM split,
+# another batch of JSONL records being approved - is invisible to it and
+# would otherwise sit at analysis_status='pending' with no run left to ever
+# pick it up.
+_pending_followup = set()
 
 
 class PipelineCancelled(Exception):
@@ -119,12 +128,36 @@ def start_or_reuse_analysis_run(project_id: int) -> dict:
     One run at a time per project (same rule POST /api/analysis-runs
     enforces): a second worker analyzing the same rows would write over the
     first. A caller invoked while an earlier run is already past its
-    `prepare` stage won't have its rows picked up by that run - they stay
-    pending until the next run starts.
+    `prepare` stage won't have its rows picked up by *that* run - instead this
+    marks the project in _pending_followup, and _maybe_start_followup() below
+    starts exactly one more run for it once the active one finishes, so the
+    caller's articles are still picked up rather than left pending forever.
     """
+    project_id = int(project_id)
     active = get_active_run_for_project(project_id)
     if active:
-        return {"run_id": active["id"], "started": False}
+        with _registry_lock:
+            _pending_followup.add(project_id)
+        # The run seen above can finish - and _maybe_start_followup() below
+        # can drain _pending_followup while it was still empty - in the
+        # window between the read above and the write just above it: this
+        # thread reads "active", loses the scheduler to the run's own
+        # finishing thread, and only then writes its mark, by which point
+        # nothing is left to notice it. Re-checking and self-draining here
+        # closes that race. The extra query only happens on this (already
+        # DB-bound) branch, and _maybe_start_followup()'s own check-and-
+        # discard is atomic under _registry_lock, so calling it again here is
+        # always safe - it no-ops if this mark (or one like it) was already
+        # consumed by whichever run actually is still active.
+        if not get_active_run_for_project(project_id):
+            _maybe_start_followup(project_id)
+            active = get_active_run_for_project(project_id)
+        if active:
+            return {"run_id": active["id"], "started": False}
+        # Nothing active and nothing pending any more (another concurrent
+        # caller's check already handled this project's mark) - there is
+        # genuinely no outstanding work for this project right now.
+        return {"run_id": None, "started": False}
     run = create_pipeline_run(status="queued", stage="queued", message="Queued for execution.", project_id=project_id)
     run_id = run["id"] if run else uuid.uuid4().hex
     threading.Thread(
@@ -136,10 +169,65 @@ def start_or_reuse_analysis_run(project_id: int) -> dict:
     return {"run_id": run_id, "started": True}
 
 
+def _project_has_pending_articles(project_id: int) -> bool:
+    """Cheap existence check used to gate a follow-up run (_maybe_start_followup
+    below) on there actually being work left. Without it, every follow-up
+    starts unconditionally and pays for a full `prepare` stage - including
+    relevance screening's title/text/embedding_json fetch for every article
+    in the project - just to discover there was nothing to do, which is the
+    common case: the run that just finished, and the caller that marked the
+    project, both typically raced over the *same* small batch of articles,
+    already covered.
+
+    Fails open (assumes there is work) on any error: this check only exists
+    to save a wasted run, and skipping a follow-up because the check itself
+    broke would silently reintroduce the stranded-work failure the mark
+    mechanism exists to prevent."""
+    try:
+        row = db.fetch_one(
+            """
+            select exists (
+                select 1
+                from article_projects ap
+                join articles a on a.id = ap.article_id
+                where ap.project_id = %s
+                  and coalesce(a.analysis_status, 'pending') = any(%s)
+            ) as has_pending
+            """,
+            (int(project_id), list(PENDING_STATUSES)),
+        )
+        return bool((row or {}).get("has_pending"))
+    except Exception:
+        logger.exception("checking for pending work before a follow-up run failed for project %s", project_id)
+        return True
+
+
+def _maybe_start_followup(project_id: int) -> None:
+    """Called once a run finishes on its own (not by user cancellation) - see
+    the `finally` block in _run_analysis_pipeline. Starts exactly one more run
+    if start_or_reuse_analysis_run() was asked to queue work for this project
+    while this run was already active (_pending_followup), and there is
+    actually still pending work for it (_project_has_pending_articles) - the
+    mark alone only means a caller *asked* while a run was active, not that
+    the run it deferred to left something behind.
+
+    Bounded to one extra run per finish rather than looping here: the
+    follow-up run goes through _run_analysis_pipeline like any other, so if
+    *more* work lands while it too is active, this same check fires again
+    when it finishes - a project with a steady trickle of approvals
+    eventually catches up run by run instead of this function blocking to
+    drain an unbounded queue."""
+    with _registry_lock:
+        pending = int(project_id) in _pending_followup
+        _pending_followup.discard(int(project_id))
+    if pending and _project_has_pending_articles(project_id):
+        start_or_reuse_analysis_run(project_id)
+
+
 # --------------------------------------------------------------------------- #
 # Selecting the work
 # --------------------------------------------------------------------------- #
-def _select_articles(project_id, scope, included_article_ids=None):
+def _select_articles(project_id, scope):
     """Every in-scope article for the project, with the document it came from.
 
     Left-joined through project_document_articles: an article that was imported
@@ -147,17 +235,10 @@ def _select_articles(project_id, scope, included_article_ids=None):
     under UNATTRIBUTED in the per-document breakdown.
     """
     status_filter = ""
-    relevance_filter = ""
     params = [int(project_id)]
     if scope != "all":
         status_filter = "and coalesce(a.analysis_status, 'pending') = any(%s)"
         params.append(list(PENDING_STATUSES))
-    if included_article_ids is not None:
-        included_article_ids = [int(article_id) for article_id in included_article_ids]
-        if not included_article_ids:
-            return []
-        relevance_filter = "and a.id = any(%s)"
-        params.append(included_article_ids)
 
     rows = db.fetch_all(
         f"""
@@ -172,7 +253,6 @@ def _select_articles(project_id, scope, included_article_ids=None):
         left join project_documents pd on pd.id = pda.document_id
         where ap.project_id = %s
           {status_filter}
-          {relevance_filter}
         order by a.id asc
         """,
         tuple(params),
@@ -288,37 +368,8 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             prepare_started_at=started,
         )
 
-        update_pipeline_run(run_id, message="Screening articles for project relevance...")
-        try:
-            screening = screen_project_articles(project_id, run_id)
-        except Exception:
-            # Relevance is an optimization and safety gate, not a reason to
-            # lose an analysis run. Any infrastructure or classifier failure
-            # falls back to the former behavior and keeps every article.
-            logger.exception("run %s: relevance screening failed; including all articles", run_id)
-            screening = {
-                "mode": "fallback",
-                "screened": 0,
-                "included": 0,
-                "excluded": 0,
-                "needs_review": 0,
-                "included_ids": None,
-            }
-        update_pipeline_run(
-            run_id,
-            articles_screened=screening["screened"],
-            articles_included=screening["included"],
-            articles_excluded=screening["excluded"],
-            articles_needs_review=screening["needs_review"],
-            screening_mode=screening["mode"],
-        )
-
-        rows = _select_articles(project_id, scope, screening["included_ids"])
-        # Freeze only the corpus admitted by the relevance gate. For a
-        # pending-only run this still includes previously analyzed, relevant
-        # articles so evidence can corroborate new claims without allowing
-        # unrelated material into the workspace.
-        capture_run_snapshot(run_id, project_id, article_ids=screening["included_ids"])
+        rows = _select_articles(project_id, scope)
+        capture_run_snapshot(run_id, project_id)
         document_stats = _initial_document_stats(rows)
         upsert_pipeline_run_document_stats(run_id, document_stats)
         update_pipeline_run(
@@ -334,9 +385,7 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
                 status="success",
                 stage="no_work",
                 message=(
-                    "No articles passed relevance screening."
-                    if screening["screened"] and not screening["included"]
-                    else "No articles require analysis; existing analytical results remain unchanged."
+                    "No articles require analysis; existing analytical results remain unchanged."
                     if scope != "all"
                     else "No articles are available to analyze."
                 ),
@@ -473,4 +522,10 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             finished_at=_now(),
         )
     finally:
+        # A run that ended because a user cancelled it should not immediately
+        # restart itself - _is_cancel_requested is checked before it's
+        # cleared below, so this only fires for a run that ran to its own
+        # natural conclusion (success, failed, fatal, or crashed).
+        if not _is_cancel_requested(run_id):
+            _maybe_start_followup(project_id)
         _clear_cancellation(run_id)

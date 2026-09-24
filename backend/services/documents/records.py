@@ -44,13 +44,15 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import config
+
 RECORD_EXTENSIONS = {".json", ".jsonl", ".ndjson"}
 
 # Every record becomes a row in the review step's un-paginated candidate list,
-# so a 50,000-line export has to be cut off somewhere or that step becomes
-# unusable. The remainder is reported, never silently dropped - see
-# ParsedRecords.truncated.
-MAX_RECORDS = 500
+# so a file has to be cut off somewhere or that step becomes unusable - see
+# config.RECORD_IMPORT_MAX_RECORDS. The remainder is reported, never silently
+# dropped - see ParsedRecords.truncated.
+MAX_RECORDS = config.RECORD_IMPORT_MAX_RECORDS
 
 # A file with the wrong shape would otherwise report one error per line.
 MAX_ERRORS_REPORTED = 5
@@ -68,6 +70,9 @@ COLLECTED_KEYS = ("collected_at", "fetched_at", "scraped_at", "retrieved_at")
 RECORD_ID_KEYS = ("original_record_id", "record_id", "external_id", "id")
 CONTENT_HASH_KEYS = ("content_hash", "original_content_hash", "body_hash")
 SOURCE_TYPE_KEYS = ("source_type", "document_type", "content_type")
+COLLECTION_PLATFORM_KEYS = ("collection_platform", "platform")
+COLLECTION_SOURCE_URL_KEY = ("collection_source_url",)
+SOURCE_URL_KEY = ("source_url",)
 ATTRIBUTION_KEYS = ("original_attribution", "attribution", "speaker")
 RELATIONSHIP_KEYS = ("relationship_to_subject", "source_relationship", "relationship")
 ORIGIN_GROUP_KEYS = ("shared_origin_id", "origin_group", "canonical_story_id")
@@ -135,6 +140,41 @@ def _source_run_snapshot(item: dict) -> dict | None:
     }
 
 
+def _collection_platform(item: dict) -> str:
+    """Read collection-channel metadata without conflating it with a
+    semantic ``source_type`` such as ``news_report``."""
+    value = _first_string(item, COLLECTION_PLATFORM_KEYS)
+    if value and not value.lower().startswith("document://"):
+        return value
+    provenance = item.get("source_provenance")
+    if isinstance(provenance, dict):
+        nested = provenance.get("collection_platform")
+        if isinstance(nested, str):
+            return nested.strip()
+    return ""
+
+
+def _collection_source_url(item: dict) -> str:
+    """Keep scraper-app's configured source URL after materialization replaces
+    ``articles.source_url`` with this app's uploaded-document URL."""
+    # An explicit collection URL is more specific than `source_url`. Analysis
+    # exports carry both fields, but their top-level source_url points back to
+    # the uploaded document rather than to the channel that collected the
+    # article.
+    value = _first_string(item, COLLECTION_SOURCE_URL_KEY)
+    if value:
+        return value
+    provenance = item.get("source_provenance")
+    if isinstance(provenance, dict):
+        nested = provenance.get("collection_source_url")
+        if isinstance(nested, str):
+            nested = nested.strip()
+            if nested and not nested.lower().startswith("document://"):
+                return nested
+    value = _first_string(item, SOURCE_URL_KEY)
+    return "" if value.lower().startswith("document://") else value
+
+
 def _derive_title(body: str) -> str:
     first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
     if len(first_line) <= DERIVED_TITLE_CHARS:
@@ -169,6 +209,8 @@ def _to_record(item: dict) -> dict | None:
             "original_record_id": _first_string(item, RECORD_ID_KEYS) or None,
             "original_content_hash": _first_string(item, CONTENT_HASH_KEYS) or None,
             "source_type": _first_string(item, SOURCE_TYPE_KEYS) or None,
+            "collection_platform": _collection_platform(item) or None,
+            "collection_source_url": _collection_source_url(item) or None,
             "original_attribution": _first_string(item, ATTRIBUTION_KEYS) or None,
             "relationship_to_subject": _first_string(item, RELATIONSHIP_KEYS) or None,
             "origin_group": _first_string(item, ORIGIN_GROUP_KEYS) or None,
@@ -235,8 +277,25 @@ def _iter_raw(text: str, suffix: str):
     # Line-delimited: the .jsonl/.ndjson default, and the fallback for a file
     # the whole-file parse just rejected - which is what a .json that really
     # holds one object per line looks like.
+    if not file_error:
+        # The common case - a genuine .jsonl/.ndjson export never reaches the
+        # branch above, so file_error is always None here. Stay a true
+        # generator: parse_records applies MAX_RECORDS as items arrive, so a
+        # multi-thousand-record file must not have every one of its records
+        # parsed and held in a list before that cap gets to discard most of
+        # them - see the module's MAX_RECORDS note and the memory this used
+        # to cost holding the whole file's records (title/body/embedding_json,
+        # not just the line count) in memory at once for no reason.
+        yield from _line_items(text)
+        return
+
+    # suffix was .json (or the file looked array-shaped) and the whole-file
+    # parse above failed - only in that case do we need to know whether ANY
+    # line parses as JSON, to choose one file-level error over one-per-line.
+    # That means buffering here, but only for a file already known to be
+    # small/malformed, never for a legitimate large export.
     lines = list(_line_items(text))
-    if file_error and not any(isinstance(item, dict) for _, item in lines):
+    if not any(isinstance(item, dict) for _, item in lines):
         # Genuinely malformed: one file-level reason beats one error per line.
         yield "File", file_error
         return

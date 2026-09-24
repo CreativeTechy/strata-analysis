@@ -32,14 +32,16 @@ from services.articles.articles_query import (
     get_analysis_status_counts,  # noqa: F401 - re-exported
     get_article_analysis,  # noqa: F401 - re-exported
     list_analysis_errors,  # noqa: F401 - re-exported
+    list_article_ids_for_source_host,
     list_articles_for_idea_cluster,  # noqa: F401 - re-exported
     list_idea_clusters_for_project,  # noqa: F401 - re-exported
+    list_project_source_keys,  # noqa: F401 - re-exported
     list_project_sources,  # noqa: F401 - re-exported
 )
 from services.articles.articles_search import search_results
 
 
-def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, coverage_status=None):
+def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, source_host=None, added_from=None, added_to=None):
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
     field, direction = _normalize_sort(sort)
@@ -52,9 +54,9 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             category=category,
             project_id=project_id,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
-            coverage_status=coverage_status,
         )
         rows = rows[offset:offset + limit]
         rows = _attach_project_similarity_scores(rows, project_id)
@@ -76,9 +78,9 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         order=f"{field}.{direction}",
         select=ARTICLES_SELECT,
         source_url=source_url,
+        source_host=source_host,
         added_from=added_from,
         added_to=added_to,
-        coverage_status=coverage_status,
     )
     rows = _attach_project_similarity_scores(rows, project_id)
     return {
@@ -90,7 +92,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
     }
 
 
-def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, added_from=None, added_to=None, coverage_status=None):
+def export_articles(search=None, sentiment=None, category=None, project_id=None, sort=DEFAULT_SORT, source_url=None, source_host=None, added_from=None, added_to=None):
     """Yield full article rows for the JSONL export, one page at a time.
 
     A generator rather than a list: the export carries `text` and
@@ -117,9 +119,9 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             category=category,
             project_id=project_id,
             source_url=source_url,
+            source_host=source_host,
             added_from=added_from,
             added_to=added_to,
-            coverage_status=coverage_status,
             select=select,
         )
         yield from _apply_similarity_scores(rows, scores)
@@ -128,6 +130,14 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
     page_size = BULK_PAGE_SIZE
     offset = 0
     field, direction = _normalize_sort(sort)
+
+    # Resolved once up front, same reasoning as articles_search's scan loop:
+    # source_host has no index to filter on, so resolving it means scanning
+    # every one of the project's articles - not something a full-export
+    # loop (potentially many pages for a large project) should redo per page.
+    source_host_ids = None
+    if project_id is not None and _normalize_text(source_host):
+        source_host_ids = list_article_ids_for_source_host(project_id, source_host)
 
     while True:
         batch, _ = _fetch_articles(
@@ -140,9 +150,10 @@ def export_articles(search=None, sentiment=None, category=None, project_id=None,
             order=f"{field}.{direction}",
             select=select,
             source_url=source_url,
+            source_host=source_host,
+            source_host_ids=source_host_ids,
             added_from=added_from,
             added_to=added_to,
-            coverage_status=coverage_status,
             max_limit=page_size,
         )
         if not batch:

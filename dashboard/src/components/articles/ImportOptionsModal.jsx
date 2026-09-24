@@ -1,8 +1,9 @@
 import { Upload, FolderInput, X } from 'lucide-react';
 
-// Lets the user pick between a file picker and a folder picker for import,
-// with the accepted formats spelled out - which formats are accepted depends
-// on whether a project is in scope (see ArticlesPage's importDocumentFiles).
+// Lets the user pick between a file picker and a folder picker for import.
+// Every supported format goes through the project-documents pipeline (see
+// ArticlesPage's importDocumentFiles), which is project-scoped, so nothing
+// can be imported until a specific project is chosen above.
 export default function ImportOptionsModal({ open, hasProject, disabled, onClose, onChooseFiles, onChooseFolder }) {
   if (!open) return null;
 
@@ -28,12 +29,12 @@ export default function ImportOptionsModal({ open, hasProject, disabled, onClose
 
         <p className="confirm-modal-message">
           {hasProject
-            ? 'JSONL exports (.jsonl, .ndjson) import unlinked or into this project. PDF, Word, Excel, CSV, image, and JSON documents are extracted, split into articles, and added to the project currently in scope.'
-            : 'JSONL exports (.jsonl, .ndjson) can be imported without a project. Select a project scope above to also import PDF, Word, Excel, CSV, image, or JSON documents.'}
+            ? 'PDF, Word, Excel, CSV, image, JSON, and JSONL/NDJSON files are extracted, split into articles, and added to the project currently in scope - each article is linked to the document it came from.'
+            : 'Select a project scope above to import files - every format is extracted, split into articles, and linked to the project currently in scope.'}
         </p>
 
         <div className="import-options-list">
-          <button type="button" className="import-option-card" onClick={onChooseFiles} disabled={disabled}>
+          <button type="button" className="import-option-card" onClick={onChooseFiles} disabled={disabled || !hasProject}>
             <span className="import-option-icon">
               <Upload size={20} />
             </span>
@@ -42,7 +43,7 @@ export default function ImportOptionsModal({ open, hasProject, disabled, onClose
               <span>Pick one or more files from your computer.</span>
             </span>
           </button>
-          <button type="button" className="import-option-card" onClick={onChooseFolder} disabled={disabled}>
+          <button type="button" className="import-option-card" onClick={onChooseFolder} disabled={disabled || !hasProject}>
             <span className="import-option-icon">
               <FolderInput size={20} />
             </span>

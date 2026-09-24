@@ -121,9 +121,15 @@ def _classify_via_local_pipeline(model_name: str, text: str):
     return _normalize_label_score(result.get("label"), result.get("score"))
 
 
+# RoBERTa's max position embeddings is 512 tokens including the <s>/</s>
+# special tokens; 480 bytes leaves headroom for those in the worst case of
+# one token per UTF-8 byte (see hf_inference_client.truncate_to_byte_budget).
+_HF_API_RETRY_MAX_BYTES = 480
+
+
 def _classify_via_hf_api(model_name: str, text: str):
     try:
-        from hf_inference_client import classify_text
+        from hf_inference_client import HFInferenceError, classify_text, truncate_to_byte_budget
     except Exception:
         logger.exception("hf_inference_client import failed")
         return None
@@ -135,7 +141,22 @@ def _classify_via_hf_api(model_name: str, text: str):
     # _safe_classify up to reanalyze.reanalyze_article(), which flags it
     # fatal for services/pipeline/pipeline.py to stop the run on - see
     # services/articles/analysis_defaults.py's FATAL_ANALYSIS_ERRORS.
-    results = classify_text(model_name, text)
+    #
+    # The one exception: a 400 here usually means this article's text
+    # tokenized past the model's max position embeddings - character count
+    # isn't token count, and unlike the local pipeline's `tokenizer_kwargs=
+    # {"truncation": True}` backstop above, the hosted API doesn't truncate
+    # for us. That's a property of this one article's text, not the
+    # provider, so retry once with a byte-safe slice (not just a shorter
+    # character count, which can still overflow the token limit on dense
+    # scripts like CJK) before giving up.
+    try:
+        results = classify_text(model_name, text)
+    except HFInferenceError as exc:
+        if exc.status == 400 and len(text.encode("utf-8")) > _HF_API_RETRY_MAX_BYTES:
+            results = classify_text(model_name, truncate_to_byte_budget(text, _HF_API_RETRY_MAX_BYTES))
+        else:
+            raise
 
     if not results:
         return None

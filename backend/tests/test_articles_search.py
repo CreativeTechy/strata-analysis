@@ -46,6 +46,22 @@ class BulkScanPagingTests(unittest.TestCase):
         rows = self._run(2500, lambda: articles_search._fetch_all_articles(limit=articles_search.SEARCH_SCAN_LIMIT))
         self.assertEqual(len(rows), articles_search.SEARCH_SCAN_LIMIT)
 
+    def test_source_host_is_resolved_once_not_once_per_page(self):
+        """list_article_ids_for_source_host has no index to work with - it
+        scans every one of the project's articles. A scan spanning several
+        500-row pages (900 rows here) must not redo that full scan on each
+        page - see the comment in _fetch_all_articles."""
+        with patch(
+            "services.articles.articles_search.list_article_ids_for_source_host", return_value=[1, 2, 3],
+        ) as mock_resolve:
+            self._run(
+                900,
+                lambda: articles_search._fetch_all_articles(
+                    project_id=1, source_host="nytimes.com", limit=articles_search.SEARCH_SCAN_LIMIT,
+                ),
+            )
+        mock_resolve.assert_called_once_with(1, "nytimes.com")
+
 
 class ScoreSearchRowTests(unittest.TestCase):
     def test_exact_phrase_hit_matches_and_scores_highest(self):
