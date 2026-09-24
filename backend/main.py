@@ -48,6 +48,7 @@ from services.articles.articles_store import (
     list_project_sources,
 )
 from services.articles.source_trust import set_tier as set_source_trust_tier
+from services.articles.article_analyses import fetch_run_article_rows
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
@@ -923,6 +924,40 @@ def get_project_trend_summary_view(
             "error": "Something went wrong while generating the trend summary. Please try again.",
             "error_code": "llm_provider_error",
         }
+
+
+@app.get("/api/projects/{project_id}/reports/variation")
+def get_report_variation_from_last_run(
+    project_id: int,
+    run_id: str,
+    regenerate: bool = False,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """The Reports page's selected-run versus previous-run comparison.
+
+    This uses the same frozen run snapshots, verified metrics, narrative, and
+    cache as the PDF. `regenerate=true` bypasses the narrative cache without
+    changing which two runs are compared.
+    """
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    run = get_pipeline_run(run_id)
+    if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
+        raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
+
+    current_rows = [
+        row for row in fetch_run_article_rows(project_id, run_id)
+        if str(row.get("analysis_status") or "").lower() == "success"
+    ]
+    report_data = {
+        "project": {"id": project_id, "name": project.get("name") or f"Project {project_id}"},
+        "scope": {"type": "run", "run_id": run_id},
+        "_analyzed_rows": current_rows,
+    }
+    return build_variation_from_last_run(project, report_data, run=run, force=regenerate)
 
 
 @app.get("/api/projects/{project_id}/idea-comparisons")

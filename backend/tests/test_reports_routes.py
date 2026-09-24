@@ -44,6 +44,33 @@ class ReportsRoutesTestCase(unittest.TestCase):
         cls._full_access_patcher.stop()
 
 
+class ReportVariationTests(ReportsRoutesTestCase):
+    PROJECT = {"id": 1, "name": "Acme"}
+    RUN = {"id": "run-2", "project_id": 1, "sequence_number": 2}
+
+    def test_returns_the_same_run_comparison_used_by_the_pdf(self):
+        rows = [{"id": 4, "analysis_status": "success"}, {"id": 5, "analysis_status": "failed"}]
+        expected = {"status": "ok", "narrative": "Changed."}
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_pipeline_run", return_value=self.RUN), \
+             patch("main.fetch_run_article_rows", return_value=rows), \
+             patch("main.build_variation_from_last_run", return_value=expected) as build:
+            resp = self.client.get("/api/projects/1/reports/variation?run_id=run-2&regenerate=true")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), expected)
+        _, kwargs = build.call_args
+        self.assertEqual(kwargs["run"], self.RUN)
+        self.assertTrue(kwargs["force"])
+        report_data = build.call_args.args[1]
+        self.assertEqual([row["id"] for row in report_data["_analyzed_rows"]], [4])
+
+    def test_rejects_a_run_from_another_project(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_pipeline_run", return_value={"id": "run-2", "project_id": 9}):
+            resp = self.client.get("/api/projects/1/reports/variation?run_id=run-2")
+        self.assertEqual(resp.status_code, 400)
+
+
 class ExportSummaryPdfTests(ReportsRoutesTestCase):
     PROJECT = {"id": 1, "name": "Acme"}
 

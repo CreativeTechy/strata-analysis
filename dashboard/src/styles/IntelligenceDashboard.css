@@ -118,6 +118,11 @@ a.intelligence-idea-comparison-source:hover, a.intelligence-idea-comparison-sour
 .report-trend-refresh-btn:disabled { opacity: .6; cursor: default; }
 .report-trend-summary-status { margin-top: 8px; font-size: .8rem; color: var(--text-light); }
 .report-trend-summary-error { color: #b91c1c; }
+.report-trend-summary-error svg { vertical-align: -2px; margin-right: 4px; }
+.report-variation-scope { margin: -8px 0 14px; color: #64748b; font-size: .8rem; }
+.report-variation-narrative { white-space: pre-line; }
+.report-variation-empty { color: #64748b; }
+.report-variation-metrics { margin-top: 18px; }
 .report-brief-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 22px; }
 .report-brief-metrics > div { display: grid; gap: 5px; padding: 17px; border: 1px solid #e0e7ff; border-radius: 13px; background: #fafcff; }
 .report-brief-metrics strong { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.4rem; }

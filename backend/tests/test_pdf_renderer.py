@@ -10,6 +10,7 @@ import unittest
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from services.reports.pdf_renderer import (
+    _build_html,
     _comparison_html,
     _executive_summary_html,
     _idea_comparisons_html,
@@ -181,6 +182,12 @@ class TrustTierTests(unittest.TestCase):
 
 
 class IdeaComparisonsHtmlTests(unittest.TestCase):
+    def test_is_the_last_pdf_section(self):
+        html = _build_html(MINIMAL_REPORT_DATA, MINIMAL_COMPARISON)
+        idea_heading = html.index("<h2>Idea Comparisons</h2>")
+        self.assertGreater(idea_heading, html.index("<h2>Variation from Last Run</h2>"))
+        self.assertNotIn("<h2>", html[idea_heading + 1:])
+
     def test_renders_each_claim_with_source_and_tier(self):
         html = _idea_comparisons_html({"idea_comparisons": IDEA_COMPARISONS})
         self.assertIn("Petrol price", html)

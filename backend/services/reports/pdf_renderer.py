@@ -446,8 +446,8 @@ def _build_html(report_data: dict, comparison: dict) -> str:
         _executive_summary_html(report_data),
         _top_articles_html(report_data),
         _sentiment_html(report_data),
-        _idea_comparisons_html(report_data),
         _comparison_html(comparison),
+        _idea_comparisons_html(report_data),
     ]
     body = "\n".join(sections)
     return f"<html><body>{body}</body></html>"
