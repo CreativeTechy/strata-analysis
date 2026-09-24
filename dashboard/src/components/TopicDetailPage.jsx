@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   ArrowLeft,
   Lightbulb,
@@ -13,6 +13,7 @@ import {
   FileText,
   ShieldCheck,
 } from 'lucide-react';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { getArticleAnalysis } from '../api/articlesApi.js';
 import { isSyntheticUrl, articleSourceLabel } from '../lib/articleHelpers.jsx';

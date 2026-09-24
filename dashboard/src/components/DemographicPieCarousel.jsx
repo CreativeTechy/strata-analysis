@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { Cell, Pie, PieChart, Tooltip } from 'recharts';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/IntelligenceDashboard.css';
 
 // Same status palette as StatsOverview.jsx's sentiment donut, reused here so

@@ -160,6 +160,8 @@
     "agrees": "المصادر متفقة",
     "diverges": "المصادر مختلفة",
     "noValue": "لا رقم مذكور",
+    "sourcesCount": "المصادر ({{count}})",
+    "viewDetails": "عرض تفاصيل {{idea}}",
     "prev": "السابق",
     "next": "التالي"
   },

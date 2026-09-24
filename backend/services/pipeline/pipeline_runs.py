@@ -100,7 +100,7 @@ def _fetch_by_id(run_id):
         from pipeline_runs pr
         left join projects p on p.id = pr.project_id
         left join (
-            select id, row_number() over (partition by project_id order by created_at asc) as sequence_number
+            select id, row_number() over (partition by project_id order by created_at asc, id asc) as sequence_number
             from pipeline_runs
             where pipeline = 'analysis'
         ) seq on seq.id = pr.id
@@ -118,6 +118,44 @@ def get_pipeline_run(run_id):
     try:
         return _fetch_by_id(run_id)
     except Exception:
+        return None
+
+
+def get_previous_analysis_run(project_id, run_id):
+    """Return the closest earlier analytics-eligible analysis run.
+
+    Run order, rather than elapsed time or calendar dates, defines "previous".
+    Runs without saved article snapshots are skipped because they cannot form
+    a report dataset (the dashboard run picker applies the same eligibility
+    rule).
+    """
+    if not config.DATABASE_URL or project_id is None or not run_id:
+        return None
+    try:
+        row = db.fetch_one(
+            f"""
+            select {RUN_SELECT}, seq.sequence_number
+            from pipeline_runs pr
+            join pipeline_runs selected on selected.id = %s
+            left join projects p on p.id = pr.project_id
+            left join (
+                select id, row_number() over (partition by project_id order by created_at asc, id asc) as sequence_number
+                from pipeline_runs
+                where pipeline = 'analysis'
+            ) seq on seq.id = pr.id
+            where pr.project_id = %s
+              and selected.project_id = pr.project_id
+              and pr.pipeline = 'analysis'
+              and (pr.created_at, pr.id) < (selected.created_at, selected.id)
+              and exists (select 1 from article_analyses an where an.run_id = pr.id)
+            order by pr.created_at desc, pr.id desc
+            limit 1
+            """,
+            (str(run_id), int(project_id)),
+        )
+        return _normalize(row) if row else None
+    except Exception:
+        logger.exception("Failed to find the previous analysis run before %s.", run_id)
         return None
 
 
@@ -167,7 +205,7 @@ def list_pipeline_runs(limit=10, project_id=None):
             from pipeline_runs pr
             left join projects p on p.id = pr.project_id
             left join (
-                select id, row_number() over (partition by project_id order by created_at asc) as sequence_number
+                select id, row_number() over (partition by project_id order by created_at asc, id asc) as sequence_number
                 from pipeline_runs
                 where pipeline = 'analysis'
             ) seq on seq.id = pr.id

@@ -1,10 +1,20 @@
-import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
+import { useState } from 'react';
+import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import StatsOverview from './StatsOverview';
+import { exportReportSummaryPdf } from '../api/projectsApi.js';
 import { REPORT_PERIODS, SENTIMENT_COLORS, pipelineRunNumber } from '../lib/appHelpers.js';
 import { formatNumber, formatPercent, formatRelativeTime } from '../lib/i18nFormat.js';
+
+// Sanitized the same way the backend names the file (main.py's
+// export_report_summary_pdf) - not load-bearing for correctness (the
+// Content-Disposition header already names it), just avoids a flash of the
+// browser's default download name before that header is read.
+function safeFileFragment(value) {
+  return String(value || '').trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+}
 
 // The Reports page, extracted out of App.jsx: everything here used to be a
 // closure (App.jsx's renderReportsView) over App's own state - this is the
@@ -63,6 +73,35 @@ export default function ReportsView({
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     }).format(new Date(value));
   }
+
+  const [exportingSummary, setExportingSummary] = useState(false);
+  const [exportError, setExportError] = useState(null);
+
+  const handleExportSummary = async () => {
+    if (exportingSummary || selectedProjectId == null) return;
+    setExportingSummary(true);
+    setExportError(null);
+    try {
+      const blob = await exportReportSummaryPdf(selectedProjectId, {
+        period: reportPeriod,
+        run_id: reportRunId || undefined,
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const scopeFragment = reportRunId ? `run-${String(reportRunId).slice(0, 8)}` : reportPeriod;
+      const dateFragment = new Date().toISOString().slice(0, 10);
+      anchor.href = objectUrl;
+      anchor.download = `${safeFileFragment(selectedProject?.name)}-summary-${scopeFragment}-${dateFragment}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setExportError(err?.message || 'Failed to export the report summary.');
+    } finally {
+      setExportingSummary(false);
+    }
+  };
 
   let syncStatus;
   if (intelligenceError) {
@@ -144,8 +183,26 @@ export default function ReportsView({
               <RefreshCw size={16} className={isLoadingIntelligence ? 'spin' : ''} />
               {isLoadingIntelligence ? t('header.refreshing') : t('header.refresh')}
             </button>
+
+            <button
+              type="button"
+              className="btn-secondary toolbar-button report-export-summary-btn"
+              onClick={handleExportSummary}
+              disabled={exportingSummary || !hasProjects || selectedProjectId == null || !totalArticles}
+              aria-busy={exportingSummary}
+              title={!totalArticles ? 'No analyzed articles in this scope yet' : 'Download a PDF summary of this report'}
+            >
+              <Download size={16} className={exportingSummary ? 'spin' : ''} />
+              {exportingSummary ? 'Preparing...' : 'Export Summary'}
+            </button>
           </div>
         </div>
+
+        {exportError ? (
+          <p className="report-export-summary-error" role="alert">
+            <AlertCircle size={13} aria-hidden="true" /> {exportError}
+          </p>
+        ) : null}
 
         <div className="report-filter-row">
           <div className="filter-tabs-shell">

@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
@@ -65,6 +65,16 @@ class GroupAndQualifyClustersTests(unittest.TestCase):
 
 
 class GenerateIdeaComparisonsTests(unittest.TestCase):
+    def setUp(self):
+        self.facts = patch("services.articles.idea_comparisons.list_comparison_facts", return_value=[])
+        self.revision = patch("services.articles.idea_comparisons._current_facts_revision", return_value=0)
+        self.facts.start()
+        self.revision.start()
+
+    def tearDown(self):
+        self.facts.stop()
+        self.revision.stop()
+
     def test_writes_one_row_per_qualifying_cluster_and_uses_synthesized_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
@@ -80,6 +90,16 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
         self.assertEqual(params[3], "petrol price")
         self.assertTrue(params[5])  # diverges
         self.assertEqual(params[7], "eia.gov says $98, Twitter says $120.")
+
+    def test_model_relationship_updates_the_comparison_status(self):
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows), \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "The evidence is compatible.", "diverges": false}'), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            idea_comparisons.generate_idea_comparisons(project_id=1)
+        params = mock_execute.call_args[0][1]
+        self.assertFalse(params[5])
 
     def test_unparsable_llm_response_still_saves_the_card_without_a_summary(self):
         rows = GroupAndQualifyClustersTests()._rows()[:2]
@@ -173,6 +193,155 @@ class HasRunGenerationAttemptTests(unittest.TestCase):
         with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
              patch("services.articles.idea_comparisons.db.fetch_one", return_value=None):
             self.assertFalse(idea_comparisons.has_run_generation_attempt(1, "run-123"))
+
+
+class ComparisonFactsTests(unittest.TestCase):
+    def test_fact_becomes_explicit_user_provided_evidence(self):
+        source = idea_comparisons._fact_as_source({
+            "fact_text": "Audited sales grew by 12%.",
+            "reference_label": "Finance review",
+            "stated_value": "12%",
+            "observed_at": "2026-08-31",
+        })
+        self.assertEqual(source["source_label"], "Finance review [user-provided]")
+        self.assertEqual(source["value"], "12%")
+        self.assertIn("2026-08-31", source["title"])
+
+    def test_fact_requires_text_and_valid_reference_url(self):
+        with self.assertRaisesRegex(ValueError, "Fact text"):
+            idea_comparisons._validate_fact({})
+        with self.assertRaisesRegex(ValueError, "Reference URL"):
+            idea_comparisons._validate_fact({"fact_text": "x", "reference_url": "javascript:alert(1)"})
+
+    def test_fact_date_must_be_iso_date(self):
+        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
+            idea_comparisons._validate_fact({"fact_text": "x", "observed_at": "tomorrow"})
+
+    def test_structured_observation_is_validated(self):
+        clean = idea_comparisons._validate_fact({
+            "fact_text": "Production is forecast to rise.",
+            "observations": [{
+                "metric": "Oil production", "numeric_value": "1.10", "unit": "million bpd",
+                "period_label": "2026 Q4", "value_kind": "forecast",
+            }],
+        })
+        self.assertEqual(clean["observations"][0]["numeric_value"], idea_comparisons.Decimal("1.10"))
+        self.assertEqual(clean["observations"][0]["value_kind"], "forecast")
+
+    def test_structured_observation_rejects_non_numeric_value(self):
+        with self.assertRaisesRegex(ValueError, "valid number"):
+            idea_comparisons._validate_fact({
+                "fact_text": "Production changed.",
+                "observations": [{"metric": "Production", "numeric_value": "many", "unit": "bpd"}],
+            })
+
+    def test_structured_observation_rejects_values_outside_json_number_range(self):
+        with self.assertRaisesRegex(ValueError, "supported range"):
+            idea_comparisons._validate_fact({
+                "fact_text": "Production changed.",
+                "observations": [{"metric": "Production", "numeric_value": "1e400", "unit": "bpd"}],
+            })
+
+    def test_fact_creation_uses_one_transaction_for_all_writes(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [{"id": 3}, {"id": 7}, {"revision": 1}]
+        transaction = MagicMock()
+        transaction.__enter__.return_value = cursor
+        fact = {"id": 7, "fact_text": "Production changed."}
+        with patch("services.articles.idea_comparisons.db.transaction", return_value=transaction), \
+             patch("services.articles.idea_comparisons.list_comparison_facts", return_value=[fact]):
+            result = idea_comparisons.create_comparison_fact(
+                1, 3,
+                {
+                    "fact_text": "Production changed.",
+                    "observations": [{"metric": "Production", "numeric_value": "12", "unit": "%"}],
+                },
+                {"id": 5, "username": "analyst"},
+            )
+        self.assertEqual(result, fact)
+        self.assertEqual(cursor.execute.call_count, 5)
+        transaction.__exit__.assert_called_once_with(None, None, None)
+
+
+class NumericEvidenceTests(unittest.TestCase):
+    def test_currency_units_group_with_or_without_spacing(self):
+        evidence = idea_comparisons._numeric_evidence("Annual saving", [
+            {"source_label": "A", "value": "£120 annual saving"},
+        ], [{
+            "id": 9, "reference_label": "User estimate", "observed_at": None,
+            "observations": [{
+                "id": 3, "metric": "Annual saving", "numeric_value": 140,
+                "unit": "£ annual saving", "period_label": None, "value_kind": "estimate",
+                "display_value": "£140 annual saving",
+            }],
+        }])
+        self.assertEqual(len(evidence["groups"]), 1)
+        self.assertEqual(evidence["groups"][0]["display_type"], "comparison")
+
+    def test_parses_existing_free_text_values_into_comparison(self):
+        evidence = idea_comparisons._numeric_evidence("Oil production", [
+            {"source_label": "A", "value": "1.10 million bpd"},
+            {"source_label": "B", "value": "0.92 million bpd"},
+        ], [])
+        self.assertEqual(evidence["total_observations"], 2)
+        self.assertEqual(evidence["groups"][0]["display_type"], "comparison")
+        self.assertAlmostEqual(evidence["groups"][0]["spread"], 0.18)
+
+    def test_ambiguous_free_text_values_are_not_charted(self):
+        for value in (
+            "2.5 million barrels, up 3% from 2024",
+            "2.5 million barrels — % of quota",
+            "10-15%",
+            "$98 to $120",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(idea_comparisons._parse_numeric_value(value))
+        self.assertEqual(idea_comparisons._parse_numeric_value("2.5% of quota")["unit"], "%")
+
+    def test_dated_observations_become_trend_with_direction(self):
+        facts = [{
+            "id": 8, "reference_label": "Forecast", "observed_at": None,
+            "observations": [
+                {"id": 1, "metric": "Oil production", "numeric_value": 0.9, "unit": "million bpd", "period_label": "2026 Q3", "value_kind": "actual", "display_value": "0.9 million bpd"},
+                {"id": 2, "metric": "Oil production", "numeric_value": 1.1, "unit": "million bpd", "period_label": "2026 Q4", "value_kind": "forecast", "display_value": "1.1 million bpd"},
+            ],
+        }]
+        group = idea_comparisons._numeric_evidence("Oil production", [], facts)["groups"][0]
+        self.assertEqual(group["display_type"], "trend")
+        self.assertEqual(group["direction"], "up")
+        self.assertAlmostEqual(group["change"], 0.2)
+
+    def test_quarter_first_periods_are_sorted_chronologically(self):
+        facts = [{
+            "id": 8, "reference_label": "Forecast", "observed_at": None,
+            "observations": [
+                {"id": 1, "metric": "Oil production", "numeric_value": 0.9, "unit": "million bpd", "period_label": "Q4 2025", "value_kind": "actual", "display_value": "0.9 million bpd"},
+                {"id": 2, "metric": "Oil production", "numeric_value": 1.1, "unit": "million bpd", "period_label": "Q1 2026", "value_kind": "forecast", "display_value": "1.1 million bpd"},
+            ],
+        }]
+        group = idea_comparisons._numeric_evidence("Oil production", [], facts)["groups"][0]
+        self.assertEqual([item["period_label"] for item in group["observations"]], ["Q4 2025", "Q1 2026"])
+        self.assertEqual(group["direction"], "up")
+        self.assertAlmostEqual(group["change"], 0.2)
+
+    def test_unknown_period_formats_do_not_claim_a_trend(self):
+        facts = [{
+            "id": 8, "reference_label": "Forecast", "observed_at": None,
+            "observations": [
+                {"id": 1, "metric": "Oil production", "numeric_value": 0.9, "unit": "million bpd", "period_label": "before policy", "value_kind": "actual", "display_value": "0.9 million bpd"},
+                {"id": 2, "metric": "Oil production", "numeric_value": 1.1, "unit": "million bpd", "period_label": "after policy", "value_kind": "forecast", "display_value": "1.1 million bpd"},
+            ],
+        }]
+        group = idea_comparisons._numeric_evidence("Oil production", [], facts)["groups"][0]
+        self.assertEqual(group["display_type"], "comparison")
+        self.assertIsNone(group["direction"])
+        self.assertIsNone(group["change"])
+
+    def test_non_numeric_evidence_does_not_create_chart(self):
+        evidence = idea_comparisons._numeric_evidence("Customer sentiment", [
+            {"source_label": "A", "value": "mostly positive"},
+        ], [])
+        self.assertEqual(evidence, {"groups": [], "total_observations": 0})
 
 
 if __name__ == "__main__":

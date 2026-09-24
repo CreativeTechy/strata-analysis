@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, Languages, RefreshCw, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
-import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
+import VariationFromLastRun from './VariationFromLastRun.jsx';
 import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
@@ -276,11 +278,14 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       </div>
     </Section>
 
-    <Section number="02" title={t('dashboard:report.sections.sentimentAnalysis')}>
+    <VariationFromLastRun projectId={projectId} runId={runId} number="02" />
+
+    <Section number="03" title={t('dashboard:report.sections.sentimentAnalysis')}>
       <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
     </Section>
 
-    <Section number="03" title={t('dashboard:report.sections.keywordExistence')}>
+    <Section number="04" title={t('dashboard:report.sections.keywordExistence')}>
+
       {configuredKeywords.length === 0 ? (
         <div className="glass-card admin-empty-state intelligence-keyword-empty">
           <strong>{t('dashboard:report.keyword.noKeywordsTitle')}</strong>
@@ -350,15 +355,16 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       )}
     </Section>
 
-    <Section number="04" title={t('dashboard:report.sections.volumeTrend')}>
+    <Section number="05" title={t('dashboard:report.sections.volumeTrend')}>
       <ResponsiveContainer width="100%" height={285}><LineChart data={intelligence.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line dataKey="total" name={t('dashboard:series.total')} type="monotone" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line dataKey="positive" name={t('dashboard:series.positive')} type="monotone" stroke={COLORS.positive} strokeWidth={2} dot={false} /><Line dataKey="negative" name={t('dashboard:series.negative')} type="monotone" stroke={COLORS.negative} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
     </Section>
 
-    <Section number="05" title={t('dashboard:report.sections.categorizedFeedback')}>
+    <Section number="06" title={t('dashboard:report.sections.categorizedFeedback')}>
       <div className="report-feedback-grid"><FeedbackColumn title={t('dashboard:report.feedback.positiveDrivers')} icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.negativeDrivers')} icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.neutralMixed')} icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} projectId={projectId} /></div>
     </Section>
 
-    <Section number="06" title={t('dashboard:report.sections.sentimentByDemographics')}>
+    <Section number="07" title={t('dashboard:report.sections.sentimentByDemographics')}>
+
       <p className="report-demographics-intro">
         {t('dashboard:report.demographics.intro')}
       </p>

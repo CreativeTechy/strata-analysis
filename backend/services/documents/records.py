@@ -70,6 +70,9 @@ COLLECTED_KEYS = ("collected_at", "fetched_at", "scraped_at", "retrieved_at")
 RECORD_ID_KEYS = ("original_record_id", "record_id", "external_id", "id")
 CONTENT_HASH_KEYS = ("content_hash", "original_content_hash", "body_hash")
 SOURCE_TYPE_KEYS = ("source_type", "document_type", "content_type")
+COLLECTION_PLATFORM_KEYS = ("collection_platform", "platform")
+COLLECTION_SOURCE_URL_KEY = ("collection_source_url",)
+SOURCE_URL_KEY = ("source_url",)
 ATTRIBUTION_KEYS = ("original_attribution", "attribution", "speaker")
 RELATIONSHIP_KEYS = ("relationship_to_subject", "source_relationship", "relationship")
 ORIGIN_GROUP_KEYS = ("shared_origin_id", "origin_group", "canonical_story_id")
@@ -137,6 +140,41 @@ def _source_run_snapshot(item: dict) -> dict | None:
     }
 
 
+def _collection_platform(item: dict) -> str:
+    """Read collection-channel metadata without conflating it with a
+    semantic ``source_type`` such as ``news_report``."""
+    value = _first_string(item, COLLECTION_PLATFORM_KEYS)
+    if value and not value.lower().startswith("document://"):
+        return value
+    provenance = item.get("source_provenance")
+    if isinstance(provenance, dict):
+        nested = provenance.get("collection_platform")
+        if isinstance(nested, str):
+            return nested.strip()
+    return ""
+
+
+def _collection_source_url(item: dict) -> str:
+    """Keep scraper-app's configured source URL after materialization replaces
+    ``articles.source_url`` with this app's uploaded-document URL."""
+    # An explicit collection URL is more specific than `source_url`. Analysis
+    # exports carry both fields, but their top-level source_url points back to
+    # the uploaded document rather than to the channel that collected the
+    # article.
+    value = _first_string(item, COLLECTION_SOURCE_URL_KEY)
+    if value:
+        return value
+    provenance = item.get("source_provenance")
+    if isinstance(provenance, dict):
+        nested = provenance.get("collection_source_url")
+        if isinstance(nested, str):
+            nested = nested.strip()
+            if nested and not nested.lower().startswith("document://"):
+                return nested
+    value = _first_string(item, SOURCE_URL_KEY)
+    return "" if value.lower().startswith("document://") else value
+
+
 def _derive_title(body: str) -> str:
     first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
     if len(first_line) <= DERIVED_TITLE_CHARS:
@@ -171,6 +209,8 @@ def _to_record(item: dict) -> dict | None:
             "original_record_id": _first_string(item, RECORD_ID_KEYS) or None,
             "original_content_hash": _first_string(item, CONTENT_HASH_KEYS) or None,
             "source_type": _first_string(item, SOURCE_TYPE_KEYS) or None,
+            "collection_platform": _collection_platform(item) or None,
+            "collection_source_url": _collection_source_url(item) or None,
             "original_attribution": _first_string(item, ATTRIBUTION_KEYS) or None,
             "relationship_to_subject": _first_string(item, RELATIONSHIP_KEYS) or None,
             "origin_group": _first_string(item, ORIGIN_GROUP_KEYS) or None,

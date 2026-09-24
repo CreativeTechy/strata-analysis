@@ -147,6 +147,66 @@ class ReanalyzeArticleTests(unittest.TestCase):
         mock_mark_failed.assert_called_once()
 
 
+class SnapshotOnSaveTests(unittest.TestCase):
+    """A successful save always gets a comparison-history snapshot now - a
+    real run_id when this is part of a tracked analysis run, otherwise a
+    synthetic per-project-per-day one (see article_analyses.
+    ensure_adhoc_snapshot_run) so a one-off retry (main.py's .../analyze,
+    .../reprocess) isn't invisible to point-in-time historical reporting
+    comparison the way it used to be."""
+
+    ARTICLE_ROW = {"id": 1, "url": "https://example.com/a", "title": "t", "text": "x" * 300}
+
+    def test_run_scoped_save_snapshots_against_the_real_run(self):
+        analysis_result = {"analysis_status": "success", "analysis_error": None}
+        with patch("services.articles.reanalyze.load_article_for_reanalysis", return_value=dict(self.ARTICLE_ROW)), \
+             patch("services.articles.reanalyze._primary_project_id_for_article", return_value=5), \
+             patch("services.articles.reanalyze.analyze_article", return_value=analysis_result), \
+             patch("services.articles.reanalyze.save_articles", return_value=(1, {})), \
+             patch("services.articles.reanalyze.ensure_adhoc_snapshot_run") as adhoc, \
+             patch("services.articles.reanalyze.record_analysis_snapshot") as snapshot:
+            reanalyze.reanalyze_article(1, run_id="run-9")
+        snapshot.assert_called_once_with("run-9", 1)
+        adhoc.assert_not_called()
+
+    def test_one_off_save_snapshots_against_a_synthetic_adhoc_run(self):
+        analysis_result = {"analysis_status": "success", "analysis_error": None}
+        with patch("services.articles.reanalyze.load_article_for_reanalysis", return_value=dict(self.ARTICLE_ROW)), \
+             patch("services.articles.reanalyze._primary_project_id_for_article", return_value=5), \
+             patch("services.articles.reanalyze.analyze_article", return_value=analysis_result), \
+             patch("services.articles.reanalyze.save_articles", return_value=(1, {})), \
+             patch("services.articles.reanalyze.ensure_adhoc_snapshot_run", return_value="snap-5-2026-03-05") as adhoc, \
+             patch("services.articles.reanalyze.record_analysis_snapshot") as snapshot:
+            reanalyze.reanalyze_article(1)
+        adhoc.assert_called_once_with(5)
+        snapshot.assert_called_once_with("snap-5-2026-03-05", 1)
+
+    def test_no_snapshot_when_nothing_was_actually_saved(self):
+        analysis_result = {"analysis_status": "success", "analysis_error": None}
+        with patch("services.articles.reanalyze.load_article_for_reanalysis", return_value=dict(self.ARTICLE_ROW)), \
+             patch("services.articles.reanalyze._primary_project_id_for_article", return_value=5), \
+             patch("services.articles.reanalyze.analyze_article", return_value=analysis_result), \
+             patch("services.articles.reanalyze.save_articles", return_value=(0, {})), \
+             patch("services.articles.reanalyze.ensure_adhoc_snapshot_run") as adhoc, \
+             patch("services.articles.reanalyze.record_analysis_snapshot") as snapshot:
+            reanalyze.reanalyze_article(1)
+        adhoc.assert_not_called()
+        snapshot.assert_not_called()
+
+    def test_no_snapshot_when_the_adhoc_run_could_not_be_created(self):
+        """No DB, or an article linked to zero/several projects - best-effort,
+        same as record_analysis_snapshot's own failure handling."""
+        analysis_result = {"analysis_status": "success", "analysis_error": None}
+        with patch("services.articles.reanalyze.load_article_for_reanalysis", return_value=dict(self.ARTICLE_ROW)), \
+             patch("services.articles.reanalyze._primary_project_id_for_article", return_value=None), \
+             patch("services.articles.reanalyze.analyze_article", return_value=analysis_result), \
+             patch("services.articles.reanalyze.save_articles", return_value=(1, {})), \
+             patch("services.articles.reanalyze.ensure_adhoc_snapshot_run", return_value=None), \
+             patch("services.articles.reanalyze.record_analysis_snapshot") as snapshot:
+            reanalyze.reanalyze_article(1)
+        snapshot.assert_not_called()
+
+
 class ReanalyzeArticlesBatchTests(unittest.TestCase):
     def test_runs_each_article_independently_and_collects_results(self):
         with patch("services.articles.reanalyze.reanalyze_article",

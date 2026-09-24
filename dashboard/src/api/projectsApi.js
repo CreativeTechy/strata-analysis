@@ -119,6 +119,17 @@ export async function getIdeaComparisons(projectId, { regenerate, run_id } = {},
   return { ok: response.ok && !data?.error, data };
 }
 
+export const getIdeaComparison = (projectId, clusterId, { run_id } = {}, signal) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}${query({ run_id })}`, { signal });
+export const createIdeaComparisonFact = (projectId, clusterId, body) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts`, { method: 'POST', body });
+export const updateIdeaComparisonFact = (projectId, clusterId, factId, body) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'PUT', body });
+export const deleteIdeaComparisonFact = (projectId, clusterId, factId) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'DELETE' });
+export const regenerateIdeaComparison = (projectId, clusterId, { run_id } = {}) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}/regenerate${query({ run_id })}`, { method: 'POST' });
+
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic
  *  status-code string rather than anything read from the response body (this
@@ -137,4 +148,27 @@ export async function getTrendSummary(projectId, params) {
   const response = await fetch(`${BASE}/${projectId}/trend-summary${query(params)}`);
   const data = await response.json().catch(() => ({}));
   return { ok: response.ok && !data?.error, data };
+}
+
+/** Selected analysis run compared with the immediately preceding eligible
+ * run. The response may be `unavailable` or `llm_failed` while still carrying
+ * verified metrics, so callers inspect its status rather than treating those
+ * states as transport failures. */
+export const getReportVariation = (projectId, params, signal) =>
+  request(`/${projectId}/reports/variation${query(params)}`, { signal });
+
+/** Reports page's "Export Summary" button. Like exportArticles() in
+ *  articlesApi.js, this streams a Blob (the PDF itself) rather than a parsed
+ *  JSON body on success - a non-ok response is still plain JSON (the usual
+ *  {error, detail} shape), so that branch mirrors this module's request(). */
+export async function exportReportSummaryPdf(projectId, params) {
+  const response = await fetch(`${BASE}/${projectId}/reports/summary.pdf${query(params)}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.detail || data?.error || `Failed to export the report summary (${response.status})`);
+  }
+  return response.blob();
 }

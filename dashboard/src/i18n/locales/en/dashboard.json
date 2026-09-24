@@ -144,6 +144,8 @@
     "agrees": "Sources agree",
     "diverges": "Sources disagree",
     "noValue": "no figure stated",
+    "sourcesCount": "Sources ({{count}})",
+    "viewDetails": "View details for {{idea}}",
     "prev": "Prev",
     "next": "Next"
   },

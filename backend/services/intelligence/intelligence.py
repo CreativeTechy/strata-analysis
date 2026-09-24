@@ -84,7 +84,45 @@ def filter_rows_for_period(rows: list[dict], period: str, now: datetime | None =
 # "Documents" is where everything uploaded through the opinion monitor lands.
 # The rest only appear for articles brought in by a JSONL import, which can
 # carry real URLs from wherever they were originally collected.
-PLATFORM_CATEGORIES = ("Documents", "Web", "X", "Reddit", "Telegram")
+PLATFORM_CATEGORIES = (
+    "Documents",
+    "Web",
+    "X",
+    "Reddit",
+    "Telegram",
+    "LinkedIn",
+    "Threads",
+    "Facebook",
+    "Instagram",
+)
+
+PLATFORM_ALIASES = {
+    "web": "Web",
+    "rss": "Web",
+    "keyword": "Web",
+    "x": "X",
+    "twitter": "X",
+    "twitter/x": "X",
+    "tweet": "X",
+    "hashtag": "X",
+    "username": "X",
+    "reddit": "Reddit",
+    "telegram": "Telegram",
+    "linkedin": "LinkedIn",
+    "threads": "Threads",
+    "facebook": "Facebook",
+    "instagram": "Instagram",
+}
+
+PLATFORM_HOSTS = (
+    ("X", ("x.com", "twitter.com")),
+    ("Reddit", ("reddit.com",)),
+    ("Telegram", ("t.me", "telegram.me")),
+    ("LinkedIn", ("linkedin.com",)),
+    ("Threads", ("threads.net", "threads.com")),
+    ("Facebook", ("facebook.com", "fb.com", "fb.watch")),
+    ("Instagram", ("instagram.com",)),
+)
 
 
 DOCUMENT_URL_PREFIX = "document://"
@@ -93,16 +131,37 @@ DOCUMENT_URL_PREFIX = "document://"
 def classify_platform(row: dict) -> str:
     if str(row.get("url") or "").startswith(DOCUMENT_URL_PREFIX):
         return "Documents"
-    values = [row.get("url"), row.get("source_url"), row.get("source")]
+
+    provenance = row.get("source_provenance")
+    provenance = provenance if isinstance(provenance, dict) else {}
+    explicit = (
+        row.get("collection_platform")
+        or row.get("platform")
+        or provenance.get("collection_platform")
+    )
+    normalized = str(explicit or "").strip().lower()
+    if normalized in PLATFORM_ALIASES:
+        return PLATFORM_ALIASES[normalized]
+
+    values = [
+        provenance.get("collection_source_url"),
+        row.get("url"),
+        row.get("source_url"),
+        provenance.get("original_url"),
+        row.get("source"),
+    ]
     for value in values:
         text = str(value or "").strip().lower()
-        host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
-        if host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
-            return "X"
-        if host == "reddit.com" or host.endswith(".reddit.com"):
-            return "Reddit"
-        if host in {"t.me", "telegram.me"}:
-            return "Telegram"
+        try:
+            host = urlparse(text if "://" in text else f"https://{text}").netloc.removeprefix("www.")
+        except ValueError:
+            # Imported provenance is operator-supplied metadata. One malformed
+            # hint must not make the project's complete intelligence response
+            # unavailable; later candidates may still identify the platform.
+            continue
+        for platform, domains in PLATFORM_HOSTS:
+            if any(host == domain or host.endswith(f".{domain}") for domain in domains):
+                return platform
     return "Web"
 
 
@@ -262,7 +321,8 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         return fetch_run_article_rows(project_id, run_id)
     return db.fetch_all(
         """
-        select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
+        select a.id, a.url, a.source, a.source_url, a.source_provenance,
+               a.title, a.summary, a.text,
                a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.segment, a.insight_json,
                a.source_domain,
                a.published, a.created_at, a.pipeline_run_id, a.source_language
