@@ -290,11 +290,13 @@ class NumericEvidenceTests(unittest.TestCase):
     def test_ambiguous_free_text_values_are_not_charted(self):
         for value in (
             "2.5 million barrels, up 3% from 2024",
+            "2.5 million barrels — % of quota",
             "10-15%",
             "$98 to $120",
         ):
             with self.subTest(value=value):
                 self.assertIsNone(idea_comparisons._parse_numeric_value(value))
+        self.assertEqual(idea_comparisons._parse_numeric_value("2.5% of quota")["unit"], "%")
 
     def test_dated_observations_become_trend_with_direction(self):
         facts = [{

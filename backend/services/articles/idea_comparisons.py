@@ -367,7 +367,7 @@ def _display_numeric_value(value: float, unit: str) -> str:
 
 def _normalise_unit(prefix: str, suffix: str) -> str:
     suffix = re.sub(r"\s+", " ", suffix.strip().lower())
-    if "%" in suffix:
+    if suffix.startswith("%"):
         return "%"
     if prefix:
         meaningful_suffix = suffix
@@ -387,6 +387,9 @@ def _parse_numeric_value(text: str) -> dict | None:
         return None
     suffix = match.group("suffix") or ""
     if _NON_UNIT_SUFFIX_PATTERN.search(suffix):
+        return None
+    normalised_suffix = suffix.lstrip()
+    if "%" in normalised_suffix and not normalised_suffix.startswith("%"):
         return None
     try:
         numeric_value = float(Decimal(match.group("number").replace(",", "")))
