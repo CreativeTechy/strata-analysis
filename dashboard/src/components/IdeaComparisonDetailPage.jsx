@@ -18,6 +18,17 @@ const emptyObservation = (metric = '') => ({ metric, numeric_value: '', unit: ''
 const emptyFact = () => ({ fact_text: '', reference_label: '', reference_url: '', observed_at: '', observations: [] });
 
 const compactNumber = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
+const readableUnit = (unit) => {
+  const text = String(unit || '').trim();
+  return /^[£$€]/.test(text) ? `${text[0]}${text.slice(1).trim() ? ` ${text.slice(1).trim()}` : ''}` : text;
+};
+const formatNumericValue = (value, unit) => {
+  const number = compactNumber(value);
+  const text = String(unit || '').trim();
+  if (/^[£$€]/.test(text)) return `${text[0]}${number}${text.slice(1).trim() ? ` ${text.slice(1).trim()}` : ''}`;
+  if (text === '%') return `${number}%`;
+  return `${number} ${text}`.trim();
+};
 const readableDisplayValue = (value) => {
   const text = String(value || '');
   if (text.startsWith('-.')) return `-0${text.slice(1)}`;
@@ -41,7 +52,7 @@ function ChangeIndicator({ change, unit, referenceLabel }) {
   return (
     <span className={`comparison-value-change ${change.direction}`}>
       <Icon size={13} /> <b>{symbol}</b>
-      {change.direction === 'flat' ? `Matches ${referenceLabel}` : `${compactNumber(Math.abs(change.difference))} ${unit} ${relation} ${referenceLabel}`}
+      {change.direction === 'flat' ? `Matches ${referenceLabel}` : `${formatNumericValue(Math.abs(change.difference), unit)} ${relation} ${referenceLabel}`}
       {change.direction !== 'flat' && change.percentage != null ? ` (${Math.abs(change.percentage).toFixed(1)}%)` : ''}
     </span>
   );
@@ -62,7 +73,7 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
     <div className="comparison-benchmark-view">
       <div className="comparison-user-benchmark">
         <div className="comparison-user-benchmark-icon"><UserRound size={17} /></div>
-        <div><span>{benchmarkItem ? 'Your fact · comparison baseline' : 'Evidence average · comparison baseline'}</span><strong>{compactNumber(benchmark)} {unit}</strong><small>{benchmarkLabel}</small></div>
+        <div><span>{benchmarkItem ? 'Your fact · comparison baseline' : 'Evidence average · comparison baseline'}</span><strong>{formatNumericValue(benchmark, unit)}</strong><small>{benchmarkLabel}</small></div>
       </div>
       <div className="comparison-benchmark-chart" role="img" aria-label={`Values compared with ${benchmarkLabel}`}>
         <div className="comparison-benchmark-heading">
@@ -72,26 +83,32 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
           const itemPosition = position(item.numeric_value);
           const start = Math.min(itemPosition, benchmarkPosition);
           const width = Math.abs(itemPosition - benchmarkPosition);
-          const userDifference = changeDetails(benchmark, item.numeric_value);
+          const comparisonChange = benchmarkItem
+            ? changeDetails(benchmark, item.numeric_value)
+            : changeDetails(item.numeric_value, benchmark);
           const isBenchmark = benchmarkItem?.id === item.id;
           return (
             <a className={`comparison-benchmark-row ${isBenchmark ? 'is-benchmark' : ''}`} href={`#${item.evidence_id}`} key={item.id}>
               <div className="comparison-benchmark-source"><i className={`comparison-origin-dot ${item.origin}`} /><span>{item.source_label}</span><strong>{readableDisplayValue(item.display_value)}</strong></div>
               <div className="comparison-benchmark-track">
                 <i className="comparison-benchmark-line" style={{ left: `${benchmarkPosition}%` }} />
-                {!isBenchmark ? <i className={`comparison-distance-line ${userDifference.direction}`} style={{ left: `${start}%`, width: `${Math.max(width, 0.6)}%` }} /> : null}
+                {!isBenchmark ? <i className={`comparison-distance-line ${comparisonChange.direction}`} style={{ left: `${start}%`, width: `${Math.max(width, 0.6)}%` }} /> : null}
                 <i className={`comparison-value-point ${item.origin} ${isBenchmark ? 'benchmark' : ''}`} style={{ left: `${itemPosition}%` }} />
               </div>
-              <div className={`comparison-benchmark-difference ${userDifference.direction}`}>
+              <div className={`comparison-benchmark-difference ${comparisonChange.direction}`}>
                 {isBenchmark ? <><b>→</b><span>Your comparison baseline</span></> : <>
-                  <b>{userDifference.direction === 'up' ? '↑' : userDifference.direction === 'down' ? '↓' : '→'}</b>
-                  <span>Your fact is <strong>{compactNumber(Math.abs(userDifference.difference))} {unit}</strong> {userDifference.direction === 'up' ? 'higher' : userDifference.direction === 'down' ? 'lower' : 'the same'}</span>
+                  <b>{comparisonChange.direction === 'up' ? '↑' : comparisonChange.direction === 'down' ? '↓' : '→'}</b>
+                  {benchmarkItem ? (
+                    <span>Your fact is <strong>{formatNumericValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'higher' : comparisonChange.direction === 'down' ? 'lower' : 'the same'}</span>
+                  ) : (
+                    <span>This source is <strong>{formatNumericValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'above' : comparisonChange.direction === 'down' ? 'below' : 'at'} the average</span>
+                  )}
                 </>}
               </div>
             </a>
           );
         })}
-        <div className="comparison-benchmark-scale"><span>{compactNumber(minimum)} {unit}</span><span>{compactNumber(maximum)} {unit}</span></div>
+        <div className="comparison-benchmark-scale"><span>{formatNumericValue(minimum, unit)}</span><span>{formatNumericValue(maximum, unit)}</span></div>
       </div>
     </div>
   );
@@ -129,20 +146,20 @@ function NumericEvidence({ evidence }) {
           return (
             <article className="comparison-numeric-group" key={group.id}>
               <div className="comparison-numeric-title">
-                <div><h2>{group.metric}</h2><span>{group.unit}</span></div>
+                <div><h2>{group.metric}</h2><span>{readableUnit(group.unit)}</span></div>
                 {group.direction ? (
                   <strong className={`comparison-direction ${group.direction}`}>
-                    <DirectionIcon size={15} /> {compactNumber(Math.abs(group.change))} {group.unit}
+                    <DirectionIcon size={15} /> {formatNumericValue(Math.abs(group.change), group.unit)}
                     {group.change_percent != null ? ` (${Math.abs(group.change_percent).toFixed(1)}%)` : ''}
                   </strong>
                 ) : null}
               </div>
               {group.observations.length > 1 ? (
                 <div className="comparison-stat-strip">
-                  <div><span>Lowest</span><strong>{compactNumber(group.minimum)} {group.unit}</strong></div>
-                  <div><span>Highest</span><strong>{compactNumber(group.maximum)} {group.unit}</strong></div>
-                  <div><span>Average</span><strong>{compactNumber(average)} {group.unit}</strong></div>
-                  <div><span>Range</span><strong>{compactNumber(group.spread)} {group.unit}</strong></div>
+                  <div><span>Lowest</span><strong>{formatNumericValue(group.minimum, group.unit)}</strong></div>
+                  <div><span>Highest</span><strong>{formatNumericValue(group.maximum, group.unit)}</strong></div>
+                  <div><span>Average</span><strong>{formatNumericValue(average, group.unit)}</strong></div>
+                  <div><span>Range</span><strong>{formatNumericValue(group.spread, group.unit)}</strong></div>
                 </div>
               ) : null}
               {group.display_type === 'single' ? (
@@ -158,7 +175,7 @@ function NumericEvidence({ evidence }) {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} width={58} />
-                        <Tooltip formatter={(value) => [`${compactNumber(value)} ${group.unit}`, 'Value']} />
+                        <Tooltip formatter={(value) => [formatNumericValue(value, group.unit), 'Value']} />
                         <Legend />
                         <Line type="monotone" dataKey="numeric_value" name="Direction" stroke="#94a3b8" strokeWidth={2} dot={false} />
                         <Line type="monotone" dataKey="actual" name="Actual" stroke="#2563eb" strokeWidth={3} connectNulls />

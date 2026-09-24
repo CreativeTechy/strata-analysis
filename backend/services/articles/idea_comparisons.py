@@ -370,7 +370,8 @@ def _parse_numeric_value(text: str) -> dict | None:
 
 
 def _normalise_group_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9%£$€]+", " ", str(value or "").lower()).strip()
+    normalised = re.sub(r"[^a-z0-9%£$€]+", " ", str(value or "").lower()).strip()
+    return re.sub(r"([£$€])\s+", r"\1", normalised)
 
 
 def _numeric_evidence(idea: str, sources: list[dict], facts: list[dict]) -> dict:

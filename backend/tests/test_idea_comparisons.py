@@ -227,6 +227,20 @@ class ComparisonFactsTests(unittest.TestCase):
 
 
 class NumericEvidenceTests(unittest.TestCase):
+    def test_currency_units_group_with_or_without_spacing(self):
+        evidence = idea_comparisons._numeric_evidence("Annual saving", [
+            {"source_label": "A", "value": "£120 annual saving"},
+        ], [{
+            "id": 9, "reference_label": "User estimate", "observed_at": None,
+            "observations": [{
+                "id": 3, "metric": "Annual saving", "numeric_value": 140,
+                "unit": "£ annual saving", "period_label": None, "value_kind": "estimate",
+                "display_value": "£140 annual saving",
+            }],
+        }])
+        self.assertEqual(len(evidence["groups"]), 1)
+        self.assertEqual(evidence["groups"][0]["display_type"], "comparison")
+
     def test_parses_existing_free_text_values_into_comparison(self):
         evidence = idea_comparisons._numeric_evidence("Oil production", [
             {"source_label": "A", "value": "1.10 million bpd"},
