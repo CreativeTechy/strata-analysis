@@ -275,6 +275,33 @@ EVIDENCE_PASSAGE_CONTEXTUAL_THRESHOLD = max(-1.0, min(
 STALE_RUN_MINUTES = int(os.environ.get("STALE_RUN_MINUTES", "180") or 180)
 
 
+# --- Reports: Export Summary PDF ---------------------------------------------
+# The timezone used to display analysis-run dates in the Reports PDF. IANA
+# name, e.g. "UTC" or "Africa/Cairo" - resolved via zoneinfo, so
+# an invalid value fails fast at first use rather than silently drifting.
+REPORT_TIMEZONE = os.environ.get("REPORT_TIMEZONE", "UTC").strip() or "UTC"
+
+# How many of a report's ranked articles make the "Top articles" section.
+REPORT_TOP_ARTICLES_LIMIT = int(os.environ.get("REPORT_TOP_ARTICLES_LIMIT", "10") or 10)
+
+# Per-side cap on how many articles' evidence (summary/topics/key points) is
+# fed into the "variation from last run" LLM prompt. A project with a large
+# corpus would otherwise blow past context limits long before it added useful
+# signal - see services/reports/yesterday_comparison.py's sampling, which
+# discloses when this truncates either side rather than doing it silently.
+REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE = int(
+    os.environ.get("REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE", "40") or 40
+)
+
+# The "variation from last run" narrative is one structured-JSON call over a
+# larger evidence bundle than the plain trend summary (two runs' worth of
+# articles' summaries/topics/key points), so it gets a longer budget than the
+# general chat_completion() default.
+REPORT_VARIATION_LLM_TIMEOUT_SECONDS = int(
+    os.environ.get("REPORT_VARIATION_LLM_TIMEOUT_SECONDS", "120") or 120
+)
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:

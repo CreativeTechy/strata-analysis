@@ -11,6 +11,7 @@ Intelligence Copilot; the two document domains keep their own routers.
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,7 @@ from services.articles.articles_store import (
     list_project_sources,
 )
 from services.articles.source_trust import set_tier as set_source_trust_tier
+from services.articles.article_analyses import fetch_run_article_rows
 from services.articles.reanalyze import (
     load_article_for_reanalysis,
     mark_processing,
@@ -73,6 +75,8 @@ from services.articles.idea_comparisons import (
     generate_idea_comparisons, has_run_generation_attempt, list_idea_comparisons,
 )
 from services.intelligence.trend_summary import generate_trend_summary
+from services.reports.report_data import build_report_data
+from services.reports.yesterday_comparison import build_variation_from_last_run
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
@@ -922,6 +926,40 @@ def get_project_trend_summary_view(
         }
 
 
+@app.get("/api/projects/{project_id}/reports/variation")
+def get_report_variation_from_last_run(
+    project_id: int,
+    run_id: str,
+    regenerate: bool = False,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """The Reports page's selected-run versus previous-run comparison.
+
+    This uses the same frozen run snapshots, verified metrics, narrative, and
+    cache as the PDF. `regenerate=true` bypasses the narrative cache without
+    changing which two runs are compared.
+    """
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    run = get_pipeline_run(run_id)
+    if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
+        raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
+
+    current_rows = [
+        row for row in fetch_run_article_rows(project_id, run_id)
+        if str(row.get("analysis_status") or "").lower() == "success"
+    ]
+    report_data = {
+        "project": {"id": project_id, "name": project.get("name") or f"Project {project_id}"},
+        "scope": {"type": "run", "run_id": run_id},
+        "_analyzed_rows": current_rows,
+    }
+    return build_variation_from_last_run(project, report_data, run=run, force=regenerate)
+
+
 @app.get("/api/projects/{project_id}/idea-comparisons")
 def get_project_idea_comparisons_view(
     project_id: int,
@@ -965,6 +1003,63 @@ def get_project_idea_comparisons_view(
                 "error_code": "llm_provider_error",
             }
     return {"comparisons": cached}
+
+
+@app.post("/api/projects/{project_id}/reports/summary.pdf")
+def export_report_summary_pdf(
+    project_id: int,
+    period: str = "30d",
+    run_id: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    """Reports page's "Export Summary" button: one PDF built from the exact
+    same report-data snapshot (services/reports/report_data.py) the on-page
+    report is derived from, plus an LLM-grounded "variation from last run"
+    section. When `run_id` is selected, its frozen results are compared with
+    the immediately preceding eligible analysis run regardless of elapsed time.
+    `period`/`run_id`
+    mirror /trend-summary and /idea-comparisons above so the same scope shown
+    on screen is what gets exported.
+
+    A rendering failure is a 500 (nothing partial to fall back to - the PDF
+    itself is the whole response body), but an LLM failure inside either
+    LLM-backed section is not: build_report_data's executive summary and
+    build_variation_from_last_run's narrative both degrade to a disclosed
+    "unavailable" state on their own (never raise), so a local model being
+    down still yields a full export with just those two sections noting it.
+    """
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    run = None
+    if run_id:
+        run = get_pipeline_run(run_id)
+        if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
+            raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
+
+    report_data = build_report_data(project, normalize_period(period), run=run)
+    comparison = build_variation_from_last_run(project, report_data, run=run)
+
+    from services.reports.pdf_renderer import render_summary_pdf
+    try:
+        pdf_bytes = render_summary_pdf(report_data, comparison)
+    except Exception:
+        logger.exception("Failed to render report summary PDF for project %s", project_id)
+        raise HTTPException(status_code=500, detail="Failed to generate the report PDF.")
+
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "-", project.get("name") or f"project-{project_id}").strip("-")
+    safe_project = safe_project or f"project-{project_id}"
+    scope_label = f"run-{run['id'][:8]}" if run else normalize_period(period)
+    date_label = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"{safe_project}-summary-{scope_label}-{date_label}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/articles/export")

@@ -399,6 +399,18 @@ class PipelineRunEligibilityTests(unittest.TestCase):
         self.assertTrue(run["analytics_eligible"])
         self.assertEqual(run["analysis_result_count"], 12)
 
+    def test_previous_run_lookup_is_ordered_by_run_not_elapsed_time(self):
+        row = {"id": "run-8", "pipeline": "analysis", "project_id": 5,
+               "analysis_result_count": 3, "sequence_number": 8}
+        with patch.object(pipeline_runs.config, "DATABASE_URL", "postgresql://test"), \
+             patch.object(pipeline_runs.db, "fetch_one", return_value=row) as fetch:
+            previous = pipeline_runs.get_previous_analysis_run(5, "run-9")
+        self.assertEqual(previous["id"], "run-8")
+        sql, params = fetch.call_args[0]
+        self.assertIn("(pr.created_at, pr.id) < (selected.created_at, selected.id)", sql)
+        self.assertIn("exists (select 1 from article_analyses", sql)
+        self.assertEqual(params, ("run-9", 5))
+
 
 if __name__ == "__main__":
     unittest.main()
