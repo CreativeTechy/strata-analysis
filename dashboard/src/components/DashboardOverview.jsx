@@ -16,6 +16,7 @@ import { getIdeaComparisons } from '../api/projectsApi.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
+const PLATFORM_LIST_PAGE_SIZE = 5;
 const PERIODS = [
   { key: '7d', labelKey: 'dashboard:periods.last7d' },
   { key: '30d', labelKey: 'dashboard:periods.last30d' },
@@ -189,6 +190,10 @@ export default function DashboardOverview({
   const sentimentData = SENTIMENT_KEYS.map((name) => ({ name, value: Number(data[name] || 0) }));
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
+  const sortedPlatformData = useMemo(
+    () => [...platformData].sort((a, b) => b.total - a.total),
+    [platformData],
+  );
   const languageData = capLanguageBreakdown(data.insights?.language_breakdown || []);
   const regionData = capBreakdown((data.insights?.region_breakdown || []).filter((entry) => entry.total > 0));
   const genderData = capBreakdown((data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0));
@@ -204,6 +209,7 @@ export default function DashboardOverview({
   const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
+  const [platformListPage, setPlatformListPage] = useState(0);
   // Set right before bumping ideaComparisonsNonce from the Regenerate button
   // below, and consumed (and cleared) by the effect - the same
   // forceRegenerateRef/nonce pattern StatsOverview.jsx's trend-summary
@@ -268,6 +274,13 @@ export default function DashboardOverview({
   const pagedIdeaComparisons = ideaComparisons.slice(
     ideaComparisonsPage * IDEA_COMPARISONS_PAGE_SIZE,
     (ideaComparisonsPage + 1) * IDEA_COMPARISONS_PAGE_SIZE,
+  );
+
+  const platformListTotalPages = Math.max(1, Math.ceil(sortedPlatformData.length / PLATFORM_LIST_PAGE_SIZE));
+  const safePlatformListPage = Math.min(platformListPage, platformListTotalPages - 1);
+  const pagedPlatformData = sortedPlatformData.slice(
+    safePlatformListPage * PLATFORM_LIST_PAGE_SIZE,
+    (safePlatformListPage + 1) * PLATFORM_LIST_PAGE_SIZE,
   );
 
   return <div className="content-shell intelligence-page">
@@ -469,7 +482,33 @@ export default function DashboardOverview({
         </section>
 
         <section className="intelligence-middle-grid">
-          <article className="glass-card intelligence-card"><h3>{t('dashboard:wherePosted.title')}</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div></article>
+          <article className="glass-card intelligence-card">
+            <h3>{t('dashboard:wherePosted.title')}</h3>
+            <div className="intelligence-platform-list">{pagedPlatformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div>
+            {platformListTotalPages > 1 ? (
+              <div className="intelligence-idea-comparison-pagination">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setPlatformListPage((current) => Math.max(0, current - 1))}
+                  disabled={safePlatformListPage === 0}
+                >
+                  <ChevronLeft size={14} className="rtl-mirror" /> {t('dashboard:wherePosted.prev')}
+                </button>
+                <span className="intelligence-idea-comparison-pagination-status">
+                  {t('common:pagination.pageOfTotal', { page: safePlatformListPage + 1, totalPages: platformListTotalPages })}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setPlatformListPage((current) => Math.min(platformListTotalPages - 1, current + 1))}
+                  disabled={safePlatformListPage >= platformListTotalPages - 1}
+                >
+                  {t('dashboard:wherePosted.next')} <ChevronRight size={14} className="rtl-mirror" />
+                </button>
+              </div>
+            ) : null}
+          </article>
           <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>{t('dashboard:ideas.title')}</h3><span>{t('dashboard:ideas.subtitle')}</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">{t('dashboard:ideas.empty')}</p>}</article>
           <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span dir="auto">{item.platform}</span><div>{SENTIMENT_KEYS.map((tone) => <i key={tone} title={t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 })} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>

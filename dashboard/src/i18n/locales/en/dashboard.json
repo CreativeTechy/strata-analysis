@@ -123,7 +123,9 @@
     }
   },
   "wherePosted": {
-    "title": "Where it’s being said"
+    "title": "Where it’s being said",
+    "prev": "Prev",
+    "next": "Next"
   },
   "ideas": {
     "title": "Most talked-about ideas",
