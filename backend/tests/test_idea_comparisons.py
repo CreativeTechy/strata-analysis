@@ -207,6 +207,54 @@ class ComparisonFactsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
             idea_comparisons._validate_fact({"fact_text": "x", "observed_at": "tomorrow"})
 
+    def test_structured_observation_is_validated(self):
+        clean = idea_comparisons._validate_fact({
+            "fact_text": "Production is forecast to rise.",
+            "observations": [{
+                "metric": "Oil production", "numeric_value": "1.10", "unit": "million bpd",
+                "period_label": "2026 Q4", "value_kind": "forecast",
+            }],
+        })
+        self.assertEqual(clean["observations"][0]["numeric_value"], idea_comparisons.Decimal("1.10"))
+        self.assertEqual(clean["observations"][0]["value_kind"], "forecast")
+
+    def test_structured_observation_rejects_non_numeric_value(self):
+        with self.assertRaisesRegex(ValueError, "valid number"):
+            idea_comparisons._validate_fact({
+                "fact_text": "Production changed.",
+                "observations": [{"metric": "Production", "numeric_value": "many", "unit": "bpd"}],
+            })
+
+
+class NumericEvidenceTests(unittest.TestCase):
+    def test_parses_existing_free_text_values_into_comparison(self):
+        evidence = idea_comparisons._numeric_evidence("Oil production", [
+            {"source_label": "A", "value": "1.10 million bpd"},
+            {"source_label": "B", "value": "0.92 million bpd"},
+        ], [])
+        self.assertEqual(evidence["total_observations"], 2)
+        self.assertEqual(evidence["groups"][0]["display_type"], "comparison")
+        self.assertAlmostEqual(evidence["groups"][0]["spread"], 0.18)
+
+    def test_dated_observations_become_trend_with_direction(self):
+        facts = [{
+            "id": 8, "reference_label": "Forecast", "observed_at": None,
+            "observations": [
+                {"id": 1, "metric": "Oil production", "numeric_value": 0.9, "unit": "million bpd", "period_label": "2026 Q3", "value_kind": "actual", "display_value": "0.9 million bpd"},
+                {"id": 2, "metric": "Oil production", "numeric_value": 1.1, "unit": "million bpd", "period_label": "2026 Q4", "value_kind": "forecast", "display_value": "1.1 million bpd"},
+            ],
+        }]
+        group = idea_comparisons._numeric_evidence("Oil production", [], facts)["groups"][0]
+        self.assertEqual(group["display_type"], "trend")
+        self.assertEqual(group["direction"], "up")
+        self.assertAlmostEqual(group["change"], 0.2)
+
+    def test_non_numeric_evidence_does_not_create_chart(self):
+        evidence = idea_comparisons._numeric_evidence("Customer sentiment", [
+            {"source_label": "A", "value": "mostly positive"},
+        ], [])
+        self.assertEqual(evidence, {"groups": [], "total_observations": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

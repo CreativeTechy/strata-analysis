@@ -2,8 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, CheckCircle2, ExternalLink, FileText, Lightbulb, Loader2,
-  Pencil, Plus, RefreshCw, Scale, Trash2, UserRound,
+  Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
 import { useAuth } from '../auth/useAuth.js';
 import {
   createIdeaComparisonFact, deleteIdeaComparisonFact, getIdeaComparison,
@@ -11,7 +15,91 @@ import {
 } from '../api/projectsApi.js';
 import '../styles/IdeaComparisonDetail.css';
 
-const EMPTY_FACT = { fact_text: '', reference_label: '', reference_url: '', stated_value: '', observed_at: '' };
+const emptyObservation = (metric = '') => ({ metric, numeric_value: '', unit: '', period_label: '', value_kind: 'unknown' });
+const emptyFact = () => ({ fact_text: '', reference_label: '', reference_url: '', observed_at: '', observations: [] });
+
+const compactNumber = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
+
+function NumericEvidence({ evidence }) {
+  if (!evidence?.groups?.length) return null;
+  return (
+    <section className="glass-card comparison-numeric-card">
+      <div className="comparison-section-heading">
+        <div><span>Numbers at a glance</span><small>Shown only for comparable figures found in this idea</small></div>
+      </div>
+      <div className="comparison-numeric-groups">
+        {evidence.groups.map((group) => {
+          const chartData = group.observations.map((item) => ({
+            ...item,
+            label: group.display_type === 'trend' ? item.period_label : item.source_label,
+            actual: item.value_kind === 'actual' ? item.numeric_value : null,
+            forecast: item.value_kind === 'forecast' || item.value_kind === 'target' ? item.numeric_value : null,
+            estimate: !['actual', 'forecast', 'target'].includes(item.value_kind) ? item.numeric_value : null,
+          }));
+          const DirectionIcon = group.direction === 'up' ? TrendingUp : group.direction === 'down' ? TrendingDown : Minus;
+          return (
+            <article className="comparison-numeric-group" key={group.id}>
+              <div className="comparison-numeric-title">
+                <div><h2>{group.metric}</h2><span>{group.unit}</span></div>
+                {group.direction ? (
+                  <strong className={`comparison-direction ${group.direction}`}>
+                    <DirectionIcon size={15} /> {compactNumber(Math.abs(group.change))} {group.unit}
+                    {group.change_percent != null ? ` (${Math.abs(group.change_percent).toFixed(1)}%)` : ''}
+                  </strong>
+                ) : null}
+              </div>
+              {group.display_type === 'single' ? (
+                <a className="comparison-single-value" href={`#${group.observations[0].evidence_id}`}>
+                  <strong>{group.observations[0].display_value}</strong>
+                  <span>{group.observations[0].source_label}</span>
+                </a>
+              ) : (
+                <div className="comparison-chart" role="img" aria-label={`${group.metric} ${group.display_type} chart`}>
+                  <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 48)}>
+                    {group.display_type === 'trend' ? (
+                      <LineChart data={chartData} margin={{ top: 12, right: 18, bottom: 8, left: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} width={58} />
+                        <Tooltip formatter={(value) => [`${compactNumber(value)} ${group.unit}`, 'Value']} />
+                        <Legend />
+                        <Line type="monotone" dataKey="numeric_value" name="Direction" stroke="#94a3b8" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="actual" name="Actual" stroke="#2563eb" strokeWidth={3} connectNulls />
+                        <Line type="monotone" dataKey="estimate" name="Estimate" stroke="#7c3aed" strokeWidth={3} strokeDasharray="5 4" connectNulls />
+                        <Line type="monotone" dataKey="forecast" name="Forecast / target" stroke="#f97316" strokeWidth={3} strokeDasharray="5 4" connectNulls />
+                      </LineChart>
+                    ) : (
+                      <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 18 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 12 }} />
+                        <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11 }} />
+                        <Tooltip formatter={(value) => [`${compactNumber(value)} ${group.unit}`, 'Value']} />
+                        <Bar dataKey="numeric_value" radius={[0, 6, 6, 0]}>
+                          {chartData.map((item) => <Cell key={item.id} fill={item.origin === 'user' ? '#f97316' : '#2563eb'} />)}
+                        </Bar>
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              )}
+              {group.observations.length > 1 ? (
+                <div className="comparison-number-table">
+                  {group.observations.map((item) => (
+                    <a href={`#${item.evidence_id}`} key={item.id}>
+                      <span><i className={`comparison-origin-dot ${item.origin}`} />{item.source_label}</span>
+                      <strong>{item.display_value}</strong>
+                      <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || 'Period not specified'}</small>
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 export default function IdeaComparisonDetailPage() {
   const { projectId, clusterId } = useParams();
@@ -27,7 +115,8 @@ export default function IdeaComparisonDetailPage() {
   const [message, setMessage] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingFactId, setEditingFactId] = useState(null);
-  const [form, setForm] = useState(EMPTY_FACT);
+  const [form, setForm] = useState(emptyFact);
+  const [includeNumbers, setIncludeNumbers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
@@ -53,16 +142,19 @@ export default function IdeaComparisonDetailPage() {
   const closeForm = () => {
     setFormOpen(false);
     setEditingFactId(null);
-    setForm(EMPTY_FACT);
+    setForm(emptyFact());
+    setIncludeNumbers(false);
   };
 
   const openEdit = (fact) => {
     setEditingFactId(fact.id);
+    const observations = fact.observations || [];
     setForm({
       fact_text: fact.fact_text || '', reference_label: fact.reference_label || '',
-      reference_url: fact.reference_url || '', stated_value: fact.stated_value || '',
-      observed_at: fact.observed_at || '',
+      reference_url: fact.reference_url || '', observed_at: fact.observed_at || '',
+      observations: observations.map((item) => ({ ...item, numeric_value: String(item.numeric_value) })),
     });
+    setIncludeNumbers(observations.length > 0);
     setFormOpen(true);
     setMessage('');
   };
@@ -90,8 +182,9 @@ export default function IdeaComparisonDetailPage() {
     setSaving(true);
     setMessage('');
     try {
-      if (editingFactId) await updateIdeaComparisonFact(projectId, clusterId, editingFactId, form);
-      else await createIdeaComparisonFact(projectId, clusterId, form);
+      const payload = { ...form, observations: includeNumbers ? form.observations : [] };
+      if (editingFactId) await updateIdeaComparisonFact(projectId, clusterId, editingFactId, payload);
+      else await createIdeaComparisonFact(projectId, clusterId, payload);
       closeForm();
       await regenerate();
     } catch (err) {
@@ -150,6 +243,8 @@ export default function IdeaComparisonDetailPage() {
         <p>{comparison.summary || 'No summary has been generated yet.'}</p>
       </section>
 
+      <NumericEvidence evidence={comparison.numeric_evidence} />
+
       <section className="comparison-evidence-grid">
         <article className="glass-card comparison-evidence-card">
           <div className="comparison-section-heading">
@@ -157,7 +252,7 @@ export default function IdeaComparisonDetailPage() {
           </div>
           <div className="comparison-evidence-list">
             {comparison.sources.map((source, index) => (
-              <div className="comparison-evidence-row" key={`${source.article_id || 'source'}-${index}`}>
+              <div className="comparison-evidence-row" id={`document-evidence-${index}`} key={`${source.article_id || 'source'}-${index}`}>
                 <div className="comparison-evidence-number">{index + 1}</div>
                 <div className="comparison-evidence-content">
                   <div><FileText size={14} /><strong>{source.source_label}</strong></div>
@@ -180,9 +275,31 @@ export default function IdeaComparisonDetailPage() {
             <form className="comparison-fact-form" onSubmit={saveAndRegenerate}>
               <label className="comparison-fact-wide">Fact <textarea required maxLength={4000} rows={4} value={form.fact_text} onChange={(e) => setForm({ ...form, fact_text: e.target.value })} placeholder="State the fact and enough context to compare it with the claims." /></label>
               <label>Reference label <input value={form.reference_label} onChange={(e) => setForm({ ...form, reference_label: e.target.value })} placeholder="Internal research, annual report…" /></label>
-              <label>Stated figure <input value={form.stated_value} onChange={(e) => setForm({ ...form, stated_value: e.target.value })} placeholder="e.g. 42%, $120, 3 days" /></label>
               <label>Reference URL <input type="url" value={form.reference_url} onChange={(e) => setForm({ ...form, reference_url: e.target.value })} placeholder="https://…" /></label>
               <label>Date <input type="date" value={form.observed_at} onChange={(e) => setForm({ ...form, observed_at: e.target.value })} /></label>
+              <label className="comparison-number-toggle">
+                <input type="checkbox" checked={includeNumbers} onChange={(e) => {
+                  const checked = e.target.checked;
+                  setIncludeNumbers(checked);
+                  if (checked && !form.observations.length) setForm({ ...form, observations: [emptyObservation(comparison.idea)] });
+                }} />
+                <span><strong>Include numbers</strong><small>Add structured values when this fact contains a measurable figure.</small></span>
+              </label>
+              {includeNumbers ? (
+                <div className="comparison-observations">
+                  {form.observations.map((observation, index) => (
+                    <div className="comparison-observation-row" key={index}>
+                      <label>Metric <input required value={observation.metric} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, metric: e.target.value } : item) })} placeholder="Oil production" /></label>
+                      <label>Value <input required inputMode="decimal" value={observation.numeric_value} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, numeric_value: e.target.value } : item) })} placeholder="1.10" /></label>
+                      <label>Unit <input required value={observation.unit} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, unit: e.target.value } : item) })} placeholder="million bpd" /></label>
+                      <label>Period <input value={observation.period_label} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, period_label: e.target.value } : item) })} placeholder="2026 Q4" /></label>
+                      <label>Type <select value={observation.value_kind} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, value_kind: e.target.value } : item) })}><option value="unknown">Unspecified</option><option value="actual">Actual</option><option value="estimate">Estimate</option><option value="forecast">Forecast</option><option value="target">Target</option></select></label>
+                      <button type="button" onClick={() => setForm({ ...form, observations: form.observations.filter((_, itemIndex) => itemIndex !== index) })} aria-label="Remove number"><X size={15} /></button>
+                    </div>
+                  ))}
+                  <button type="button" className="comparison-add-observation" onClick={() => setForm({ ...form, observations: [...form.observations, emptyObservation(comparison.idea)] })}><Plus size={14} /> Add another number</button>
+                </div>
+              ) : null}
               <div className="comparison-fact-actions">
                 <button type="button" className="btn-secondary" onClick={closeForm} disabled={saving}>Cancel</button>
                 <button type="submit" className="btn-primary" disabled={saving || regenerating || !form.fact_text.trim()}>
@@ -195,11 +312,12 @@ export default function IdeaComparisonDetailPage() {
           {comparison.facts.length ? (
             <div className="comparison-facts-list">
               {comparison.facts.map((fact) => (
-                <div className="comparison-fact" key={fact.id}>
+                <div className="comparison-fact" id={`user-fact-${fact.id}`} key={fact.id}>
                   <div className="comparison-fact-icon"><UserRound size={16} /></div>
                   <div>
                     <span>User-provided fact{fact.reference_label ? ` · ${fact.reference_label}` : ''}</span>
                     <p>{fact.fact_text}</p>
+                    {fact.observations?.length ? <div className="comparison-fact-values">{fact.observations.map((item) => <span key={item.id}>{item.display_value}{item.period_label ? ` · ${item.period_label}` : ''}</span>)}</div> : null}
                     <small>{[fact.stated_value, fact.observed_at, fact.created_by_name && `Added by ${fact.created_by_name}`].filter(Boolean).join(' · ')}</small>
                     {fact.reference_url ? <a href={fact.reference_url} target="_blank" rel="noreferrer">Open reference <ExternalLink size={12} /></a> : null}
                   </div>

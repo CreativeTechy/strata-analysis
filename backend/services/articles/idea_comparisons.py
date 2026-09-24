@@ -17,7 +17,9 @@ another LLM call.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
 
 import config
@@ -33,6 +35,11 @@ PROMPT_VERSION = "idea-comparison/2"
 _SYSTEM_PROMPT = load_prompt("idea_comparison_system_prompt.txt")
 
 MAX_EXCERPT_LENGTH = 300
+VALUE_KINDS = {"actual", "forecast", "estimate", "target", "unknown"}
+_NUMBER_PATTERN = re.compile(
+    r"(?P<prefix>[£$€])?\s*(?P<number>[+-]?(?:\d[\d,]*(?:\.\d+)?|\.\d+))\s*(?P<suffix>.*)",
+    re.IGNORECASE,
+)
 
 
 def _source_label(row: dict) -> str:
@@ -181,9 +188,11 @@ def _fact_as_source(fact: dict) -> dict:
     text = str(fact.get("fact_text") or "").strip()
     date = fact.get("observed_at")
     date_note = f" (dated {date.isoformat() if hasattr(date, 'isoformat') else date})" if date else ""
+    observations = fact.get("observations") or []
+    observation_values = [item.get("display_value") for item in observations if item.get("display_value")]
     return {
         "source_label": f"{label} [user-provided]",
-        "value": str(fact.get("stated_value") or "").strip(),
+        "value": str(fact.get("stated_value") or "").strip() or ", ".join(observation_values),
         "title": f"User-provided fact{date_note}",
         "excerpt": text[:MAX_EXCERPT_LENGTH],
     }
@@ -208,9 +217,33 @@ def list_comparison_facts(project_id: int, idea_cluster_id: int) -> list[dict]:
         """,
         (int(project_id), int(idea_cluster_id)),
     )
+    fact_ids = [row["id"] for row in rows or []]
+    observation_rows = db.fetch_all(
+        """
+        select id, fact_id, metric, numeric_value, unit, period_label, value_kind, sort_order
+        from idea_comparison_fact_observations
+        where fact_id = any(%s)
+        order by fact_id, sort_order, id
+        """,
+        (fact_ids,),
+    ) if fact_ids else []
+    observations_by_fact: dict[int, list[dict]] = {}
+    for observation in observation_rows or []:
+        numeric_value = float(observation["numeric_value"])
+        unit = str(observation["unit"])
+        observations_by_fact.setdefault(observation["fact_id"], []).append({
+            "id": observation["id"],
+            "metric": observation["metric"],
+            "numeric_value": numeric_value,
+            "unit": unit,
+            "period_label": observation.get("period_label"),
+            "value_kind": observation.get("value_kind") or "unknown",
+            "display_value": _display_numeric_value(numeric_value, unit),
+        })
     return [
         {
             **row,
+            "observations": observations_by_fact.get(row["id"], []),
             "observed_at": row["observed_at"].isoformat() if row.get("observed_at") else None,
             "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
             "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
@@ -235,13 +268,198 @@ def _validate_fact(payload: dict) -> dict:
             date.fromisoformat(observed_at)
         except ValueError as exc:
             raise ValueError("Date must use YYYY-MM-DD format.") from exc
+    raw_observations = payload.get("observations") or []
+    if not isinstance(raw_observations, list):
+        raise ValueError("Numeric observations must be a list.")
+    if len(raw_observations) > 20:
+        raise ValueError("A fact can contain at most 20 numeric observations.")
+    observations = []
+    for index, raw in enumerate(raw_observations):
+        if not isinstance(raw, dict):
+            raise ValueError("Each numeric observation must be an object.")
+        metric = str(raw.get("metric") or "").strip()
+        unit = str(raw.get("unit") or "").strip()
+        if not metric or not unit:
+            raise ValueError("Each numeric observation needs a metric and unit.")
+        try:
+            numeric_value = Decimal(str(raw.get("numeric_value", "")).replace(",", ""))
+        except (InvalidOperation, ValueError):
+            raise ValueError("Each numeric observation needs a valid number.") from None
+        if not numeric_value.is_finite():
+            raise ValueError("Numeric observation values must be finite.")
+        value_kind = str(raw.get("value_kind") or "unknown").strip().lower()
+        if value_kind not in VALUE_KINDS:
+            raise ValueError("Value type must be actual, forecast, estimate, target, or unknown.")
+        observations.append({
+            "metric": metric[:200],
+            "numeric_value": numeric_value,
+            "unit": unit[:80],
+            "period_label": str(raw.get("period_label") or "").strip()[:100] or None,
+            "value_kind": value_kind,
+            "sort_order": index,
+        })
     return {
         "fact_text": fact_text,
         "reference_label": str(payload.get("reference_label") or "").strip()[:200] or None,
         "reference_url": reference_url[:2000] or None,
         "stated_value": str(payload.get("stated_value") or "").strip()[:300] or None,
         "observed_at": observed_at or None,
+        "observations": observations,
     }
+
+
+def _replace_fact_observations(fact_id: int, observations: list[dict]) -> None:
+    db.execute("delete from idea_comparison_fact_observations where fact_id = %s", (int(fact_id),))
+    for observation in observations:
+        db.execute(
+            """
+            insert into idea_comparison_fact_observations (
+                fact_id, metric, numeric_value, unit, period_label, value_kind, sort_order
+            ) values (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (int(fact_id), observation["metric"], observation["numeric_value"], observation["unit"],
+             observation["period_label"], observation["value_kind"], observation["sort_order"]),
+        )
+
+
+def _compact_number(value: float) -> str:
+    return f"{value:,.6f}".rstrip("0").rstrip(".")
+
+
+def _display_numeric_value(value: float, unit: str) -> str:
+    number = _compact_number(value)
+    if unit.startswith(("£", "$", "€")):
+        return f"{unit[0]}{number}{unit[1:]}"
+    if unit == "%":
+        return f"{number}%"
+    return f"{number} {unit}".strip()
+
+
+def _normalise_unit(prefix: str, suffix: str) -> str:
+    suffix = re.sub(r"\s+", " ", suffix.strip().lower())
+    if "%" in suffix:
+        return "%"
+    if prefix:
+        meaningful_suffix = suffix
+        for noise in ("estimated", "estimate", "forecast", "projected", "actual"):
+            meaningful_suffix = meaningful_suffix.replace(noise, "")
+        meaningful_suffix = re.sub(r"\s+", " ", meaningful_suffix).strip()
+        return f"{prefix}{meaningful_suffix}"
+    return suffix.rstrip(".,;")
+
+
+def _parse_numeric_value(text: str) -> dict | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    match = _NUMBER_PATTERN.fullmatch(raw)
+    if not match:
+        return None
+    try:
+        numeric_value = float(Decimal(match.group("number").replace(",", "")))
+    except (InvalidOperation, ValueError):
+        return None
+    unit = _normalise_unit(match.group("prefix") or "", match.group("suffix") or "")
+    if not unit:
+        return None
+    return {
+        "numeric_value": numeric_value,
+        "unit": unit,
+        "display_value": raw,
+    }
+
+
+def _normalise_group_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9%£$€]+", " ", str(value or "").lower()).strip()
+
+
+def _numeric_evidence(idea: str, sources: list[dict], facts: list[dict]) -> dict:
+    observations: list[dict] = []
+    for index, source in enumerate(sources):
+        explicit = source.get("numeric_observations") or []
+        if explicit:
+            candidates = explicit
+        else:
+            parsed = _parse_numeric_value(source.get("value") or "")
+            candidates = [{**parsed, "metric": idea}] if parsed else []
+        for item_index, item in enumerate(candidates):
+            try:
+                value = float(item["numeric_value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            unit = str(item.get("unit") or "").strip()
+            if not unit:
+                continue
+            observations.append({
+                "id": f"source-{index}-{item_index}",
+                "origin": "document",
+                "evidence_id": f"document-evidence-{index}",
+                "source_label": source.get("source_label") or f"Source {index + 1}",
+                "metric": str(item.get("metric") or idea).strip(),
+                "numeric_value": value,
+                "unit": unit,
+                "period_label": item.get("period_label"),
+                "value_kind": item.get("value_kind") or "unknown",
+                "display_value": item.get("display_value") or _display_numeric_value(value, unit),
+            })
+    for fact in facts:
+        candidates = fact.get("observations") or []
+        if not candidates:
+            parsed = _parse_numeric_value(fact.get("stated_value") or "")
+            candidates = [{**parsed, "metric": idea}] if parsed else []
+        for item_index, item in enumerate(candidates):
+            value = float(item["numeric_value"])
+            unit = str(item["unit"])
+            observations.append({
+                "id": f"fact-{fact['id']}-{item.get('id', item_index)}",
+                "origin": "user",
+                "evidence_id": f"user-fact-{fact['id']}",
+                "source_label": fact.get("reference_label") or "User-provided fact",
+                "metric": str(item.get("metric") or idea).strip(),
+                "numeric_value": value,
+                "unit": unit,
+                "period_label": item.get("period_label") or fact.get("observed_at"),
+                "value_kind": item.get("value_kind") or "unknown",
+                "display_value": item.get("display_value") or _display_numeric_value(value, unit),
+            })
+
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for observation in observations:
+        key = (_normalise_group_key(observation["metric"]), _normalise_group_key(observation["unit"]))
+        grouped.setdefault(key, []).append(observation)
+
+    groups = []
+    for items in grouped.values():
+        periods = {str(item.get("period_label") or "").strip() for item in items}
+        periods.discard("")
+        display_type = "single"
+        direction = None
+        change = None
+        change_percent = None
+        if len(items) >= 2:
+            display_type = "trend" if len(periods) >= 2 and all(item.get("period_label") for item in items) else "comparison"
+        if display_type == "trend":
+            items.sort(key=lambda item: str(item.get("period_label") or ""))
+            change = items[-1]["numeric_value"] - items[0]["numeric_value"]
+            direction = "up" if change > 0 else "down" if change < 0 else "flat"
+            if items[0]["numeric_value"]:
+                change_percent = change / abs(items[0]["numeric_value"]) * 100
+        values = [item["numeric_value"] for item in items]
+        groups.append({
+            "id": f"{_normalise_group_key(items[0]['metric'])}-{_normalise_group_key(items[0]['unit'])}",
+            "metric": items[0]["metric"],
+            "unit": items[0]["unit"],
+            "display_type": display_type,
+            "observations": items,
+            "minimum": min(values),
+            "maximum": max(values),
+            "spread": max(values) - min(values),
+            "direction": direction,
+            "change": change,
+            "change_percent": change_percent,
+        })
+    groups.sort(key=lambda group: (-len(group["observations"]), group["metric"].lower()))
+    return {"groups": groups, "total_observations": len(observations)}
 
 
 def _bump_facts_revision(project_id: int, idea_cluster_id: int) -> int:
@@ -279,6 +497,7 @@ def create_comparison_fact(project_id: int, idea_cluster_id: int, payload: dict,
          clean["reference_url"], clean["stated_value"], clean["observed_at"], user.get("id"),
          str(user.get("username") or "").strip() or None),
     )
+    _replace_fact_observations(row["id"], clean["observations"])
     _bump_facts_revision(project_id, idea_cluster_id)
     return next((fact for fact in list_comparison_facts(project_id, idea_cluster_id) if fact["id"] == row["id"]), None)
 
@@ -298,6 +517,7 @@ def update_comparison_fact(project_id: int, idea_cluster_id: int, fact_id: int, 
     )
     if not row:
         return None
+    _replace_fact_observations(row["id"], clean["observations"])
     _bump_facts_revision(project_id, idea_cluster_id)
     return next((fact for fact in list_comparison_facts(project_id, idea_cluster_id) if fact["id"] == row["id"]), None)
 
@@ -483,10 +703,12 @@ def get_idea_comparison(project_id: int, idea_cluster_id: int, run_id: str | Non
         return None
     revision = _current_facts_revision(project_id, idea_cluster_id)
     facts = list_comparison_facts(project_id, idea_cluster_id)
+    sources = row["sources"] or []
     return {
         "idea_cluster_id": row["idea_cluster_id"], "idea": row["idea"], "type": row["type"],
-        "diverges": bool(row["diverges"]), "sources": row["sources"] or [], "summary": row["summary"],
+        "diverges": bool(row["diverges"]), "sources": sources, "summary": row["summary"],
         "article_count": int(row["article_count"] or 0), "facts": facts,
+        "numeric_evidence": _numeric_evidence(row["idea"], sources, facts),
         "facts_revision": revision, "summary_facts_revision": int(row.get("facts_revision") or 0),
         "summary_stale": revision != int(row.get("facts_revision") or 0),
         "generated_at": row["generated_at"].isoformat() if row.get("generated_at") else None,
