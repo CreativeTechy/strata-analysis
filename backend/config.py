@@ -505,3 +505,26 @@ CORS_ALLOWED_ORIGINS = [
 ADMIN_BOOTSTRAP_USERNAME = os.environ.get("ADMIN_BOOTSTRAP_USERNAME", "").strip()
 ADMIN_BOOTSTRAP_EMAIL = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip()
 ADMIN_BOOTSTRAP_PASSWORD = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "").strip()
+
+
+# --- OCR ----------------------------------------------------------------------
+# Tesseract language string passed straight through to pytesseract
+# (services/documents/extraction.py's image_to_string(lang=...) calls).
+# "eng+ara" by default so a scanned/image document in either interface
+# language OCRs correctly out of the box - the Docker image installs both
+# tesseract-ocr-eng and tesseract-ocr-ara so that default actually works there.
+# Any Tesseract-recognized language code (or +-joined combination) is valid;
+# an unavailable one fails loudly at OCR time via pytesseract's own error
+# rather than being validated here against the installed pack list.
+OCR_LANGUAGES = os.environ.get("OCR_LANGUAGES", "eng+ara").strip() or "eng+ara"
+
+
+# --- Locale (interface language / AI output language) --------------------------
+# The closed set of locales the frontend's interface language switcher, and any
+# locale-aware backend output (Intelligence Copilot replies, generated report
+# summaries), may request. This is deliberately not user-editable input - see
+# services/i18n/locales.py, which is the only place a request-supplied locale
+# string is turned into either a validated code from this list or a rejection;
+# nothing downstream ever sees an unvalidated locale value.
+SUPPORTED_LOCALES = ("en", "ar")
+DEFAULT_LOCALE = "en"

@@ -1,0 +1,85 @@
+{
+  "outputLanguage": {
+    "label": "Response language",
+    "hint": "Independent of the interface language - ask Copilot to answer in a specific language."
+  },
+  "chatTitle": "{{brand}} Intelligence Copilot",
+  "greeting": "Hello! I am your Intelligence Copilot. Select a project or browse all projects, then ask me to summarize or analyze the articles.",
+  "chattingOver_one": "Chatting over {{count}} article",
+  "chattingOver_other": "Chatting over {{count}} articles",
+  "allProjectsScope": "all projects",
+  "filters": {
+    "title": "Filters",
+    "projectLabel": "Project",
+    "allProjects": "All projects",
+    "byDocument": "By Document",
+    "bySentiment": "By Sentiment",
+    "byTopic": "By Topic",
+    "byDatePublished": "By Date (published)",
+    "thisWeek": "This Week",
+    "thisMonth": "This Month",
+    "from": "From",
+    "to": "To"
+  },
+  "matches": {
+    "button": "Matches ({{count}})",
+    "title": "Matches ({{count}})",
+    "collapsedTooltip_one": "{{count}} match",
+    "collapsedTooltip_other": "{{count}} matches",
+    "expandPanel": "Expand matches panel",
+    "collapsePanel": "Collapse matches panel",
+    "noMatches": "No matching articles for the current filters.",
+    "writerTone": "Writer",
+    "articleTone": "Article",
+    "overallTone": "Overall",
+    "match": "Match",
+    "viewDetails": "View Details",
+    "showingOfTotal": "Showing {{from}}-{{to}} of {{total}}"
+  },
+  "chat": {
+    "inputPlaceholderThinking": "Thinking...",
+    "inputPlaceholderAsk": "Ask about the {{count}} filtered articles...",
+    "analyzing": "Analyzing {{count}} articles...",
+    "noResponse": "No response.",
+    "summarizeThemes": "Summarize Themes",
+    "summarizeThemesPrompt": "Summarize the overall sentiment and the key themes across these articles.",
+    "draftBrief": "Draft Brief",
+    "draftBriefPrompt": "Draft a short executive brief highlighting the most important signals in these articles.",
+    "networkError": "Can't reach the Copilot service right now. Please check your connection and try again."
+  },
+  "detail": {
+    "close": "Close",
+    "topicFallback": "Topic",
+    "writerTone": "Writer tone",
+    "articleTone": "Article tone",
+    "overallTone": "Overall tone",
+    "score": "Score",
+    "projectMatch": "Project match",
+    "byAuthor": "By {{author}}",
+    "viewOriginal": "View original",
+    "aiAnalysis": "AI Analysis",
+    "fullText": "Full Text"
+  },
+  "sentimentLabels": {
+    "positive": "Positive",
+    "negative": "Negative",
+    "neutral": "Neutral",
+    "mixed": "Mixed"
+  },
+  "toneLabels": {
+    "neutral": "Neutral",
+    "positive": "Positive",
+    "enthusiastic": "Enthusiastic",
+    "optimistic": "Optimistic",
+    "critical": "Critical",
+    "skeptical": "Skeptical",
+    "negative": "Negative",
+    "concerned": "Concerned",
+    "angry": "Angry",
+    "sarcastic": "Sarcastic",
+    "humorous": "Humorous",
+    "formal": "Formal",
+    "informal": "Informal",
+    "mixed": "Mixed"
+  }
+}

@@ -10,6 +10,8 @@
  * handling instead, same reasoning as projectsApi.js's getTrendSummary().
  */
 
+import { apiErrorFromPayload } from '../lib/apiError.js';
+
 const BASE = '/api';
 
 async function request(path, { method = 'GET', body, signal, form } = {}) {
@@ -29,8 +31,7 @@ async function request(path, { method = 'GET', body, signal, form } = {}) {
   }
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }

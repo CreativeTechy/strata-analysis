@@ -7,9 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app/backend
 
 # Build deps cover psycopg and the document-extraction stack's native
-# dependencies. tesseract-ocr(-eng) backs pytesseract for the OCR extraction
-# path (scanned PDFs, images) - pytesseract itself is just a subprocess wrapper
-# around it.
+# dependencies. tesseract-ocr(-eng, -ara) backs pytesseract for the OCR
+# extraction path (scanned PDFs, images) - pytesseract itself is just a
+# subprocess wrapper around it. Both language packs are installed so the
+# default config.OCR_LANGUAGES ("eng+ara") actually resolves at runtime -
+# without tesseract-ocr-ara, an Arabic scan would silently OCR through the
+# English model alone and come out as garbage.
 #
 # Acquire::Retries covers the flaky-CDN case: a dropped connection to a Debian
 # mirror mid-download otherwise fails the whole layer, and this layer is the
@@ -25,6 +28,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
     zlib1g-dev \
     tesseract-ocr \
     tesseract-ocr-eng \
+    tesseract-ocr-ara \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt

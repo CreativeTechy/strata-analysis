@@ -1,10 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
 import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
-import { prettyLabel, confidencePct, articleDate } from '../lib/articleHelpers.jsx';
+import { prettyLabel } from '../lib/articleHelpers.jsx';
+import { formatDate, formatDateTime, formatPercent, formatLanguageName } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
+
+// Bounded enum (pending/success/failed) - reuses the shared common:status.*
+// labels rather than duplicating them, keeping data.analysis_status itself
+// untouched (it still drives the badge's negative/positive/neutral className).
+const STATUS_LABEL_KEYS = {
+  pending: 'common:status.pending',
+  success: 'common:status.success',
+  failed: 'common:status.failed',
+};
+
+// articleHelpers.jsx's articleDate() is an ad hoc, locale-unaware
+// toLocaleDateString() wrapper - this uses the shared, locale-explicit
+// formatDate() instead (see lib/i18nFormat.js), keeping the same fallback.
+function displayDate(value, locale) {
+  if (!value) return null;
+  return formatDate(value, locale) || value;
+}
 
 // Full-page version of what used to be the "Analysis details" modal opened
 // from an article card/row - a self-contained read (plus optional reprocess
@@ -13,6 +32,8 @@ import ConfirmModal from './ConfirmModal';
 // directly. Delete used to live on the card/row - it's here instead so it
 // isn't one accidental click away from the list.
 export default function ArticleDetailPage() {
+  const { t, i18n } = useTranslation(['articles', 'common']);
+  const locale = i18n.language;
   const { articleId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,11 +70,11 @@ export default function ArticleDetailPage() {
     getArticleAnalysis(articleId, controller.signal)
       .then((res) => setData(res?.analysis || null))
       .catch((err) => {
-        if (err?.name !== 'AbortError') setError(err?.message || 'Failed to load analysis details.');
+        if (err?.name !== 'AbortError') setError(err?.message || t('detail.loadFailed'));
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [articleId]);
+  }, [articleId, t]);
 
   const handleReprocess = async () => {
     if (reprocessing) return;
@@ -61,9 +82,9 @@ export default function ArticleDetailPage() {
     setActionMessage('');
     try {
       await reprocessArticle(articleId);
-      setActionMessage('Reprocessing started - refresh this page in a moment to see the updated result.');
+      setActionMessage(t('detail.reprocessSuccess'));
     } catch (err) {
-      setActionMessage(err?.message || 'Failed to reprocess article.');
+      setActionMessage(err?.message || t('detail.reprocessFailed'));
     } finally {
       setReprocessing(false);
     }
@@ -80,7 +101,7 @@ export default function ArticleDetailPage() {
       // to a 404 for a row that's already gone.
       navigate(backTo, { replace: true });
     } catch (err) {
-      setDeleteError(err?.message || 'Failed to delete article.');
+      setDeleteError(err?.message || t('detail.deleteFailed'));
     } finally {
       setDeleting(false);
     }
@@ -90,10 +111,10 @@ export default function ArticleDetailPage() {
     <div className="admin-page-shell">
       <ConfirmModal
         open={showDeleteModal}
-        title="Delete this article?"
-        message={`"${data?.title || 'Untitled article'}" will be permanently removed and cannot be undone.`}
-        confirmLabel={deleting ? 'Deleting...' : 'Delete article'}
-        cancelLabel="Keep article"
+        title={t('detail.deleteModal.title')}
+        message={t('detail.deleteModal.message', { title: data?.title || t('common.untitledArticle') })}
+        confirmLabel={deleting ? t('detail.deleteModal.confirmLabelBusy') : t('detail.deleteModal.confirmLabel')}
+        cancelLabel={t('detail.deleteModal.cancelLabel')}
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
@@ -103,18 +124,18 @@ export default function ArticleDetailPage() {
         }}
         onConfirm={handleDelete}
       >
-        {deleteError ? <p style={{ color: '#b42318', fontSize: '0.85rem' }}>{deleteError}</p> : null}
+        {deleteError ? <p style={{ color: '#b42318', fontSize: '0.85rem' }} dir="auto">{deleteError}</p> : null}
       </ConfirmModal>
 
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <FileText size={14} /> Article Library
+            <FileText size={14} /> {t('detail.kicker')}
           </div>
-          <h1 className="admin-page-title">{data?.title || 'Article details'}</h1>
+          <h1 className="admin-page-title" dir="auto">{data?.title || t('detail.titleFallback')}</h1>
           {data?.source || data?.author || data?.published ? (
-            <p className="admin-page-subtitle">
-              {[data?.source, data?.author ? `By ${data.author}` : null, data?.published ? articleDate(data.published) : null]
+            <p className="admin-page-subtitle" dir="auto">
+              {[data?.source, data?.author ? t('common.byAuthor', { author: data.author }) : null, data?.published ? displayDate(data.published, locale) : null]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
@@ -122,11 +143,11 @@ export default function ArticleDetailPage() {
         </div>
         <div className="admin-page-toolbar">
           <Link to={backTo} className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ArrowLeft size={16} /> Back to Articles
+            <ArrowLeft size={16} className="rtl-mirror" /> {t('detail.backToArticles')}
           </Link>
           {canReprocess ? (
             <button type="button" className="btn-secondary" onClick={handleReprocess} disabled={reprocessing || loading}>
-              {reprocessing ? 'Reprocessing...' : 'Reprocess'}
+              {reprocessing ? t('detail.reprocessingButton') : t('detail.reprocessButton')}
             </button>
           ) : null}
           {canDelete ? (
@@ -140,9 +161,9 @@ export default function ArticleDetailPage() {
               // confirming a delete with no article to name and no
               // confirmed title is worse than just disabling the button.
               disabled={loading || !data}
-              title={!loading && !data ? 'Analysis details failed to load - cannot confirm what would be deleted.' : undefined}
+              title={!loading && !data ? t('detail.deleteDisabledTitle') : undefined}
             >
-              <Trash2 size={16} /> Delete
+              <Trash2 size={16} /> {t('detail.deleteButton')}
             </button>
           ) : null}
         </div>
@@ -150,15 +171,15 @@ export default function ArticleDetailPage() {
 
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', padding: '24px 0' }}>
-          <Loader2 size={18} className="spin" /> Loading analysis details...
+          <Loader2 size={18} className="spin" /> {t('detail.loading')}
         </div>
       ) : error ? (
         <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#b42318', borderLeft: '4px solid #ff4757' }}>
-          <AlertTriangle size={18} /> {error}
+          <AlertTriangle size={18} /> <span dir="auto">{error}</span>
         </div>
       ) : !data ? (
         <div className="glass-card">
-          <p className="subtitle">No analysis data available for this article.</p>
+          <p className="subtitle">{t('detail.noData')}</p>
         </div>
       ) : (
         <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -168,63 +189,64 @@ export default function ArticleDetailPage() {
                 data.analysis_status === 'failed' ? 'negative' : data.analysis_status === 'success' ? 'positive' : 'neutral'
               }`}
             >
-              {prettyLabel(data.analysis_status || 'unknown')}
+              {t(STATUS_LABEL_KEYS[data.analysis_status] || 'common:status.unknown')}
             </span>
-            {data.analysis_error ? <span className="badge negative">{data.analysis_error}</span> : null}
+            {data.analysis_error ? <span className="badge negative" dir="auto">{data.analysis_error}</span> : null}
           </div>
 
-          {data.summary ? <p className="article-summary">{data.summary}</p> : null}
+          {data.summary ? <p className="article-summary" dir="auto">{data.summary}</p> : null}
 
           <div>
-            <strong>Sentiment:</strong> {prettyLabel(data.sentiment)}
-            {confidencePct(data.confidence?.sentiment) && (
+            <strong>{t('detail.sentimentLabel')}</strong> {prettyLabel(data.sentiment)}
+            {formatPercent(data.confidence?.sentiment, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                (confidence {confidencePct(data.confidence.sentiment)}
-                {data.confidence?.sentiment_low_confidence ? ', low confidence' : ''})
+                {data.confidence?.sentiment_low_confidence
+                  ? t('detail.confidenceLowConfidence', { pct: formatPercent(data.confidence.sentiment, locale) })
+                  : t('detail.confidence', { pct: formatPercent(data.confidence.sentiment, locale) })}
               </span>
             )}
           </div>
           <div>
-            <strong>Category:</strong> {prettyLabel(data.article_category)}
-            {confidencePct(data.confidence?.category) && (
+            <strong>{t('detail.categoryLabel')}</strong> {prettyLabel(data.article_category)}
+            {formatPercent(data.confidence?.category, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                (confidence {confidencePct(data.confidence.category)})
+                {t('detail.confidence', { pct: formatPercent(data.confidence.category, locale) })}
               </span>
             )}
           </div>
           <div>
-            <strong>Writer tone:</strong> {prettyLabel(data.writer_tone)}
-            {confidencePct(data.confidence?.writer_tone) && (
+            <strong>{t('detail.writerToneLabel')}</strong> {prettyLabel(data.writer_tone)}
+            {formatPercent(data.confidence?.writer_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                (confidence {confidencePct(data.confidence.writer_tone)})
+                {t('detail.confidence', { pct: formatPercent(data.confidence.writer_tone, locale) })}
               </span>
             )}
           </div>
           <div>
-            <strong>Article tone:</strong> {prettyLabel(data.article_tone)}
-            {confidencePct(data.confidence?.article_tone) && (
+            <strong>{t('detail.articleToneLabel')}</strong> {prettyLabel(data.article_tone)}
+            {formatPercent(data.confidence?.article_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                (confidence {confidencePct(data.confidence.article_tone)})
+                {t('detail.confidence', { pct: formatPercent(data.confidence.article_tone, locale) })}
               </span>
             )}
           </div>
           <div>
-            <strong>Overall tone:</strong> {prettyLabel(data.overall_tone)}
+            <strong>{t('detail.overallToneLabel')}</strong> {prettyLabel(data.overall_tone)}
           </div>
           <div>
-            <strong>Region:</strong> {prettyLabel(data.region)}
-            {confidencePct(data.confidence?.region) && (
+            <strong>{t('detail.regionLabel')}</strong> {prettyLabel(data.region)}
+            {formatPercent(data.confidence?.region, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                (confidence {confidencePct(data.confidence.region)})
+                {t('detail.confidence', { pct: formatPercent(data.confidence.region, locale) })}
               </span>
             )}
           </div>
           {data.source_language ? (
             <div>
-              <strong>Source language:</strong> {data.source_language.toUpperCase()}
-              {confidencePct(data.source_language_confidence) && (
+              <strong>{t('detail.sourceLanguageLabel')}</strong> {formatLanguageName(data.source_language, locale)}
+              {formatPercent(data.source_language_confidence, locale) && (
                 <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  (confidence {confidencePct(data.source_language_confidence)})
+                  {t('detail.confidence', { pct: formatPercent(data.source_language_confidence, locale) })}
                 </span>
               )}
             </div>
@@ -232,23 +254,28 @@ export default function ArticleDetailPage() {
 
           <div style={{ fontSize: '0.82rem', color: 'var(--text-light)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
             <div>
-              Models - sentiment: {data.models?.sentiment || 'n/a'}, classification: {data.models?.classification || 'n/a'}, extraction:{' '}
-              {data.models?.extraction || 'n/a'}
+              {t('detail.modelsLine', {
+                sentiment: data.models?.sentiment || t('detail.notApplicable'),
+                classification: data.models?.classification || t('detail.notApplicable'),
+                extraction: data.models?.extraction || t('detail.notApplicable'),
+              })}
             </div>
             <div style={{ marginTop: 4 }}>
-              Attempts: {data.processing?.attempt_count ?? 0} - Last run:{' '}
-              {data.processing?.finished_at ? new Date(data.processing.finished_at).toLocaleString() : 'Not yet'}
+              {t('detail.attemptsLine', {
+                count: data.processing?.attempt_count ?? 0,
+                lastRun: data.processing?.finished_at ? formatDateTime(data.processing.finished_at, locale) : t('detail.notYet'),
+              })}
             </div>
           </div>
 
-          {actionMessage ? <p style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>{actionMessage}</p> : null}
+          {actionMessage ? <p style={{ fontSize: '0.85rem', color: 'var(--text-light)' }} dir="auto">{actionMessage}</p> : null}
         </div>
       )}
 
       {!loading && !error && data?.text ? (
         <div className="glass-card" style={{ marginTop: 18 }}>
-          <h3 className="run-detail-section-title">Full article</h3>
-          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.95rem' }}>{data.text}</div>
+          <h3 className="run-detail-section-title">{t('detail.fullArticleHeading')}</h3>
+          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.95rem' }} dir="auto">{data.text}</div>
         </div>
       ) : null}
     </div>

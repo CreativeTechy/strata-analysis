@@ -1,19 +1,25 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
 export default function ConfirmModal({
   open = false,
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   confirmButtonStyle,
   onConfirm,
   onClose,
   hideCancel = false,
   children,
 }) {
+  const { t } = useTranslation('common');
+
   if (!open) return null;
+
+  const resolvedConfirmLabel = confirmLabel ?? t('actions.confirm');
+  const resolvedCancelLabel = cancelLabel ?? t('actions.cancel');
 
   return (
     <div className="confirm-modal-backdrop" role="presentation" onClick={onClose}>
@@ -31,7 +37,7 @@ export default function ConfirmModal({
               {title}
             </h2>
           </div>
-          <button type="button" className="confirm-modal-close" onClick={onClose} aria-label="Close dialog">
+          <button type="button" className="confirm-modal-close" onClick={onClose} aria-label={t('a11y.closeDialog')}>
             <X size={18} />
           </button>
         </div>
@@ -47,11 +53,11 @@ export default function ConfirmModal({
         <div className="confirm-modal-actions">
           {!hideCancel && (
             <button type="button" className="btn-secondary" onClick={onClose}>
-              {cancelLabel}
+              {resolvedCancelLabel}
             </button>
           )}
           <button type="button" className="btn-primary" onClick={onConfirm || onClose} style={confirmButtonStyle}>
-            {confirmLabel}
+            {resolvedConfirmLabel}
           </button>
         </div>
       </div>

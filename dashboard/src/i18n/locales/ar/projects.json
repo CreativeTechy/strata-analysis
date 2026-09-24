@@ -1,0 +1,278 @@
+{
+  "shared": {
+    "opinionMonitoringKicker": "رصد الرأي العام",
+    "locationTypeLabels": {
+      "on_site": "ميداني",
+      "remote": "عن بُعد",
+      "hybrid": "مختلط"
+    },
+    "statusLabels": {
+      "draft": "مسودة",
+      "active": "نشط",
+      "archived": "مؤرشف"
+    }
+  },
+  "list": {
+    "title": "رصد الرأي العام",
+    "subtitle": "تابع ما يقوله الناس عن كل مشروع كمساحة عمل مستقلة به: ارفع المستندات التي يغطيها، واعتمد المقالات التي تحتويها، واحرص على ربط كل تحليل بمشروع محدد.",
+    "toolbar": {
+      "statusLabel": "الحالة",
+      "statusConfigured": "مُهيّأ",
+      "statusEmpty": "فارغ",
+      "searchLabel": "بحث",
+      "matchesCount": "{{formattedCount}} نتيجة مطابقة"
+    },
+    "actions": {
+      "addProject": "إضافة مشروع"
+    },
+    "stats": {
+      "totalProjects": "إجمالي المشاريع",
+      "active": "نشط",
+      "draft": "مسودة",
+      "archived": "مؤرشف"
+    },
+    "search": {
+      "placeholder": "ابحث في المشاريع أو التواريخ أو الحالات أو الكلمات المفتاحية"
+    },
+    "filters": {
+      "allStatuses": "كل الحالات"
+    },
+    "panel": {
+      "title": "المشاريع المتابَعة",
+      "loadingInline": "جارٍ التحميل...",
+      "visibleCount": "{{formattedCount}} ظاهر"
+    },
+    "emptyState": {
+      "loadingTitle": "جارٍ تحميل المشاريع...",
+      "loadingBody": "يتم جلب أحدث قائمة مشاريع من مساحة العمل.",
+      "noProjectsTitle": "لا توجد مشاريع بعد",
+      "noProjectsBody": "ابدأ بإنشاء مشروع، ثم ارفع المستندات التي ينبغي تحليلها.",
+      "noMatchesTitle": "لا توجد مشاريع مطابقة",
+      "noMatchesBody": "جرّب مصطلح بحث آخر أو غيّر عامل تصفية الحالة."
+    },
+    "item": {
+      "repeatEvery": "كل {{value}} {{unit}}",
+      "nextRun": "التشغيل التالي: {{value}}",
+      "lastRun": "آخر تشغيل: {{value}}",
+      "pendingFirstRun": "في انتظار أول تشغيل",
+      "noStartDate": "لا يوجد تاريخ بدء",
+      "noEndDate": "لا يوجد تاريخ انتهاء",
+      "sourceCount_zero": "لا يوجد مصدر",
+      "sourceCount_one": "مصدر واحد",
+      "sourceCount_two": "مصدران",
+      "sourceCount_few": "{{formattedCount}} مصادر",
+      "sourceCount_many": "{{formattedCount}} مصدرًا",
+      "sourceCount_other": "{{formattedCount}} مصدر",
+      "defaultDescription": "افتح المشروع لعرض المصادر المخصَّصة والوسوم والبيانات الوصفية."
+    },
+    "pagination": {
+      "showingRange": "عرض {{from}}-{{to}} من {{total}}"
+    }
+  },
+  "detail": {
+    "kicker": "تفاصيل المشروع",
+    "subtitle": "راجع المصادر والوسوم وتفاصيل الاكتشاف المرتبطة بهذا المشروع. هذه الصفحة هي الأنسب لفحص نطاق العمل قبل تشغيل خط التحليل.",
+    "toolbar": {
+      "statusLabel": "الحالة",
+      "documentsLabel": "المستندات"
+    },
+    "actions": {
+      "evidence": "الأدلة",
+      "editProject": "تعديل المشروع"
+    },
+    "notFound": {
+      "title": "المشروع غير موجود",
+      "body": "ربما تمت إزالة المشروع أو أن الرابط لم يعد صالحًا.",
+      "backToProjects": "العودة إلى المشاريع"
+    },
+    "overview": {
+      "title": "نظرة عامة",
+      "start": "البدء",
+      "end": "الانتهاء",
+      "location": "الموقع",
+      "audience": "الجمهور",
+      "notSet": "غير محدد",
+      "noAudience": "لم يُحدَّد جمهور"
+    },
+    "analysis": {
+      "title": "التحليل",
+      "neverRun": "لم يُشغَّل قط",
+      "lastRun": "آخر تشغيل: {{value}}",
+      "notYet": "لم يحدث بعد",
+      "allRuns": "كل عمليات التحليل",
+      "analyzeButton": "تحليل المقالات الجديدة",
+      "starting": "جارٍ البدء...",
+      "started": "بدأت عملية التحليل.",
+      "hint": "يحلّل كل مقالة معتمدة لم تُحلَّل بعد.",
+      "statusLabels": {
+        "success": "success",
+        "failed": "failed",
+        "cancelled": "cancelled"
+      }
+    },
+    "description": {
+      "title": "الوصف",
+      "empty": "لم تتم إضافة وصف لهذا المشروع بعد."
+    },
+    "topics": {
+      "title": "مواضيع الاهتمام",
+      "keywordsLabel": "الكلمات المفتاحية",
+      "noKeywords": "لا توجد كلمات مفتاحية",
+      "hint": "تُتابَع في صفحة التقارير، التي ترسم عدد مرات ظهور كل كلمة مفتاحية عبر مقالات هذا المشروع المُحلَّلة."
+    },
+    "quickFacts": {
+      "title": "حقائق سريعة",
+      "created": "أُنشئ في {{value}}",
+      "updated": "حُدِّث في {{value}}",
+      "documentCount_zero": "لا توجد مستندات",
+      "documentCount_one": "مستند واحد",
+      "documentCount_two": "مستندان",
+      "documentCount_few": "{{formattedCount}} مستندات",
+      "documentCount_many": "{{formattedCount}} مستندًا",
+      "documentCount_other": "{{formattedCount}} مستند",
+      "keywordCount_zero": "لا توجد كلمات مفتاحية",
+      "keywordCount_one": "كلمة مفتاحية واحدة",
+      "keywordCount_two": "كلمتان مفتاحيتان",
+      "keywordCount_few": "{{formattedCount}} كلمات مفتاحية",
+      "keywordCount_many": "{{formattedCount}} كلمة مفتاحية",
+      "keywordCount_other": "{{formattedCount}} كلمة مفتاحية",
+      "linkedUserCount_zero": "لا يوجد مستخدمون مرتبطون",
+      "linkedUserCount_one": "مستخدم مرتبط واحد",
+      "linkedUserCount_two": "مستخدمان مرتبطان",
+      "linkedUserCount_few": "{{formattedCount}} مستخدمين مرتبطين",
+      "linkedUserCount_many": "{{formattedCount}} مستخدمًا مرتبطًا",
+      "linkedUserCount_other": "{{formattedCount}} مستخدم مرتبط"
+    },
+    "insights": {
+      "title": "رؤى المقالات",
+      "analyzedCount": "{{formattedCount}} مقالة مُحلَّلة",
+      "loading": "جارٍ تحميل رؤى المقالات...",
+      "emptyTitle": "لا توجد مقالات مُحلَّلة بعد",
+      "emptyBody": "ارفع المستندات، واعتمد مقالاتها، وشغّل تحليلًا لعرض رؤى النبرة والمشاعر هنا.",
+      "overallMood": "المزاج العام",
+      "overallTone": "النبرة العامة",
+      "writerToneBreakdown": "توزيع نبرة الكاتب",
+      "articleToneBreakdown": "توزيع نبرة المقالة",
+      "sentimentByRegion": "مشاعر السجلات المُحلَّلة حسب المنطقة",
+      "sentimentByGender": "مشاعر السجلات المُحلَّلة حسب الجنس",
+      "sentimentByAgeRange": "مشاعر السجلات المُحلَّلة حسب الفئة العمرية",
+      "sentimentBySegment": "مشاعر السجلات المُحلَّلة حسب الشريحة",
+      "chartTitleRegion": "المشاعر حسب المنطقة",
+      "chartTitleGender": "المشاعر حسب الجنس",
+      "chartTitleAgeRange": "المشاعر حسب الفئة العمرية",
+      "chartTitleSegment": "المشاعر حسب الشريحة"
+    },
+    "ideas": {
+      "title": "الأفكار المتكررة",
+      "clusterCount": "{{formattedCount}} مجموعة",
+      "description": "أفكار تتكرر عبر المقالات المُحلَّلة لهذا المشروع، تتراكم عبر كل عملية تحليل.",
+      "loadError": "تعذّر تحميل الأفكار المتكررة",
+      "loading": "جارٍ تحميل الأفكار المتكررة...",
+      "emptyTitle": "لا توجد أفكار متكررة بعد",
+      "emptyBody": "شغّل خط التحليل لبناء مجموعات أفكار مشتركة بين المقالات لهذا المشروع.",
+      "articlesCount": "{{formattedCount}} مقالة",
+      "backToDashboard": "العودة إلى لوحة التحكم",
+      "errors": {
+        "loadFailed": "فشل تحميل الأفكار المتكررة.",
+        "openArticlesFailed": "فشل تحميل مقالات هذه الفكرة."
+      }
+    },
+    "deleteModal": {
+      "title": "حذف المشروع \"{{name}}\"؟",
+      "body": "سيؤدي هذا إلى إزالة المشروع نهائيًا، مع مستنداته المرفوعة والمقالات الناتجة عنها.",
+      "confirmLabel": "حذف المشروع",
+      "cancelLabel": "الإبقاء على المشروع"
+    },
+    "errors": {
+      "startAnalysisFailed": "فشل بدء عملية التحليل."
+    }
+  },
+  "wizard": {
+    "heading": {
+      "create": "إنشاء مشروع",
+      "edit": "تعديل المشروع"
+    },
+    "subheading": {
+      "create": "أنشئ المشروع في {{steps}} خطوات، ثم أنشئ مساحة العمل.",
+      "edit": "حدّث المشروع في {{steps}} خطوات. راجع أي خطوة، ثم احفظ تغييراتك."
+    },
+    "toolbar": {
+      "stepLabel": "الخطوة",
+      "stepOfTotal": "{{step}} من {{total}}",
+      "documentsLabel": "المستندات"
+    },
+    "stepNav": {
+      "done": "تم",
+      "basics": { "label": "أساسيات المشروع", "detail": "الاسم والوصف والمواضيع" },
+      "users": { "label": "المستخدمون المرتبطون", "detail": "اختر مستخدمي لوحة التحكم المطلوب ربطهم" },
+      "finish": { "label": "الإنهاء", "detail": "راجع التحليل وافتح مساحة العمل" }
+    },
+    "actions": {
+      "continue": "متابعة",
+      "creatingProject": "جارٍ إنشاء المشروع..."
+    },
+    "basics": {
+      "stepHeading": "الخطوة {{step}}. أساسيات المشروع",
+      "readyChip": "جاهز",
+      "requiredChip": "مطلوب",
+      "nameLabel": "اسم المشروع",
+      "descriptionLabel": "الوصف",
+      "descriptionPlaceholder": "وصف المشروع",
+      "locationTypeLabel": "نوع الموقع",
+      "selectPlaceholder": "اختر...",
+      "locationLabel": "الموقع",
+      "locationPlaceholder": "الموقع",
+      "audienceLabel": "الجمهور المستهدف",
+      "audiencePlaceholder": "مَن يتناوله هذا المشروع",
+      "keywordsLabel": "مواضيع الاهتمام",
+      "keywordsPlaceholder": "كلمة مفتاحية أو عبارة (مثل: مواعيد التسليم)",
+      "keywordsHint": "ترسم صفحة التقارير عدد مرات ظهور كل منها عبر مقالات هذا المشروع المُحلَّلة.",
+      "suggestButton": "اقترح الجمهور والمواضيع",
+      "suggesting": "جارٍ الاقتراح...",
+      "footnote": "استخدم عنوانًا عمليًا واضحًا ووصفًا موجزًا. فهما ما يخبران النموذج بموضوع هذا المشروع عند تحليل المستندات التي سترفعها لاحقًا."
+    },
+    "users": {
+      "stepHeading": "الخطوة {{step}}. المستخدمون المرتبطون",
+      "selectedCount": "{{formattedCount}} محدَّد"
+    },
+    "finish": {
+      "stepHeading": "الخطوة {{step}}. الإنهاء",
+      "statusChoice": {
+        "label": "حالة المشروع",
+        "draftOption": "مسودة — احفظ لوقت لاحق",
+        "activeOption": "نشط — ابدأ الرصد",
+        "activeHelp": "المشاريع النشطة جاهزة للاستخدام عبر الرصد والتحليل والتقارير.",
+        "draftHelp": "تبقى المشاريع كمسودة غير مكتملة حتى تُفعّلها."
+      },
+      "saving": "جارٍ الحفظ...",
+      "openWorkspace": "فتح مساحة العمل",
+      "activateAndOpen": "تفعيل وفتح مساحة العمل",
+      "saveDraftAndOpen": "حفظ كمسودة وفتح مساحة العمل"
+    },
+    "cancelModal": {
+      "title": "تجاهل التغييرات؟",
+      "body": "لديك تغييرات غير محفوظة على هذا المشروع. إذا ألغيت الآن، ستُفقد كل التعديلات في هذه الصفحة.",
+      "confirmLabel": "تجاهل التغييرات",
+      "cancelLabel": "متابعة التعديل"
+    },
+    "errors": {
+      "createProjectFailed": "فشل إنشاء المشروع.",
+      "finishProjectFailed": "فشل إنهاء المشروع.",
+      "suggestFailed": "فشل توليد اقتراحات الذكاء الاصطناعي."
+    }
+  },
+  "userAssign": {
+    "kicker": "المستخدمون المرتبطون",
+    "title": "اختر مستخدمي لوحة التحكم المرتبطين بهذا المشروع",
+    "selectedCount": "{{formattedCount}} محدَّد",
+    "searchPlaceholder": "صفِّ المستخدمين حسب اسم المستخدم أو البريد الإلكتروني أو الدور",
+    "noUsers": "لا يوجد مستخدمو لوحة تحكم بعد.",
+    "noMatchesTitle": "لا يوجد مستخدمون مطابقون",
+    "noMatchesBody": "جرّب مصطلح بحث مختلف في مربع التخصيص هذا.",
+    "noEmail": "لا يوجد بريد إلكتروني مسجَّل"
+  },
+  "termChips": {
+    "removeAria": "إزالة {{value}}",
+    "addSuggested": "أضف عنصرًا مقترحًا..."
+  }
+}

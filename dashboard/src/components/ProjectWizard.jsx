@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import ConfirmModal from './ConfirmModal';
 import ErrorBanner from './project-wizard/ErrorBanner.jsx';
 import TermChipsField from './project-wizard/TermChipsField.jsx';
 import UserAssignField from './project-wizard/UserAssignField.jsx';
 import { useAuth } from '../auth/useAuth.js';
+import { translateApiError } from '../lib/apiError.js';
+import { formatNumber } from '../lib/i18nFormat.js';
 import { emptyDraft, LOCATION_TYPE_OPTIONS, sanitizeTermArray, normalizeDraftForCompare, toDateInput } from '../lib/projectHelpers.js';
 import { getPageNumbers } from '../lib/articleHelpers.jsx';
 import '../styles/Projects.css';
@@ -49,6 +52,14 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
+  const { t, i18n } = useTranslation(['projects', 'documents']);
+  const { t: tErrors } = useTranslation('errors');
+  const locale = i18n.language;
+  const locationTypeLabels = {
+    on_site: t('shared.locationTypeLabels.on_site'),
+    remote: t('shared.locationTypeLabels.remote'),
+    hybrid: t('shared.locationTypeLabels.hybrid'),
+  };
   const { hasPermission } = useAuth();
   const canLinkUsers = hasPermission('projects.link_users');
   const STEP = useMemo(() => {
@@ -268,12 +279,12 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       const created = await onCreateProject?.(payload);
       const createdId = Number(created?.project?.id);
       if (!Number.isFinite(createdId)) {
-        throw new Error('Could not create the project.');
+        throw new Error(t('wizard.errors.createProjectFailed'));
       }
       setOfflineProjectId(createdId);
       return createdId;
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to create the project.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('wizard.errors.createProjectFailed')));
       return null;
     } finally {
       setIsCreatingOfflineProject(false);
@@ -294,7 +305,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       await deleteProjectDocument(documentId);
       setDocuments((prev) => prev.filter((document) => document.id !== documentId));
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to remove the document.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.removeDocumentFailed')));
     }
   };
 
@@ -319,13 +330,13 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     let uploadedIds;
     try {
       id = await ensureOfflineProject();
-      if (!id) throw new Error('Could not create the project.');
+      if (!id) throw new Error(t('wizard.errors.createProjectFailed'));
       const result = await uploadProjectDocuments(id, pendingFiles, publisherUrl);
       uploadedIds = (result.documents || []).map((document) => document.id);
       setPendingFiles([]);
       setPublisherUrl('');
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to upload documents.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.uploadFailed')));
       setUploadingDocs(false);
       return;
     }
@@ -338,7 +349,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       await pollProjectArticleCandidates(id, uploadedIds, setDocuments);
       await refreshArticleCandidates(id);
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to process the uploaded documents.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.processFailed')));
     } finally {
       setExtractingDocs(false);
     }
@@ -351,7 +362,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       setArticleCandidates((prev) => prev.map((candidate) => (candidate.id === candidateId ? result.article : candidate)));
       if (status === 'approved' && offlineProjectId) watchArticleAnalysis(offlineProjectId);
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to update the article.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.updateArticleFailed')));
     } finally {
       setDecidingCandidate((prev) => ({ ...prev, [candidateId]: false }));
     }
@@ -366,7 +377,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       await refreshArticleCandidates(offlineProjectId);
       watchArticleAnalysis(offlineProjectId);
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to approve the articles.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.approveAllFailed')));
     } finally {
       setApprovingAll(false);
     }
@@ -383,7 +394,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       await reanalyzeProjectDocumentArticles(offlineProjectId);
       await pollProjectArticleAnalysis(offlineProjectId, setArticleCandidates);
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to re-run analysis.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.reanalyzeFailed')));
     } finally {
       setReanalyzing(false);
     }
@@ -455,7 +466,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       await onUpdateProject?.(offlineProjectId, payload);
       navigate(`/projects/${offlineProjectId}`);
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to finish the project.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('wizard.errors.finishProjectFailed')));
     } finally {
       setIsSaving(false);
     }
@@ -480,7 +491,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       }));
       return suggestions;
     } catch (error) {
-      setMetadataError(error?.message || 'Failed to generate AI suggestions.');
+      setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('wizard.errors.suggestFailed')));
       throw error;
     } finally {
       setIsGeneratingMetadata(false);
@@ -499,15 +510,15 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     discardChanges();
   };
 
-  const heading = isEditRoute ? 'Edit Project' : 'Create Project';
+  const heading = isEditRoute ? t('wizard.heading.edit') : t('wizard.heading.create');
   const step1Complete = Boolean(draft.name.trim() && draft.description.trim());
   const totalSteps = Object.keys(STEP).length;
   const stepMeta = {
-    basics: { label: 'Project basics', detail: 'Name, description, and topics', complete: step1Complete },
-    users: { label: 'Linked users', detail: 'Choose dashboard users to link', complete: true },
-    upload: { label: 'Upload documents', detail: 'Add the files to analyze', complete: true },
-    review: { label: 'Review articles', detail: 'Approve what should be analyzed', complete: true },
-    finish: { label: 'Finish', detail: 'Review analysis and open workspace', complete: true },
+    basics: { label: t('wizard.stepNav.basics.label'), detail: t('wizard.stepNav.basics.detail'), complete: step1Complete },
+    users: { label: t('wizard.stepNav.users.label'), detail: t('wizard.stepNav.users.detail'), complete: true },
+    upload: { label: t('documents:wizard.stepNav.upload.label'), detail: t('documents:wizard.stepNav.upload.detail'), complete: true },
+    review: { label: t('documents:wizard.stepNav.review.label'), detail: t('documents:wizard.stepNav.review.detail'), complete: true },
+    finish: { label: t('wizard.stepNav.finish.label'), detail: t('wizard.stepNav.finish.detail'), complete: true },
   };
   const stepOrder = Object.keys(STEP).sort((a, b) => STEP[a] - STEP[b]);
 
@@ -516,23 +527,23 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Opinion monitoring
+            <CalendarDays size={14} /> {t('shared.opinionMonitoringKicker')}
           </div>
           <h1 className="admin-page-title">{heading}</h1>
           <p className="admin-page-subtitle">
             {isEditRoute
-              ? `Update the project in ${totalSteps} steps. Revisit any step, then save your changes.`
-              : `Build the project in ${totalSteps} steps, then create the workspace.`}
+              ? t('wizard.subheading.edit', { steps: totalSteps })
+              : t('wizard.subheading.create', { steps: totalSteps })}
           </p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
-            <span>Step</span>
-            <strong>{wizardStep} of {totalSteps}</strong>
+            <span>{t('wizard.toolbar.stepLabel')}</span>
+            <strong>{t('wizard.toolbar.stepOfTotal', { step: wizardStep, total: totalSteps })}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Documents</span>
-            <strong>{documents.length}</strong>
+            <span>{t('wizard.toolbar.documentsLabel')}</span>
+            <strong>{formatNumber(documents.length, locale)}</strong>
           </div>
         </div>
       </div>
@@ -561,7 +572,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 }}
               >
                 <span className="panel-chip" style={{ marginRight: 10 }}>
-                  {done ? 'Done' : `0${step}`}
+                  {done ? t('wizard.stepNav.done') : `0${step}`}
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
                   <strong style={{ fontSize: '0.92rem' }}>{item.label}</strong>
@@ -577,83 +588,87 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         {wizardStep === STEP.basics && (
         <div className="glass-card project-wizard-panel">
           <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-            <strong style={{ fontSize: '1rem' }}>Step {STEP.basics}. Project basics</strong>
-            <span className="panel-chip">{step1Complete ? 'Ready' : 'Required'}</span>
+            <strong style={{ fontSize: '1rem' }}>{t('wizard.basics.stepHeading', { step: STEP.basics })}</strong>
+            <span className="panel-chip">{step1Complete ? t('wizard.basics.readyChip') : t('wizard.basics.requiredChip')}</span>
           </div>
           <div style={{ display: 'grid', gap: 10 }}>
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Project name</span>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>{t('wizard.basics.nameLabel')}</span>
               <input
                 type="text"
                 className="source-input"
-                placeholder="Project name"
+                placeholder={t('wizard.basics.nameLabel')}
                 value={draft.name}
                 onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
                 disabled={isSaving}
+                dir="auto"
               />
             </label>
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Description</span>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>{t('wizard.basics.descriptionLabel')}</span>
               <textarea
                 className="source-input"
-                placeholder="Project description"
+                placeholder={t('wizard.basics.descriptionPlaceholder')}
                 rows={4}
                 value={draft.description}
                 onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
                 style={{ resize: 'vertical', minHeight: 110 }}
                 disabled={isSaving}
+                dir="auto"
               />
             </label>
 
             <div className="form-row-location">
               <label style={{ display: 'grid', gap: 6 }}>
-                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location type</span>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>{t('wizard.basics.locationTypeLabel')}</span>
                 <select
                   className="filter-select"
                   value={draft.location_type}
                   onChange={(e) => setDraft((prev) => ({ ...prev, location_type: e.target.value }))}
                   disabled={isSaving}
                 >
-                  <option value="">Select...</option>
+                  <option value="">{t('wizard.basics.selectPlaceholder')}</option>
                   {LOCATION_TYPE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
-                      {option.label}
+                      {locationTypeLabels[option.value] || option.label}
                     </option>
                   ))}
                 </select>
               </label>
               <label style={{ display: 'grid', gap: 6 }}>
-                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Location</span>
+                <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>{t('wizard.basics.locationLabel')}</span>
                 <input
                   type="text"
                   className="source-input"
-                  placeholder="Location"
+                  placeholder={t('wizard.basics.locationPlaceholder')}
                   value={draft.location}
                   onChange={(e) => setDraft((prev) => ({ ...prev, location: e.target.value }))}
                   disabled={isSaving}
+                  dir="auto"
                 />
               </label>
             </div>
 
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>Target audience</span>
+              <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>{t('wizard.basics.audienceLabel')}</span>
               <input
                 type="text"
                 className="source-input"
-                placeholder="Who this project is about"
+                placeholder={t('wizard.basics.audiencePlaceholder')}
                 value={draft.target_audience}
                 onChange={(e) => setDraft((prev) => ({ ...prev, target_audience: e.target.value }))}
                 disabled={isSaving}
+                dir="auto"
               />
             </label>
 
             <TermChipsField
-              label="Topics of interest"
-              placeholder="Keyword or phrase (e.g. delivery times)"
+              label={t('wizard.basics.keywordsLabel')}
+              placeholder={t('wizard.basics.keywordsPlaceholder')}
               values={draft.keywords}
               onChange={(values) => setDraft((prev) => ({ ...prev, keywords: values }))}
               disabled={isSaving}
-              hint="Reports charts how often each of these shows up across this project's analyzed articles."
+              hint={t('wizard.basics.keywordsHint')}
             />
 
             <div>
@@ -666,11 +681,11 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               >
                 {isGeneratingMetadata ? (
                   <>
-                    <RefreshCw size={15} className="spin" /> Suggesting...
+                    <RefreshCw size={15} className="spin" /> {t('wizard.basics.suggesting')}
                   </>
                 ) : (
                   <>
-                    <Sparkles size={15} /> Suggest audience and topics
+                    <Sparkles size={15} /> {t('wizard.basics.suggestButton')}
                   </>
                 )}
               </button>
@@ -680,8 +695,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
 
             <div className="project-wizard-nav-row">
               <span style={{ color: 'var(--text-light)', fontSize: '0.85rem', lineHeight: 1.5 }}>
-                Use a clear working title and a short description. They tell the model what this project is about when it
-                analyzes the documents you upload next.
+                {t('wizard.basics.footnote')}
               </span>
               <div className="project-wizard-nav-actions">
                 <button
@@ -699,10 +713,10 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 >
                   {isCreatingOfflineProject ? (
                     <>
-                      <RefreshCw size={16} className="spin" /> Creating project...
+                      <RefreshCw size={16} className="spin" /> {t('wizard.actions.creatingProject')}
                     </>
                   ) : (
-                    'Continue'
+                    t('wizard.actions.continue')
                   )}
                 </button>
               </div>
@@ -714,8 +728,8 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         {canLinkUsers && wizardStep === STEP.users && (
         <div className="glass-card project-wizard-panel">
           <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-            <strong style={{ fontSize: '1rem' }}>Step {STEP.users}. Linked users</strong>
-            <span className="panel-chip">{draft.user_ids.length} selected</span>
+            <strong style={{ fontSize: '1rem' }}>{t('wizard.users.stepHeading', { step: STEP.users })}</strong>
+            <span className="panel-chip">{t('wizard.users.selectedCount', { count: draft.user_ids.length, formattedCount: formatNumber(draft.user_ids.length, locale) })}</span>
           </div>
           <div style={{ display: 'grid', gap: 14 }}>
             <UserAssignField
@@ -729,7 +743,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
 
             <div className="project-wizard-nav-row">
               <button type="button" className="btn-secondary wizard-btn-back" onClick={() => setWizardStep(STEP.basics)} disabled={isSaving}>
-                Back
+                {t('common:actions.back')}
               </button>
               <button
                 type="button"
@@ -742,10 +756,10 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               >
                 {isCreatingOfflineProject ? (
                   <>
-                    <RefreshCw size={16} className="spin" /> Creating project...
+                    <RefreshCw size={16} className="spin" /> {t('wizard.actions.creatingProject')}
                   </>
                 ) : (
-                  'Continue'
+                  t('wizard.actions.continue')
                 )}
               </button>
             </div>
@@ -756,8 +770,8 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         {wizardStep === STEP.upload && (
         <div className="glass-card project-wizard-panel">
           <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-            <strong style={{ fontSize: '1rem' }}>Step {STEP.upload}. Upload documents</strong>
-            <span className="panel-chip">{documents.length} uploaded</span>
+            <strong style={{ fontSize: '1rem' }}>{t('documents:wizard.upload.stepHeading', { step: STEP.upload })}</strong>
+            <span className="panel-chip">{t('documents:wizard.upload.uploadedCount', { count: documents.length, formattedCount: formatNumber(documents.length, locale) })}</span>
           </div>
 
           <ErrorBanner message={metadataError} />
@@ -795,8 +809,8 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             <div className="proj-dropzone-icon">
               <Upload size={20} />
             </div>
-            <div className="proj-dropzone-title">Drag files here, or click to browse</div>
-            <div className="proj-dropzone-hint">Multiple files at once are fine</div>
+            <div className="proj-dropzone-title">{t('documents:wizard.upload.dropzone.title')}</div>
+            <div className="proj-dropzone-hint">{t('documents:wizard.upload.dropzone.hint')}</div>
             <div className="proj-dropzone-types">
               {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG', 'JSON', 'JSONL'].map((ext) => (
                 <span key={ext} className="panel-chip muted">
@@ -808,7 +822,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 the LLM split entirely — worth saying, since it also means
                 those files keep each record's own link and date. */}
             <div className="proj-dropzone-hint" style={{ marginTop: 6 }}>
-              JSON/JSONL exports are read as articles directly — one record per article, no splitting.
+              {t('documents:wizard.upload.dropzone.recordsHint')}
             </div>
             <input
               ref={fileInputRef}
@@ -825,7 +839,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
 
           <label style={{ display: 'grid', gap: 6, marginTop: 14 }}>
             <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-light)' }}>
-              Original publisher URL (optional)
+              {t('documents:wizard.upload.publisherUrl.label')}
             </span>
             <input
               type="url"
@@ -836,7 +850,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               disabled={uploadingDocs || extractingDocs}
             />
             <span className="proj-row-desc">
-              Applied to this upload batch and used to identify the original publisher during coverage checks.
+              {t('documents:wizard.upload.publisherUrl.hint')}
             </span>
           </label>
 
@@ -845,8 +859,8 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               {pendingFiles.map((file, index) => (
                 <div key={`${file.name}-${index}`} className="proj-row">
                   <div className="proj-row-main">
-                    <span className="proj-row-name">{file.name}</span>
-                    <span className="proj-row-desc">{(file.size / 1024).toFixed(0)} KB</span>
+                    <span className="proj-row-name" dir="auto">{file.name}</span>
+                    <span className="proj-row-desc">{t('documents:wizard.upload.pendingFile.sizeKb', { size: formatNumber((file.size / 1024).toFixed(0), locale) })}</span>
                   </div>
                   <div className="proj-row-side">
                     <button
@@ -855,7 +869,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                       style={{ padding: '6px 10px', fontSize: '0.78rem' }}
                       onClick={() => removePendingFile(index)}
                     >
-                      Remove
+                      {t('common:actions.remove')}
                     </button>
                   </div>
                 </div>
@@ -869,10 +883,10 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               >
                 {uploadingDocs ? (
                   <>
-                    <RefreshCw size={16} className="spin" /> Uploading...
+                    <RefreshCw size={16} className="spin" /> {t('documents:wizard.upload.uploadButton.uploading')}
                   </>
                 ) : (
-                  `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`
+                  t('documents:wizard.upload.uploadButton.upload', { count: pendingFiles.length, formattedCount: formatNumber(pendingFiles.length, locale) })
                 )}
               </button>
             </div>
@@ -885,12 +899,12 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 return (
                   <div key={document.id} className="proj-row">
                     <div className="proj-row-main">
-                      <span className="proj-row-name">{document.original_filename}</span>
+                      <span className="proj-row-name" dir="auto">{document.original_filename}</span>
                       {document.publisher_url && (
-                        <span className="proj-row-desc">Publisher: {document.publisher_url}</span>
+                        <span className="proj-row-desc" dir="auto">{t('documents:wizard.upload.document.publisher', { url: document.publisher_url })}</span>
                       )}
                       {document.extraction_error && (
-                        <span className="proj-row-desc" style={{ color: '#b42318', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="proj-row-desc" dir="auto" style={{ color: '#b42318', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <AlertTriangle size={12} /> {document.extraction_error}
                         </span>
                       )}
@@ -898,7 +912,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                           it is how a cut-off import ("first 500 of 40,000")
                           says so, which would otherwise look complete. */}
                       {document.articles_error && (
-                        <span className="proj-row-desc" style={{ color: '#b54708', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="proj-row-desc" dir="auto" style={{ color: '#b54708', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <AlertTriangle size={12} /> {document.articles_error}
                         </span>
                       )}
@@ -907,19 +921,19 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                       {active ? (
                         <span className="panel-chip warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                           <RefreshCw size={12} className="spin" />
-                          Reading
-                          {document.total_chunks ? ` (${document.processed_chunks || 0}/${document.total_chunks})` : ''}
-                          {extractingDocs ? ' — reading contents...' : ''}
+                          {t('documents:wizard.upload.document.status.reading')}
+                          {document.total_chunks ? t('documents:wizard.upload.document.status.readingProgress', { processed: formatNumber(document.processed_chunks || 0, locale), total: formatNumber(document.total_chunks, locale) }) : ''}
+                          {extractingDocs ? t('documents:wizard.upload.document.status.readingContentsSuffix') : ''}
                         </span>
                       ) : document.status === 'failed' ? (
-                        <span className="panel-chip">Not extracted</span>
+                        <span className="panel-chip">{t('documents:wizard.upload.document.status.notExtracted')}</span>
                       ) : (
                         <span className="panel-chip success">
                           {document.extraction_method === 'ocr'
-                            ? 'Extracted (OCR)'
+                            ? t('documents:wizard.upload.document.status.extractedOcr')
                             : document.extraction_method === 'mixed'
-                            ? 'Extracted (mixed)'
-                            : 'Extracted'}
+                            ? t('documents:wizard.upload.document.status.extractedMixed')
+                            : t('documents:wizard.upload.document.status.extracted')}
                         </span>
                       )}
                       <button
@@ -928,7 +942,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                         style={{ padding: '6px 10px', fontSize: '0.78rem' }}
                         onClick={() => removeDocument(document.id)}
                       >
-                        Remove
+                        {t('common:actions.remove')}
                       </button>
                     </div>
                   </div>
@@ -940,14 +954,14 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               <div className="admin-empty-state-icon">
                 <Upload size={18} />
               </div>
-              <strong>No documents yet</strong>
-              <span>Drop files above or click to browse. Uploading is optional — you can skip this and add articles to the project later.</span>
+              <strong>{t('documents:wizard.upload.emptyTitle')}</strong>
+              <span>{t('documents:wizard.upload.emptyBody')}</span>
             </div>
           ) : null}
 
           <div className="project-wizard-nav-row" style={{ marginTop: 16 }}>
             <button type="button" className="btn-secondary wizard-btn-back" onClick={() => setWizardStep(STEP.users || STEP.basics)} disabled={uploadingDocs}>
-              Back
+              {t('common:actions.back')}
             </button>
             <button
               type="button"
@@ -955,7 +969,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               onClick={() => setWizardStep(STEP.review)}
               disabled={uploadingDocs}
             >
-              {documents.length ? 'Continue to review articles' : 'Skip for now'}
+              {documents.length ? t('documents:wizard.upload.continueButton') : t('documents:wizard.upload.skipButton')}
             </button>
           </div>
         </div>
@@ -964,15 +978,13 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         {wizardStep === STEP.review && (
         <div className="glass-card project-wizard-panel">
           <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-            <strong style={{ fontSize: '1rem' }}>Step {STEP.review}. Review articles</strong>
+            <strong style={{ fontSize: '1rem' }}>{t('documents:wizard.review.stepHeading', { step: STEP.review })}</strong>
             <span className="panel-chip">
-              {approvedCandidateCount} approved, {pendingCandidateCount} pending
+              {t('documents:wizard.review.summaryChip', { approved: approvedCandidateCount, pending: pendingCandidateCount })}
             </span>
           </div>
           <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
-            Strata read your documents into individual articles and approved them all for
-            analysis. Don&rsquo;t want one included? Reject it here, or delete it from the
-            Articles page later.
+            {t('documents:wizard.review.description')}
           </p>
 
           <ErrorBanner message={metadataError} />
@@ -982,27 +994,27 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               <div className="admin-empty-state-icon">
                 <RefreshCw size={18} className="spin" />
               </div>
-              <strong>Reading your documents into articles...</strong>
+              <strong>{t('documents:wizard.review.loadingTitle')}</strong>
             </div>
           ) : articleCandidates.length === 0 ? (
             <div className="admin-empty-state" style={{ padding: '16px 10px' }}>
               <div className="admin-empty-state-icon">
                 <FileCheck size={18} />
               </div>
-              <strong>No articles yet</strong>
+              <strong>{t('documents:wizard.review.emptyTitle')}</strong>
               <span>
                 {documents.some((document) => document.articles_status === 'failed')
-                  ? 'Splitting failed for at least one document — try re-uploading it.'
+                  ? t('documents:wizard.review.emptySplittingFailed')
                   : documents.length
-                  ? 'Go back and upload a document to get started.'
-                  : 'No documents were uploaded. You can finish the project now and add articles later.'}
+                  ? t('documents:wizard.review.emptyGoBack')
+                  : t('documents:wizard.review.emptyNoDocuments')}
               </span>
             </div>
           ) : (
             <>
               <div className="project-wizard-nav-row" style={{ marginBottom: 12 }}>
                 <span style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                  {approvedCandidateCount} approved, {pendingCandidateCount} pending review
+                  {t('documents:wizard.review.summaryChip', { approved: approvedCandidateCount, pending: pendingCandidateCount })}
                 </span>
                 <button
                   type="button"
@@ -1012,11 +1024,11 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 >
                   {approvingAll ? (
                     <>
-                      <RefreshCw size={16} className="spin" /> Approving...
+                      <RefreshCw size={16} className="spin" /> {t('documents:wizard.review.approving')}
                     </>
                   ) : (
                     <>
-                      <ListChecks size={16} /> Approve all{pendingCandidateCount ? ` (${pendingCandidateCount})` : ''}
+                      <ListChecks size={16} /> {t('documents:wizard.review.approveAllButton')}{pendingCandidateCount ? t('documents:wizard.review.approveAllCount', { count: pendingCandidateCount }) : ''}
                     </>
                   )}
                 </button>
@@ -1025,6 +1037,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               {pagedCandidatesByDocument.map(([documentId, candidates]) => (
                 <div key={documentId} style={{ marginBottom: 14 }}>
                   <div
+                    dir="auto"
                     style={{
                       fontSize: '0.74rem',
                       textTransform: 'uppercase',
@@ -1033,23 +1046,23 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                       marginBottom: 8,
                     }}
                   >
-                    {documentById.get(documentId)?.original_filename || 'Document'}
+                    {documentById.get(documentId)?.original_filename || t('documents:wizard.review.documentFallback')}
                   </div>
                   <div className="proj-rows">
                     {candidates.map((candidate) => (
                       <div key={candidate.id} className="proj-row" style={{ alignItems: 'flex-start' }}>
                         <div className="proj-row-main">
-                          <span className="proj-row-name">{candidate.title}</span>
-                          {candidate.summary && <span className="proj-row-desc">{candidate.summary}</span>}
+                          <span className="proj-row-name" dir="auto">{candidate.title}</span>
+                          {candidate.summary && <span className="proj-row-desc" dir="auto">{candidate.summary}</span>}
                           {candidate.status === 'approved' && (
                             <span style={{ marginTop: 2 }}>
                               {candidate.article_analysis_status === 'success' ? (
-                                <span className="panel-chip success">Analyzed</span>
+                                <span className="panel-chip success">{t('documents:wizard.review.status.analyzed')}</span>
                               ) : candidate.article_analysis_status === 'failed' ? (
-                                <span className="panel-chip">Analysis failed</span>
+                                <span className="panel-chip">{t('documents:wizard.review.status.analysisFailed')}</span>
                               ) : (
                                 <span className="panel-chip warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                  <RefreshCw size={11} className="spin" /> Analyzing...
+                                  <RefreshCw size={11} className="spin" /> {t('documents:wizard.review.status.analyzing')}
                                 </span>
                               )}
                             </span>
@@ -1057,9 +1070,9 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                         </div>
                         <div className="proj-row-side">
                           {candidate.status === 'approved' ? (
-                            <span className="panel-chip success">Approved</span>
+                            <span className="panel-chip success">{t('documents:wizard.review.status.approved')}</span>
                           ) : candidate.status === 'rejected' ? (
-                            <span className="panel-chip">Rejected</span>
+                            <span className="panel-chip">{t('documents:wizard.review.status.rejected')}</span>
                           ) : (
                             <>
                               <button
@@ -1069,7 +1082,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                                 onClick={() => decideCandidate(candidate.id, 'rejected')}
                                 disabled={Boolean(decidingCandidate[candidate.id])}
                               >
-                                Reject
+                                {t('documents:wizard.review.rejectButton')}
                               </button>
                               <button
                                 type="button"
@@ -1078,7 +1091,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                                 onClick={() => decideCandidate(candidate.id, 'approved')}
                                 disabled={Boolean(decidingCandidate[candidate.id])}
                               >
-                                {decidingCandidate[candidate.id] ? <RefreshCw size={13} className="spin" /> : 'Approve'}
+                                {decidingCandidate[candidate.id] ? <RefreshCw size={13} className="spin" /> : t('documents:wizard.review.approveButton')}
                               </button>
                             </>
                           )}
@@ -1090,14 +1103,14 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               ))}
 
               {totalCandidatePages > 1 && (
-                <div className="proj-pagination" role="navigation" aria-label="Articles pagination">
+                <div className="proj-pagination" role="navigation" aria-label={t('documents:wizard.review.paginationLabel')}>
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => setCandidatesPage((prev) => Math.max(1, prev - 1))}
                     disabled={candidatesPage <= 1}
                   >
-                    <ChevronLeft size={16} /> Previous
+                    <ChevronLeft size={16} className="rtl-mirror" /> {t('common:actions.previous')}
                   </button>
                   {candidatePageNumbers.map((page, index) =>
                     page === '...' ? (
@@ -1112,7 +1125,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                         onClick={() => setCandidatesPage(page)}
                         aria-current={page === candidatesPage ? 'page' : undefined}
                       >
-                        {page}
+                        {formatNumber(page, locale)}
                       </button>
                     )
                   )}
@@ -1122,7 +1135,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                     onClick={() => setCandidatesPage((prev) => Math.min(totalCandidatePages, prev + 1))}
                     disabled={candidatesPage >= totalCandidatePages}
                   >
-                    Next <ChevronRight size={16} />
+                    {t('common:actions.next')} <ChevronRight size={16} className="rtl-mirror" />
                   </button>
                 </div>
               )}
@@ -1136,7 +1149,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               onClick={() => setWizardStep(STEP.upload)}
               disabled={reviewingArticles}
             >
-              Back
+              {t('common:actions.back')}
             </button>
             <button
               type="button"
@@ -1144,7 +1157,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               onClick={() => setWizardStep(STEP.finish)}
               disabled={reviewingArticles}
             >
-              Continue to finish
+              {t('documents:wizard.review.continueButton')}
             </button>
           </div>
         </div>
@@ -1153,20 +1166,22 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         {wizardStep === STEP.finish && (
         <div className="glass-card project-wizard-panel">
           <div className="panel-header-tight" style={{ marginBottom: 12 }}>
-            <strong style={{ fontSize: '1rem' }}>Step {STEP.finish}. Finish</strong>
+            <strong style={{ fontSize: '1rem' }}>{t('wizard.finish.stepHeading', { step: STEP.finish })}</strong>
           </div>
           <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
-            {documents.length} document{documents.length === 1 ? '' : 's'} uploaded,{' '}
-            {approvedCandidateCount} article{approvedCandidateCount === 1 ? '' : 's'} approved.
-            {analyzedCandidateCount > 0 ? ` ${analyzedCandidateCount} analyzed.` : ''}
-            {failedAnalysisCandidateCount > 0 ? ` ${failedAnalysisCandidateCount} failed to analyze.` : ''}
+            {t('documents:wizard.finish.summary.documentsUploaded', { count: documents.length, formattedCount: formatNumber(documents.length, locale) })}
+            {', '}
+            {t('documents:wizard.finish.summary.articlesApproved', { count: approvedCandidateCount, formattedCount: formatNumber(approvedCandidateCount, locale) })}
+            {'.'}
+            {analyzedCandidateCount > 0 ? t('documents:wizard.finish.summary.analyzedSuffix', { count: analyzedCandidateCount, formattedCount: formatNumber(analyzedCandidateCount, locale) }) : ''}
+            {failedAnalysisCandidateCount > 0 ? t('documents:wizard.finish.summary.failedSuffix', { count: failedAnalysisCandidateCount, formattedCount: formatNumber(failedAnalysisCandidateCount, locale) }) : ''}
           </p>
 
           <ErrorBanner message={metadataError} />
 
           {!isEditRoute && (
             <div className="project-status-choice">
-              <label className="project-status-choice-label" htmlFor="project-status-choice-select">Project status</label>
+              <label className="project-status-choice-label" htmlFor="project-status-choice-select">{t('wizard.finish.statusChoice.label')}</label>
               <select
                 id="project-status-choice-select"
                 className="filter-select project-status-choice-select"
@@ -1175,13 +1190,13 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                 disabled={isSaving}
                 aria-describedby="project-status-choice-help"
               >
-                <option value="draft">Draft — save for later</option>
-                <option value="active">Active — start monitoring</option>
+                <option value="draft">{t('wizard.finish.statusChoice.draftOption')}</option>
+                <option value="active">{t('wizard.finish.statusChoice.activeOption')}</option>
               </select>
               <span id="project-status-choice-help" className="project-status-choice-help">
                 {draft.status === 'active'
-                  ? 'Active projects are ready to use across monitoring, analysis, and reports.'
-                  : 'Draft projects stay marked as unfinished until you activate them.'}
+                  ? t('wizard.finish.statusChoice.activeHelp')
+                  : t('wizard.finish.statusChoice.draftHelp')}
               </span>
             </div>
           )}
@@ -1196,11 +1211,11 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             >
               {reanalyzing ? (
                 <>
-                  <RefreshCw size={16} className="spin" /> Re-running...
+                  <RefreshCw size={16} className="spin" /> {t('documents:wizard.finish.rerunning')}
                 </>
               ) : (
                 <>
-                  <ScanText size={16} /> Re-run analysis
+                  <ScanText size={16} /> {t('documents:wizard.finish.rerunButton')}
                 </>
               )}
             </button>
@@ -1213,27 +1228,27 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
               onClick={() => setWizardStep(STEP.review)}
               disabled={isSaving}
             >
-              Back
+              {t('common:actions.back')}
             </button>
             <button className="btn-primary wizard-btn-grow" onClick={finishOffline} disabled={isSaving}>
               {isSaving ? (
                 <>
                   <RefreshCw size={18} className="spin" />
-                  Saving...
+                  {t('wizard.finish.saving')}
                 </>
                 ) : (
                   <>
                     <Check size={18} />
                     {isEditRoute
-                      ? 'Open workspace'
+                      ? t('wizard.finish.openWorkspace')
                       : draft.status === 'active'
-                        ? 'Activate and open workspace'
-                        : 'Save draft and open workspace'}
+                        ? t('wizard.finish.activateAndOpen')
+                        : t('wizard.finish.saveDraftAndOpen')}
                   </>
                 )}
             </button>
             <button className="btn-secondary wizard-btn-fixed" type="button" onClick={handleCancel}>
-              <X size={18} /> Cancel
+              <X size={18} /> {t('common:actions.cancel')}
             </button>
           </div>
         </div>
@@ -1242,10 +1257,10 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
 
       <ConfirmModal
         open={showCancelModal}
-        title="Discard changes?"
-        message="You have unsaved changes on this project. If you cancel now, all edits on this page will be lost."
-        confirmLabel="Discard changes"
-        cancelLabel="Keep editing"
+        title={t('wizard.cancelModal.title')}
+        message={t('wizard.cancelModal.body')}
+        confirmLabel={t('wizard.cancelModal.confirmLabel')}
+        cancelLabel={t('wizard.cancelModal.cancelLabel')}
         onClose={() => setShowCancelModal(false)}
         onConfirm={discardChanges}
       />

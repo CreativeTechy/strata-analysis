@@ -1,0 +1,53 @@
+{
+  "outputLanguage": {
+    "label": "لغة التقرير",
+    "hint": "مستقلة عن لغة الواجهة - أنشئ هذا الملخص بلغة محددة."
+  },
+  "trendSummary": {
+    "fallbackNotice": "يتم عرض الملخص بالإنجليزية - تعذّرت ترجمته حاليًا."
+  },
+  "header": {
+    "kicker": "التقارير",
+    "selectProjectTitle": "اختر مشروعًا",
+    "subtitle": "رؤى حول المشاعر والفئات والجمهور، مستخلصة من المقالات المُحلَّلة.",
+    "projectScopeLabel": "نطاق المشروع",
+    "projectScopeAriaLabel": "نطاق المشروع لهذا التقرير",
+    "noProjectsYet": "لا توجد مشاريع بعد",
+    "refresh": "تحديث",
+    "refreshing": "جارٍ التحديث...",
+    "filterTypeAriaLabel": "نوع التصفية",
+    "dateRangeTab": "النطاق الزمني",
+    "analysisRunTab": "عملية تحليل",
+    "runFilterAriaLabel": "التصفية حسب عملية التحليل",
+    "dateRangeFilterAriaLabel": "النطاق الزمني للتقرير"
+  },
+  "summaryChips": {
+    "ariaLabel": "ملخص التقرير",
+    "project": "المشروع",
+    "noneSelected": "لم يتم التحديد",
+    "articlesAnalyzed": "المقالات المُحلَّلة",
+    "dominantSentiment": "المشاعر السائدة",
+    "range": "النطاق",
+    "syncFailed": "فشلت المزامنة",
+    "syncing": "جارٍ المزامنة",
+    "fetchingLatestData": "جارٍ جلب أحدث البيانات...",
+    "upToDate": "محدَّث",
+    "updatedAgo": "تم التحديث {{time}}",
+    "notSyncedYet": "لم تتم المزامنة بعد"
+  },
+  "periods": {
+    "7d": "آخر 7 أيام",
+    "30d": "آخر 30 يومًا",
+    "all": "كل الأوقات"
+  },
+  "runLabel": "عملية التحليل رقم {{number}}: {{date}}",
+  "sentimentLabels": {
+    "positive": "إيجابي",
+    "negative": "سلبي",
+    "neutral": "محايد",
+    "mixed": "متباين",
+    "noDataYet": "لا توجد بيانات بعد"
+  },
+  "backToReports": "العودة إلى التقارير",
+  "noProjectSelectedScope": "لم يتم اختيار مشروع"
+}

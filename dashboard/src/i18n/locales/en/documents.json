@@ -1,0 +1,118 @@
+{
+  "wizard": {
+    "stepNav": {
+      "upload": { "label": "Upload documents", "detail": "Add the files to analyze" },
+      "review": { "label": "Review articles", "detail": "Approve what should be analyzed" }
+    },
+    "upload": {
+      "stepHeading": "Step {{step}}. Upload documents",
+      "uploadedCount": "{{formattedCount}} uploaded",
+      "dropzone": {
+        "title": "Drag files here, or click to browse",
+        "hint": "Multiple files at once are fine",
+        "recordsHint": "JSON/JSONL exports are read as articles directly — one record per article, no splitting."
+      },
+      "publisherUrl": {
+        "label": "Original publisher URL (optional)",
+        "hint": "Applied to this upload batch and used to identify the original publisher during coverage checks."
+      },
+      "pendingFile": {
+        "sizeKb": "{{size}} KB"
+      },
+      "uploadButton": {
+        "uploading": "Uploading...",
+        "upload_one": "Upload {{formattedCount}} file",
+        "upload_other": "Upload {{formattedCount}} files"
+      },
+      "document": {
+        "publisher": "Publisher: {{url}}",
+        "status": {
+          "reading": "Reading",
+          "readingProgress": " ({{processed}}/{{total}})",
+          "readingContentsSuffix": " — reading contents...",
+          "notExtracted": "Not extracted",
+          "extractedOcr": "Extracted (OCR)",
+          "extractedMixed": "Extracted (mixed)",
+          "extracted": "Extracted"
+        }
+      },
+      "emptyTitle": "No documents yet",
+      "emptyBody": "Drop files above or click to browse. Uploading is optional — you can skip this and add articles to the project later.",
+      "continueButton": "Continue to review articles",
+      "skipButton": "Skip for now"
+    },
+    "review": {
+      "stepHeading": "Step {{step}}. Review articles",
+      "summaryChip": "{{approved}} approved, {{pending}} pending",
+      "description": "Strata read your documents into individual articles and approved them all for analysis. Don’t want one included? Reject it here, or delete it from the Articles page later.",
+      "loadingTitle": "Reading your documents into articles...",
+      "emptyTitle": "No articles yet",
+      "emptySplittingFailed": "Splitting failed for at least one document — try re-uploading it.",
+      "emptyGoBack": "Go back and upload a document to get started.",
+      "emptyNoDocuments": "No documents were uploaded. You can finish the project now and add articles later.",
+      "approveAllButton": "Approve all",
+      "approveAllCount": " ({{count}})",
+      "approving": "Approving...",
+      "documentFallback": "Document",
+      "status": {
+        "analyzed": "Analyzed",
+        "analysisFailed": "Analysis failed",
+        "analyzing": "Analyzing...",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      },
+      "rejectButton": "Reject",
+      "approveButton": "Approve",
+      "paginationLabel": "Articles pagination",
+      "continueButton": "Continue to finish"
+    },
+    "finish": {
+      "summary": {
+        "documentsUploaded_one": "{{formattedCount}} document uploaded",
+        "documentsUploaded_other": "{{formattedCount}} documents uploaded",
+        "articlesApproved_one": "{{formattedCount}} article approved",
+        "articlesApproved_other": "{{formattedCount}} articles approved",
+        "analyzedSuffix": " {{formattedCount}} analyzed.",
+        "failedSuffix": " {{formattedCount}} failed to analyze."
+      },
+      "rerunButton": "Re-run analysis",
+      "rerunning": "Re-running..."
+    },
+    "errors": {
+      "removeDocumentFailed": "Failed to remove the document.",
+      "uploadFailed": "Failed to upload documents.",
+      "processFailed": "Failed to process the uploaded documents.",
+      "updateArticleFailed": "Failed to update the article.",
+      "approveAllFailed": "Failed to approve the articles.",
+      "reanalyzeFailed": "Failed to re-run analysis."
+    }
+  },
+  "detail": {
+    "documents": {
+      "title": "Uploaded Documents",
+      "uploadedCount": "{{formattedCount}} uploaded",
+      "viewSources": "View sources →",
+      "emptyTitle": "No documents uploaded",
+      "emptyBody": "Use Edit Project to upload the files this project analyzes.",
+      "fallbackName": "Document #{{id}}",
+      "articlesLabel": "Articles: {{value}}",
+      "added": "Added {{value}}",
+      "statusLabels": {
+        "uploaded": "uploaded",
+        "processing": "processing",
+        "processed": "processed",
+        "failed": "failed"
+      },
+      "articlesStatusLabels": {
+        "pending": "pending",
+        "generating": "generating",
+        "ready": "ready",
+        "failed": "failed",
+        "skipped": "skipped"
+      },
+      "pagination": {
+        "showingRange": "Showing {{from}}-{{to}} of {{total}}"
+      }
+    }
+  }
+}

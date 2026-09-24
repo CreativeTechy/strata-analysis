@@ -1,0 +1,118 @@
+{
+  "app": {
+    "name": "Strata"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "regenerate": "Regenerate",
+    "export": "Export",
+    "import": "Import",
+    "upload": "Upload",
+    "download": "Download",
+    "search": "Search",
+    "filter": "Filter",
+    "filters": "Filters",
+    "clear": "Clear",
+    "clearAll": "Clear all",
+    "apply": "Apply",
+    "submit": "Submit",
+    "create": "Create",
+    "add": "Add",
+    "remove": "Remove",
+    "view": "View",
+    "viewAll": "View all",
+    "viewDetails": "View details",
+    "manage": "Manage",
+    "select": "Select",
+    "selectAll": "Select all",
+    "copy": "Copy",
+    "copied": "Copied",
+    "reset": "Reset",
+    "signIn": "Sign in",
+    "signOut": "Log out",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "openNavigation": "Open navigation",
+    "closeNavigation": "Close navigation",
+    "expandNavigation": "Expand navigation",
+    "collapseNavigation": "Collapse navigation"
+  },
+  "status": {
+    "loading": "Loading…",
+    "saving": "Saving…",
+    "processing": "Processing…",
+    "pending": "Pending",
+    "success": "Success",
+    "failed": "Failed",
+    "error": "Error",
+    "unknown": "Unknown"
+  },
+  "boolean": {
+    "yes": "Yes",
+    "no": "No",
+    "on": "On",
+    "off": "Off",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
+  },
+  "misc": {
+    "all": "All",
+    "none": "None",
+    "notAvailable": "Not available",
+    "unknown": "Unknown",
+    "optional": "Optional",
+    "required": "Required",
+    "language": "Language",
+    "interfaceLanguage": "Interface language",
+    "outputLanguage": "Output language",
+    "and": "and",
+    "or": "or"
+  },
+  "pagination": {
+    "pageOfTotal": "Page {{page}} of {{totalPages}}",
+    "showingOfTotal": "Showing {{count}} of {{total}}",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
+    "itemCount_one": "{{count}} item",
+    "itemCount_other": "{{count}} items"
+  },
+  "emptyState": {
+    "noData": "No data yet",
+    "noResults": "No results found",
+    "noResultsHint": "Try adjusting your filters or search terms.",
+    "nothingSelected": "Nothing selected"
+  },
+  "dialog": {
+    "confirmDeleteTitle": "Delete this item?",
+    "confirmDeleteBody": "This action cannot be undone.",
+    "unsavedChangesTitle": "Discard unsaved changes?",
+    "unsavedChangesBody": "You have unsaved changes that will be lost."
+  },
+  "errors": {
+    "genericTitle": "Something went wrong",
+    "genericBody": "Please try again. If the problem continues, contact your administrator.",
+    "networkTitle": "Connection problem",
+    "networkBody": "Couldn't reach the server. Check your connection and try again.",
+    "unauthorized": "Your session has expired. Please sign in again."
+  },
+  "a11y": {
+    "loadingSpinner": "Loading",
+    "closeDialog": "Close dialog",
+    "mainNavigation": "Main navigation",
+    "userMenu": "User menu"
+  },
+  "search": {
+    "placeholder": "Search…",
+    "noMatches": "No matches"
+  }
+}

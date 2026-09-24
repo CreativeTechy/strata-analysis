@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Upload, FolderInput, X } from 'lucide-react';
 
 // Lets the user pick between a file picker and a folder picker for import.
@@ -5,6 +6,7 @@ import { Upload, FolderInput, X } from 'lucide-react';
 // ArticlesPage's importDocumentFiles), which is project-scoped, so nothing
 // can be imported until a specific project is chosen above.
 export default function ImportOptionsModal({ open, hasProject, disabled, onClose, onChooseFiles, onChooseFolder }) {
+  const { t } = useTranslation(['articles', 'common']);
   if (!open) return null;
 
   return (
@@ -19,18 +21,18 @@ export default function ImportOptionsModal({ open, hasProject, disabled, onClose
         <div className="confirm-modal-header">
           <div>
             <h2 id="import-modal-title" className="confirm-modal-title">
-              Import articles
+              {t('importModal.title')}
             </h2>
           </div>
-          <button type="button" className="confirm-modal-close" onClick={onClose} aria-label="Close dialog">
+          <button type="button" className="confirm-modal-close" onClick={onClose} aria-label={t('common:a11y.closeDialog')}>
             <X size={18} />
           </button>
         </div>
 
         <p className="confirm-modal-message">
           {hasProject
-            ? 'PDF, Word, Excel, CSV, image, JSON, and JSONL/NDJSON files are extracted, split into articles, and added to the project currently in scope - each article is linked to the document it came from.'
-            : 'Select a project scope above to import files - every format is extracted, split into articles, and linked to the project currently in scope.'}
+            ? t('importModal.messageWithProject')
+            : t('importModal.messageNoProject')}
         </p>
 
         <div className="import-options-list">
@@ -39,8 +41,8 @@ export default function ImportOptionsModal({ open, hasProject, disabled, onClose
               <Upload size={20} />
             </span>
             <span className="import-option-copy">
-              <strong>Upload file(s)</strong>
-              <span>Pick one or more files from your computer.</span>
+              <strong>{t('importModal.uploadFiles')}</strong>
+              <span>{t('importModal.uploadFilesHint')}</span>
             </span>
           </button>
           <button type="button" className="import-option-card" onClick={onChooseFolder} disabled={disabled || !hasProject}>
@@ -48,8 +50,8 @@ export default function ImportOptionsModal({ open, hasProject, disabled, onClose
               <FolderInput size={20} />
             </span>
             <span className="import-option-copy">
-              <strong>Upload a folder</strong>
-              <span>Import every supported file found inside a folder.</span>
+              <strong>{t('importModal.uploadFolder')}</strong>
+              <span>{t('importModal.uploadFolderHint')}</span>
             </span>
           </button>
         </div>

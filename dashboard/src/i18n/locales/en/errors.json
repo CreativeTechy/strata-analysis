@@ -1,0 +1,15 @@
+{
+  "llm_provider_error": "The assistant hit an unexpected error. Please try again.",
+  "llm_config_error": "The AI assistant isn't set up yet. Please contact your administrator.",
+  "llm_auth_error": "The AI assistant isn't configured correctly. Please contact your administrator.",
+  "llm_rate_limited": "The assistant is busy right now. Please wait a moment and try again.",
+  "llm_quota_exceeded": "The AI provider account is out of credit or has hit its usage quota. Contact your administrator.",
+  "llm_timeout": "The assistant took too long to respond. Please try again.",
+  "llm_unavailable": "The assistant service is temporarily unavailable. Please try again shortly.",
+  "llm_connection_error": "Couldn't reach the configured AI service. Please contact your administrator.",
+  "llm_endpoint_not_found": "The configured AI service couldn't be found. Please contact your administrator.",
+  "llm_bad_request": "That request couldn't be processed. Try rephrasing your question.",
+  "llm_invalid_response": "The assistant couldn't produce a usable answer. Try rephrasing your question.",
+  "unsupported_locale": "\"{{locale}}\" isn't a supported language.",
+  "unknown": "An unexpected error occurred."
+}

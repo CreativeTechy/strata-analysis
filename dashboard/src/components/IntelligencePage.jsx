@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import '../styles/Intelligence.css';
 import {
   Send,
@@ -20,6 +21,8 @@ import remarkGfm from 'remark-gfm';
 import { computeOverallTone } from '../lib/tone.js';
 import { articleSourceLink, articleSourceLabel } from '../lib/articleHelpers.jsx';
 import { listArticles, sendChatMessage } from '../api/articlesApi.js';
+import { formatDate, formatNumber } from '../lib/i18nFormat.js';
+import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '../i18n/locales.js';
 
 const MATCHES_PAGE_SIZE = 4;
 
@@ -38,23 +41,30 @@ function parseLocalDate(value) {
   return new Date(year, month - 1, day);
 }
 
-// Backend error codes (see backend/llm_client.py) mapped to short, friendly,
-// provider-neutral copy. Never surface raw provider/stack trace text here.
-const LLM_ERROR_MESSAGES = {
-  llm_config_error: "The AI assistant isn't set up yet. Please contact your administrator.",
-  llm_auth_error: "The AI assistant isn't configured correctly. Please contact your administrator.",
-  llm_rate_limited: 'The assistant is busy right now. Please wait a moment and try again.',
-  llm_timeout: 'The assistant took too long to respond. Please try again.',
-  llm_unavailable: 'The assistant service is temporarily unavailable. Please try again shortly.',
-  llm_bad_request: "That request couldn't be processed. Try rephrasing your question.",
-  llm_invalid_response: "The assistant couldn't produce a usable answer. Try rephrasing your question.",
-  llm_provider_error: 'The assistant hit an unexpected error. Please try again.',
-  network_error: "Can't reach the Copilot service right now. Please check your connection and try again.",
-};
-
-const DEFAULT_ERROR_MESSAGE = 'Something went wrong. Please try again.';
+// /api/chat reports a failure as a 200 carrying {error, error_code} (an LLM
+// failure - see backend/llm_client.py's LLMError subclasses) or, for a
+// rejected request like an invalid `locale`, a non-2xx with
+// {error: {code, params}} (see backend/services/common/api_errors.py). Both
+// carry a stable code translatable through the `errors` namespace; only an
+// unrecognized shape falls back to whatever raw string the backend sent.
+function resolveChatErrorText(data, tErrors) {
+  const coded = data?.error && typeof data.error === 'object' ? data.error : null;
+  const code = coded?.code || data?.error_code;
+  if (code) return tErrors(code, { ...(coded?.params || {}), defaultValue: tErrors('unknown') });
+  if (typeof data?.error === 'string' && data.error) return data.error;
+  return tErrors('unknown');
+}
 
 export default function IntelligencePage({ project = null, projectId = null, projects = [] }) {
+  const { t } = useTranslation('copilot');
+  const { t: tCommon, i18n } = useTranslation('common');
+  const { t: tErrors } = useTranslation('errors');
+  const locale = i18n.language;
+  // The Copilot reply's output language is an explicit, independent request -
+  // it defaults to the current interface locale for convenience but does not
+  // stay coupled to it: changing the interface language afterwards must not
+  // silently change an already-chosen response language.
+  const [replyLocale, setReplyLocale] = useState(locale);
   const normalizedProjectId = useMemo(() => {
     if (projectId == null) return null;
     if (typeof projectId === 'object') {
@@ -92,10 +102,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [chatHistory, setChatHistory] = useState([
-    {
-      role: 'bot',
-      text: 'Hello! I am your Intelligence Copilot. Select a project or browse all projects, then ask me to summarize or analyze the articles.',
-    },
+    { role: 'bot', text: t('greeting') },
   ]);
 
   const [selectedArticle, setSelectedArticle] = useState(null);
@@ -224,6 +231,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
       const { ok, data } = await sendChatMessage({
         question,
         total: filteredArticles.length,
+        locale: replyLocale,
         project: activeProject
           ? {
               id: activeProject.id,
@@ -254,15 +262,15 @@ export default function IntelligencePage({ project = null, projectId = null, pro
         })),
       });
       if (ok) {
-        setChatHistory([...baseHistory, { role: 'bot', text: data.reply || 'No response.' }]);
+        setChatHistory([...baseHistory, { role: 'bot', text: data.reply || t('chat.noResponse') }]);
       } else {
-        const text = (data?.error_code && LLM_ERROR_MESSAGES[data.error_code]) || data?.error || DEFAULT_ERROR_MESSAGE;
+        const text = resolveChatErrorText(data, tErrors);
         setChatHistory([...baseHistory, { role: 'bot', text, isError: true, retryText: question }]);
       }
     } catch {
       setChatHistory([
         ...baseHistory,
-        { role: 'bot', text: LLM_ERROR_MESSAGES.network_error, isError: true, retryText: question },
+        { role: 'bot', text: t('chat.networkError'), isError: true, retryText: question },
       ]);
     } finally {
       setIsThinking(false);
@@ -282,14 +290,14 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
       <div className={`intell-sidebar ${mobilePanel === 'filters' ? 'mobile-open' : ''}`}>
         <button type="button" className="intell-mobile-close" onClick={() => setMobilePanel(null)}>
-          <X size={16} /> Close
+          <X size={16} /> {t('detail.close')}
         </button>
         <h2 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Filter size={18} /> Filters
+          <Filter size={18} /> {t('filters.title')}
         </h2>
 
         <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: '16px' }}>
-          Project
+          {t('filters.projectLabel')}
           <select
             className="filter-select"
             style={{ display: 'block', width: '100%', marginTop: '6px' }}
@@ -299,7 +307,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               setMatchesPage(1);
             }}
           >
-            <option value="all">All projects</option>
+            <option value="all">{t('filters.allProjects')}</option>
             {projects.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.status || 'draft'})
@@ -308,9 +316,24 @@ export default function IntelligencePage({ project = null, projectId = null, pro
           </select>
         </label>
 
+        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: '16px' }}>
+          {t('outputLanguage.label')}
+          <select
+            className="filter-select"
+            style={{ display: 'block', width: '100%', marginTop: '6px' }}
+            value={replyLocale}
+            onChange={(e) => setReplyLocale(e.target.value)}
+            title={t('outputLanguage.hint')}
+          >
+            {SUPPORTED_LOCALES.map((code) => (
+              <option key={code} value={code} lang={code}>{LOCALE_NATIVE_NAMES[code]}</option>
+            ))}
+          </select>
+        </label>
+
         <div className="filter-group">
           <button type="button" className="filter-group-header" onClick={() => toggleSection('site')}>
-            <h4>By Document</h4>
+            <h4>{t('filters.byDocument')}</h4>
             <ChevronDown size={16} className={`filter-group-chevron ${openSections.site ? 'open' : ''}`} />
           </button>
           {openSections.site && (
@@ -322,7 +345,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                     checked={selectedSites.includes(site)}
                     onChange={() => toggleFilter(setSelectedSites, selectedSites, site)}
                   />
-                  {site}
+                  <span dir="auto">{site}</span>
                 </label>
               ))}
             </div>
@@ -331,7 +354,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
         <div className="filter-group">
           <button type="button" className="filter-group-header" onClick={() => toggleSection('sentiment')}>
-            <h4>By Sentiment</h4>
+            <h4>{t('filters.bySentiment')}</h4>
             <ChevronDown size={16} className={`filter-group-chevron ${openSections.sentiment ? 'open' : ''}`} />
           </button>
           {openSections.sentiment && (
@@ -343,7 +366,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                     checked={selectedSentiments.includes(sent)}
                     onChange={() => toggleFilter(setSelectedSentiments, selectedSentiments, sent)}
                   />
-                  <span style={{ textTransform: 'capitalize' }}>{sent}</span>
+                  <span>{t(`sentimentLabels.${sent}`)}</span>
                 </label>
               ))}
             </div>
@@ -352,7 +375,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
         <div className="filter-group">
           <button type="button" className="filter-group-header" onClick={() => toggleSection('topic')}>
-            <h4>By Topic</h4>
+            <h4>{t('filters.byTopic')}</h4>
             <ChevronDown size={16} className={`filter-group-chevron ${openSections.topic ? 'open' : ''}`} />
           </button>
           {openSections.topic && (
@@ -364,7 +387,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                     checked={selectedCategories.includes(cat)}
                     onChange={() => toggleFilter(setSelectedCategories, selectedCategories, cat)}
                   />
-                  {cat}
+                  <span dir="auto">{cat}</span>
                 </label>
               ))}
             </div>
@@ -373,7 +396,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
 
         <div className="filter-group">
           <button type="button" className="filter-group-header" onClick={() => toggleSection('date')}>
-            <h4>By Date (published)</h4>
+            <h4>{t('filters.byDatePublished')}</h4>
             <ChevronDown size={16} className={`filter-group-chevron ${openSections.date ? 'open' : ''}`} />
           </button>
           {openSections.date && (
@@ -384,24 +407,24 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                   className={`btn-secondary ${datePreset === 'week' ? 'active' : ''}`}
                   onClick={() => applyDatePreset(datePreset === 'week' ? '' : 'week')}
                 >
-                  This Week
+                  {t('filters.thisWeek')}
                 </button>
                 <button
                   type="button"
                   className={`btn-secondary ${datePreset === 'month' ? 'active' : ''}`}
                   onClick={() => applyDatePreset(datePreset === 'month' ? '' : 'month')}
                 >
-                  This Month
+                  {t('filters.thisMonth')}
                 </button>
                 {(dateStart || dateEnd) && (
                   <button type="button" className="btn-secondary" onClick={() => applyDatePreset('')}>
-                    Clear
+                    {tCommon('actions.clearAll')}
                   </button>
                 )}
               </div>
               <div className="date-filter-inputs">
                 <label>
-                  From
+                  {t('filters.from')}
                   <input
                     type="date"
                     className="filter-select date-input"
@@ -411,7 +434,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                   />
                 </label>
                 <label>
-                  To
+                  {t('filters.to')}
                   <input
                     type="date"
                     className="filter-select date-input"
@@ -429,19 +452,20 @@ export default function IntelligencePage({ project = null, projectId = null, pro
       <div className="intell-chat">
         <div className="intell-chat-header">
           <h2 className="title" style={{ fontSize: '1.5rem' }}>
-            Strata Intelligence Copilot
+            {t('chatTitle', { brand: tCommon('app.name') })}
           </h2>
           <p className="subtitle" style={{ fontSize: '0.9rem' }}>
-            Chatting over {filteredArticles.length} articles
-            {activeProject ? ` - ${activeProject.name}` : ' - all projects'}
+            {t('chattingOver', { count: filteredArticles.length })}
+            {' - '}
+            {activeProject ? <span dir="auto">{activeProject.name}</span> : t('allProjectsScope')}
           </p>
 
           <div className="intell-mobile-toggle-row">
             <button type="button" className="btn-secondary" onClick={() => setMobilePanel('filters')}>
-              <Filter size={14} /> Filters
+              <Filter size={14} /> {t('filters.title')}
             </button>
             <button type="button" className="btn-secondary" onClick={() => setMobilePanel('matches')}>
-              <FileText size={14} /> Matches ({filteredArticles.length})
+              <FileText size={14} /> {t('matches.button', { count: filteredArticles.length })}
             </button>
           </div>
         </div>
@@ -461,7 +485,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                   <User size={18} style={{ marginTop: '2px', flexShrink: 0 }} />
                 )}
                 {msg.role === 'bot' ? (
-                  <div className="md-content">
+                  <div className="md-content" dir="auto">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
                     {msg.isError && (
                       <button
@@ -471,12 +495,12 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                         disabled={isThinking}
                         onClick={() => handleRetry(msg.retryText)}
                       >
-                        Retry
+                        {tCommon('actions.retry')}
                       </button>
                     )}
                   </div>
                 ) : (
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
+                  <div style={{ whiteSpace: 'pre-wrap' }} dir="auto">{msg.text}</div>
                 )}
               </div>
             </motion.div>
@@ -485,7 +509,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="chat-bubble bot">
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <Bot size={18} style={{ color: 'var(--primary-color)' }} />
-                <div style={{ color: 'var(--text-light)' }}>Analyzing {filteredArticles.length} articles...</div>
+                <div style={{ color: 'var(--text-light)' }}>{t('chat.analyzing', { count: filteredArticles.length })}</div>
               </div>
             </motion.div>
           )}
@@ -495,14 +519,15 @@ export default function IntelligencePage({ project = null, projectId = null, pro
           <div className="chat-input-box">
             <input
               type="text"
-              placeholder={isThinking ? 'Thinking...' : `Ask about the ${filteredArticles.length} filtered articles...`}
+              dir="auto"
+              placeholder={isThinking ? t('chat.inputPlaceholderThinking') : t('chat.inputPlaceholderAsk', { count: filteredArticles.length })}
               value={chatInput}
               disabled={isThinking || filteredArticles.length === 0}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
             />
             <button className="chat-send-btn" onClick={() => handleSendMessage()} disabled={isThinking || filteredArticles.length === 0}>
-              <Send size={18} />
+              <Send size={18} className="rtl-mirror" />
             </button>
           </div>
           <div className="chat-quick-actions">
@@ -510,17 +535,17 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               className="btn-secondary"
               style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}
               disabled={isThinking || filteredArticles.length === 0}
-              onClick={() => handleSendMessage('Summarize the overall sentiment and the key themes across these articles.')}
+              onClick={() => handleSendMessage(t('chat.summarizeThemesPrompt'))}
             >
-              Summarize Themes
+              {t('chat.summarizeThemes')}
             </button>
             <button
               className="btn-secondary"
               style={{ fontSize: '0.8rem', padding: '6px 12px', background: 'rgba(255,255,255,0.6)' }}
               disabled={isThinking || filteredArticles.length === 0}
-              onClick={() => handleSendMessage('Draft a short executive brief highlighting the most important signals in these articles.')}
+              onClick={() => handleSendMessage(t('chat.draftBriefPrompt'))}
             >
-              Draft Brief
+              {t('chat.draftBrief')}
             </button>
           </div>
         </div>
@@ -530,7 +555,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
         className={`intell-preview ${mobilePanel === 'matches' ? 'mobile-open' : ''} ${showMatchesCollapsed ? 'intell-preview-collapsed' : ''}`}
       >
         <button type="button" className="intell-mobile-close" onClick={() => setMobilePanel(null)}>
-          <X size={16} /> Close
+          <X size={16} /> {t('detail.close')}
         </button>
 
         <div className="matches-panel-header">
@@ -538,28 +563,28 @@ export default function IntelligencePage({ project = null, projectId = null, pro
             type="button"
             className="matches-collapse-btn"
             onClick={() => setMatchesCollapsed((value) => !value)}
-            title={matchesCollapsed ? 'Expand matches panel' : 'Collapse matches panel'}
-            aria-label={matchesCollapsed ? 'Expand matches panel' : 'Collapse matches panel'}
+            title={matchesCollapsed ? t('matches.expandPanel') : t('matches.collapsePanel')}
+            aria-label={matchesCollapsed ? t('matches.expandPanel') : t('matches.collapsePanel')}
           >
-            {showMatchesCollapsed ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
+            {showMatchesCollapsed ? <ChevronsLeft size={18} className="rtl-mirror" /> : <ChevronsRight size={18} className="rtl-mirror" />}
           </button>
           {!showMatchesCollapsed && (
             <h3 style={{ fontSize: '1.1rem', color: 'var(--text-light)', margin: 0 }}>
-              Matches ({filteredArticles.length})
+              {t('matches.title', { count: filteredArticles.length })}
             </h3>
           )}
         </div>
 
         {showMatchesCollapsed && (
-          <span className="matches-collapsed-count" title={`${filteredArticles.length} matches`}>
-            {filteredArticles.length}
+          <span className="matches-collapsed-count" title={t('matches.collapsedTooltip', { count: filteredArticles.length })}>
+            {formatNumber(filteredArticles.length, locale)}
           </span>
         )}
 
         {!showMatchesCollapsed && (
         <>
         {pagedArticles.length === 0 ? (
-          <div className="preview-empty">No matching articles for the current filters.</div>
+          <div className="preview-empty">{t('matches.noMatches')}</div>
         ) : (
           pagedArticles.map((article) => (
             <motion.div
@@ -572,28 +597,28 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               }}
             >
               <div className="preview-meta">
-                <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }}>{articleSourceLabel(article)}</span>
+                <span style={{ color: 'var(--secondary-color)', fontWeight: '500' }} dir="auto">{articleSourceLabel(article)}</span>
                 <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`} style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                  {article.sentiment || 'Neutral'}
+                  {t(`sentimentLabels.${(article.sentiment || 'neutral').toLowerCase()}`)}
                 </span>
-                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Writer tone">
-                  Writer: {article.writer_tone || 'neutral'}
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title={t('detail.writerTone')}>
+                  {t('matches.writerTone')}: {t(`toneLabels.${article.writer_tone || 'neutral'}`)}
                 </span>
-                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Article tone">
-                  Article: {article.article_tone || 'neutral'}
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title={t('detail.articleTone')}>
+                  {t('matches.articleTone')}: {t(`toneLabels.${article.article_tone || 'neutral'}`)}
                 </span>
-                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title="Overall tone (derived from writer + article tone)">
-                  Overall: {computeOverallTone(article.article_tone, article.writer_tone)}
+                <span className="badge category" style={{ padding: '2px 6px', fontSize: '0.65rem' }} title={t('detail.overallTone')}>
+                  {t('matches.overallTone')}: {t(`toneLabels.${computeOverallTone(article.article_tone, article.writer_tone)}`)}
                 </span>
                 {article.project_similarity_score != null && (
                   <span className="badge score" style={{ padding: '2px 6px', fontSize: '0.65rem' }}>
-                    Match: {formatMatchScore(article.project_similarity_score)}
+                    {t('matches.match')}: {formatMatchScore(article.project_similarity_score)}
                   </span>
                 )}
               </div>
-              <div className="preview-title">{article.title}</div>
+              <div className="preview-title" dir="auto">{article.title}</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '0.8rem', color: 'var(--primary-color)' }}>
-                View Details <ChevronRight size={14} />
+                {t('matches.viewDetails')} <ChevronRight size={14} className="rtl-mirror" />
               </div>
             </motion.div>
           ))
@@ -602,7 +627,11 @@ export default function IntelligencePage({ project = null, projectId = null, pro
         {filteredArticles.length > MATCHES_PAGE_SIZE && (
           <div className="matches-pagination">
             <div className="matches-pagination-meta">
-              Showing {(safeMatchesPage - 1) * MATCHES_PAGE_SIZE + 1}-{Math.min(safeMatchesPage * MATCHES_PAGE_SIZE, filteredArticles.length)} of {filteredArticles.length}
+              {t('matches.showingOfTotal', {
+                from: formatNumber((safeMatchesPage - 1) * MATCHES_PAGE_SIZE + 1, locale),
+                to: formatNumber(Math.min(safeMatchesPage * MATCHES_PAGE_SIZE, filteredArticles.length), locale),
+                total: formatNumber(filteredArticles.length, locale),
+              })}
             </div>
             <div className="matches-pagination-controls">
               <button
@@ -612,10 +641,10 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                 disabled={safeMatchesPage <= 1}
                 style={{ padding: '8px 10px', fontSize: '0.8rem' }}
               >
-                <ChevronLeft size={14} /> Previous
+                <ChevronLeft size={14} className="rtl-mirror" /> {tCommon('pagination.previousPage')}
               </button>
               <span className="matches-pagination-chip">
-                Page {safeMatchesPage} of {totalMatchesPages}
+                {tCommon('pagination.pageOfTotal', { page: safeMatchesPage, totalPages: totalMatchesPages })}
               </span>
               <button
                 type="button"
@@ -642,32 +671,38 @@ export default function IntelligencePage({ project = null, projectId = null, pro
             className="article-detail-overlay"
           >
             <button className="btn-secondary" style={{ alignSelf: 'flex-end', padding: '8px' }} onClick={() => setSelectedArticle(null)}>
-              <X size={20} /> Close
+              <X size={20} /> {t('detail.close')}
             </button>
 
             <div className="content-shell">
               <div className="article-meta-badges">
-                <span className="badge category">{selectedArticle.article_category || selectedArticle.category || 'Topic'}</span>
-                <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>{selectedArticle.sentiment}</span>
-                <span className="badge category" title="Writer tone">Writer tone: {selectedArticle.writer_tone || 'neutral'}</span>
-                <span className="badge category" title="Article tone">Article tone: {selectedArticle.article_tone || 'neutral'}</span>
-                <span className="badge category" title="Overall tone (derived from writer + article tone)">
-                  Overall tone: {computeOverallTone(selectedArticle.article_tone, selectedArticle.writer_tone)}
+                <span className="badge category" dir="auto">{selectedArticle.article_category || selectedArticle.category || t('detail.topicFallback')}</span>
+                <span className={`badge ${selectedArticle.sentiment?.toLowerCase() || 'neutral'}`}>
+                  {t(`sentimentLabels.${(selectedArticle.sentiment || 'neutral').toLowerCase()}`)}
                 </span>
-                <span className="badge score">Score: {selectedArticle.relevance_score}/10</span>
+                <span className="badge category" title={t('detail.writerTone')}>
+                  {t('detail.writerTone')}: {t(`toneLabels.${selectedArticle.writer_tone || 'neutral'}`)}
+                </span>
+                <span className="badge category" title={t('detail.articleTone')}>
+                  {t('detail.articleTone')}: {t(`toneLabels.${selectedArticle.article_tone || 'neutral'}`)}
+                </span>
+                <span className="badge category" title={t('detail.overallTone')}>
+                  {t('detail.overallTone')}: {t(`toneLabels.${computeOverallTone(selectedArticle.article_tone, selectedArticle.writer_tone)}`)}
+                </span>
+                <span className="badge score">{t('detail.score')}: {selectedArticle.relevance_score}/10</span>
                 {selectedArticle.project_similarity_score != null && (
-                  <span className="badge score">Project match: {formatMatchScore(selectedArticle.project_similarity_score)}</span>
+                  <span className="badge score">{t('detail.projectMatch')}: {formatMatchScore(selectedArticle.project_similarity_score)}</span>
                 )}
               </div>
 
-              <h1 style={{ fontSize: '2rem', marginBottom: '10px' }}>{selectedArticle.title}</h1>
+              <h1 style={{ fontSize: '2rem', marginBottom: '10px' }} dir="auto">{selectedArticle.title}</h1>
               <div className="article-byline">
-                <span>{articleSourceLabel(selectedArticle)}</span>
-                {selectedArticle.published && <span>{new Date(selectedArticle.published).toLocaleDateString()}</span>}
-                {selectedArticle.author && <span>By {selectedArticle.author}</span>}
+                <span dir="auto">{articleSourceLabel(selectedArticle)}</span>
+                {selectedArticle.published && <span>{formatDate(selectedArticle.published, locale)}</span>}
+                {selectedArticle.author && <span dir="auto">{t('detail.byAuthor', { author: selectedArticle.author })}</span>}
                 {articleSourceLink(selectedArticle) && (
                   <a href={articleSourceLink(selectedArticle)} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    View original <ExternalLink size={12} />
+                    {t('detail.viewOriginal')} <ExternalLink size={12} />
                   </a>
                 )}
               </div>
@@ -677,18 +712,18 @@ export default function IntelligencePage({ project = null, projectId = null, pro
                   background: 'rgba(46, 134, 222, 0.05)',
                   padding: '20px',
                   borderRadius: '12px',
-                  borderLeft: '4px solid var(--secondary-color)',
+                  borderInlineStart: '4px solid var(--secondary-color)',
                   marginBottom: '30px',
                 }}
               >
                 <h3 style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Bot size={18} /> AI Analysis
+                  <Bot size={18} /> {t('detail.aiAnalysis')}
                 </h3>
-                <p style={{ lineHeight: '1.6' }}>{selectedArticle.insight_json?.summary || selectedArticle.summary}</p>
+                <p style={{ lineHeight: '1.6' }} dir="auto">{selectedArticle.insight_json?.summary || selectedArticle.summary}</p>
                 {selectedArticle.insight_json?.frequent_ideas?.length ? (
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
                     {selectedArticle.insight_json.frequent_ideas.slice(0, 4).map((item) => (
-                      <span key={item.idea} className="badge score" style={{ textTransform: 'none' }}>
+                      <span key={item.idea} className="badge score" style={{ textTransform: 'none' }} dir="auto">
                         {item.idea}
                       </span>
                     ))}
@@ -697,9 +732,9 @@ export default function IntelligencePage({ project = null, projectId = null, pro
               </div>
 
               <h3 style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FileText size={18} /> Full Text
+                <FileText size={18} /> {t('detail.fullText')}
               </h3>
-              <div style={{ lineHeight: '1.8', whiteSpace: 'pre-wrap', color: '#4a4a4a' }}>
+              <div style={{ lineHeight: '1.8', whiteSpace: 'pre-wrap', color: '#4a4a4a' }} dir="auto">
                 {selectedArticle.text}
               </div>
             </div>

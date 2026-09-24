@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Eye, Layers3, Link2, Pencil, Search, Users } from 'lucide-react';
+import { formatNumber } from '../lib/i18nFormat.js';
 import '../styles/ProjectLinkage.css';
 
+// Status codes are literal, backend-checked values (mirrored in filter
+// comparisons below) - never translated, same as a permission key or a
+// user's active/disabled status.
 const STATUS_OPTIONS = ['draft', 'active', 'archived'];
 const PAGE_SIZE = 10;
 
@@ -11,6 +16,7 @@ const PAGE_SIZE = 10;
 // (ProjectLinkageDetailPage / ProjectLinkageEditPage); this page never
 // renders the assignment UI itself.
 export default function ProjectLinkageListPage({ projects = [], users = [], isLoadingProjects, isLoadingUsers }) {
+  const { t, i18n } = useTranslation(['admin', 'common']);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [userFilter, setUserFilter] = useState('all');
@@ -52,22 +58,21 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <Link2 size={14} /> Access control
+            <Link2 size={14} /> {t('kickers.accessControl')}
           </div>
-          <h1 className="admin-page-title">Project Linkage</h1>
+          <h1 className="admin-page-title">{t('projectLinkage.list.title')}</h1>
           <p className="admin-page-subtitle">
-            See which dashboard users are linked to each project. Open a project to review its linked users, or edit
-            the linkage directly.
+            {t('projectLinkage.list.subtitle')}
           </p>
         </div>
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
-            <span>Projects</span>
-            <strong>{projects.length}</strong>
+            <span>{t('projectLinkage.list.projectsMeta')}</span>
+            <strong>{formatNumber(projects.length, i18n.language)}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Matches</span>
-            <strong>{visibleProjects.length}</strong>
+            <span>{t('projectLinkage.list.matchesMeta')}</span>
+            <strong>{formatNumber(visibleProjects.length, i18n.language)}</strong>
           </div>
         </div>
       </div>
@@ -78,8 +83,8 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
             <Layers3 size={18} />
           </div>
           <div>
-            <span>Total projects</span>
-            <strong>{projects.length.toLocaleString()}</strong>
+            <span>{t('projectLinkage.list.totalProjects')}</span>
+            <strong>{formatNumber(projects.length, i18n.language)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -87,8 +92,8 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
             <Users size={18} />
           </div>
           <div>
-            <span>Dashboard users</span>
-            <strong>{users.length.toLocaleString()}</strong>
+            <span>{t('projectLinkage.list.dashboardUsers')}</span>
+            <strong>{formatNumber(users.length, i18n.language)}</strong>
           </div>
         </div>
       </div>
@@ -100,12 +105,12 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search projects by name"
+            placeholder={t('projectLinkage.list.searchPlaceholder')}
           />
         </label>
 
         <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">All statuses</option>
+          <option value="all">{t('projectLinkage.list.allStatuses')}</option>
           {STATUS_OPTIONS.map((status) => (
             <option key={status} value={status}>
               {status[0].toUpperCase() + status.slice(1)}
@@ -119,7 +124,7 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
           onChange={(e) => setUserFilter(e.target.value)}
           disabled={isLoadingUsers}
         >
-          <option value="all">{isLoadingUsers ? 'Loading users...' : 'All linked users'}</option>
+          <option value="all">{isLoadingUsers ? t('projectLinkage.list.loadingUsers') : t('projectLinkage.list.allLinkedUsers')}</option>
           {sortedUsers.map((user) => (
             <option key={user.id} value={user.id}>
               {user.username}
@@ -130,10 +135,10 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
 
       <div className="glass-card admin-list-panel">
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Projects</strong>
+          <strong style={{ fontSize: '1rem' }}>{t('projectLinkage.list.panelTitle')}</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isLoadingProjects && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>Loading...</span>}
-            <span className="panel-chip">{visibleProjects.length} visible</span>
+            {isLoadingProjects && <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{t('projectLinkage.list.loading')}</span>}
+            <span className="panel-chip">{t('projectLinkage.list.visibleCount', { count: visibleProjects.length })}</span>
           </div>
         </div>
 
@@ -143,8 +148,8 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
               <div className="admin-empty-state-icon">
                 <Link2 size={18} />
               </div>
-              <strong>No projects yet</strong>
-              <span>Create a project first, then manage its linked users here.</span>
+              <strong>{t('projectLinkage.list.emptyTitle')}</strong>
+              <span>{t('projectLinkage.list.emptyBody')}</span>
             </div>
           )}
 
@@ -157,14 +162,14 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title">{project.name}</strong>
+                      <strong className="admin-item-title" dir="auto">{project.name}</strong>
                       <span className={`panel-chip ${isActive ? 'success' : status === 'archived' ? 'muted' : 'warning'}`}>
                         {status.toUpperCase()}
                       </span>
                     </div>
                     <div className="admin-item-meta">
                       <span>
-                        {linkedCount} linked user{linkedCount === 1 ? '' : 's'}
+                        {t('projectLinkage.list.linkedUserCount', { count: linkedCount })}
                       </span>
                     </div>
                   </div>
@@ -174,13 +179,13 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
                       className="btn-secondary project-linkage-compact-btn"
                       to={`/admin/project-linkage/${project.id}`}
                     >
-                      <Eye size={14} /> View
+                      <Eye size={14} /> {t('common:actions.view')}
                     </Link>
                     <Link
                       className="btn-secondary project-linkage-compact-btn"
                       to={`/admin/project-linkage/${project.id}/edit`}
                     >
-                      <Pencil size={14} /> Edit
+                      <Pencil size={14} /> {t('common:actions.edit')}
                     </Link>
                   </div>
                 </div>
@@ -193,8 +198,8 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
               <div className="admin-empty-state-icon">
                 <Search size={18} />
               </div>
-              <strong>No matching projects</strong>
-              <span>Try another search term or adjust the filters.</span>
+              <strong>{t('projectLinkage.list.noMatchTitle')}</strong>
+              <span>{t('projectLinkage.list.noMatchBody')}</span>
             </div>
           )}
         </div>
@@ -213,8 +218,11 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
             }}
           >
             <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-              Showing {(safePage - 1) * PAGE_SIZE + 1}-{Math.min(safePage * PAGE_SIZE, visibleProjects.length)} of{' '}
-              {visibleProjects.length}
+              {t('projectLinkage.list.showingRange', {
+                start: (safePage - 1) * PAGE_SIZE + 1,
+                end: Math.min(safePage * PAGE_SIZE, visibleProjects.length),
+                total: visibleProjects.length,
+              })}
             </div>
             <div className="project-linkage-pagination-controls">
               <button
@@ -222,17 +230,17 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
                 onClick={() => setCurrentPage((value) => Math.max(1, value - 1))}
                 disabled={safePage <= 1}
               >
-                Previous
+                {t('common:actions.previous')}
               </button>
               <span className="panel-chip">
-                Page {safePage} of {totalPages}
+                {t('common:pagination.pageOfTotal', { page: safePage, totalPages })}
               </span>
               <button
                 className="btn-secondary project-linkage-compact-btn"
                 onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
                 disabled={safePage >= totalPages}
               >
-                Next
+                {t('common:actions.next')}
               </button>
             </div>
           </div>

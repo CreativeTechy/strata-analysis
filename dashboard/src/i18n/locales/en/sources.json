@@ -1,0 +1,436 @@
+{
+  "reasonLabel": "Reason",
+  "perPageOption_one": "{{count}} per page",
+  "perPageOption_other": "{{count}} per page",
+
+  "trustTier": {
+    "trusted": "Trusted",
+    "mixed": "Mixed",
+    "untrusted": "Untrusted",
+    "unknown": "Not yet assessed"
+  },
+
+  "page": {
+    "kicker": "Sources",
+    "title": "Sources",
+    "subtitle": "where this project's articles actually came from: a real outlet when an article carries its own URL, the uploaded document otherwise.",
+    "backToDashboard": "Back to Dashboard"
+  },
+
+  "toolbar": {
+    "projectLabel": "Project",
+    "noProjectsYet": "No projects yet",
+    "perPageAriaLabel": "Sources per page"
+  },
+
+  "emptyState": {
+    "pickProjectTitle": "Pick a project",
+    "pickProjectBody": "Sources are scoped to one opinion-monitor project at a time.",
+    "loading": "Loading sources…",
+    "loadErrorTitle": "Couldn't load sources",
+    "loadErrorFallback": "Failed to load sources.",
+    "noSourcesTitle": "No sources yet",
+    "noSourcesBody": "Upload a document or import articles into this project first."
+  },
+
+  "summary": {
+    "sourcesRange_one": "Showing {{from}}–{{to}} of {{total}} source",
+    "sourcesRange_other": "Showing {{from}}–{{to}} of {{total}} sources",
+    "articlesTotal_one": "{{formatted}} article total",
+    "articlesTotal_other": "{{formatted}} articles total"
+  },
+
+  "sourceRow": {
+    "realSource": "Real source",
+    "uploadedDocument": "Uploaded document",
+    "articleCount_one": "{{count}} article",
+    "articleCount_other": "{{count}} articles",
+    "latestPublished": " · latest {{date}}",
+    "viewArticles": "View articles",
+    "visit": "Visit",
+    "showingOfCount": "Showing {{shown}} of {{total}}.",
+    "untitledArticle": "Untitled article",
+    "open": "Open"
+  },
+
+  "trustTooltip": {
+    "setBy": "Set by {{setBy}}: {{reason}}",
+    "setByFallback": "an operator",
+    "defaultWithReason": "{{reason}} (starting default{{setBySuffix}}, not reviewed by an operator yet)",
+    "defaultSetBySuffix": " - {{setBy}}",
+    "defaultNoReason": "Not yet reviewed by an operator - a starting default."
+  },
+
+  "trustEditor": {
+    "setTrust": "Set trust",
+    "trustTierLabel": "Trust tier",
+    "reasonPlaceholder": "Why this tier - what did you check?",
+    "save": "Save trust tier",
+    "genericError": "Failed to save trust tier."
+  },
+
+  "pagination": {
+    "ariaLabel": "Sources pagination"
+  },
+
+  "evidence": {
+    "header": {
+      "kicker": "Evidence workspace",
+      "titleFallback": "Project evidence",
+      "subtitle": "Inspect what each run supports, what remains uncertain, and the exact imported passages behind every assessment.",
+      "projectLink": "Project",
+      "waitTitle": "Wait for this analysis run to finish.",
+      "buildEvidence": "Build evidence",
+      "rebuildEvidence": "Rebuild evidence",
+      "starting": "Starting…",
+      "analysisRunning": "Analysis running…"
+    },
+
+    "scopeNote": {
+      "title": "Evidence from this run’s saved documents",
+      "body": "Claims are screened against the frozen research scope. Relevance and evidential support are assessed separately. No website is fetched while you review this page."
+    },
+
+    "requiresRebuild": "These saved results need a new relevance assessment. Rebuild evidence to show current relevant claims. Earlier results remain available under All candidates.",
+
+    "scope": {
+      "frozenTitle": "Frozen research scope",
+      "editedForRun": "Edited for this evidence run",
+      "capturedFromSettings": "Captured from project settings",
+      "editScope": "Edit scope",
+      "questionLabel": "Research question",
+      "descriptionLabel": "Description",
+      "locationLabel": "Geographic focus",
+      "keywordsLabel": "Keywords",
+      "keywordsPlaceholder": "Comma-separated guidance",
+      "directRelevanceLabel": "Direct relevance",
+      "allowedContextLabel": "Allowed context",
+      "exclusionsLabel": "Exclusions",
+      "saveScope": "Save scope",
+      "saveHint": "Save, then rebuild evidence to create a new staged generation.",
+      "geography": "Geography",
+      "keywordsDt": "Keywords",
+      "relevantContext": "Relevant context",
+      "exclude": "Exclude",
+      "noGeoLimit": "No explicit geographic limit",
+      "noKeywordGuidance": "No keyword guidance"
+    },
+
+    "filters": {
+      "analysisRun": "Analysis run",
+      "runOption": "Run {{number}} · {{date}} · {{claims}} · {{documents}}",
+      "topic": "Topic",
+      "allTopics": "All topics",
+      "searchPlaceholder": "Claim or explanation",
+      "assessment": "Assessment",
+      "allAssessments": "All assessments",
+      "hideFilters": "Hide filters",
+      "moreFilters": "More filters",
+      "claimType": "Claim type",
+      "allTypes": "All types",
+      "publisher": "Publisher",
+      "allPublishers": "All publishers",
+      "analystReview": "Analyst review",
+      "anyStatus": "Any status",
+      "needsAttention": "Needs attention",
+      "notReviewedByAnalyst": "Not reviewed by analyst",
+      "reviewed": "Reviewed",
+      "originReview": "Origin review",
+      "projectRelevance": "Project relevance",
+      "relevantCurrent": "Relevant claims · current assessment",
+      "excludedAsUnrelated": "Excluded as unrelated",
+      "allCandidates": "All candidates"
+    },
+
+    "claimType": {
+      "factual_assertion": "factual assertion",
+      "attributed_statement": "attributed statement",
+      "forecast": "forecast",
+      "opinion": "opinion",
+      "causal_explanation": "causal explanation"
+    },
+
+    "provenanceFilter": {
+      "unassessed": "Unassessed",
+      "verified": "Verified",
+      "rejected": "Rejected"
+    },
+
+    "provenanceStatus": {
+      "unassessed": "unassessed",
+      "verified": "verified",
+      "rejected": "rejected"
+    },
+
+    "provenanceForm": {
+      "originDecision": "Origin decision",
+      "returnToUnassessed": "Return to unassessed",
+      "reasonPlaceholder": "Record what you checked and why…",
+      "saveOriginReview": "Save origin review"
+    },
+
+    "count": {
+      "claims_one": "{{count}} claim",
+      "claims_other": "{{count}} claims",
+      "documents_one": "{{count}} document",
+      "documents_other": "{{count}} documents",
+      "relevantClaims_one": "{{count}} relevant claim",
+      "relevantClaims_other": "{{count}} relevant claims",
+      "sourcesExcluded_one": "{{count}} source excluded",
+      "sourcesExcluded_other": "{{count}} sources excluded"
+    },
+
+    "generationTabs": {
+      "title": "Evidence runs",
+      "subtitle": "Open a completed run to review its saved claims. Rebuilding keeps the last published result available.",
+      "ariaLabel": "Evidence processing runs",
+      "legacyEvidence": "Legacy evidence",
+      "evidenceNumber": "Evidence #{{number}}",
+      "published": "Published"
+    },
+
+    "generationStatus": {
+      "queued": "queued",
+      "running": "running",
+      "pending": "pending",
+      "success": "success",
+      "failed": "failed"
+    },
+
+    "errors": {
+      "loadFailed": "Failed to load evidence.",
+      "openClaimFailed": "Failed to open the claim.",
+      "openSourceFailed": "Failed to open the source evidence.",
+      "saveReviewFailed": "Failed to save the review.",
+      "saveRelevanceFailed": "Failed to save relevance review.",
+      "saveSourceReviewFailed": "Failed to save the source review.",
+      "saveScopeFailed": "Failed to save the research scope.",
+      "provenanceReviewFailed": "Failed to review provenance.",
+      "rebuildFailed": "Failed to rebuild evidence.",
+      "compareFailed": "Failed to compare evidence runs."
+    },
+
+    "notBuilt": {
+      "title": "Evidence has not been built for this run",
+      "body": "Build it from the run’s frozen article snapshot. If this is a legacy run without a snapshot, start a new analysis run."
+    },
+
+    "failed": {
+      "prefix": "Evidence processing failed: {{error}}. The last published evidence is still available in its tab. Use Rebuild evidence to retry safely.",
+      "unknownError": "Unknown error"
+    },
+
+    "reviewFailedAttempt": {
+      "summary": "Review failed attempt decisions",
+      "intro": "The failed attempt did not replace published evidence. These saved reasons explain what it excluded before stopping.",
+      "excludedSources_one": "{{count}} excluded source",
+      "excludedSources_other": "{{count}} excluded sources",
+      "unsupportedCandidatesShown_one": "{{count}} unsupported candidate shown",
+      "unsupportedCandidatesShown_other": "{{count}} unsupported candidates shown"
+    },
+
+    "running": {
+      "title": "Evidence processing is running",
+      "preparing": "Preparing claim candidates…",
+      "progress_one": "{{classified}} of {{total}} candidate classified",
+      "progress_other": "{{classified}} of {{total}} candidates classified"
+    },
+
+    "loadingEvidence": "Loading evidence…",
+
+    "noRuns": {
+      "title": "No evidence run yet",
+      "body": "Complete an analysis run to freeze the project evidence and extract claims."
+    },
+
+    "relevanceSummary": {
+      "relevant": "relevant",
+      "uncertain": "uncertain",
+      "excluded": "excluded",
+      "legacy": "legacy"
+    },
+
+    "overview": {
+      "totalClaims": "Total claims",
+      "extractedFromRun": "Extracted from this run",
+      "corroborated": "Corroborated",
+      "twoOrMoreOrigins": "Two or more independent origins",
+      "singleSource": "Single source",
+      "usefulNotConfirmed": "Useful, but not independently confirmed",
+      "needsReview": "Needs review",
+      "quotationNeedsAttention": "Quotation or source needs attention"
+    },
+
+    "quality": {
+      "title": "Source and candidate quality",
+      "unsupportedCandidates_one": "{{count}} unsupported candidate",
+      "unsupportedCandidates_other": "{{count}} unsupported candidates",
+      "duplicateRecords_one": "{{count}} duplicate record",
+      "duplicateRecords_other": "{{count}} duplicate records",
+      "body": "Similarity is a ranking signal, not a confidence percentage. Excluded material stays here with its reason. A source review applies on the next evidence rebuild.",
+      "excludedOrPendingTitle": "Excluded or pending sources",
+      "latestReview": "Latest review: {{decision}} — {{reason}}",
+      "review": "Review",
+      "includeNextRebuild": "Include next rebuild",
+      "keepExcluded": "Keep excluded",
+      "needsReviewOption": "Needs review",
+      "requiredReasonPlaceholder": "Required reason",
+      "unsupportedCandidatesTitle": "Unsupported claim candidates"
+    },
+
+    "actions": {
+      "saveReview": "Save review"
+    },
+
+    "articleFallback": "Article {{id}}",
+
+    "comparison": {
+      "title": "Compare runs",
+      "subtitle": "See evidence changes separately from rules-only reprocessing.",
+      "comparing": "Comparing…",
+      "compare": "Compare",
+      "noChanges": "No claim or evidence-count changes between these runs.",
+      "notPresent": "Not present",
+      "transition": "{{from}} → {{to}}"
+    },
+
+    "viewSwitch": {
+      "ariaLabel": "Evidence view",
+      "reviewClaims": "Review claims",
+      "compareSources": "Compare sources"
+    },
+
+    "matrix": {
+      "title": "Claims by source",
+      "onThisPage_one": "{{count}} on this page",
+      "onThisPage_other": "{{count}} on this page",
+      "updating": "Updating…",
+      "subtitle": "Compare source agreement and open any filled cell to inspect its exact saved passage.",
+      "quickFiltersAriaLabel": "Quick claim filters",
+      "quickFilters": {
+        "conflicting": "Conflicting",
+        "singleSource": "Single source"
+      },
+      "sourceColumnsAriaLabel": "Source columns",
+      "sourceToggle": {
+        "onPage": "Sources on page",
+        "allSources": "All sources"
+      },
+      "truthNoteStrong": "“Supported” means supported by qualifying passages in the saved documents.",
+      "truthNoteText": "It does not independently prove the claim is true in the real world.",
+      "showingRange_one": "Showing {{first}}–{{last}} of {{total}} claim",
+      "showingRange_other": "Showing {{first}}–{{last}} of {{total}} claims",
+      "hiddenSources_one": " · {{count}} unrelated source hidden",
+      "hiddenSources_other": " · {{count}} unrelated sources hidden",
+      "claimHeader": "Claim",
+      "inViewCount": "{{count}} in this view",
+      "qualifiedCount": "{{count}} qualified",
+      "noQualifyingPassage": "No qualifying passage",
+      "openEvidenceSuffix": ". Open evidence.",
+      "previousPage": "Previous claim page",
+      "nextPage": "Next claim page",
+      "paginationNavLabel": "{{position}} claim matrix pagination",
+      "positionTop": "Top",
+      "positionBottom": "Bottom",
+      "openFullReview": "Open full claim review",
+      "noMatch": "No source evidence matches these filters.",
+      "detailAriaLabel": "Source evidence detail",
+      "detailHeading": "Evidence detail",
+      "closeDetailAriaLabel": "Close evidence detail",
+      "loadingPassages": "Loading exact passages…",
+      "noPassageAvailable": "No saved passage is available for this source.",
+      "dtPublisher": "Publisher",
+      "dtPublished": "Published",
+      "dtLocator": "Locator"
+    },
+
+    "claims": {
+      "title": "Claims",
+      "subtitle": "Choose a status to focus the review queue.",
+      "showingRange": "Showing {{first}}–{{last}} of {{total}}",
+      "noMatch": "No claims match this topic.",
+      "originsCount_one": "{{count}} origin",
+      "originsCount_other": "{{count}} origins",
+      "supportingCount": "{{count}} supporting",
+      "conflictingCount": "{{count}} conflicting",
+      "reviewedSuffix": " · reviewed",
+      "paginationAriaLabel": "{{position}} claims pagination",
+      "tabsAriaLabel": "Claim status"
+    },
+
+    "claimTabs": {
+      "all": "All claims",
+      "needsReview": "Needs review",
+      "mixed": "Mixed",
+      "insufficient": "Insufficient",
+      "unavailable": "Unavailable"
+    },
+
+    "detail": {
+      "selectPrompt": "Select a claim to inspect its evidence.",
+      "automated": "Automated: {{label}}",
+      "analyst": "Analyst: {{label}}",
+      "whyMatches": "Why it matches the project",
+      "legacyNotClassified": "This legacy claim has not been classified against a project scope.",
+      "assessmentMethod": "Assessment method: {{value}}",
+      "independentOrigins": "Independent qualifying origins: {{count}}",
+      "quotationsChecked": "Exact quotations checked: {{count}}",
+      "timeScope": "Time scope: {{value}}",
+      "quantities": "Quantities: {{value}}",
+      "evidencePassages": "Evidence passages",
+      "exactQuotation": "exact quotation",
+      "exactQuotationTitle": "Exact passage found in frozen document",
+      "quotationUnavailable": "quotation unavailable",
+      "quotationUnavailableTitle": "No exact document passage",
+      "doesNotQualify": "Does not qualify",
+      "unknownSource": "Unknown source",
+      "published": "Published: {{date}}",
+      "locator": "Locator: {{value}}",
+      "unavailable": "Unavailable",
+      "contentType": "Content type: {{value}}",
+      "analysis": "Analysis: {{value}}",
+      "producedInRun": "Produced in this run",
+      "reusedFrozen": "Reused frozen analysis",
+      "originReviewLabel": "Origin review: {{value}}",
+      "passageMatch": "Passage match: {{percent}}",
+      "openSource": "Open source",
+      "storedArticle": "Stored article #{{id}}",
+      "reviewOrigin": "Review origin",
+      "analystReviewTitle": "Analyst review",
+      "explainEvidencePlaceholder": "Explain the evidence and the limits of this decision…",
+      "relevanceOverrideTitle": "Project relevance override",
+      "explainRelevancePlaceholder": "Explain why this claim belongs in or outside the project…",
+      "saveRelevanceOverride": "Save relevance override",
+      "reviewHistoryTitle": "Review history",
+      "reviewerFallback": "Reviewer",
+      "relevanceFallbackUnclassified": "Unclassified"
+    },
+
+    "labels": {
+      "supported": "Supported",
+      "contradicted": "Contradicted",
+      "mixedEvidence": "Mixed evidence",
+      "insufficientEvidence": "Insufficient evidence",
+      "notYetVerifiable": "Not yet verifiable",
+      "assessmentUnavailable": "Assessment unavailable"
+    },
+
+    "relevanceLabels": {
+      "direct": "Directly relevant",
+      "contextual": "Relevant context",
+      "unrelated": "Unrelated",
+      "uncertain": "Uncertain",
+      "unclassified": "Legacy / unclassified"
+    },
+
+    "matrixStates": {
+      "supporting": "Supports",
+      "contradicting": "Conflicts",
+      "contextual": "Context",
+      "review": "Review"
+    },
+
+    "unknownDate": "Unknown date",
+    "unknownTime": "Unknown time"
+  }
+}

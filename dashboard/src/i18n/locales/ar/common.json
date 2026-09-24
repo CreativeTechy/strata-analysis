@@ -1,0 +1,122 @@
+{
+  "app": {
+    "name": "Strata"
+  },
+  "actions": {
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "delete": "حذف",
+    "edit": "تعديل",
+    "close": "إغلاق",
+    "confirm": "تأكيد",
+    "back": "رجوع",
+    "next": "التالي",
+    "previous": "السابق",
+    "retry": "إعادة المحاولة",
+    "refresh": "تحديث",
+    "regenerate": "إعادة الإنشاء",
+    "export": "تصدير",
+    "import": "استيراد",
+    "upload": "رفع",
+    "download": "تنزيل",
+    "search": "بحث",
+    "filter": "تصفية",
+    "filters": "عوامل التصفية",
+    "clear": "مسح",
+    "clearAll": "مسح الكل",
+    "apply": "تطبيق",
+    "submit": "إرسال",
+    "create": "إنشاء",
+    "add": "إضافة",
+    "remove": "إزالة",
+    "view": "عرض",
+    "viewAll": "عرض الكل",
+    "viewDetails": "عرض التفاصيل",
+    "manage": "إدارة",
+    "select": "اختيار",
+    "selectAll": "تحديد الكل",
+    "copy": "نسخ",
+    "copied": "تم النسخ",
+    "reset": "إعادة تعيين",
+    "signIn": "تسجيل الدخول",
+    "signOut": "تسجيل الخروج",
+    "expand": "توسيع",
+    "collapse": "طي",
+    "openNavigation": "فتح التنقل",
+    "closeNavigation": "إغلاق التنقل",
+    "expandNavigation": "توسيع شريط التنقل",
+    "collapseNavigation": "طي شريط التنقل"
+  },
+  "status": {
+    "loading": "جارٍ التحميل…",
+    "saving": "جارٍ الحفظ…",
+    "processing": "جارٍ المعالجة…",
+    "pending": "قيد الانتظار",
+    "success": "تم بنجاح",
+    "failed": "فشل",
+    "error": "خطأ",
+    "unknown": "غير معروف"
+  },
+  "boolean": {
+    "yes": "نعم",
+    "no": "لا",
+    "on": "تشغيل",
+    "off": "إيقاف",
+    "enabled": "مفعّل",
+    "disabled": "معطّل"
+  },
+  "misc": {
+    "all": "الكل",
+    "none": "لا شيء",
+    "notAvailable": "غير متاح",
+    "unknown": "غير معروف",
+    "optional": "اختياري",
+    "required": "مطلوب",
+    "language": "اللغة",
+    "interfaceLanguage": "لغة الواجهة",
+    "outputLanguage": "لغة الإخراج",
+    "and": "و",
+    "or": "أو"
+  },
+  "pagination": {
+    "pageOfTotal": "صفحة {{page}} من {{totalPages}}",
+    "showingOfTotal": "عرض {{count}} من {{total}}",
+    "previousPage": "الصفحة السابقة",
+    "nextPage": "الصفحة التالية",
+    "itemCount_zero": "لا توجد عناصر",
+    "itemCount_one": "عنصر واحد",
+    "itemCount_two": "عنصران",
+    "itemCount_few": "{{count}} عناصر",
+    "itemCount_many": "{{count}} عنصرًا",
+    "itemCount_other": "{{count}} عنصر"
+  },
+  "emptyState": {
+    "noData": "لا توجد بيانات بعد",
+    "noResults": "لم يتم العثور على نتائج",
+    "noResultsHint": "حاول تعديل عوامل التصفية أو مصطلحات البحث.",
+    "nothingSelected": "لم يتم تحديد شيء"
+  },
+  "dialog": {
+    "confirmDeleteTitle": "هل تريد حذف هذا العنصر؟",
+    "confirmDeleteBody": "لا يمكن التراجع عن هذا الإجراء.",
+    "unsavedChangesTitle": "هل تريد تجاهل التغييرات غير المحفوظة؟",
+    "unsavedChangesBody": "لديك تغييرات غير محفوظة سيتم فقدانها."
+  },
+  "errors": {
+    "genericTitle": "حدث خطأ ما",
+    "genericBody": "يرجى المحاولة مرة أخرى. إذا استمرت المشكلة، تواصل مع مسؤول النظام.",
+    "networkTitle": "مشكلة في الاتصال",
+    "networkBody": "تعذّر الوصول إلى الخادم. تحقق من اتصالك وحاول مرة أخرى.",
+    "unauthorized": "انتهت صلاحية جلستك. يرجى تسجيل الدخول مرة أخرى."
+  },
+  "a11y": {
+    "loadingSpinner": "جارٍ التحميل",
+    "closeDialog": "إغلاق مربع الحوار",
+    "mainNavigation": "التنقل الرئيسي",
+    "userMenu": "قائمة المستخدم"
+  },
+  "search": {
+    "placeholder": "بحث…",
+    "noMatches": "لا توجد تطابقات"
+  }
+}

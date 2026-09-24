@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { Pencil, ShieldAlert, ArrowLeft } from 'lucide-react';
 import RoleForm from './RoleForm';
@@ -7,6 +8,7 @@ import { listRoles, listPermissions, updateRole } from '../api/adminApi.js';
 // Edit-only: loads one existing role and its permission set and saves changes
 // back to it. Creating a new role lives in RoleCreatePage.
 export default function RoleEditPage() {
+  const { t } = useTranslation('admin');
   const navigate = useNavigate();
   const { roleId } = useParams();
   const [permissions, setPermissions] = useState([]);
@@ -64,10 +66,10 @@ export default function RoleEditPage() {
             <div className="admin-empty-state-icon">
               <ShieldAlert size={18} />
             </div>
-            <strong>Role not found</strong>
-            <span>{loadError || 'It may have been removed, or you may not have access to it.'}</span>
+            <strong>{t('notFound.roleTitle')}</strong>
+            <span dir="auto">{loadError || t('notFound.hint')}</span>
             <Link to="/admin/roles" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-              <ArrowLeft size={16} /> Back to Roles
+              <ArrowLeft size={16} className="rtl-mirror" /> {t('notFound.backToRoles')}
             </Link>
           </div>
         </div>
@@ -80,22 +82,25 @@ export default function RoleEditPage() {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <Pencil size={14} /> Access control
+            <Pencil size={14} /> {t('kickers.accessControl')}
           </div>
-          <h1 className="admin-page-title">Edit role{role ? `: ${role.name}` : ''}</h1>
-          <p className="admin-page-subtitle">Rename the role or adjust the permissions it grants.</p>
+          <h1 className="admin-page-title">
+            {t('roles.edit.title')}
+            {role && <>: <span dir="auto">{role.name}</span></>}
+          </h1>
+          <p className="admin-page-subtitle">{t('roles.edit.subtitle')}</p>
         </div>
       </div>
 
       {loadError && (
-        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }}>
+        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c', marginBottom: 16 }} dir="auto">
           {loadError}
         </div>
       )}
 
       {loading && (
         <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)' }}>
-          <div className="loading-spinner" /> Loading role...
+          <div className="loading-spinner" /> {t('roles.edit.loading')}
         </div>
       )}
 
@@ -105,7 +110,7 @@ export default function RoleEditPage() {
           onChange={setValue}
           permissions={permissions}
           fullAccess={Boolean(role?.full_access)}
-          submitLabel="Save changes"
+          submitLabel={t('roles.edit.submitLabel')}
           submitting={submitting}
           error={error}
           onSubmit={handleSubmit}

@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, FileCheck, ListChecks, Loader2, ScanText, Trash2, Upload, X,
@@ -30,6 +31,7 @@ const ARTICLES_ACTIVE_STATUSES = new Set(['pending', 'generating']);
 const CANDIDATES_PAGE_SIZE = 10;
 
 export function DocumentsPanel({ studyId }) {
+  const { t } = useTranslation(['competitors', 'common']);
   const [error, setError] = useState('');
   const [loadingInitial, setLoadingInitial] = useState(true);
 
@@ -237,12 +239,12 @@ export function DocumentsPanel({ studyId }) {
       {error ? (
         <div className="cs-alert cs-alert-error" style={{ marginBottom: 16 }}>
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>{error}</span>
+          <span dir="auto">{error}</span>
         </div>
       ) : null}
 
       <div className="cs-field">
-        <label className="cs-label" htmlFor="cs-documents-files">Files</label>
+        <label className="cs-label" htmlFor="cs-documents-files">{t('documentsPanel.filesLabel')}</label>
         <div
           className={`cs-dropzone${dropActive ? ' cs-dropzone-active' : ''}`}
           role="button"
@@ -264,15 +266,15 @@ export function DocumentsPanel({ studyId }) {
           }}
         >
           <div className="cs-dropzone-icon"><Upload size={20} /></div>
-          <div className="cs-dropzone-title">Drag files here, or click to browse</div>
-          <div className="cs-dropzone-hint">Multiple files at once are fine</div>
+          <div className="cs-dropzone-title">{t('documentsPanel.dropzoneTitle')}</div>
+          <div className="cs-dropzone-hint">{t('documentsPanel.dropzoneHint')}</div>
           <div className="cs-dropzone-types">
             {['PDF', 'DOC', 'DOCX', 'XLS', 'XLSX', 'CSV', 'PNG', 'JPG', 'JSON', 'JSONL'].map((ext) => (
               <span key={ext} className="cs-pill cs-pill-signal">{ext}</span>
             ))}
           </div>
           <div className="cs-dropzone-hint" style={{ marginTop: 6 }}>
-            JSON/JSONL exports are read as articles directly — one record per article, no splitting.
+            {t('documentsPanel.jsonHint')}
           </div>
           <input
             id="cs-documents-files"
@@ -295,12 +297,12 @@ export function DocumentsPanel({ studyId }) {
           {pendingFiles.map((file, index) => (
             <div key={`${file.name}-${index}`} className="cs-row">
               <div className="cs-row-main">
-                <div className="cs-row-name">{file.name}</div>
-                <div className="cs-row-desc">{(file.size / 1024).toFixed(0)} KB — not uploaded yet</div>
+                <div className="cs-row-name" dir="auto">{file.name}</div>
+                <div className="cs-row-desc">{(file.size / 1024).toFixed(0)} KB {t('documentsPanel.notUploadedYet')}</div>
               </div>
               <div className="cs-row-side">
                 <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removePendingFile(index)}>
-                  <Trash2 size={13} /> Remove
+                  <Trash2 size={13} /> {t('common:actions.remove')}
                 </button>
               </div>
             </div>
@@ -312,7 +314,7 @@ export function DocumentsPanel({ studyId }) {
             disabled={uploadingDocs}
           >
             {uploadingDocs ? <Loader2 size={15} className="cs-spin" /> : <Upload size={15} />}
-            {uploadingDocs ? 'Uploading...' : `Upload ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}`}
+            {uploadingDocs ? t('documentsPanel.uploadingEllipsis') : t('documentsPanel.uploadFiles', { count: pendingFiles.length })}
           </button>
         </div>
       ) : null}
@@ -320,10 +322,10 @@ export function DocumentsPanel({ studyId }) {
       {documents.length ? (
         <div className="cs-field">
           <label className="cs-label">
-            Uploaded
+            {t('documentsPanel.uploadedLabel')}
             <span className="cs-label-hint">
-              {documents.length} file{documents.length === 1 ? '' : 's'}
-              {extractingDocs ? ' — reading contents...' : ''}
+              {t('documentsPanel.fileCount', { count: documents.length })}
+              {extractingDocs ? ` ${t('documentsPanel.readingContents')}` : ''}
             </span>
           </label>
           <div className="cs-rows">
@@ -331,14 +333,14 @@ export function DocumentsPanel({ studyId }) {
               const active = document.status === 'uploaded' || document.status === 'processing';
               const progress = active && document.total_chunks ? ` (${document.processed_chunks || 0}/${document.total_chunks})` : '';
               const methodLabel = document.extraction_method === 'ocr'
-                ? 'Extracted (OCR)'
+                ? t('documentsPanel.extractedOcr')
                 : document.extraction_method === 'mixed'
-                  ? 'Extracted (mixed)'
-                  : 'Extracted';
+                  ? t('documentsPanel.extractedMixed')
+                  : t('documentsPanel.extracted');
               return (
                 <div key={document.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
                   <div className="cs-row-main">
-                    <div className="cs-row-name">{document.original_filename}</div>
+                    <div className="cs-row-name" dir="auto">{document.original_filename}</div>
                     <div className="cs-row-desc">{(document.size_bytes / 1024).toFixed(0)} KB</div>
                     {document.extraction_error ? (
                       <div
@@ -348,22 +350,22 @@ export function DocumentsPanel({ studyId }) {
                         }}
                       >
                         <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-                        <span>{document.extraction_error}</span>
+                        <span dir="auto">{document.extraction_error}</span>
                       </div>
                     ) : null}
                   </div>
                   <div className="cs-row-side">
                     {active ? (
                       <span className="cs-pill cs-pill-pending">
-                        <span className="cs-spinner" style={{ width: 11, height: 11 }} /> Reading{progress}...
+                        <span className="cs-spinner" style={{ width: 11, height: 11 }} /> {t('documentsPanel.readingWithProgress', { progress })}
                       </span>
                     ) : document.status === 'failed' ? (
-                      <span className="cs-pill cs-pill-rejected"><AlertTriangle size={11} /> Not extracted</span>
+                      <span className="cs-pill cs-pill-rejected"><AlertTriangle size={11} /> {t('documentsPanel.notExtracted')}</span>
                     ) : (
                       <span className="cs-pill cs-pill-valid"><ScanText size={11} /> {methodLabel}</span>
                     )}
                     <button type="button" className="cs-btn cs-btn-sm cs-btn-danger" onClick={() => removeDocument(document.id)}>
-                      <Trash2 size={13} /> Remove
+                      <Trash2 size={13} /> {t('common:actions.remove')}
                     </button>
                   </div>
                 </div>
@@ -377,7 +379,7 @@ export function DocumentsPanel({ studyId }) {
         <div className="cs-panel" style={{ marginBottom: 16, background: '#fcfdff' }}>
           <div className="cs-progress-row cs-progress-row-active">
             <span className="cs-spinner" />
-            <span>Reading your documents into articles...</span>
+            <span>{t('documentsPanel.readingIntoArticles')}</span>
           </div>
         </div>
       ) : null}
@@ -386,9 +388,9 @@ export function DocumentsPanel({ studyId }) {
         <div className="cs-field">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
             <label className="cs-label" style={{ marginBottom: 0 }}>
-              Review extracted articles
+              {t('documentsPanel.reviewHeading')}
               <span className="cs-label-hint">
-                {approvedCandidateCount} approved, {pendingCandidateCount} pending
+                {t('documentsPanel.reviewSummary', { approved: approvedCandidateCount, pending: pendingCandidateCount })}
               </span>
             </label>
             <button
@@ -398,29 +400,33 @@ export function DocumentsPanel({ studyId }) {
               disabled={approvingAll || !pendingCandidateCount}
             >
               {approvingAll ? <Loader2 size={15} className="cs-spin" /> : <ListChecks size={15} />}
-              {approvingAll ? 'Approving...' : `Approve all${pendingCandidateCount ? ` (${pendingCandidateCount})` : ''}`}
+              {approvingAll
+                ? t('documentsPanel.approvingEllipsis')
+                : pendingCandidateCount
+                  ? t('documentsPanel.approveAllWithCount', { count: pendingCandidateCount })
+                  : t('documentsPanel.approveAll')}
             </button>
           </div>
 
           {[...pagedCandidatesByDocument.entries()].map(([documentId, candidates]) => (
             <div key={documentId} style={{ marginBottom: 18 }}>
-              <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {documentById[documentId]?.original_filename || 'Document'}
+              <div style={{ fontSize: '0.76rem', fontWeight: 650, color: 'var(--text-light)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }} dir="auto">
+                {documentById[documentId]?.original_filename || t('documentsPanel.documentFallback')}
               </div>
               <div className="cs-rows">
                 {candidates.map((candidate) => (
                   <div key={candidate.id} className="cs-row" style={{ alignItems: 'flex-start' }}>
                     <div className="cs-row-main">
-                      <div className="cs-row-name">{candidate.title}</div>
-                      <div className="cs-row-desc" style={{ whiteSpace: 'normal', maxWidth: 'none' }}>
+                      <div className="cs-row-name" dir="auto">{candidate.title}</div>
+                      <div className="cs-row-desc" style={{ whiteSpace: 'normal', maxWidth: 'none' }} dir="auto">
                         {candidate.summary}
                       </div>
                     </div>
                     <div className="cs-row-side">
                       {candidate.status === 'approved' ? (
-                        <span className="cs-pill cs-pill-valid"><Check size={11} /> Approved</span>
+                        <span className="cs-pill cs-pill-valid"><Check size={11} /> {t('documentsPanel.approved')}</span>
                       ) : candidate.status === 'rejected' ? (
-                        <span className="cs-pill cs-pill-rejected"><X size={11} /> Rejected</span>
+                        <span className="cs-pill cs-pill-rejected"><X size={11} /> {t('documentsPanel.rejected')}</span>
                       ) : (
                         <>
                           <button
@@ -429,7 +435,7 @@ export function DocumentsPanel({ studyId }) {
                             disabled={decidingCandidate[candidate.id]}
                             onClick={() => decideCandidate(candidate.id, 'rejected')}
                           >
-                            <X size={13} /> Reject
+                            <X size={13} /> {t('documentsPanel.rejectAction')}
                           </button>
                           <button
                             type="button"
@@ -437,7 +443,7 @@ export function DocumentsPanel({ studyId }) {
                             disabled={decidingCandidate[candidate.id]}
                             onClick={() => decideCandidate(candidate.id, 'approved')}
                           >
-                            {decidingCandidate[candidate.id] ? <Loader2 size={13} className="cs-spin" /> : <Check size={13} />} Approve
+                            {decidingCandidate[candidate.id] ? <Loader2 size={13} className="cs-spin" /> : <Check size={13} />} {t('documentsPanel.approveAction')}
                           </button>
                         </>
                       )}
@@ -449,14 +455,14 @@ export function DocumentsPanel({ studyId }) {
           ))}
 
           {totalCandidatePages > 1 && (
-            <div className="cs-candidates-pager" role="navigation" aria-label="Articles pagination">
+            <div className="cs-candidates-pager" role="navigation" aria-label={t('documentsPanel.paginationAria')}>
               <button
                 type="button"
                 className="cs-btn cs-btn-ghost cs-btn-sm"
                 onClick={() => setCandidatesPage((prev) => Math.max(1, prev - 1))}
                 disabled={candidatesPage <= 1}
               >
-                <ChevronLeft size={14} /> Previous
+                <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
               </button>
               {candidatePageNumbers.map((page, index) =>
                 page === '...' ? (
@@ -479,7 +485,7 @@ export function DocumentsPanel({ studyId }) {
                 onClick={() => setCandidatesPage((prev) => Math.min(totalCandidatePages, prev + 1))}
                 disabled={candidatesPage >= totalCandidatePages}
               >
-                Next <ChevronRight size={14} />
+                {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
               </button>
             </div>
           )}
@@ -489,8 +495,8 @@ export function DocumentsPanel({ studyId }) {
       {!documents.length && !pendingFiles.length ? (
         <div className="cs-empty">
           <div className="cs-empty-icon"><FileCheck size={20} /></div>
-          <h3>No documents yet</h3>
-          <p>Add some above to give this study evidence to report on.</p>
+          <h3>{t('documentsPanel.emptyTitle')}</h3>
+          <p>{t('documentsPanel.emptyBodyStandalone')}</p>
         </div>
       ) : null}
     </div>
@@ -498,6 +504,7 @@ export function DocumentsPanel({ studyId }) {
 }
 
 export default function CompetitorDocumentsPage() {
+  const { t } = useTranslation('competitors');
   const { studyId } = useParams();
   const navigate = useNavigate();
   const [study, setStudy] = useState(null);
@@ -523,22 +530,16 @@ export default function CompetitorDocumentsPage() {
       <div className="cs-head">
         <div>
           <Link to={`/competitors/${studyId}`} className="cs-link-back">
-            <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> Reports
+            <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('shared.reports')}
           </Link>
-          <h1>{study?.name || 'Competitor study'} — Documents</h1>
-          <p>
-            Upload files to give this study evidence to report on. Each one is extracted as soon as
-            it uploads — text where the file has any, OCR where it doesn&rsquo;t — split into
-            candidate articles, and approved automatically so they&rsquo;re usable evidence right
-            away. Don&rsquo;t want one included? Reject it here, or delete it from the Articles page
-            later.
-          </p>
+          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')} — {t('documents.pageTitleWord')}</h1>
+          <p>{t('documents.pageHint')}</p>
         </div>
       </div>
 
       {error ? (
         <div className="cs-alert cs-alert-error">
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{error}</span>
         </div>
       ) : null}
 
@@ -546,7 +547,7 @@ export default function CompetitorDocumentsPage() {
 
       <div className="cs-wizard-foot">
         <button type="button" className="cs-btn cs-btn-primary" onClick={() => navigate(`/competitors/${studyId}`)}>
-          <CheckCircle2 size={15} /> Done
+          <CheckCircle2 size={15} /> {t('documents.doneButton')}
         </button>
       </div>
     </div>

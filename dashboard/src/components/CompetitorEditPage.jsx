@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { AlertTriangle, Check, ChevronRight, Trash2 } from 'lucide-react';
 import {
@@ -19,6 +20,7 @@ import '../styles/Competitors.css';
 const STUDY_STATUS_OPTIONS = ['draft', 'active', 'archived'];
 
 export default function CompetitorEditPage() {
+  const { t } = useTranslation(['competitors', 'common']);
   const { studyId } = useParams();
   const navigate = useNavigate();
 
@@ -111,82 +113,79 @@ export default function CompetitorEditPage() {
       <div className="cs-head">
         <div>
           <Link to={`/competitors/${studyId}`} className="cs-link-back">
-            <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /> Reports
+            <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('shared.reports')}
           </Link>
-          <h1>Edit {studyName || 'competitor study'}</h1>
-          <p>Study settings and the business profile competitors get judged against.</p>
+          <h1 dir="auto">{t('editPage.editTitle', { name: studyName || t('editPage.competitorStudyFallbackLower') })}</h1>
+          <p>{t('editPage.subtitle')}</p>
         </div>
       </div>
 
       {error ? (
         <div className="cs-alert cs-alert-error">
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{error}</span>
         </div>
       ) : null}
 
       <div className="cs-panel" style={{ marginBottom: 20 }}>
-        <h2 className="cs-panel-title">Study</h2>
+        <h2 className="cs-panel-title">{t('editPage.studyHeading')}</h2>
         <div className="cs-field">
-          <label className="cs-label" htmlFor="cs-study-name">Name</label>
-          <input id="cs-study-name" className="cs-input" value={studyName}
+          <label className="cs-label" htmlFor="cs-study-name">{t('editPage.nameLabel')}</label>
+          <input id="cs-study-name" className="cs-input" value={studyName} dir="auto"
             onChange={(event) => { setStudyName(event.target.value); setSaved(false); }} />
         </div>
         <div className="cs-field">
-          <label className="cs-label" htmlFor="cs-study-description">Description</label>
-          <textarea id="cs-study-description" className="cs-textarea" style={{ minHeight: 80 }}
+          <label className="cs-label" htmlFor="cs-study-description">{t('editPage.descriptionLabel')}</label>
+          <textarea id="cs-study-description" className="cs-textarea" style={{ minHeight: 80 }} dir="auto"
             value={studyDescription}
             onChange={(event) => { setStudyDescription(event.target.value); setSaved(false); }} />
         </div>
         <div className="cs-field">
-          <label className="cs-label" htmlFor="cs-study-status">Status</label>
+          <label className="cs-label" htmlFor="cs-study-status">{t('editPage.statusLabel')}</label>
           <select id="cs-study-status" className="cs-input" value={studyStatus}
             onChange={(event) => { setStudyStatus(event.target.value); setSaved(false); }}>
             {STUDY_STATUS_OPTIONS.map((status) => (
-              <option key={status} value={status}>{status}</option>
+              <option key={status} value={status}>{t(`editPage.statusOptions.${status}`)}</option>
             ))}
           </select>
         </div>
       </div>
 
       <div className="cs-panel" style={{ marginBottom: 20 }}>
-        <h2 className="cs-panel-title">Business profile</h2>
-        <p className="cs-panel-hint">
-          This is the description competitors get matched against, and what every &ldquo;how does this
-          affect us&rdquo; judgement is measured by.
-        </p>
+        <h2 className="cs-panel-title">{t('editPage.profileHeading')}</h2>
+        <p className="cs-panel-hint">{t('editPage.profileHint')}</p>
 
         <div className="cs-grid-2">
           <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-p-industry">Industry</label>
-            <input id="cs-p-industry" className="cs-input" value={profileDraft.industry}
+            <label className="cs-label" htmlFor="cs-p-industry">{t('editPage.industryLabel')}</label>
+            <input id="cs-p-industry" className="cs-input" value={profileDraft.industry} dir="auto"
               onChange={(event) => { setProfileDraft({ ...profileDraft, industry: event.target.value }); setSaved(false); }} />
           </div>
           <div className="cs-field">
-            <label className="cs-label" htmlFor="cs-p-market">Market you compete in</label>
-            <input id="cs-p-market" className="cs-input" value={profileDraft.market}
+            <label className="cs-label" htmlFor="cs-p-market">{t('editPage.marketLabel')}</label>
+            <input id="cs-p-market" className="cs-input" value={profileDraft.market} dir="auto"
               onChange={(event) => { setProfileDraft({ ...profileDraft, market: event.target.value }); setSaved(false); }} />
           </div>
         </div>
 
         <div className="cs-field">
-          <label className="cs-label" htmlFor="cs-p-positioning">Positioning</label>
-          <input id="cs-p-positioning" className="cs-input" value={profileDraft.positioning}
+          <label className="cs-label" htmlFor="cs-p-positioning">{t('editPage.positioningLabel')}</label>
+          <input id="cs-p-positioning" className="cs-input" value={profileDraft.positioning} dir="auto"
             onChange={(event) => { setProfileDraft({ ...profileDraft, positioning: event.target.value }); setSaved(false); }} />
         </div>
 
-        <ListEditor label="What you offer" values={profileDraft.offerings}
-          placeholder="demand forecasting"
+        <ListEditor label={t('editPage.offeringsLabel')} values={profileDraft.offerings}
+          placeholder={t('editPage.offeringsPlaceholder')}
           onChange={(offerings) => { setProfileDraft({ ...profileDraft, offerings }); setSaved(false); }} />
-        <ListEditor label="Who buys it" values={profileDraft.audience}
-          placeholder="operations directors"
+        <ListEditor label={t('editPage.audienceLabel')} values={profileDraft.audience}
+          placeholder={t('editPage.audiencePlaceholder')}
           onChange={(audience) => { setProfileDraft({ ...profileDraft, audience }); setSaved(false); }} />
-        <ListEditor label="What sets you apart" hint="used to judge competitor moves"
-          values={profileDraft.differentiators} placeholder="implementation in under 30 days"
+        <ListEditor label={t('editPage.differentiatorsLabel')} hint={t('editPage.differentiatorsHint')}
+          values={profileDraft.differentiators} placeholder={t('editPage.differentiatorsPlaceholder')}
           onChange={(differentiators) => { setProfileDraft({ ...profileDraft, differentiators }); setSaved(false); }} />
 
         <div className="cs-field">
-          <label className="cs-label" htmlFor="cs-p-context">Market context</label>
-          <textarea id="cs-p-context" className="cs-textarea" style={{ minHeight: 110 }}
+          <label className="cs-label" htmlFor="cs-p-context">{t('editPage.contextLabel')}</label>
+          <textarea id="cs-p-context" className="cs-textarea" style={{ minHeight: 110 }} dir="auto"
             value={profileDraft.context_summary}
             onChange={(event) => { setProfileDraft({ ...profileDraft, context_summary: event.target.value }); setSaved(false); }} />
         </div>
@@ -195,25 +194,25 @@ export default function CompetitorEditPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 28 }}>
         <button type="button" className="cs-btn cs-btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? <span className="cs-spinner" /> : <Check size={15} />}
-          {saving ? 'Saving...' : 'Save changes'}
+          {saving ? t('editPage.savingEllipsis') : t('editPage.saveChanges')}
         </button>
-        {saved && !saving ? <span style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>Saved.</span> : null}
+        {saved && !saving ? <span style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>{t('editPage.savedText')}</span> : null}
       </div>
 
       <div className="cs-panel" style={{ borderColor: 'rgba(255, 71, 87, 0.35)' }}>
-        <h2 className="cs-panel-title" style={{ color: '#ff4757' }}>Danger zone</h2>
-        <p className="cs-panel-hint">Permanently remove this study, its business profile, tracked competitors, and findings.</p>
+        <h2 className="cs-panel-title" style={{ color: '#ff4757' }}>{t('editPage.dangerZoneHeading')}</h2>
+        <p className="cs-panel-hint">{t('editPage.dangerZoneHint')}</p>
         <button type="button" className="cs-btn" onClick={() => setDeleteOpen(true)} style={{ color: '#ff4757' }}>
-          <Trash2 size={15} /> Delete study
+          <Trash2 size={15} /> {t('editPage.deleteStudyBtn')}
         </button>
       </div>
 
       <ConfirmModal
         open={deleteOpen}
-        title={`Delete study "${studyName}"?`}
-        message="This will permanently remove the study, its business profile, tracked competitors, and findings."
-        confirmLabel={deleting ? 'Deleting...' : 'Delete study'}
-        cancelLabel="Keep study"
+        title={t('editPage.confirmDeleteTitle', { name: studyName })}
+        message={t('editPage.confirmDeleteMessage')}
+        confirmLabel={deleting ? t('editPage.deletingEllipsis') : t('editPage.deleteStudyBtn')}
+        cancelLabel={t('editPage.keepStudy')}
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',

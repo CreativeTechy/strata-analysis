@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import ConfirmModal from './ConfirmModal';
 import DemographicSentimentChart from './DemographicSentimentChart';
 import SurveyObservationsChart from './SurveyObservationsChart';
 import { useAuth } from '../auth/useAuth.js';
+import { translateApiError } from '../lib/apiError.js';
+import { formatDate as formatDateIntl, formatDateTime as formatDateTimeIntl, formatNumber } from '../lib/i18nFormat.js';
 import {
   ArrowLeft,
   BarChart3,
@@ -37,26 +40,12 @@ function documentStatusTone(status) {
   return 'muted';
 }
 
-function formatBytes(value) {
+function formatBytes(value, locale) {
   const bytes = Number(value || 0);
   if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDate(value) {
-  if (!value) return 'Not set';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
-}
-
-function formatDateTime(value) {
-  if (!value) return 'Not yet';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleString();
+  if (bytes < 1024) return `${formatNumber(bytes, locale)} B`;
+  if (bytes < 1024 * 1024) return `${formatNumber(Math.round(bytes / 1024), locale)} KB`;
+  return `${formatNumber(bytes / (1024 * 1024), locale, { maximumFractionDigits: 1, minimumFractionDigits: 1 })} MB`;
 }
 
 function normalizeList(value) {
@@ -77,6 +66,34 @@ export default function ProjectDetailPage({
 }) {
   const navigate = useNavigate();
   const params = useParams();
+  const { t, i18n } = useTranslation('projects');
+  const { t: tErrors } = useTranslation('errors');
+  const locale = i18n.language;
+  const formatDate = (value) => formatDateIntl(value, locale) || t('detail.overview.notSet');
+  const formatDateTime = (value) => formatDateTimeIntl(value, locale) || t('detail.analysis.notYet');
+  const locationTypeLabels = {
+    on_site: t('shared.locationTypeLabels.on_site'),
+    remote: t('shared.locationTypeLabels.remote'),
+    hybrid: t('shared.locationTypeLabels.hybrid'),
+  };
+  const documentStatusLabels = {
+    uploaded: t('documents:detail.documents.statusLabels.uploaded'),
+    processing: t('documents:detail.documents.statusLabels.processing'),
+    processed: t('documents:detail.documents.statusLabels.processed'),
+    failed: t('documents:detail.documents.statusLabels.failed'),
+  };
+  const articlesStatusLabels = {
+    pending: t('documents:detail.documents.articlesStatusLabels.pending'),
+    generating: t('documents:detail.documents.articlesStatusLabels.generating'),
+    ready: t('documents:detail.documents.articlesStatusLabels.ready'),
+    failed: t('documents:detail.documents.articlesStatusLabels.failed'),
+    skipped: t('documents:detail.documents.articlesStatusLabels.skipped'),
+  };
+  const lastRunStatusLabels = {
+    success: t('detail.analysis.statusLabels.success'),
+    failed: t('detail.analysis.statusLabels.failed'),
+    cancelled: t('detail.analysis.statusLabels.cancelled'),
+  };
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
@@ -153,7 +170,7 @@ export default function ProjectDetailPage({
       } catch (err) {
         if (err?.name !== 'AbortError') {
           setIdeaClusters({ clusters: [], total: 0, limit: 10, offset: 0 });
-          setIdeaClustersError(err?.message || 'Failed to load frequent ideas.');
+          setIdeaClustersError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('detail.ideas.errors.loadFailed')));
         }
       } finally {
         setIdeaClustersLoading(false);
@@ -161,7 +178,7 @@ export default function ProjectDetailPage({
     }
     loadIdeaClusters();
     return () => controller.abort();
-  }, [project?.id, ideaOffset]);
+  }, [project?.id, ideaOffset, t, tErrors]);
 
   // A cluster's persisted frequency can span far more articles than fit in
   // this page's list - fetch a large-but-bounded page of its representative
@@ -191,11 +208,14 @@ export default function ProjectDetailPage({
           projectId: project.id,
           sources: clusterSources,
           backTo: '/dashboard',
-          backLabel: 'Back to Dashboard',
+          backLabel: t('detail.ideas.backToDashboard'),
         },
       });
     } catch (err) {
-      setClusterOpenErrors((current) => ({ ...current, [cluster.id]: err?.message || 'Failed to load articles for this idea.' }));
+      setClusterOpenErrors((current) => ({
+        ...current,
+        [cluster.id]: err?.code ? translateApiError(tErrors, err) : (err?.message || t('detail.ideas.errors.openArticlesFailed')),
+      }));
     } finally {
       setOpeningClusterId(null);
     }
@@ -220,9 +240,9 @@ export default function ProjectDetailPage({
     setAnalysisError('');
     try {
       const data = await startAnalysisRun({ project_id: Number(project.id), scope: 'pending' });
-      setAnalysisNotice(data?.message || 'Analysis run started.');
+      setAnalysisNotice(data?.message || t('detail.analysis.started'));
     } catch (err) {
-      setAnalysisError(err?.message || 'Failed to start analysis run.');
+      setAnalysisError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('detail.errors.startAnalysisFailed')));
     } finally {
       setAnalysisStarting(false);
     }
@@ -246,7 +266,7 @@ export default function ProjectDetailPage({
   const status = String(project?.status || 'draft').toLowerCase();
   const isActive = status === 'active';
   const isArchived = status === 'archived';
-  const statusLabel = status.toUpperCase();
+  const statusLabel = (t(`shared.statusLabels.${status}`, { defaultValue: status }) || status).toUpperCase();
 
   if (!project) {
     return (
@@ -256,10 +276,10 @@ export default function ProjectDetailPage({
             <div className="admin-empty-state-icon">
               <CalendarDays size={18} />
             </div>
-            <strong>Project not found</strong>
-            <span>The project may have been removed or the link is outdated.</span>
+            <strong>{t('detail.notFound.title')}</strong>
+            <span>{t('detail.notFound.body')}</span>
             <Link to="/projects" className="btn-primary" style={{ marginTop: 8, textDecoration: 'none' }}>
-              <ArrowLeft size={16} /> Back to Projects
+              <ArrowLeft size={16} className="rtl-mirror" /> {t('detail.notFound.backToProjects')}
             </Link>
           </div>
         </div>
@@ -278,30 +298,30 @@ export default function ProjectDetailPage({
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <CalendarDays size={14} /> Project details
+            <CalendarDays size={14} /> {t('detail.kicker')}
           </div>
-          <h1 className="admin-page-title">{project.name}</h1>
+          <h1 className="admin-page-title" dir="auto">{project.name}</h1>
           <p className="admin-page-subtitle">
-            Review the sources, tags, and discovery details attached to this project. This page is the best place to inspect the working scope before running the pipeline.
+            {t('detail.subtitle')}
           </p>
         </div>
 
         <div className="admin-page-toolbar">
           <div className="admin-page-toolbar-meta">
-            <span>Status</span>
+            <span>{t('detail.toolbar.statusLabel')}</span>
             <strong>{statusLabel}</strong>
           </div>
           <div className="admin-page-toolbar-meta">
-            <span>Documents</span>
-            <strong>{documents.length.toLocaleString()}</strong>
+            <span>{t('detail.toolbar.documentsLabel')}</span>
+            <strong>{formatNumber(documents.length, locale)}</strong>
           </div>
           <Link to={`/projects/${project.id}/evidence`} className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ShieldCheck size={16} /> Evidence
+            <ShieldCheck size={16} /> {t('detail.actions.evidence')}
           </Link>
           {canEdit && (
             <>
               <Link to={`/projects/${project.id}/edit`} className="btn-secondary" style={{ textDecoration: 'none' }}>
-                <Pencil size={16} /> Edit Project
+                <Pencil size={16} /> {t('detail.actions.editProject')}
               </Link>
               <button
                 type="button"
@@ -309,7 +329,7 @@ export default function ProjectDetailPage({
                 onClick={() => setDeleteOpen(true)}
                 style={{ color: '#ff4757' }}
               >
-                <Trash2 size={16} /> Delete
+                <Trash2 size={16} /> {t('common:actions.delete')}
               </button>
             </>
           )}
@@ -325,15 +345,15 @@ export default function ProjectDetailPage({
           style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
         >
           <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>Overview</strong>
+            <strong style={{ fontSize: '1rem' }}>{t('detail.overview.title')}</strong>
             <span className={`panel-chip ${isActive ? 'success' : isArchived ? 'muted' : 'warning'}`}>{statusLabel}</span>
           </div>
 
           <div className="project-detail-summary-grid">
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="admin-item-meta" style={{ marginBottom: 8 }}>
-                <span><CalendarDays size={12} /> Start</span>
-                <span><CalendarDays size={12} /> End</span>
+                <span><CalendarDays size={12} /> {t('detail.overview.start')}</span>
+                <span><CalendarDays size={12} /> {t('detail.overview.end')}</span>
               </div>
               <strong style={{ fontSize: '0.98rem' }}>{formatDate(project.start_date)}</strong>
               <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{formatDate(project.end_date)}</div>
@@ -341,28 +361,28 @@ export default function ProjectDetailPage({
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="admin-item-meta" style={{ marginBottom: 8 }}>
-                <span><MapPin size={12} /> Location</span>
-                <span><Tag size={12} /> Audience</span>
+                <span><MapPin size={12} /> {t('detail.overview.location')}</span>
+                <span><Tag size={12} /> {t('detail.overview.audience')}</span>
               </div>
-              <strong style={{ fontSize: '0.98rem' }}>
-                {project.location || 'Not set'}
-                {project.location_type ? ` (${prettyLabel(project.location_type)})` : ''}
+              <strong style={{ fontSize: '0.98rem' }} dir="auto">
+                {project.location || t('detail.overview.notSet')}
+                {project.location_type ? ` (${locationTypeLabels[project.location_type] || prettyLabel(project.location_type)})` : ''}
               </strong>
-              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }}>{project.target_audience || 'No audience specified'}</div>
+              <div style={{ color: 'var(--text-light)', fontSize: '0.84rem', marginTop: 4 }} dir="auto">{project.target_audience || t('detail.overview.noAudience')}</div>
             </div>
           </div>
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> Analysis</strong>
+              <strong style={{ fontSize: '0.94rem' }}><RefreshCw size={14} style={{ verticalAlign: -2 }} /> {t('detail.analysis.title')}</strong>
               <span className={`panel-chip ${project.last_run_status === 'success' ? 'success' : 'muted'}`}>
-                {project.last_run_status ? project.last_run_status : 'Never run'}
+                {project.last_run_status ? (lastRunStatusLabels[project.last_run_status] || project.last_run_status) : t('detail.analysis.neverRun')}
               </span>
             </div>
             <div style={{ display: 'grid', gap: 10, color: 'var(--text-light)', fontSize: '0.86rem' }}>
               <div className="admin-item-meta">
-                <span>Last run: {formatDateTime(project.last_run_at)}</span>
-                <Link to="/pipeline-runs">All analysis runs</Link>
+                <span>{t('detail.analysis.lastRun', { value: formatDateTime(project.last_run_at) })}</span>
+                <Link to="/pipeline-runs">{t('detail.analysis.allRuns')}</Link>
               </div>
               {canRunAnalysis ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -373,40 +393,40 @@ export default function ProjectDetailPage({
                     disabled={analysisStarting}
                     style={{ padding: '8px 12px', fontSize: '0.82rem' }}
                   >
-                    <Play size={14} /> {analysisStarting ? 'Starting...' : 'Analyze new articles'}
+                    <Play size={14} /> {analysisStarting ? t('detail.analysis.starting') : t('detail.analysis.analyzeButton')}
                   </button>
-                  <span>Analyzes every approved article that hasn't been analyzed yet.</span>
+                  <span>{t('detail.analysis.hint')}</span>
                 </div>
               ) : null}
-              {analysisNotice ? <div style={{ color: 'var(--text-dark)' }}>{analysisNotice}</div> : null}
-              {analysisError ? <div style={{ color: '#b42318' }}>{analysisError}</div> : null}
+              {analysisNotice ? <div style={{ color: 'var(--text-dark)' }} dir="auto">{analysisNotice}</div> : null}
+              {analysisError ? <div style={{ color: '#b42318' }} dir="auto">{analysisError}</div> : null}
             </div>
           </div>
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}>Description</strong>
+              <strong style={{ fontSize: '0.94rem' }}>{t('detail.description.title')}</strong>
             </div>
-            <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-              {project.description || 'No description has been added for this project yet.'}
+            <div style={{ color: 'var(--text-light)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }} dir="auto">
+              {project.description || t('detail.description.empty')}
             </div>
           </div>
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}>Topics of interest</strong>
+              <strong style={{ fontSize: '0.94rem' }}>{t('detail.topics.title')}</strong>
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-light)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                <Link2 size={14} /> Keywords
+                <Link2 size={14} /> {t('detail.topics.keywordsLabel')}
               </div>
               <div className="admin-item-chips">
                 {keywordList.length ? keywordList.map((item) => (
-                  <span key={item} className="admin-tag muted">{item}</span>
-                )) : <span className="admin-tag muted">No keywords</span>}
+                  <span key={item} className="admin-tag muted" dir="auto">{item}</span>
+                )) : <span className="admin-tag muted">{t('detail.topics.noKeywords')}</span>}
               </div>
               <div style={{ color: 'var(--text-light)', fontSize: '0.82rem', marginTop: 8 }}>
-                Tracked on the Reports page, which charts how often each keyword shows up across this project's analyzed articles.
+                {t('detail.topics.hint')}
               </div>
             </div>
           </div>
@@ -420,11 +440,11 @@ export default function ProjectDetailPage({
           style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
         >
           <div className="panel-header-tight">
-            <strong style={{ fontSize: '1rem' }}>Uploaded Documents</strong>
+            <strong style={{ fontSize: '1rem' }}>{t('documents:detail.documents.title')}</strong>
             <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="panel-chip">{documents.length} uploaded</span>
+              <span className="panel-chip">{t('documents:detail.documents.uploadedCount', { count: documents.length, formattedCount: formatNumber(documents.length, locale) })}</span>
               <Link to={`/sources?project_id=${project.id}`} style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
-                View sources →
+                {t('documents:detail.documents.viewSources')}
               </Link>
             </span>
           </div>
@@ -434,8 +454,8 @@ export default function ProjectDetailPage({
               <div className="admin-empty-state-icon">
                 <FileText size={18} />
               </div>
-              <strong>No documents uploaded</strong>
-              <span>Use Edit Project to upload the files this project analyzes.</span>
+              <strong>{t('documents:detail.documents.emptyTitle')}</strong>
+              <span>{t('documents:detail.documents.emptyBody')}</span>
             </div>
           ) : (
             <>
@@ -445,21 +465,21 @@ export default function ProjectDetailPage({
                     <div className="admin-item-top">
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                          <strong className="admin-item-title project-detail-break-text">
-                            {document.original_filename || `Document #${document.id}`}
+                          <strong className="admin-item-title project-detail-break-text" dir="auto">
+                            {document.original_filename || t('documents:detail.documents.fallbackName', { id: document.id })}
                           </strong>
                           <span className={`panel-chip ${documentStatusTone(document.status)}`}>
-                            {document.status || 'uploaded'}
+                            {documentStatusLabels[document.status] || document.status || documentStatusLabels.uploaded}
                           </span>
                         </div>
                         <div className="admin-item-meta">
-                          <span>{formatBytes(document.size_bytes)}</span>
-                          <span>Articles: {document.articles_status || 'pending'}</span>
-                          <span>Added {formatDate(document.created_at)}</span>
+                          <span>{formatBytes(document.size_bytes, locale)}</span>
+                          <span>{t('documents:detail.documents.articlesLabel', { value: articlesStatusLabels[document.articles_status] || document.articles_status || articlesStatusLabels.pending })}</span>
+                          <span>{t('documents:detail.documents.added', { value: formatDate(document.created_at) })}</span>
                         </div>
                         {document.extraction_error ? (
                           <div className="admin-item-meta" style={{ color: '#b42318' }}>
-                            <span>{document.extraction_error}</span>
+                            <span dir="auto">{document.extraction_error}</span>
                           </div>
                         ) : null}
                       </div>
@@ -481,7 +501,11 @@ export default function ProjectDetailPage({
                   }}
                 >
                   <div style={{ fontSize: '0.84rem', color: 'var(--text-light)' }}>
-                    Showing {(safeDocumentsPage - 1) * DOCUMENTS_PAGE_SIZE + 1}-{Math.min(safeDocumentsPage * DOCUMENTS_PAGE_SIZE, documents.length)} of {documents.length}
+                    {t('documents:detail.documents.pagination.showingRange', {
+                      from: formatNumber((safeDocumentsPage - 1) * DOCUMENTS_PAGE_SIZE + 1, locale),
+                      to: formatNumber(Math.min(safeDocumentsPage * DOCUMENTS_PAGE_SIZE, documents.length), locale),
+                      total: formatNumber(documents.length, locale),
+                    })}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button
@@ -491,10 +515,10 @@ export default function ProjectDetailPage({
                       disabled={safeDocumentsPage <= 1}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
-                      <ChevronLeft size={14} /> Previous
+                      <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
                     </button>
                     <span className="panel-chip">
-                      Page {safeDocumentsPage} of {totalDocumentsPages}
+                      {t('common:pagination.pageOfTotal', { page: formatNumber(safeDocumentsPage, locale), totalPages: formatNumber(totalDocumentsPages, locale) })}
                     </span>
                     <button
                       type="button"
@@ -503,7 +527,7 @@ export default function ProjectDetailPage({
                       disabled={safeDocumentsPage >= totalDocumentsPages}
                       style={{ padding: '8px 10px', fontSize: '0.8rem' }}
                     >
-                      Next <ChevronRight size={14} />
+                      {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
                     </button>
                   </div>
                 </div>
@@ -513,26 +537,26 @@ export default function ProjectDetailPage({
 
           <div className="admin-item-card" style={{ margin: 0 }}>
             <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-              <strong style={{ fontSize: '0.94rem' }}>Quick Facts</strong>
+              <strong style={{ fontSize: '0.94rem' }}>{t('detail.quickFacts.title')}</strong>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               <div className="admin-item-meta">
-                <span>Created {formatDate(project.created_at)}</span>
-                <span>Updated {formatDate(project.updated_at)}</span>
+                <span>{t('detail.quickFacts.created', { value: formatDate(project.created_at) })}</span>
+                <span>{t('detail.quickFacts.updated', { value: formatDate(project.updated_at) })}</span>
               </div>
               <div className="admin-item-meta">
-                <span>{documents.length} document{documents.length === 1 ? '' : 's'}</span>
-                <span>{keywordList.length} keyword{keywordList.length === 1 ? '' : 's'}</span>
+                <span>{t('detail.quickFacts.documentCount', { count: documents.length, formattedCount: formatNumber(documents.length, locale) })}</span>
+                <span>{t('detail.quickFacts.keywordCount', { count: keywordList.length, formattedCount: formatNumber(keywordList.length, locale) })}</span>
               </div>
               {canLinkUsers && (
                 <div className="admin-item-meta">
-                  <span>{linkedUsers.length} linked user{linkedUsers.length === 1 ? '' : 's'}</span>
+                  <span>{t('detail.quickFacts.linkedUserCount', { count: linkedUsers.length, formattedCount: formatNumber(linkedUsers.length, locale) })}</span>
                 </div>
               )}
               {canLinkUsers && linkedUsers.length > 0 && (
                 <div className="admin-item-chips">
                   {linkedUsers.map((user) => (
-                    <span key={user.id} className="admin-tag muted">{user.username}</span>
+                    <span key={user.id} className="admin-tag muted" dir="auto">{user.username}</span>
                   ))}
                 </div>
               )}
@@ -549,21 +573,21 @@ export default function ProjectDetailPage({
         style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}
       >
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Article Insights</strong>
-          <span className="panel-chip">{(articleStats?.total || 0).toLocaleString()} analyzed articles</span>
+          <strong style={{ fontSize: '1rem' }}>{t('detail.insights.title')}</strong>
+          <span className="panel-chip">{t('detail.insights.analyzedCount', { count: articleStats?.total || 0, formattedCount: formatNumber(articleStats?.total || 0, locale) })}</span>
         </div>
 
         {statsLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.86rem', padding: '12px 0' }}>
-            <Loader2 size={16} className="spin" /> Loading article insights...
+            <Loader2 size={16} className="spin" /> {t('detail.insights.loading')}
           </div>
         ) : !articleStats?.total ? (
           <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
             <div className="admin-empty-state-icon">
               <BarChart3 size={18} />
             </div>
-            <strong>No analyzed articles yet</strong>
-            <span>Upload documents, approve their articles, and run an analysis to see tone and sentiment insights here.</span>
+            <strong>{t('detail.insights.emptyTitle')}</strong>
+            <span>{t('detail.insights.emptyBody')}</span>
           </div>
         ) : (
           <>
@@ -575,14 +599,14 @@ export default function ProjectDetailPage({
             <div className="project-detail-summary-grid">
               <div className="admin-item-card" style={{ margin: 0 }}>
                 <div className="admin-item-meta" style={{ marginBottom: 8 }}>
-                  <span>Overall Mood</span>
+                  <span>{t('detail.insights.overallMood')}</span>
                 </div>
                 <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_mood || 'neutral')}</strong>
               </div>
 
               <div className="admin-item-card" style={{ margin: 0 }}>
                 <div className="admin-item-meta" style={{ marginBottom: 8 }}>
-                  <span>Overall Tone</span>
+                  <span>{t('detail.insights.overallTone')}</span>
                 </div>
                 <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_tone || 'neutral')}</strong>
               </div>
@@ -590,60 +614,60 @@ export default function ProjectDetailPage({
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Writer Tone Breakdown</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.writerToneBreakdown')}</strong>
               </div>
               <div className="admin-item-chips">
                 {(articleStats?.insights?.writer_tone_breakdown || []).length ? (
                   articleStats.insights.writer_tone_breakdown.map((item) => (
-                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({item.count})</span>
+                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({formatNumber(item.count, locale)})</span>
                   ))
                 ) : (
-                  <span className="admin-tag muted">No data yet</span>
+                  <span className="admin-tag muted">{t('common:emptyState.noData')}</span>
                 )}
               </div>
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Article Tone Breakdown</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.articleToneBreakdown')}</strong>
               </div>
               <div className="admin-item-chips">
                 {(articleStats?.insights?.article_tone_breakdown || []).length ? (
                   articleStats.insights.article_tone_breakdown.map((item) => (
-                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({item.count})</span>
+                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({formatNumber(item.count, locale)})</span>
                   ))
                 ) : (
-                  <span className="admin-tag muted">No data yet</span>
+                  <span className="admin-tag muted">{t('common:emptyState.noData')}</span>
                 )}
               </div>
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by region</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.sentimentByRegion')}</strong>
               </div>
-              <DemographicSentimentChart title="Sentiment by region" data={articleStats?.insights?.region_breakdown} />
+              <DemographicSentimentChart title={t('detail.insights.chartTitleRegion')} data={articleStats?.insights?.region_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by gender</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.sentimentByGender')}</strong>
               </div>
-              <DemographicSentimentChart title="Sentiment by gender" data={articleStats?.insights?.gender_breakdown} />
+              <DemographicSentimentChart title={t('detail.insights.chartTitleGender')} data={articleStats?.insights?.gender_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by age range</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.sentimentByAgeRange')}</strong>
               </div>
-              <DemographicSentimentChart title="Sentiment by age range" data={articleStats?.insights?.age_range_breakdown} />
+              <DemographicSentimentChart title={t('detail.insights.chartTitleAgeRange')} data={articleStats?.insights?.age_range_breakdown} />
             </div>
 
             <div className="admin-item-card" style={{ margin: 0 }}>
               <div className="panel-header-tight" style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: '0.94rem' }}>Analyzed-record sentiment by segment</strong>
+                <strong style={{ fontSize: '0.94rem' }}>{t('detail.insights.sentimentBySegment')}</strong>
               </div>
-              <DemographicSentimentChart title="Sentiment by segment" data={articleStats?.insights?.segment_breakdown} />
+              <DemographicSentimentChart title={t('detail.insights.chartTitleSegment')} data={articleStats?.insights?.segment_breakdown} />
             </div>
           </>
         )}
@@ -657,11 +681,11 @@ export default function ProjectDetailPage({
         style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}
       >
         <div className="panel-header-tight">
-          <strong style={{ fontSize: '1rem' }}>Frequent Ideas</strong>
-          <span className="panel-chip">{ideaClusters.total.toLocaleString()} clusters</span>
+          <strong style={{ fontSize: '1rem' }}>{t('detail.ideas.title')}</strong>
+          <span className="panel-chip">{t('detail.ideas.clusterCount', { count: ideaClusters.total, formattedCount: formatNumber(ideaClusters.total, locale) })}</span>
         </div>
         <p className="subtitle" style={{ margin: 0 }}>
-          Ideas repeated across analyzed articles for this project, accumulated across every analysis run.
+          {t('detail.ideas.description')}
         </p>
 
         {ideaClustersError ? (
@@ -669,20 +693,20 @@ export default function ProjectDetailPage({
             <div className="admin-empty-state-icon">
               <Lightbulb size={18} />
             </div>
-            <strong>Couldn't load frequent ideas</strong>
-            <span>{ideaClustersError}</span>
+            <strong>{t('detail.ideas.loadError')}</strong>
+            <span dir="auto">{ideaClustersError}</span>
           </div>
         ) : ideaClustersLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.86rem', padding: '12px 0' }}>
-            <Loader2 size={16} className="spin" /> Loading frequent ideas...
+            <Loader2 size={16} className="spin" /> {t('detail.ideas.loading')}
           </div>
         ) : ideaClusters.clusters.length === 0 ? (
           <div className="admin-empty-state" style={{ padding: '20px 12px' }}>
             <div className="admin-empty-state-icon">
               <Lightbulb size={18} />
             </div>
-            <strong>No repeated ideas yet</strong>
-            <span>Run the pipeline to build up cross-article idea clusters for this project.</span>
+            <strong>{t('detail.ideas.emptyTitle')}</strong>
+            <span>{t('detail.ideas.emptyBody')}</span>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -712,15 +736,15 @@ export default function ProjectDetailPage({
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                       {isOpening ? <Loader2 size={16} className="spin" style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
-                      <strong style={{ fontSize: '0.92rem' }}>{cluster.idea}</strong>
+                      <strong style={{ fontSize: '0.92rem' }} dir="auto">{cluster.idea}</strong>
                       <span className="admin-tag muted">{cluster.type || 'issue'}</span>
                     </span>
                     <span className="panel-chip" style={{ flexShrink: 0 }}>
-                      {Number(cluster.frequency_estimate || 0).toLocaleString()} articles
+                      {t('detail.ideas.articlesCount', { count: cluster.frequency_estimate || 0, formattedCount: formatNumber(cluster.frequency_estimate || 0, locale) })}
                     </span>
                   </button>
                   {openError ? (
-                    <span style={{ display: 'block', marginTop: 8, color: '#b42318', fontSize: '0.82rem' }}>{openError}</span>
+                    <span dir="auto" style={{ display: 'block', marginTop: 8, color: '#b42318', fontSize: '0.82rem' }}>{openError}</span>
                   ) : null}
                 </div>
               );
@@ -736,7 +760,7 @@ export default function ProjectDetailPage({
               disabled={ideaOffset === 0 || ideaClustersLoading}
               style={{ padding: '6px 10px', fontSize: '0.78rem' }}
             >
-              <ChevronLeft size={14} /> Previous
+              <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
             </button>
             <button
               className="btn-secondary"
@@ -744,7 +768,7 @@ export default function ProjectDetailPage({
               disabled={ideaOffset + ideaClusters.limit >= ideaClusters.total || ideaClustersLoading}
               style={{ padding: '6px 10px', fontSize: '0.78rem' }}
             >
-              Next <ChevronRight size={14} />
+              {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
             </button>
           </div>
         ) : null}
@@ -752,10 +776,10 @@ export default function ProjectDetailPage({
 
       <ConfirmModal
         open={deleteOpen}
-        title={`Delete project "${project.name}"?`}
-        message="This will permanently remove the project, its uploaded documents, and the articles they produced."
-        confirmLabel="Delete project"
-        cancelLabel="Keep project"
+        title={t('detail.deleteModal.title', { name: project.name })}
+        message={t('detail.deleteModal.body')}
+        confirmLabel={t('detail.deleteModal.confirmLabel')}
+        cancelLabel={t('detail.deleteModal.cancelLabel')}
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',

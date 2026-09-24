@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import {
   Activity, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
@@ -11,31 +12,50 @@ import {
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
+import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PERIODS = [
-  { key: '7d', label: 'Last 7 days' },
-  { key: '30d', label: 'Last 30 days' },
-  { key: 'all', label: 'All time' },
+  { key: '7d', labelKey: 'dashboard:periods.last7d' },
+  { key: '30d', labelKey: 'dashboard:periods.last30d' },
+  { key: 'all', labelKey: 'dashboard:periods.allTime' },
 ];
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
+const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
 // Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
 // same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
 const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
-function languageLabel(code) {
-  if (!code || code === 'unknown') return 'Unknown';
-  if (code === 'other') return 'Other';
-  try {
-    const name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code);
-    return name ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
-  } catch {
-    return code.toUpperCase();
-  }
+// SENTIMENT_KEYS/idea "type"/EMOTION_AXES are fixed, small enums, so they go
+// through a real translation lookup (object keys stay the untranslated code -
+// see dashboard.json's sentiment.*/ideaType.*/emotionAxis.*); region/gender/
+// age/language buckets below are open-ended DB text and stay a plain
+// capitalize transform instead (see distributionLabel()).
+function sentimentLabel(t, key) {
+  return t(`dashboard:sentiment.${key}`, key);
+}
+
+function ideaTypeLabel(t, type) {
+  const value = type || 'issue';
+  return t(`dashboard:ideaType.${value}`, value);
+}
+
+function emotionAxisLabel(t, axis) {
+  const fallback = axis ? axis.charAt(0).toUpperCase() + axis.slice(1) : axis;
+  return t(`dashboard:emotionAxis.${axis}`, fallback);
+}
+
+function languageLabel(t, locale, code) {
+  if (!code || code === 'unknown') return t('dashboard:distributions.language.unknown');
+  if (code === 'other') return t('dashboard:distributions.language.other');
+  const name = formatLanguageName(code, locale);
+  return name ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
 }
 
 // Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
 // - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
+// Open-ended DB text, so this stays a plain transform rather than a
+// translation lookup.
 function distributionLabel(value) {
   return String(value || 'unknown')
     .replace(/_/g, ' ')
@@ -73,16 +93,18 @@ function percent(value, total) {
   return total ? Math.round((Number(value || 0) / total) * 100) : 0;
 }
 
-function formatDate(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function formatDate(value, locale) {
+  const formatted = formatLocaleDate(value, locale, { month: 'short', day: 'numeric' });
+  return formatted || value;
 }
 
 function Change({ value }) {
-  if (value == null) return <span className="intelligence-change neutral">First completed run</span>;
+  const { t, i18n } = useTranslation('dashboard');
+  if (value == null) return <span className="intelligence-change neutral">{t('dashboard:change.firstRun')}</span>;
   const positive = value >= 0;
   const Icon = positive ? TrendingUp : TrendingDown;
-  return <span className={`intelligence-change ${positive ? 'positive' : 'negative'}`}><Icon size={13} />{positive ? '+' : ''}{value}% vs previous</span>;
+  const formattedValue = formatNumber(value, i18n.language, { signDisplay: 'always', maximumFractionDigits: 0 });
+  return <span className={`intelligence-change ${positive ? 'positive' : 'negative'}`}><Icon size={13} />{t('dashboard:change.vsPrevious', { value: formattedValue })}</span>;
 }
 
 function MetricCard({ icon, label, value, detail, tone = 'blue' }) {
@@ -106,9 +128,10 @@ function mapTopicSources(sources) {
 }
 
 function IdeaRow({ idea, maxFrequency, projectId }) {
+  const { t, i18n } = useTranslation('dashboard');
   const body = <>
-    <div><strong>{idea.idea}</strong><span>{idea.type || 'issue'}</span></div>
-    <strong>{Number(idea.frequency_estimate || 0).toLocaleString()}</strong>
+    <div><strong dir="auto">{idea.idea}</strong><span>{ideaTypeLabel(t, idea.type)}</span></div>
+    <strong>{formatNumber(idea.frequency_estimate || 0, i18n.language)}</strong>
     <div className="intelligence-track"><span style={{ width: `${Math.max(8, percent(idea.frequency_estimate, maxFrequency))}%` }} /></div>
   </>;
   if (projectId && idea.sources?.length) {
@@ -116,7 +139,7 @@ function IdeaRow({ idea, maxFrequency, projectId }) {
       className={`intelligence-idea intelligence-idea-clickable ${idea.type || 'issue'}`}
       style={{ textDecoration: 'none', color: 'inherit' }}
       to={`/projects/${projectId}/topics`}
-      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), projectId, backTo: '/dashboard', backLabel: 'Back to Dashboard' }}
+      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), projectId, backTo: '/dashboard', backLabel: t('dashboard:ideas.backLabel') }}
     >
       {body}
     </Link>;
@@ -124,12 +147,11 @@ function IdeaRow({ idea, maxFrequency, projectId }) {
   return <div className={`intelligence-idea ${idea.type || 'issue'}`}>{body}</div>;
 }
 
-function formatRunLabel(run) {
+function formatRunLabel(run, locale, t) {
   const value = run?.finished_at || run?.created_at;
   const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return 'Run';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    + ' ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (!date || Number.isNaN(date.getTime())) return t('dashboard:runLabel.fallback');
+  return `${formatLocaleDate(date, locale, { month: 'short', day: 'numeric' })} ${formatTime(date, locale)}`;
 }
 
 // sequence_number is this project's Nth analysis run ever (oldest = 1),
@@ -143,24 +165,26 @@ function pipelineRunNumber(run, index) {
 
 // Full label (with date/time) for the tab list, where several runs are
 // shown side by side and the date disambiguates them at a glance.
-function pipelineRunTitle(run, index) {
-  return `Analysis #${pipelineRunNumber(run, index)}: ${formatRunLabel(run)}`;
+function pipelineRunTitle(run, index, locale, t) {
+  return t('dashboard:runLabel.title', { number: pipelineRunNumber(run, index), label: formatRunLabel(run, locale, t) });
 }
 
 // Compact label for summary spots (metric cards, the "showing run" note)
 // where the number alone is already unambiguous and a repeated date/time is
 // just clutter.
-function pipelineRunShortLabel(run, index) {
-  return `Analysis #${pipelineRunNumber(run, index)}`;
+function pipelineRunShortLabel(run, index, t) {
+  return t('dashboard:runLabel.short', { number: pipelineRunNumber(run, index) });
 }
 
 export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
   loading, error, pipelineHealth, runs = [], selectedRunId, onRunChange,
 }) {
+  const { t, i18n } = useTranslation(['dashboard', 'common']);
+  const locale = i18n.language;
   const data = intelligence || {};
   const total = Number(data.total || 0);
-  const sentimentData = ['positive', 'neutral', 'negative', 'mixed'].map((name) => ({ name, value: Number(data[name] || 0) }));
+  const sentimentData = SENTIMENT_KEYS.map((name) => ({ name, value: Number(data[name] || 0) }));
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
   const languageData = capLanguageBreakdown(data.insights?.language_breakdown || []);
@@ -210,11 +234,11 @@ export default function DashboardOverview({
         if (cancelled) return;
         setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
         setIdeaComparisonsPage(0);
-        if (!ok) setIdeaComparisonsError(data?.error || 'Failed to load idea comparisons.');
+        if (!ok) setIdeaComparisonsError(data?.error || t('dashboard:ideaComparisons.loadError'));
       } catch (err) {
         if (!cancelled && err?.name !== 'AbortError') {
           setIdeaComparisons([]);
-          setIdeaComparisonsError(err?.message || 'Failed to load idea comparisons.');
+          setIdeaComparisonsError(err?.message || t('dashboard:ideaComparisons.loadError'));
         }
       } finally {
         if (!cancelled) {
@@ -225,6 +249,7 @@ export default function DashboardOverview({
     }
     loadIdeaComparisons();
     return () => { cancelled = true; controller.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
 
   // Spends an LLM call per qualifying idea cluster (see
@@ -246,66 +271,66 @@ export default function DashboardOverview({
   return <div className="content-shell intelligence-page">
     <header className="intelligence-header">
       <div>
-        <span className="intelligence-eyebrow"><Sparkles size={14} /> Intelligence dashboard</span>
-        <h2>Project intelligence</h2>
-        <p className="subtitle">Signals from the documents and articles already analyzed for this project.</p>
+        <span className="intelligence-eyebrow"><Sparkles size={14} /> {t('dashboard:overview.eyebrow')}</span>
+        <h2>{t('dashboard:overview.title')}</h2>
+        <p className="subtitle">{t('dashboard:overview.subtitle')}</p>
         <div className="filter-tabs-shell">
-          <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter type">
-            <button type="button" role="tab" aria-selected={!selectedRunId} className={`source-type-tab ${!selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(null)}>Date range</button>
-            {runs.length > 0 ? <button type="button" role="tab" aria-selected={!!selectedRunId} className={`source-type-tab ${selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(selectedRunId || runs[0].id)}>Analysis run</button> : null}
+          <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('dashboard:overview.filterTypeAria')}>
+            <button type="button" role="tab" aria-selected={!selectedRunId} className={`source-type-tab ${!selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(null)}>{t('dashboard:overview.dateRangeTab')}</button>
+            {runs.length > 0 ? <button type="button" role="tab" aria-selected={!!selectedRunId} className={`source-type-tab ${selectedRunId ? 'active' : ''}`} onClick={() => onRunChange?.(selectedRunId || runs[0].id)}>{t('dashboard:overview.analysisRunTab')}</button> : null}
           </div>
           <div className="filter-tab-divider" aria-hidden="true" />
           {selectedRunId ? (
             runs.length > 3 ? (
-              <select className="filter-select filter-run-select" value={selectedRunId} onChange={(event) => onRunChange?.(event.target.value)} aria-label="Filter by analysis run">
-                {runs.map((run, index) => <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>)}
+              <select className="filter-select filter-run-select" value={selectedRunId} onChange={(event) => onRunChange?.(event.target.value)} aria-label={t('dashboard:overview.filterByRunAria')}>
+                {runs.map((run, index) => <option key={run.id} value={run.id}>{pipelineRunTitle(run, index, locale, t)}</option>)}
               </select>
             ) : (
-              <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
-                {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index)}</button></span>)}
+              <div className="filter-tab-buttons scrollable" role="tablist" aria-label={t('dashboard:overview.filterByRunAria')}>
+                {runs.map((run, index) => <span key={run.id} className="filter-tab-run-item">{index > 0 ? <ChevronRight size={14} className="filter-tab-arrow rtl-mirror" aria-hidden="true" /> : null}<button type="button" role="tab" aria-selected={selectedRunId === run.id} className={`source-type-tab ${selectedRunId === run.id ? 'active' : ''}`} onClick={() => onRunChange?.(run.id)}>{pipelineRunTitle(run, index, locale, t)}</button></span>)}
               </div>
             )
           ) : (
-            <div className="filter-tab-buttons" role="tablist" aria-label="Dashboard date range">
-              {PERIODS.map((item) => <button key={item.key} type="button" role="tab" aria-selected={period === item.key} className={`source-type-tab ${period === item.key ? 'active' : ''}`} onClick={() => onPeriodChange(item.key)}>{item.label}</button>)}
+            <div className="filter-tab-buttons" role="tablist" aria-label={t('dashboard:overview.dateRangeAria')}>
+              {PERIODS.map((item) => <button key={item.key} type="button" role="tab" aria-selected={period === item.key} className={`source-type-tab ${period === item.key ? 'active' : ''}`} onClick={() => onPeriodChange(item.key)}>{t(item.labelKey)}</button>)}
             </div>
           )}
         </div>
       </div>
       <div className="intelligence-controls">
-        <select className="filter-select" value={selectedProjectId ?? ''} onChange={(event) => onProjectChange(Number(event.target.value))} disabled={!projects.length} aria-label="Dashboard project">
+        <select className="filter-select" value={selectedProjectId ?? ''} onChange={(event) => onProjectChange(Number(event.target.value))} disabled={!projects.length} aria-label={t('dashboard:overview.projectSelectAria')}>
           {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
         </select>
       </div>
     </header>
 
-    {selectedRun ? <p className="intelligence-run-note">Showing {pipelineRunTitle(selectedRun, selectedRunIndex)}.</p> : null}
+    {selectedRun ? <p className="intelligence-run-note">{t('dashboard:runLabel.showing', { run: pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) })}</p> : null}
 
     {selectedProject?.mode === 'competitor' ? (
-      <CompetitorPulseCard studyId={selectedProject.id} backTo="/dashboard" backLabel="Back to dashboard" />
+      <CompetitorPulseCard studyId={selectedProject.id} backTo="/dashboard" backLabel={t('dashboard:overview.competitorBackLabel')} />
     ) : null}
 
-    {!selectedProject ? <div className="glass-card admin-empty-state"><strong>No project selected</strong><p className="subtitle">Create a project to begin tracking intelligence.</p></div> : null}
-    {error ? <div className="glass-card admin-empty-state"><strong>Couldn’t load project intelligence</strong><p className="subtitle">{error}</p></div> : null}
+    {!selectedProject ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.noProjectTitle')}</strong><p className="subtitle">{t('dashboard:overview.noProjectBody')}</p></div> : null}
+    {error ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.loadErrorTitle')}</strong><p className="subtitle" dir="auto">{error}</p></div> : null}
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Activity size={18} />} label="Analysis health" value={pipelineHealth?.lastRun?.status || 'No runs'} detail={pipelineHealth?.lastFinished ? `Last completed ${formatDate(pipelineHealth.lastFinished.finished_at)}` : 'No completed runs yet'} tone="blue" />
-        <MetricCard icon={<Network size={18} />} label="Analyzed articles" value={loading ? '—' : total.toLocaleString()} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex) : PERIODS.find((item) => item.key === period)?.label} tone="blue" />
-        <MetricCard icon={<Gauge size={18} />} label="Net sentiment" value={loading ? '—' : `${Number(data.net_sentiment || 0) >= 0 ? '+' : ''}${data.net_sentiment || 0}`} detail="Positive minus negative" tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
-        <MetricCard icon={<FileText size={18} />} label="Documents" value={loading ? '—' : Number(data.document_count || 0).toLocaleString()} detail="Uploaded to this project" tone="blue" />
+        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status || t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
+        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" />
+        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
+        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
       </section>
 
-      {loading ? <div className="glass-card intelligence-loading">Loading intelligence…</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>No analyzed articles in this period</strong><p className="subtitle">Run an analysis or choose a broader time range to populate this dashboard.</p></div> : <>
+      {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
         <section className="intelligence-top-grid">
-          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>Sentiment breakdown</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [`${value} articles`, name]} /></PieChart></ResponsiveContainer><strong>{data.net_sentiment >= 0 ? '+' : ''}{data.net_sentiment}</strong><span>net sentiment</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <div key={entry.name}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{entry.name}</label><strong>{percent(entry.value, total)}%</strong></div>)}</div></div></article>
-          <article className="glass-card intelligence-card intelligence-line-card"><h3>Article volume &amp; sentiment over time</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={formatDate} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={formatDate} /><Legend /><Line type="monotone" dataKey="total" name="Total" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name="Positive" stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name="Negative" stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name="Neutral" stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
-          <article className="glass-card intelligence-card intelligence-radar-card"><h3>Emotional signature</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => value.charAt(0).toUpperCase() + value.slice(1)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>Derived from the emotional tone of analyzed articles.</p></article>
+          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <div key={entry.name}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}</div></div></article>
+          <article className="glass-card intelligence-card intelligence-line-card"><h3>{t('dashboard:volumeOverTime.title')}</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
+          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
         </section>
 
         <section className="intelligence-language-grid">
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Language distribution</h3>
+            <h3>{t('dashboard:distributions.language.title')}</h3>
             {languageData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -314,7 +339,7 @@ export default function DashboardOverview({
                       <Pie data={languageData} dataKey="count" nameKey="language" outerRadius="92%" paddingAngle={3} stroke="none">
                         {languageData.map((entry, index) => <Cell key={entry.language} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, languageLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), languageLabel(t, locale, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -322,17 +347,17 @@ export default function DashboardOverview({
                   {languageData.map((entry, index) => (
                     <div key={entry.language}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{languageLabel(entry.language)}</label>
-                      <strong>{percent(entry.count, total)}%</strong>
+                      <label>{languageLabel(t, locale, entry.language)}</label>
+                      <strong>{formatPercent(percent(entry.count, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No detected language on analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:distributions.language.empty')}</p>}
           </article>
 
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Region distribution</h3>
+            <h3>{t('dashboard:distributions.region.title')}</h3>
             {regionData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -341,7 +366,7 @@ export default function DashboardOverview({
                       <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {regionData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -350,16 +375,16 @@ export default function DashboardOverview({
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(entry.value)}</label>
-                      <strong>{percent(entry.total, total)}%</strong>
+                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No region detected on analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:distributions.region.empty')}</p>}
           </article>
 
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Gender distribution</h3>
+            <h3>{t('dashboard:distributions.gender.title')}</h3>
             {genderData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -368,7 +393,7 @@ export default function DashboardOverview({
                       <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {genderData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -377,16 +402,16 @@ export default function DashboardOverview({
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(entry.value)}</label>
-                      <strong>{percent(entry.total, total)}%</strong>
+                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No gender detected on analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:distributions.gender.empty')}</p>}
           </article>
 
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Age range distribution</h3>
+            <h3>{t('dashboard:distributions.ageRange.title')}</h3>
             {ageRangeData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -395,7 +420,7 @@ export default function DashboardOverview({
                       <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {ageRangeData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -404,16 +429,16 @@ export default function DashboardOverview({
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(entry.value)}</label>
-                      <strong>{percent(entry.total, total)}%</strong>
+                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No age range detected on analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:distributions.ageRange.empty')}</p>}
           </article>
 
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Segment distribution</h3>
+            <h3>{t('dashboard:distributions.segment.title')}</h3>
             {segmentData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -422,7 +447,7 @@ export default function DashboardOverview({
                       <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {segmentData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -431,28 +456,28 @@ export default function DashboardOverview({
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(entry.value)}</label>
-                      <strong>{percent(entry.total, total)}%</strong>
+                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No life-situation/occupation segment detected on analyzed articles yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:distributions.segment.empty')}</p>}
           </article>
 
         </section>
 
         <section className="intelligence-middle-grid">
-          <article className="glass-card intelligence-card"><h3>Where it’s being said</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong>{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{item.total.toLocaleString()}</strong><small>{item.total === 1 ? 'article' : 'articles'}</small></div></div>)}</div></article>
-          <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>Most talked-about ideas</h3><span>Grouped by theme</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">No repeated ideas detected yet.</p>}</article>
-          <article className="glass-card intelligence-card"><h3>Sentiment by platform</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span>{item.platform}</span><div>{['positive', 'neutral', 'negative', 'mixed'].map((tone) => <i key={tone} title={`${tone}: ${item[tone] || 0}`} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
+          <article className="glass-card intelligence-card"><h3>{t('dashboard:wherePosted.title')}</h3><div className="intelligence-platform-list">{platformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div></article>
+          <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>{t('dashboard:ideas.title')}</h3><span>{t('dashboard:ideas.subtitle')}</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">{t('dashboard:ideas.empty')}</p>}</article>
+          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span dir="auto">{item.platform}</span><div>{SENTIMENT_KEYS.map((tone) => <i key={tone} title={t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 })} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
 
         <section className="intelligence-idea-comparisons-grid">
           <article className="glass-card intelligence-card intelligence-idea-comparisons-card">
             <div className="intelligence-card-heading">
               <div>
-                <h3>Idea comparisons across sources</h3>
-                <span>Where two or more sources cover the same idea, side by side</span>
+                <h3>{t('dashboard:ideaComparisons.title')}</h3>
+                <span>{t('dashboard:ideaComparisons.subtitle')}</span>
               </div>
               <button
                 type="button"
@@ -462,18 +487,18 @@ export default function DashboardOverview({
                 style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
               >
                 {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                Regenerate
+                {t('common:actions.regenerate')}
               </button>
             </div>
             {ideaComparisonsError ? (
-              <p className="intelligence-empty">{ideaComparisonsError}</p>
+              <p className="intelligence-empty" dir="auto">{ideaComparisonsError}</p>
             ) : ideaComparisonsLoading ? (
-              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> Loading idea comparisons…</p>
+              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> {t('dashboard:ideaComparisons.loading')}</p>
             ) : ideaComparisons.length === 0 ? (
               <div className="intelligence-idea-comparison-empty">
                 <Lightbulb size={20} />
                 <p>
-                  No cross-source comparisons yet. Run the pipeline once at least two distinct sources cover the same idea, or click Regenerate.
+                  {t('dashboard:ideaComparisons.emptyBody')}
                 </p>
               </div>
             ) : (
@@ -487,24 +512,24 @@ export default function DashboardOverview({
                     <div className="intelligence-idea-comparison-header">
                       <div className="intelligence-idea-comparison-title">
                         <Lightbulb size={14} className="intelligence-idea-comparison-icon" />
-                        <strong>{comparison.idea}</strong>
+                        <strong dir="auto">{comparison.idea}</strong>
                       </div>
                       {comparison.diverges ? (
-                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> Sources disagree</span>
+                        <span className="intelligence-idea-comparison-tag diverges"><Scale size={12} /> {t('dashboard:ideaComparisons.diverges')}</span>
                       ) : (
-                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> Sources agree</span>
+                        <span className="intelligence-idea-comparison-tag agrees"><CheckCircle2 size={12} /> {t('dashboard:ideaComparisons.agrees')}</span>
                       )}
                     </div>
-                    {comparison.summary ? <p className="intelligence-idea-comparison-summary">{comparison.summary}</p> : null}
+                    {comparison.summary ? <p className="intelligence-idea-comparison-summary" dir="auto">{comparison.summary}</p> : null}
                     <div className="intelligence-idea-comparison-sources">
                       {(comparison.sources || []).map((source, index) => {
                         const content = (
                           <>
-                            <span className="intelligence-idea-comparison-source-label">{source.source_label}</span>
+                            <span className="intelligence-idea-comparison-source-label" dir="auto">{source.source_label}</span>
                             {source.value ? (
-                              <span className="intelligence-idea-comparison-source-value">{source.value}</span>
+                              <span className="intelligence-idea-comparison-source-value" dir="auto">{source.value}</span>
                             ) : (
-                              <span className="intelligence-idea-comparison-source-novalue">no figure stated</span>
+                              <span className="intelligence-idea-comparison-source-novalue">{t('dashboard:ideaComparisons.noValue')}</span>
                             )}
                             {source.url ? <ExternalLink size={12} className="intelligence-idea-comparison-source-link-icon" /> : null}
                           </>
@@ -539,10 +564,10 @@ export default function DashboardOverview({
                     onClick={() => setIdeaComparisonsPage((current) => Math.max(0, current - 1))}
                     disabled={ideaComparisonsPage === 0}
                   >
-                    <ChevronLeft size={14} /> Prev
+                    <ChevronLeft size={14} className="rtl-mirror" /> {t('dashboard:ideaComparisons.prev')}
                   </button>
                   <span className="intelligence-idea-comparison-pagination-status">
-                    Page {ideaComparisonsPage + 1} of {ideaComparisonsTotalPages}
+                    {t('common:pagination.pageOfTotal', { page: ideaComparisonsPage + 1, totalPages: ideaComparisonsTotalPages })}
                   </span>
                   <button
                     type="button"
@@ -550,7 +575,7 @@ export default function DashboardOverview({
                     onClick={() => setIdeaComparisonsPage((current) => Math.min(ideaComparisonsTotalPages - 1, current + 1))}
                     disabled={ideaComparisonsPage >= ideaComparisonsTotalPages - 1}
                   >
-                    Next <ChevronRight size={14} />
+                    {t('dashboard:ideaComparisons.next')} <ChevronRight size={14} className="rtl-mirror" />
                   </button>
                 </div>
               ) : null}
@@ -560,14 +585,14 @@ export default function DashboardOverview({
         </section>
 
         <section className="intelligence-bottom-grid">
-          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>Trending keywords &amp; hashtags</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={`See articles mentioning ${term.term}`}><b>{term.term}</b> <em>{term.mentions}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">None of this project’s configured terms were mentioned in this period.</p>}</div></article> : null}
-          <article className={`glass-card intelligence-card intelligence-pipeline-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}><div className="intelligence-card-heading"><h3>Articles analyzed by run</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value) => [`${value} articles`, 'Discovered']} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete a successful analysis run to compare article volume.</p>}</article>
+          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>{t('dashboard:trending.title')}</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={t('dashboard:trending.linkTitle', { term: term.term })}><b dir="auto">{term.term}</b> <em>{formatNumber(term.mentions, locale)}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">{t('dashboard:trending.empty')}</p>}</div></article> : null}
+          <article className={`glass-card intelligence-card intelligence-pipeline-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}><div className="intelligence-card-heading"><h3>{t('dashboard:articlesByRun.title')}</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index, t)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [t('dashboard:counts.articlesCount', { count: value }), t('dashboard:articlesByRun.tooltipLabel')]} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:articlesByRun.empty')}</p>}</article>
         </section>
 
         <section className="intelligence-run-sentiment-grid">
           <article className="glass-card intelligence-card intelligence-run-sentiment-card">
-            <h3>Sentiment variation across analysis runs</h3>
-            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index)} minTickGap={18} /><YAxis domain={[-100, 100]} tickFormatter={(value) => `${value > 0 ? '+' : ''}${value}`} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0)} · ${formatDate(item.completed_at)}` : value; }} formatter={(value) => [`${value > 0 ? '+' : ''}${value}`, 'Net sentiment']} /><ReferenceLine y={0} stroke="rgba(15,23,42,.25)" /><Line type="monotone" dataKey="net_sentiment" name="Net sentiment" stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">Complete an analysis run with analyzed articles to compare sentiment across runs.</p>}
+            <h3>{t('dashboard:sentimentAcrossRuns.title')}</h3>
+            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index, t)} minTickGap={18} /><YAxis domain={[-100, 100]} tickFormatter={(value) => formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 }), t('dashboard:sentimentAcrossRuns.tooltipLabel')]} /><ReferenceLine y={0} stroke="rgba(15,23,42,.25)" /><Line type="monotone" dataKey="net_sentiment" name={t('dashboard:sentimentAcrossRuns.tooltipLabel')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:sentimentAcrossRuns.empty')}</p>}
           </article>
         </section>
       </>}

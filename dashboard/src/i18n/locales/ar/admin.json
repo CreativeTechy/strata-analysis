@@ -1,0 +1,232 @@
+{
+  "kickers": {
+    "userManagement": "إدارة المستخدمين",
+    "accessControl": "التحكم في الوصول",
+    "projectLinkage": "ربط المشاريع"
+  },
+  "notFound": {
+    "roleTitle": "الدور غير موجود",
+    "projectTitle": "المشروع غير موجود",
+    "hint": "ربما تمت إزالته، أو قد لا تملك صلاحية الوصول إليه.",
+    "backToRoles": "العودة إلى الأدوار",
+    "backToProjectLinkage": "العودة إلى ربط المشاريع"
+  },
+  "users": {
+    "title": "المستخدمون",
+    "subtitle": "إنشاء حسابات لوحة التحكم وإدارتها.",
+    "totalUsers": "إجمالي المستخدمين",
+    "fields": {
+      "username": "اسم المستخدم",
+      "email": "البريد الإلكتروني",
+      "password": "كلمة المرور",
+      "role": "الدور",
+      "status": "الحالة",
+      "actions": "الإجراءات"
+    },
+    "form": {
+      "creating": "جارٍ الإنشاء...",
+      "createButton": "إنشاء مستخدم"
+    },
+    "table": {
+      "loading": "جارٍ تحميل المستخدمين...",
+      "emptyTitle": "لا يوجد مستخدمون بعد",
+      "emptyBody": "أنشئ أول حساب للوحة التحكم باستخدام النموذج أعلاه.",
+      "youSuffix": " (أنت)"
+    },
+    "actions": {
+      "disable": "تعطيل",
+      "enable": "تفعيل",
+      "cannotDeleteSelf": "لا يمكنك حذف حسابك الخاص."
+    },
+    "deleteModal": {
+      "title": "حذف المستخدم \"{{username}}\"؟",
+      "message": "سيؤدي هذا إلى إزالة حساب المستخدم نهائيًا وتسجيل خروجه من أي جلسات نشطة.",
+      "deleting": "جارٍ الحذف...",
+      "confirmLabel": "حذف المستخدم",
+      "cancelLabel": "الإبقاء على المستخدم"
+    }
+  },
+  "roles": {
+    "title": "الأدوار والصلاحيات",
+    "subtitle": "الأدوار هي مجموعات صلاحيات مسمّاة تُسند إلى المستخدمين.",
+    "totalRoles": "إجمالي الأدوار",
+    "newRole": "دور جديد",
+    "fields": {
+      "role": "الدور",
+      "description": "الوصف",
+      "permissions": "الصلاحيات",
+      "actions": "الإجراءات"
+    },
+    "table": {
+      "loading": "جارٍ تحميل الأدوار...",
+      "emptyTitle": "لا توجد أدوار بعد",
+      "emptyBodyCanCreate": "أنشئ دورًا للبدء بإسناد مجموعات الصلاحيات إلى المستخدمين.",
+      "emptyBodyReadOnly": "لم يتم إنشاء أي أدوار بعد.",
+      "systemBadge": "نظام",
+      "fullAccess": "وصول كامل",
+      "permissionCount_zero": "لا توجد صلاحيات",
+      "permissionCount_one": "صلاحية واحدة",
+      "permissionCount_two": "صلاحيتان",
+      "permissionCount_few": "{{count}} صلاحيات",
+      "permissionCount_many": "{{count}} صلاحية",
+      "permissionCount_other": "{{count}} صلاحية",
+      "viewOnly": "عرض فقط"
+    },
+    "rowActions": {
+      "edit": "تعديل",
+      "systemCannotDelete": "لا يمكن حذف أدوار النظام."
+    },
+    "deleteModal": {
+      "title": "حذف الدور \"{{name}}\"؟",
+      "message": "سيؤدي هذا إلى إزالة الدور نهائيًا. يُمنع الحذف طالما لا يزال أي مستخدم مُسندًا إليه - انقل هؤلاء المستخدمين إلى دور آخر أولًا.",
+      "deleting": "جارٍ الحذف...",
+      "confirmLabel": "حذف الدور",
+      "cancelLabel": "الإبقاء على الدور"
+    },
+    "create": {
+      "title": "دور جديد",
+      "subtitle": "سمِّ الدور واختر الصلاحيات التي يمنحها.",
+      "loading": "جارٍ تحميل الصلاحيات...",
+      "submitLabel": "إنشاء الدور"
+    },
+    "edit": {
+      "title": "تعديل الدور",
+      "subtitle": "أعد تسمية الدور أو عدّل الصلاحيات التي يمنحها.",
+      "loading": "جارٍ تحميل الدور...",
+      "submitLabel": "حفظ التغييرات"
+    }
+  },
+  "roleForm": {
+    "categories": {
+      "articles": "المقالات",
+      "pipeline": "خط المعالجة",
+      "projects": "المشاريع",
+      "roles": "الأدوار",
+      "sources": "المصادر",
+      "users": "المستخدمون"
+    },
+    "deselectAll": "إلغاء تحديد الكل",
+    "fields": {
+      "name": "اسم الدور",
+      "namePlaceholder": "مثال: مراجع المحتوى",
+      "description": "الوصف",
+      "descriptionPlaceholder": "ما الغرض من هذا الدور؟",
+      "permissions": "الصلاحيات"
+    },
+    "fullAccessNotice": "يملك هذا الدور تلقائيًا كل الصلاحيات ولا يمكن تقييده.",
+    "saving": "جارٍ الحفظ...",
+    "permissionLabels": {
+      "projects": {
+        "view": "عرض المشاريع",
+        "create": "إنشاء المشاريع",
+        "update": "تعديل المشاريع",
+        "delete": "حذف المشاريع",
+        "link_users": "إدارة مستخدمي لوحة التحكم المرتبطين بمشروع"
+      },
+      "articles": {
+        "view": "عرض المقالات",
+        "delete": "حذف جميع المقالات المخزَّنة",
+        "import": "استيراد المقالات من تصدير JSONL"
+      },
+      "pipeline": {
+        "view": "عرض عمليات التحليل",
+        "run": "بدء عملية تحليل",
+        "stop": "إيقاف تحليل قيد التشغيل"
+      },
+      "competitors": {
+        "view": "عرض دراسات المنافسين والمنافسين والنتائج",
+        "manage": "إنشاء وتعديل الملف التجاري والمنافسين",
+        "analyze": "تشغيل اكتشاف المنافسين وإنشاء التحليل"
+      },
+      "users": {
+        "view": "عرض مستخدمي لوحة التحكم",
+        "create": "إنشاء مستخدمي لوحة التحكم",
+        "update": "تعديل مستخدمي لوحة التحكم (الدور/الحالة)",
+        "delete": "حذف مستخدمي لوحة التحكم"
+      },
+      "roles": {
+        "view": "عرض الأدوار وصلاحياتها",
+        "create": "إنشاء أدوار جديدة",
+        "update": "تعديل الأدوار وإسنادات صلاحياتها",
+        "delete": "حذف الأدوار"
+      }
+    }
+  },
+  "projectLinkage": {
+    "linkedUsers": "المستخدمون المرتبطون",
+    "noEmailOnFile": "لا يوجد بريد إلكتروني مسجَّل",
+    "list": {
+      "title": "ربط المشاريع",
+      "subtitle": "اطّلع على مستخدمي لوحة التحكم المرتبطين بكل مشروع. افتح مشروعًا لمراجعة مستخدميه المرتبطين، أو عدّل الربط مباشرة.",
+      "projectsMeta": "المشاريع",
+      "matchesMeta": "المطابقات",
+      "totalProjects": "إجمالي المشاريع",
+      "dashboardUsers": "مستخدمو لوحة التحكم",
+      "searchPlaceholder": "البحث في المشاريع بالاسم",
+      "allStatuses": "جميع الحالات",
+      "allLinkedUsers": "جميع المستخدمين المرتبطين",
+      "loadingUsers": "جارٍ تحميل المستخدمين...",
+      "panelTitle": "المشاريع",
+      "loading": "جارٍ التحميل...",
+      "visibleCount_zero": "لا يوجد ظاهر",
+      "visibleCount_one": "{{count}} ظاهر",
+      "visibleCount_two": "{{count}} ظاهر",
+      "visibleCount_few": "{{count}} ظاهرة",
+      "visibleCount_many": "{{count}} ظاهرًا",
+      "visibleCount_other": "{{count}} ظاهر",
+      "emptyTitle": "لا توجد مشاريع بعد",
+      "emptyBody": "أنشئ مشروعًا أولًا، ثم أدِر مستخدميه المرتبطين هنا.",
+      "linkedUserCount_zero": "لا يوجد مستخدمون مرتبطون",
+      "linkedUserCount_one": "مستخدم واحد مرتبط",
+      "linkedUserCount_two": "مستخدمان مرتبطان",
+      "linkedUserCount_few": "{{count}} مستخدمين مرتبطين",
+      "linkedUserCount_many": "{{count}} مستخدمًا مرتبطًا",
+      "linkedUserCount_other": "{{count}} مستخدم مرتبط",
+      "noMatchTitle": "لا توجد مشاريع مطابقة",
+      "noMatchBody": "جرّب مصطلح بحث آخر أو عدّل عوامل التصفية.",
+      "showingRange": "عرض {{start}}-{{end}} من {{total}}"
+    },
+    "detail": {
+      "subtitle": "راجع مستخدمي لوحة التحكم المرتبطين بهذا المشروع.",
+      "statusLabel": "الحالة",
+      "editLinkage": "تعديل الربط",
+      "detailsTitle": "تفاصيل المشروع",
+      "start": "البداية",
+      "end": "النهاية",
+      "notSet": "غير محدد",
+      "location": "الموقع",
+      "audience": "الجمهور",
+      "noAudience": "لم يتم تحديد جمهور",
+      "descriptionTitle": "الوصف",
+      "noDescription": "لم تتم إضافة وصف لهذا المشروع بعد.",
+      "linkedBadge_zero": "{{count}} مرتبط",
+      "linkedBadge_one": "{{count}} مرتبط",
+      "linkedBadge_two": "{{count}} مرتبط",
+      "linkedBadge_few": "{{count}} مرتبطون",
+      "linkedBadge_many": "{{count}} مرتبطًا",
+      "linkedBadge_other": "{{count}} مرتبط",
+      "noUsersTitle": "لا يوجد مستخدمون مرتبطون",
+      "noUsersBody": "استخدم تعديل الربط لإضافة مستخدمي لوحة التحكم إلى هذا المشروع."
+    },
+    "edit": {
+      "titlePrefix": "تعديل الربط",
+      "subtitle": "أضف مستخدمي لوحة التحكم المرتبطين بهذا المشروع أو أزلهم.",
+      "selectedMeta": "المحدد",
+      "chooseUsersTitle": "اختر مستخدمي لوحة التحكم المرتبطين بهذا المشروع",
+      "selectedBadge_zero": "لم يتم تحديد شيء",
+      "selectedBadge_one": "{{count}} محدد",
+      "selectedBadge_two": "{{count}} محدد",
+      "selectedBadge_few": "{{count}} محددون",
+      "selectedBadge_many": "{{count}} محددًا",
+      "selectedBadge_other": "{{count}} محدد",
+      "searchPlaceholder": "تصفية المستخدمين بالاسم أو البريد الإلكتروني أو الدور",
+      "noUsersTitle": "لا يوجد مستخدمو لوحة تحكم بعد",
+      "noUsersBody": "أنشئ مستخدمي لوحة تحكم أولًا، ثم اربطهم بهذا المشروع.",
+      "noMatchTitle": "لا يوجد مستخدمون مطابقون",
+      "noMatchBody": "جرّب مصطلح بحث مختلف.",
+      "saving": "جارٍ الحفظ...",
+      "saveLinkage": "حفظ الربط",
+      "genericError": "فشل تحديث المستخدمين المرتبطين."
+    }
+  }
+}

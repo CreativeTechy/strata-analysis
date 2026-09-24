@@ -1,0 +1,130 @@
+{
+  "wizard": {
+    "stepNav": {
+      "upload": { "label": "رفع المستندات", "detail": "أضف الملفات المطلوب تحليلها" },
+      "review": { "label": "مراجعة المقالات", "detail": "اعتمد ما ينبغي تحليله" }
+    },
+    "upload": {
+      "stepHeading": "الخطوة {{step}}. رفع المستندات",
+      "uploadedCount": "{{formattedCount}} مرفوع",
+      "dropzone": {
+        "title": "اسحب الملفات هنا، أو انقر للتصفح",
+        "hint": "لا مانع من رفع عدة ملفات دفعة واحدة",
+        "recordsHint": "تُقرأ ملفات تصدير JSON/JSONL كمقالات مباشرة — سجل واحد لكل مقالة، دون تقسيم."
+      },
+      "publisherUrl": {
+        "label": "رابط الناشر الأصلي (اختياري)",
+        "hint": "يُطبَّق على دفعة الرفع هذه ويُستخدم لتحديد الناشر الأصلي أثناء فحوصات التغطية."
+      },
+      "pendingFile": {
+        "sizeKb": "{{size}} كيلوبايت"
+      },
+      "uploadButton": {
+        "uploading": "جارٍ الرفع...",
+        "upload_zero": "رفع {{formattedCount}} ملف",
+        "upload_one": "رفع ملف واحد",
+        "upload_two": "رفع ملفين",
+        "upload_few": "رفع {{formattedCount}} ملفات",
+        "upload_many": "رفع {{formattedCount}} ملفًا",
+        "upload_other": "رفع {{formattedCount}} ملف"
+      },
+      "document": {
+        "publisher": "الناشر: {{url}}",
+        "status": {
+          "reading": "جارٍ القراءة",
+          "readingProgress": " ({{processed}}/{{total}})",
+          "readingContentsSuffix": " — جارٍ قراءة المحتوى...",
+          "notExtracted": "لم يُستخرج",
+          "extractedOcr": "مُستخرَج (OCR)",
+          "extractedMixed": "مُستخرَج (مختلط)",
+          "extracted": "مُستخرَج"
+        }
+      },
+      "emptyTitle": "لا توجد مستندات بعد",
+      "emptyBody": "أفلت الملفات أعلاه أو انقر للتصفح. الرفع اختياري — يمكنك تخطي هذه الخطوة وإضافة مقالات إلى المشروع لاحقًا.",
+      "continueButton": "متابعة إلى مراجعة المقالات",
+      "skipButton": "تخطّي الآن"
+    },
+    "review": {
+      "stepHeading": "الخطوة {{step}}. مراجعة المقالات",
+      "summaryChip": "{{approved}} معتمدة، {{pending}} قيد الانتظار",
+      "description": "قرأت Strata مستنداتك وقسّمتها إلى مقالات مستقلة واعتمدتها جميعًا للتحليل. لا تريد تضمين إحداها؟ ارفضها هنا، أو احذفها من صفحة المقالات لاحقًا.",
+      "loadingTitle": "جارٍ قراءة مستنداتك وتحويلها إلى مقالات...",
+      "emptyTitle": "لا توجد مقالات بعد",
+      "emptySplittingFailed": "فشل التقسيم في مستند واحد على الأقل — جرّب إعادة رفعه.",
+      "emptyGoBack": "ارجع وارفع مستندًا للبدء.",
+      "emptyNoDocuments": "لم تُرفع أي مستندات. يمكنك إنهاء المشروع الآن وإضافة مقالات لاحقًا.",
+      "approveAllButton": "اعتماد الكل",
+      "approveAllCount": " ({{count}})",
+      "approving": "جارٍ الاعتماد...",
+      "documentFallback": "مستند",
+      "status": {
+        "analyzed": "مُحلَّلة",
+        "analysisFailed": "فشل التحليل",
+        "analyzing": "جارٍ التحليل...",
+        "approved": "معتمدة",
+        "rejected": "مرفوضة"
+      },
+      "rejectButton": "رفض",
+      "approveButton": "اعتماد",
+      "paginationLabel": "ترقيم صفحات المقالات",
+      "continueButton": "متابعة إلى الإنهاء"
+    },
+    "finish": {
+      "summary": {
+        "documentsUploaded_zero": "لا توجد مستندات مرفوعة",
+        "documentsUploaded_one": "مستند واحد مرفوع",
+        "documentsUploaded_two": "مستندان مرفوعان",
+        "documentsUploaded_few": "{{formattedCount}} مستندات مرفوعة",
+        "documentsUploaded_many": "{{formattedCount}} مستندًا مرفوعًا",
+        "documentsUploaded_other": "{{formattedCount}} مستند مرفوع",
+        "articlesApproved_zero": "لا توجد مقالات معتمدة",
+        "articlesApproved_one": "مقالة واحدة معتمدة",
+        "articlesApproved_two": "مقالتان معتمدتان",
+        "articlesApproved_few": "{{formattedCount}} مقالات معتمدة",
+        "articlesApproved_many": "{{formattedCount}} مقالة معتمدة",
+        "articlesApproved_other": "{{formattedCount}} مقالة معتمدة",
+        "analyzedSuffix": " {{formattedCount}} مُحلَّلة.",
+        "failedSuffix": " فشل تحليل {{formattedCount}}."
+      },
+      "rerunButton": "إعادة تشغيل التحليل",
+      "rerunning": "جارٍ إعادة التشغيل..."
+    },
+    "errors": {
+      "removeDocumentFailed": "فشل حذف المستند.",
+      "uploadFailed": "فشل رفع المستندات.",
+      "processFailed": "فشل معالجة المستندات المرفوعة.",
+      "updateArticleFailed": "فشل تحديث المقالة.",
+      "approveAllFailed": "فشل اعتماد المقالات.",
+      "reanalyzeFailed": "فشل إعادة تشغيل التحليل."
+    }
+  },
+  "detail": {
+    "documents": {
+      "title": "المستندات المرفوعة",
+      "uploadedCount": "{{formattedCount}} مرفوع",
+      "viewSources": "عرض المصادر →",
+      "emptyTitle": "لا توجد مستندات مرفوعة",
+      "emptyBody": "استخدم تعديل المشروع لرفع الملفات التي يحلّلها هذا المشروع.",
+      "fallbackName": "مستند #{{id}}",
+      "articlesLabel": "المقالات: {{value}}",
+      "added": "أُضيف في {{value}}",
+      "statusLabels": {
+        "uploaded": "مرفوع",
+        "processing": "قيد المعالجة",
+        "processed": "تمت المعالجة",
+        "failed": "فشل"
+      },
+      "articlesStatusLabels": {
+        "pending": "قيد الانتظار",
+        "generating": "قيد الإنشاء",
+        "ready": "جاهز",
+        "failed": "فشل",
+        "skipped": "تم التخطي"
+      },
+      "pagination": {
+        "showingRange": "عرض {{from}}-{{to}} من {{total}}"
+      }
+    }
+  }
+}

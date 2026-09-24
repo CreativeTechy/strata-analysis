@@ -1,26 +1,32 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import '../styles/AdminUsers.css';
 
-const CATEGORY_LABELS = {
-  articles: 'Articles',
-  pipeline: 'Pipeline',
-  projects: 'Projects',
-  roles: 'Roles',
-  sources: 'Sources',
-  users: 'Users',
-};
+// Resource identifiers a permission key's prefix can take - these are
+// literal backend-checked strings (see backend/schema.sql's permission
+// catalogue), never translated. Only their display label (looked up via
+// t('roleForm.categories.<resource>')) is.
+const CATEGORY_ORDER = ['articles', 'pipeline', 'projects', 'roles', 'sources', 'users'];
 
-const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS);
-
-function categoryLabel(resource) {
-  return CATEGORY_LABELS[resource] || resource.charAt(0).toUpperCase() + resource.slice(1);
+function categoryLabel(resource, t) {
+  const translated = t(`roleForm.categories.${resource}`, { defaultValue: '' });
+  if (translated) return translated;
+  return resource.charAt(0).toUpperCase() + resource.slice(1);
 }
 
-// Prefer the permission's own description (already human-readable, no
-// category prefix); fall back to deriving one from the key if it's missing.
-function permissionLabel(perm) {
+// Prefer a translated label keyed on the permission's own key (never
+// translated itself - see roleForm.permissionLabels.<resource>.<action> in
+// admin.json), then the permission's own description from the API (already
+// human-readable, no category prefix), then fall back to deriving one from
+// the key if both are missing (e.g. a permission added to the backend
+// before its translation catalogue entry).
+function permissionLabel(perm, t) {
+  const [resource, ...rest] = perm.key.split('.');
+  const action = rest.join('.');
+  const translated = t(`roleForm.permissionLabels.${resource}.${action}`, { defaultValue: '' });
+  if (translated) return translated;
   if (perm.description) return perm.description;
-  const label = perm.key.split('.').slice(1).join(' ').replace(/_/g, ' ');
+  const label = rest.join(' ').replace(/_/g, ' ');
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -40,7 +46,7 @@ function groupPermissions(permissions) {
   }));
 }
 
-function GroupSelectAll({ perms, selected, onToggleGroup }) {
+function GroupSelectAll({ perms, selected, onToggleGroup, t }) {
   const checkboxRef = useRef(null);
   const checkedCount = perms.filter((perm) => selected.has(perm.key)).length;
   const allChecked = checkedCount === perms.length;
@@ -58,26 +64,26 @@ function GroupSelectAll({ perms, selected, onToggleGroup }) {
         checked={allChecked}
         onChange={() => onToggleGroup(perms, !allChecked)}
       />
-      {allChecked ? 'Deselect all' : 'Select all'}
+      {allChecked ? t('roleForm.deselectAll') : t('common:actions.selectAll')}
     </label>
   );
 }
 
-function PermissionGrid({ permissions, selected, onToggle, onToggleGroup }) {
+function PermissionGrid({ permissions, selected, onToggle, onToggleGroup, t }) {
   const groups = useMemo(() => groupPermissions(permissions), [permissions]);
   return (
     <div className="permission-groups">
       {groups.map(({ resource, perms }) => (
         <div key={resource} className="permission-group-card">
           <div className="permission-group-header">
-            <span className="permission-group-title">{categoryLabel(resource)}</span>
-            <GroupSelectAll perms={perms} selected={selected} onToggleGroup={onToggleGroup} />
+            <span className="permission-group-title">{categoryLabel(resource, t)}</span>
+            <GroupSelectAll perms={perms} selected={selected} onToggleGroup={onToggleGroup} t={t} />
           </div>
           <div className="permission-group-body">
             {perms.map((perm) => (
               <label key={perm.key} className="permission-row" title={perm.key}>
                 <input type="checkbox" checked={selected.has(perm.key)} onChange={() => onToggle(perm.key)} />
-                {permissionLabel(perm)}
+                {permissionLabel(perm, t)}
               </label>
             ))}
           </div>
@@ -101,6 +107,7 @@ export default function RoleForm({
   onSubmit,
   onCancel,
 }) {
+  const { t } = useTranslation(['admin', 'common']);
   const togglePermission = (key) => {
     const next = new Set(value.permissions);
     if (next.has(key)) next.delete(key);
@@ -122,54 +129,55 @@ export default function RoleForm({
   return (
     <form onSubmit={onSubmit} className="glass-card role-form">
       {error && (
-        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c' }}>
+        <div className="panel-chip" style={{ background: '#fde2e2', color: '#9c1c1c' }} dir="auto">
           {error}
         </div>
       )}
 
       <div className="role-fields">
         <label className="role-field">
-          <span className="role-field-label">Role name</span>
+          <span className="role-field-label">{t('roleForm.fields.name')}</span>
           <input
             className="filter-select"
             value={value.name}
             onChange={(e) => onChange({ ...value, name: e.target.value })}
-            placeholder="e.g. Content Reviewer"
+            placeholder={t('roleForm.fields.namePlaceholder')}
             required
           />
         </label>
         <label className="role-field">
-          <span className="role-field-label">Description</span>
+          <span className="role-field-label">{t('roleForm.fields.description')}</span>
           <textarea
             className="filter-select role-textarea"
             value={value.description}
             onChange={(e) => onChange({ ...value, description: e.target.value })}
-            placeholder="What is this role for?"
+            placeholder={t('roleForm.fields.descriptionPlaceholder')}
             rows={3}
           />
         </label>
       </div>
 
       {fullAccess ? (
-        <p className="subtitle">This role automatically has every permission and can't be restricted.</p>
+        <p className="subtitle">{t('roleForm.fullAccessNotice')}</p>
       ) : (
         <div className="role-permissions">
-          <span className="role-field-label">Permissions</span>
+          <span className="role-field-label">{t('roleForm.fields.permissions')}</span>
           <PermissionGrid
             permissions={permissions}
             selected={new Set(value.permissions)}
             onToggle={togglePermission}
             onToggleGroup={toggleGroup}
+            t={t}
           />
         </div>
       )}
 
       <div className="role-form-actions">
         <button type="button" className="btn-secondary" onClick={onCancel}>
-          Cancel
+          {t('common:actions.cancel')}
         </button>
         <button type="submit" className="btn-primary" disabled={submitting || !nameValid}>
-          {submitting ? 'Saving...' : submitLabel}
+          {submitting ? t('roleForm.saving') : submitLabel}
         </button>
       </div>
     </form>

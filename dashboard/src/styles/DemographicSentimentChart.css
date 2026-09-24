@@ -58,7 +58,7 @@
 }
 
 .demographic-chart-tooltip li > b {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-dark);
 }
 .survey-observations { display:grid; gap:14px; }

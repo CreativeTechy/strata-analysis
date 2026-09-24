@@ -1,8 +1,10 @@
 import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import StatsOverview from './StatsOverview';
-import { REPORT_PERIODS, dominantSentimentFromStats, timeAgo, pipelineRunTitle } from '../lib/appHelpers.js';
+import { REPORT_PERIODS, SENTIMENT_COLORS, pipelineRunNumber } from '../lib/appHelpers.js';
+import { formatNumber, formatPercent, formatRelativeTime } from '../lib/i18nFormat.js';
 
 // The Reports page, extracted out of App.jsx: everything here used to be a
 // closure (App.jsx's renderReportsView) over App's own state - this is the
@@ -25,32 +27,66 @@ export default function ReportsView({
   projectRuns,
   onRefresh,
 }) {
+  const { t, i18n } = useTranslation('reports');
+  const locale = i18n.language;
   const hasProjects = projects.length > 0;
   const liveReport = intelligence || {};
-  const dominantSentiment = dominantSentimentFromStats(liveReport);
   const totalArticles = Number(liveReport.total) || 0;
+
+  // Duplicated (rather than imported from appHelpers.js's
+  // dominantSentimentFromStats) because that shared helper bakes in an
+  // English label and other in-progress work depends on its current
+  // signature - recomputing the same small ranking here keeps this page's
+  // translation self-contained without touching a file other areas rely on.
+  const dominantSentiment = (() => {
+    const total = Number(liveReport.total) || 0;
+    if (!total) return { label: t('sentimentLabels.noDataYet'), color: 'var(--text-light)' };
+    const entries = ['positive', 'negative', 'neutral', 'mixed'].map((key) => ({
+      key, value: Number(liveReport[key]) || 0,
+    })).sort((a, b) => b.value - a.value);
+    const top = entries[0];
+    return {
+      label: `${t(`sentimentLabels.${top.key}`)} - ${formatPercent(top.value / total, locale)}`,
+      color: SENTIMENT_COLORS[top.key],
+    };
+  })();
+
+  const runTabLabel = (run, index) => t('runLabel', {
+    number: pipelineRunNumber(run, index),
+    date: run ? formatDateTimeShort(run) : '',
+  });
+
+  function formatDateTimeShort(run) {
+    const value = run?.finished_at || run?.created_at;
+    if (!value) return '';
+    return new Intl.DateTimeFormat(locale === 'ar' ? 'ar-SA-u-nu-latn' : 'en-US', {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date(value));
+  }
 
   let syncStatus;
   if (intelligenceError) {
     syncStatus = {
       tone: 'error',
       icon: <AlertCircle size={13} />,
-      label: 'Sync failed',
+      label: t('summaryChips.syncFailed'),
       detail: intelligenceError,
     };
   } else if (isLoadingIntelligence) {
     syncStatus = {
       tone: 'loading',
       icon: <RefreshCw size={13} className="spin" />,
-      label: 'Syncing',
-      detail: 'Fetching latest data...',
+      label: t('summaryChips.syncing'),
+      detail: t('summaryChips.fetchingLatestData'),
     };
   } else {
     syncStatus = {
       tone: 'success',
       icon: <CheckCircle2 size={13} />,
-      label: 'Up to date',
-      detail: lastIntelligenceSyncAt ? `Updated ${timeAgo(lastIntelligenceSyncAt)}` : 'Not synced yet',
+      label: t('summaryChips.upToDate'),
+      detail: lastIntelligenceSyncAt
+        ? t('summaryChips.updatedAgo', { time: formatRelativeTime(lastIntelligenceSyncAt, locale) })
+        : t('summaryChips.notSyncedYet'),
     };
   }
 
@@ -60,20 +96,20 @@ export default function ReportsView({
         <div className="report-header-top">
           <div className="report-heading">
             <span className="report-kicker">
-              <BarChart3 size={13} /> Reports
+              <BarChart3 size={13} /> {t('header.kicker')}
             </span>
-            <h2 className="report-title">
-              {selectedProject ? selectedProject.name : 'Select a project'}
+            <h2 className="report-title" dir="auto">
+              {selectedProject ? selectedProject.name : t('header.selectProjectTitle')}
             </h2>
             <p className="subtitle">
-              Sentiment, categories, and audience insights generated from analyzed articles.
+              {t('header.subtitle')}
             </p>
           </div>
 
           <div className="report-header-actions">
             <div className="report-project-control">
               <label className="report-project-control-label" htmlFor="reports-project-select">
-                <FolderKanban size={13} /> Project scope
+                <FolderKanban size={13} /> {t('header.projectScopeLabel')}
               </label>
               <div className="report-project-select-wrap">
                 <FolderKanban size={16} aria-hidden="true" />
@@ -83,7 +119,7 @@ export default function ReportsView({
                   value={selectedProjectId ?? ''}
                   onChange={(e) => onSelectedProjectIdChange(e.target.value ? Number(e.target.value) : null)}
                   disabled={isLoadingProjects || !hasProjects}
-                  aria-label="Project scope for this report"
+                  aria-label={t('header.projectScopeAriaLabel')}
                 >
                   {hasProjects ? (
                     projects.map((project) => (
@@ -92,7 +128,7 @@ export default function ReportsView({
                       </option>
                     ))
                   ) : (
-                    <option value="">No projects yet</option>
+                    <option value="">{t('header.noProjectsYet')}</option>
                   )}
                 </select>
               </div>
@@ -106,14 +142,14 @@ export default function ReportsView({
               aria-busy={isLoadingIntelligence}
             >
               <RefreshCw size={16} className={isLoadingIntelligence ? 'spin' : ''} />
-              {isLoadingIntelligence ? 'Refreshing...' : 'Refresh'}
+              {isLoadingIntelligence ? t('header.refreshing') : t('header.refresh')}
             </button>
           </div>
         </div>
 
         <div className="report-filter-row">
           <div className="filter-tabs-shell">
-            <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label="Filter type">
+            <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('header.filterTypeAriaLabel')}>
               <button
                 type="button"
                 role="tab"
@@ -121,7 +157,7 @@ export default function ReportsView({
                 className={`source-type-tab ${!reportRunId ? 'active' : ''}`}
                 onClick={() => onReportRunIdChange(null)}
               >
-                Date range
+                {t('header.dateRangeTab')}
               </button>
               {projectRuns.length > 0 ? (
                 <button
@@ -131,7 +167,7 @@ export default function ReportsView({
                   className={`source-type-tab ${reportRunId ? 'active' : ''}`}
                   onClick={() => onReportRunIdChange(reportRunId || projectRuns[0].id)}
                 >
-                  Analysis run
+                  {t('header.analysisRunTab')}
                 </button>
               ) : null}
             </div>
@@ -144,17 +180,17 @@ export default function ReportsView({
                   className="filter-select filter-run-select"
                   value={reportRunId}
                   onChange={(event) => onReportRunIdChange(event.target.value)}
-                  aria-label="Filter by analysis run"
+                  aria-label={t('header.runFilterAriaLabel')}
                 >
                   {projectRuns.map((run, index) => (
-                    <option key={run.id} value={run.id}>{pipelineRunTitle(run, index)}</option>
+                    <option key={run.id} value={run.id}>{runTabLabel(run, index)}</option>
                   ))}
                 </select>
               ) : (
-                <div className="filter-tab-buttons scrollable" role="tablist" aria-label="Filter by analysis run">
+                <div className="filter-tab-buttons scrollable" role="tablist" aria-label={t('header.runFilterAriaLabel')}>
                   {projectRuns.map((run, index) => (
                     <span key={run.id} className="filter-tab-run-item">
-                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow" aria-hidden="true" /> : null}
+                      {index > 0 ? <ChevronRight size={14} className="filter-tab-arrow rtl-mirror" aria-hidden="true" /> : null}
                       <button
                         type="button"
                         role="tab"
@@ -162,14 +198,14 @@ export default function ReportsView({
                         className={`source-type-tab ${reportRunId === run.id ? 'active' : ''}`}
                         onClick={() => onReportRunIdChange(run.id)}
                       >
-                        {pipelineRunTitle(run, index)}
+                        {runTabLabel(run, index)}
                       </button>
                     </span>
                   ))}
                 </div>
               )
             ) : (
-              <div className="filter-tab-buttons" role="tablist" aria-label="Report date range">
+              <div className="filter-tab-buttons" role="tablist" aria-label={t('header.dateRangeFilterAriaLabel')}>
                 {REPORT_PERIODS.map((period) => (
                   <button
                     key={period.key}
@@ -179,7 +215,7 @@ export default function ReportsView({
                     className={`source-type-tab ${reportPeriod === period.key ? 'active' : ''}`}
                     onClick={() => onReportPeriodChange(period.key)}
                   >
-                    {period.label}
+                    {t(`periods.${period.key}`)}
                   </button>
                 ))}
               </div>
@@ -187,32 +223,32 @@ export default function ReportsView({
           </div>
         </div>
 
-        <ul className="report-summary-chips" aria-label="Report summary">
+        <ul className="report-summary-chips" aria-label={t('summaryChips.ariaLabel')}>
           <li className="report-chip">
             <FolderKanban size={13} aria-hidden="true" />
-            <span className="report-chip-label">Project</span>
-            <strong>{selectedProject ? selectedProject.name : 'None selected'}</strong>
+            <span className="report-chip-label">{t('summaryChips.project')}</span>
+            <strong dir="auto">{selectedProject ? selectedProject.name : t('summaryChips.noneSelected')}</strong>
           </li>
           <li className="report-chip">
             <Activity size={13} aria-hidden="true" />
-            <span className="report-chip-label">Articles analyzed</span>
-            <strong>{totalArticles.toLocaleString()}</strong>
+            <span className="report-chip-label">{t('summaryChips.articlesAnalyzed')}</span>
+            <strong>{formatNumber(totalArticles, locale)}</strong>
           </li>
           <li className="report-chip">
             <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
-            <span className="report-chip-label">Dominant sentiment</span>
+            <span className="report-chip-label">{t('summaryChips.dominantSentiment')}</span>
             <strong style={{ color: dominantSentiment.color }}>{dominantSentiment.label}</strong>
           </li>
           <li className="report-chip">
             <CalendarClock size={13} aria-hidden="true" />
-            <span className="report-chip-label">Range</span>
+            <span className="report-chip-label">{t('summaryChips.range')}</span>
             <strong>
               {reportRunId
-                ? pipelineRunTitle(
+                ? runTabLabel(
                     projectRuns.find((run) => run.id === reportRunId),
                     projectRuns.findIndex((run) => run.id === reportRunId),
                   )
-                : REPORT_PERIODS.find((period) => period.key === reportPeriod)?.label}
+                : t(`periods.${reportPeriod}`)}
             </strong>
           </li>
           <li
@@ -222,19 +258,19 @@ export default function ReportsView({
           >
             {syncStatus.icon}
             <span className="report-chip-label">{syncStatus.label}</span>
-            <strong>{syncStatus.detail}</strong>
+            <strong dir="auto">{syncStatus.detail}</strong>
           </li>
         </ul>
       </header>
 
       {selectedProject?.mode === 'competitor' ? (
-        <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel="Back to reports" />
+        <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel={t('backToReports')} />
       ) : null}
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
         <StatsOverview
           intelligence={liveReport}
-          scopeLabel={selectedProject ? selectedProject.name : 'no project selected'}
+          scopeLabel={selectedProject ? selectedProject.name : t('noProjectSelectedScope')}
           loading={isLoadingIntelligence}
           error={intelligenceError}
           onRetry={onRefresh}

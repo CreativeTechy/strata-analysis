@@ -11,6 +11,8 @@
  * later "generate findings" pass.
  */
 
+import { apiErrorFromPayload } from '../lib/apiError.js';
+
 const BASE = '/api/projects';
 
 async function request(path, { method = 'GET', body, signal } = {}) {
@@ -30,8 +32,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
   }
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }
@@ -56,8 +57,7 @@ async function requestForm(path, formData) {
   }
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error || `Request failed (${response.status})`;
-    const error = new Error(message);
+    const error = apiErrorFromPayload(payload, `Request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }

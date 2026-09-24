@@ -9,15 +9,23 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Radar } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
-import { IMPACT_LABELS, avatarGradient, initials, listStudyFindings, relativeTime } from '../api/competitorApi.js';
+import { IMPACT_LABELS, avatarGradient, initials, listStudyFindings } from '../api/competitorApi.js';
+import { formatRelativeTime } from '../lib/i18nFormat.js';
 import '../styles/Competitors.css';
 
 const PAGE_SIZE = 5;
 
+function impactLabel(t, level) {
+  return t(`labels.impact.${level}`, { defaultValue: IMPACT_LABELS[level] || level });
+}
+
 export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
+  const { t, i18n } = useTranslation(['competitors', 'common']);
+  const locale = i18n.language;
   const { hasPermission } = useAuth();
   const canView = hasPermission('competitors.view');
   const [page, setPage] = useState(0);
@@ -59,15 +67,15 @@ export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
   return (
     <article className="glass-card cs-pulse-card">
       <div className="cs-pulse-head">
-        <span className="cs-pulse-eyebrow"><Radar size={13} /> Competitor intelligence</span>
+        <span className="cs-pulse-eyebrow"><Radar size={13} /> {t('pulseCard.eyebrow')}</span>
       </div>
 
       {loading ? (
         <div className="cs-skeleton" style={{ height: 64 }} />
       ) : error ? (
-        <p className="cs-pulse-empty">Couldn&rsquo;t load competitor data: {error}</p>
+        <p className="cs-pulse-empty">{t('pulseCard.loadError', { error })}</p>
       ) : findings.length === 0 ? (
-        <p className="cs-pulse-empty">No findings generated yet — run analysis from this study to populate this.</p>
+        <p className="cs-pulse-empty">{t('pulseCard.empty')}</p>
       ) : (
         <>
           <ul className="cs-pulse-list">
@@ -82,11 +90,11 @@ export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
                     {initials(finding.competitor_name)}
                   </span>
                   <span className="cs-pulse-row-main">
-                    <span className="cs-pulse-row-headline">{finding.headline}</span>
-                    <span className="cs-pulse-row-meta">{finding.competitor_name}</span>
+                    <span className="cs-pulse-row-headline" dir="auto">{finding.headline}</span>
+                    <span className="cs-pulse-row-meta" dir="auto">{finding.competitor_name}</span>
                   </span>
-                  <span className={`cs-pill cs-pill-${finding.impact_level}`}>{IMPACT_LABELS[finding.impact_level] || finding.impact_level}</span>
-                  <span className="cs-pulse-row-time">{relativeTime(finding.generated_at)}</span>
+                  <span className={`cs-pill cs-pill-${finding.impact_level}`}>{impactLabel(t, finding.impact_level)}</span>
+                  <span className="cs-pulse-row-time">{formatRelativeTime(finding.generated_at, locale)}</span>
                 </Link>
               </li>
             ))}
@@ -100,16 +108,16 @@ export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
                 onClick={() => setPage((current) => Math.max(0, current - 1))}
                 disabled={page === 0}
               >
-                <ChevronLeft size={14} /> Prev
+                <ChevronLeft size={14} className="rtl-mirror" /> {t('pulseCard.prev')}
               </button>
-              <span className="cs-pulse-pagination-status">Page {page + 1} of {totalPages}</span>
+              <span className="cs-pulse-pagination-status">{t('common:pagination.pageOfTotal', { page: page + 1, totalPages })}</span>
               <button
                 type="button"
                 className="cs-btn cs-btn-ghost cs-btn-sm"
                 onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
                 disabled={page >= totalPages - 1}
               >
-                Next <ChevronRight size={14} />
+                {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
               </button>
             </div>
           ) : null}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
@@ -15,38 +16,51 @@ import {
 import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { getArticleAnalysis } from '../api/articlesApi.js';
 import { isSyntheticUrl, articleSourceLabel } from '../lib/articleHelpers.jsx';
+import { formatDate, formatNumber } from '../lib/i18nFormat.js';
 const TYPE_COLORS = { praise: '#16a34a', complaint: '#e11d48', issue: '#e11d48', suggestion: '#f59e0b' };
 const ARTICLE_DISPLAY_CAP = 200;
+
+// Bounded, known badge types - the underlying `type` data value is never
+// translated itself, only the label shown for it; anything outside this
+// fixed set (or missing, defaulting to "issue") falls back to the raw value.
+const BADGE_TYPE_KEYS = {
+  praise: 'topic.badgeType.praise',
+  complaint: 'topic.badgeType.complaint',
+  issue: 'topic.badgeType.issue',
+  suggestion: 'topic.badgeType.suggestion',
+};
 
 function typeColor(type) {
   return TYPE_COLORS[String(type || '').toLowerCase()] || '#64748b';
 }
 
-function formatDate(value) {
+// articleHelpers.jsx isn't owned by this localization pass and its
+// articleDate() is an ad hoc toLocaleDateString() wrapper - these use the
+// shared, locale-explicit formatDate()/formatNumber() (lib/i18nFormat.js)
+// instead, matching the same "—" / raw-value fallbacks the local helpers
+// this file used to define had.
+function displayDate(value, locale) {
   if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+  return formatDate(value, locale) || '—';
 }
 
-function formatChartDate(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function displayChartDate(value, locale) {
+  const formatted = formatDate(value, locale, { month: 'short', day: 'numeric' });
+  return formatted || value;
 }
 
-// "August 18 2026" - long enough to be unambiguous without a locale comma.
-function formatLongDate(value) {
+function displayLongDate(value, locale) {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return `${date.toLocaleDateString(undefined, { month: 'long' })} ${date.getDate()} ${date.getFullYear()}`;
+  return formatDate(value, locale, { month: 'long', day: 'numeric', year: 'numeric' }) || '—';
 }
 
 function sourceDate(source) {
   return source?.published || source?.createdAt || null;
 }
 
-function TypeBadge({ type }) {
+function TypeBadge({ type, t }) {
   const color = typeColor(type);
+  const key = BADGE_TYPE_KEYS[String(type || '').toLowerCase()];
   return (
     <span
       style={{
@@ -61,12 +75,14 @@ function TypeBadge({ type }) {
         fontSize: '0.75rem',
       }}
     >
-      {type || 'issue'}
+      {key ? t(key) : (type || t('topic.badgeType.issue'))}
     </span>
   );
 }
 
 export default function TopicDetailPage() {
+  const { t, i18n } = useTranslation(['articles', 'common']);
+  const locale = i18n.language;
   const location = useLocation();
   const state = location.state;
   const sources = useMemo(() => (Array.isArray(state?.sources) ? state.sources : []), [state]);
@@ -90,7 +106,7 @@ export default function TopicDetailPage() {
         })
         .catch((err) => {
           if (!cancelled) {
-            setRunDetails((prev) => ({ ...prev, [runId]: { run: null, loading: false, error: err?.message || 'Pipeline details unavailable.' } }));
+            setRunDetails((prev) => ({ ...prev, [runId]: { run: null, loading: false, error: err?.message || t('topic.pipelineDetailsUnavailable') } }));
           }
         });
     });
@@ -140,7 +156,7 @@ export default function TopicDetailPage() {
           if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: data?.analysis || null, loading: false, error: '' } }));
         })
         .catch((err) => {
-          if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: null, loading: false, error: err?.message || 'Failed to load article.' } }));
+          if (!cancelled) setArticleDetails((prev) => ({ ...prev, [id]: { data: null, loading: false, error: err?.message || t('topic.failedToLoadArticle') } }));
         });
     });
     return () => {
@@ -154,7 +170,7 @@ export default function TopicDetailPage() {
   const lastSeen = sortedSources.length ? sourceDate(sortedSources[0]) : null;
 
   const backTo = state?.backTo || '/dashboard';
-  const backLabel = state?.backLabel || 'Back to Dashboard';
+  const backLabel = state?.backLabel || t('topic.backToDashboard');
 
   if (!state || !sources.length) {
     return (
@@ -163,10 +179,10 @@ export default function TopicDetailPage() {
           <div className="admin-empty-state-icon">
             <Lightbulb size={18} />
           </div>
-          <strong>No topic selected</strong>
-          <span>Open this page by clicking a topic from the dashboard, reports, or a project's frequent ideas.</span>
+          <strong>{t('topic.noTopicSelected')}</strong>
+          <span>{t('topic.noTopicHint')}</span>
           <Link to={backTo} className="btn-secondary" style={{ textDecoration: 'none', marginTop: 12 }}>
-            <ArrowLeft size={16} /> {backLabel}
+            <ArrowLeft size={16} className="rtl-mirror" /> {backLabel}
           </Link>
         </div>
       </div>
@@ -178,12 +194,12 @@ export default function TopicDetailPage() {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
-            <Lightbulb size={14} /> Topic insights
+            <Lightbulb size={14} /> {t('topic.kicker')}
           </div>
-          <h1 className="admin-page-title">{state.idea}</h1>
+          <h1 className="admin-page-title" dir="auto">{state.idea}</h1>
           <p className="admin-page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <TypeBadge type={state.type} />
-            {state.category ? <span className="admin-tag muted">{state.category}</span> : null}
+            <TypeBadge type={state.type} t={t} />
+            {state.category ? <span className="admin-tag muted" dir="auto">{state.category}</span> : null}
           </p>
         </div>
         <div className="admin-page-toolbar">
@@ -192,10 +208,10 @@ export default function TopicDetailPage() {
             className="btn-secondary"
             style={{ textDecoration: 'none' }}
           >
-            <ShieldCheck size={16} /> Topic evidence
+            <ShieldCheck size={16} /> {t('topic.topicEvidence')}
           </Link> : null}
           <Link to={backTo} className="btn-secondary" style={{ textDecoration: 'none' }}>
-            <ArrowLeft size={16} /> {backLabel}
+            <ArrowLeft size={16} className="rtl-mirror" /> {backLabel}
           </Link>
         </div>
       </div>
@@ -206,8 +222,8 @@ export default function TopicDetailPage() {
             <Lightbulb size={18} />
           </div>
           <div>
-            <span>Mentions</span>
-            <strong>{totalMentions.toLocaleString()}</strong>
+            <span>{t('topic.mentions')}</span>
+            <strong>{formatNumber(totalMentions, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -215,8 +231,8 @@ export default function TopicDetailPage() {
             <Rss size={18} />
           </div>
           <div>
-            <span>First seen</span>
-            <strong>{formatDate(firstSeen)}</strong>
+            <span>{t('topic.firstSeen')}</span>
+            <strong>{displayDate(firstSeen, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -224,8 +240,8 @@ export default function TopicDetailPage() {
             <Rss size={18} />
           </div>
           <div>
-            <span>Last seen</span>
-            <strong>{formatDate(lastSeen)}</strong>
+            <span>{t('topic.lastSeen')}</span>
+            <strong>{displayDate(lastSeen, locale)}</strong>
           </div>
         </div>
         <div className="admin-stat-card">
@@ -233,16 +249,16 @@ export default function TopicDetailPage() {
             <Workflow size={18} />
           </div>
           <div>
-            <span>Analysis runs</span>
-            <strong>{distinctRunIds.length.toLocaleString()}</strong>
+            <span>{t('topic.analysisRuns')}</span>
+            <strong>{formatNumber(distinctRunIds.length, locale)}</strong>
           </div>
         </div>
       </div>
 
       <div className="glass-card" style={{ marginBottom: 18 }}>
-        <h3 className="run-detail-section-title">Extracted by</h3>
+        <h3 className="run-detail-section-title">{t('topic.extractedBy')}</h3>
         {distinctRunIds.length === 0 ? (
-          <div className="run-detail-fallback">No analysis run is recorded for these articles.</div>
+          <div className="run-detail-fallback">{t('topic.noAnalysisRun')}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {distinctRunIds.map((runId) => {
@@ -262,20 +278,20 @@ export default function TopicDetailPage() {
                 >
                   {detail?.loading ? (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-light)', fontSize: '0.85rem' }}>
-                      <Loader2 size={14} className="spin" /> Loading analysis run…
+                      <Loader2 size={14} className="spin" /> {t('topic.loadingAnalysisRun')}
                     </span>
                   ) : detail?.error ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#b42318', fontSize: '0.85rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#b42318', fontSize: '0.85rem' }} dir="auto">
                       <AlertTriangle size={14} /> {detail.error}
                     </span>
                   ) : (
                     <>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600 }}>
                         <Workflow size={15} style={{ color: 'var(--primary-color)' }} />
-                        {detail?.run?.sequence_number ? `Analysis #${detail.run.sequence_number}` : 'Analysis run'}
+                        {detail?.run?.sequence_number ? t('topic.analysisNumber', { number: detail.run.sequence_number }) : t('topic.analysisRun')}
                       </span>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                        {formatLongDate(detail?.run?.started_at)}
+                        {displayLongDate(detail?.run?.started_at, locale)}
                       </span>
                     </>
                   )}
@@ -284,7 +300,7 @@ export default function TopicDetailPage() {
             })}
             {unattributedCount > 0 ? (
               <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
-                {unattributedCount.toLocaleString()} article{unattributedCount === 1 ? '' : 's'} with no recorded pipeline run (manual import or reanalysis).
+                {t('topic.unattributedCount', { count: unattributedCount })}
               </span>
             ) : null}
           </div>
@@ -292,23 +308,23 @@ export default function TopicDetailPage() {
       </div>
 
       <div className="glass-card" style={{ marginBottom: 18 }}>
-        <h3 className="run-detail-section-title">Mentions over time</h3>
+        <h3 className="run-detail-section-title">{t('topic.mentionsOverTime')}</h3>
         {seriesData.length === 0 ? (
-          <div className="run-detail-fallback">No dated articles to plot yet.</div>
+          <div className="run-detail-fallback">{t('topic.noDatedArticles')}</div>
         ) : (
           <>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={seriesData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" />
-                <XAxis dataKey="date" tickFormatter={formatChartDate} minTickGap={24} />
+                <XAxis dataKey="date" tickFormatter={(value) => displayChartDate(value, locale)} minTickGap={24} />
                 <YAxis allowDecimals={false} />
-                <Tooltip labelFormatter={formatChartDate} formatter={(value) => [`${value}`, 'Mentions']} />
-                <Line type="monotone" dataKey="count" name="Mentions" stroke="#2563eb" strokeWidth={2.5} dot={false} />
+                <Tooltip labelFormatter={(value) => displayChartDate(value, locale)} formatter={(value) => [`${value}`, t('topic.mentionsTooltipLabel')]} />
+                <Line type="monotone" dataKey="count" name={t('topic.mentionsTooltipLabel')} stroke="#2563eb" strokeWidth={2.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
             {undatedCount > 0 ? (
               <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
-                {undatedCount.toLocaleString()} article{undatedCount === 1 ? '' : 's'} without a date not shown above.
+                {t('topic.undatedCount', { count: undatedCount })}
               </span>
             ) : null}
           </>
@@ -316,9 +332,9 @@ export default function TopicDetailPage() {
       </div>
 
       <div className="glass-card">
-        <h3 className="run-detail-section-title">Articles ({sources.length.toLocaleString()})</h3>
+        <h3 className="run-detail-section-title">{t('topic.articlesHeading', { count: formatNumber(sources.length, locale) })}</h3>
         {displayedSources.length === 0 ? (
-          <div className="run-detail-fallback">No representative articles found.</div>
+          <div className="run-detail-fallback">{t('topic.noRepresentativeArticles')}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {displayedSources.map((source) => {
@@ -339,23 +355,23 @@ export default function TopicDetailPage() {
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.84rem' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontWeight: 600 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontWeight: 600 }} dir="auto">
                       {source.title || source.url} <FileText size={12} style={{ opacity: 0.5, flexShrink: 0 }} />
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-light)', flexShrink: 0 }}>
-                      {source.source ? <span>{articleSourceLabel({ url: rawUrl, source: source.source })}</span> : null}
+                      {source.source ? <span dir="auto">{articleSourceLabel({ url: rawUrl, source: source.source })}</span> : null}
                       {sentiment ? <span className="admin-tag muted">{sentiment}</span> : null}
-                      <span>{formatDate(sourceDate(source))}</span>
+                      <span>{displayDate(sourceDate(source), locale)}</span>
                     </span>
                   </div>
                   {detail?.loading ? (
-                    <p className="subtitle" style={{ margin: 0 }}>Loading summary…</p>
+                    <p className="subtitle" style={{ margin: 0 }}>{t('topic.loadingSummary')}</p>
                   ) : detail?.error ? (
-                    <p style={{ margin: 0, color: '#b42318', fontSize: '0.82rem' }}>{detail.error}</p>
+                    <p style={{ margin: 0, color: '#b42318', fontSize: '0.82rem' }} dir="auto">{detail.error}</p>
                   ) : detail?.data?.summary ? (
-                    <p style={{ margin: 0, lineHeight: 1.5, fontSize: '0.84rem' }}>{detail.data.summary}</p>
+                    <p style={{ margin: 0, lineHeight: 1.5, fontSize: '0.84rem' }} dir="auto">{detail.data.summary}</p>
                   ) : (
-                    <p className="subtitle" style={{ margin: 0 }}>No summary available for this article.</p>
+                    <p className="subtitle" style={{ margin: 0 }}>{t('topic.noSummaryAvailable')}</p>
                   )}
                   {url ? (
                     <a
@@ -364,7 +380,7 @@ export default function TopicDetailPage() {
                       rel="noopener noreferrer"
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, alignSelf: 'flex-start', fontSize: '0.8rem', color: 'var(--primary-color)', textDecoration: 'none' }}
                     >
-                      View original article <ExternalLink size={12} />
+                      {t('topic.viewOriginalArticle')} <ExternalLink size={12} />
                     </a>
                   ) : null}
                 </div>
@@ -372,7 +388,7 @@ export default function TopicDetailPage() {
             })}
             {sources.length > displayedSources.length ? (
               <span style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>
-                Showing {displayedSources.length.toLocaleString()} of {sources.length.toLocaleString()} articles.
+                {t('topic.showingOfArticles', { shown: formatNumber(displayedSources.length, locale), total: formatNumber(sources.length, locale) })}
               </span>
             ) : null}
           </div>

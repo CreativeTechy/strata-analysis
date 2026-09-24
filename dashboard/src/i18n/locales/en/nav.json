@@ -1,0 +1,33 @@
+{
+  "brand": {
+    "subtitle": "Data Analysis"
+  },
+  "sections": {
+    "insights": "Insights",
+    "monitoring": "Monitoring",
+    "analysis": "Analysis",
+    "admin": "Admin"
+  },
+  "items": {
+    "dashboard": "Dashboard",
+    "reports": "Reports",
+    "articles": "Articles",
+    "sources": "Sources",
+    "copilot": "Copilot",
+    "opinionMonitor": "Opinion Monitor",
+    "competitorAnalysis": "Competitor Analysis",
+    "analysisRuns": "Analysis Runs",
+    "performanceLogs": "Performance Logs",
+    "users": "Users",
+    "roles": "Roles",
+    "projectAccess": "Project Access"
+  },
+  "toggle": {
+    "closeNavigation": "Close navigation",
+    "expandNavigation": "Expand navigation",
+    "collapseNavigation": "Collapse navigation"
+  },
+  "profile": {
+    "logout": "Log out"
+  }
+}
