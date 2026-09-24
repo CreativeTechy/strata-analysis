@@ -254,6 +254,55 @@ class ListProjectSourceKeysTests(unittest.TestCase):
         })
 
 
+class SourceTrustSummaryForRowsTests(unittest.TestCase):
+    """source_trust_summary_for_rows() - the dashboard KPI's project-wide
+    trust-tier aggregate, computed over already-fetched article rows rather
+    than a fresh query (unlike list_project_sources(), which only resolves
+    trust for one page of source groups)."""
+
+    def test_no_rows_returns_zeroed_summary_without_resolving_trust(self):
+        with patch("services.articles.articles_query.resolve_source_trust") as mock_resolve:
+            result = articles_query.source_trust_summary_for_rows([])
+        mock_resolve.assert_not_called()
+        self.assertEqual(result["total_sources"], 0)
+        self.assertEqual(result["total_articles"], 0)
+        self.assertIsNone(result["trusted_pct"])
+        self.assertEqual(result["tiers"]["trusted"], {"sources": 0, "articles": 0})
+
+    def test_aggregates_article_and_source_counts_per_tier(self):
+        rows = [
+            {"url": "https://trusted.example/a1"},
+            {"url": "https://trusted.example/a2"},
+            {"url": "https://sketchy.example/a1"},
+            {"url": None, "source": "doc.pdf", "source_url": "document://project-document/1"},
+        ]
+
+        def fake_resolve(sources, project_id=None):
+            return {
+                "real:trusted.example": {"tier": "trusted"},
+                "real:sketchy.example": {"tier": "untrusted"},
+                "document:document://project-document/1": {"tier": "unknown"},
+            }
+
+        with patch("services.articles.articles_query.resolve_source_trust", side_effect=fake_resolve):
+            result = articles_query.source_trust_summary_for_rows(rows, project_id=7)
+
+        self.assertEqual(result["total_sources"], 3)
+        self.assertEqual(result["total_articles"], 4)
+        self.assertEqual(result["tiers"]["trusted"], {"sources": 1, "articles": 2})
+        self.assertEqual(result["tiers"]["untrusted"], {"sources": 1, "articles": 1})
+        self.assertEqual(result["tiers"]["unknown"], {"sources": 1, "articles": 1})
+        self.assertEqual(result["tiers"]["mixed"], {"sources": 0, "articles": 0})
+        self.assertEqual(result["trusted_pct"], 50.0)
+
+    def test_missing_tier_falls_back_to_unknown(self):
+        rows = [{"url": "https://example.com/a"}]
+        with patch("services.articles.articles_query.resolve_source_trust", return_value={}):
+            result = articles_query.source_trust_summary_for_rows(rows)
+        self.assertEqual(result["tiers"]["unknown"], {"sources": 1, "articles": 1})
+        self.assertEqual(result["trusted_pct"], 0.0)
+
+
 class ListArticleIdsForSourceHostTests(unittest.TestCase):
     """The query-side counterpart to ListProjectSourcesTests above - it must
     match every article that list_project_sources() would group/label under

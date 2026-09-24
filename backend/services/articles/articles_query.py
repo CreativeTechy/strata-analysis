@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import config
 import db
+from services.articles.source_trust import TIERS as TRUST_TIERS
 from services.articles.source_trust import resolve_many as resolve_source_trust
 from services.projects.projects_store import list_article_ids_for_project
 
@@ -625,6 +626,53 @@ def list_project_source_keys(project_id) -> dict[str, dict]:
         key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
         keys[key] = {"type": source_type, "label": label}
     return keys
+
+
+def source_trust_summary_for_rows(rows: list[dict], project_id=None) -> dict:
+    """Project-wide trust-tier breakdown, counted over `rows` (each needing
+    at least `url`/`source`/`source_url` - the same shape
+    _fetch_project_rows() already selects for the dashboard, so the caller
+    doesn't need a second query). Unlike list_project_sources()'s `trust`
+    field, this resolves every source group the rows produce, not just one
+    page - the whole point is a project-wide aggregate, not a Sources-tab
+    listing.
+
+    Returns {"tiers": {tier: {"sources": n, "articles": n}, ...},
+    "total_sources": n, "total_articles": n, "trusted_pct": float | None}.
+    `trusted_pct` is the share of *articles* (not sources) whose source is
+    'trusted' - None when there are no articles to divide by, so the
+    dashboard can show "no data" instead of a misleading 0%.
+    """
+    groups: dict[str, dict] = {}
+    for row in rows or []:
+        key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        group = groups.setdefault(key, {"key": key, "type": source_type, "label": label, "article_count": 0})
+        group["article_count"] += 1
+
+    tiers = {tier: {"sources": 0, "articles": 0} for tier in TRUST_TIERS}
+    if groups:
+        # Same "no DB, nothing to resolve" short-circuit as list_project_sources()'s
+        # other DB-backed helpers - every group falls back to 'unknown' rather than
+        # attempting a connection, so an unconfigured/unreachable DATABASE_URL fails
+        # fast instead of blocking the whole intelligence response on a pool timeout.
+        trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id else None) if config.DATABASE_URL else {}
+        for group in groups.values():
+            tier = (trust_by_key.get(group["key"]) or {}).get("tier") or "unknown"
+            if tier not in tiers:
+                tier = "unknown"
+            tiers[tier]["sources"] += 1
+            tiers[tier]["articles"] += group["article_count"]
+
+    total_sources = len(groups)
+    total_articles = sum(group["article_count"] for group in groups.values())
+    trusted_pct = round(tiers["trusted"]["articles"] / total_articles * 100, 1) if total_articles else None
+
+    return {
+        "tiers": tiers,
+        "total_sources": total_sources,
+        "total_articles": total_articles,
+        "trusted_pct": trusted_pct,
+    }
 
 
 def get_analysis_status_counts(project_id=None):

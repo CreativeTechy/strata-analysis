@@ -27,6 +27,10 @@ const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
 // Categorical palette for language slices (open-ended set, unlike the fixed 4 sentiments) -
 // same validated CVD-safe order used for keyword lines in StatsOverview.jsx.
 const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+// Same offline trust tiers source_trust.py resolves - order matches the
+// Sources tab's own tier order (trusted -> mixed -> untrusted -> unknown).
+const TRUST_TIER_ORDER = ['trusted', 'mixed', 'untrusted', 'unknown'];
+const TRUST_TIER_COLORS = { trusted: '#16a34a', mixed: '#f59e0b', untrusted: '#e11d48', unknown: '#64748b' };
 
 // SENTIMENT_KEYS/idea "type"/EMOTION_AXES are fixed, small enums, so they go
 // through a real translation lookup (object keys stay the untranslated code -
@@ -197,6 +201,10 @@ export default function DashboardOverview({
   const languageData = capLanguageBreakdown(data.insights?.language_breakdown || []);
   const regionData = capBreakdown((data.insights?.region_breakdown || []).filter((entry) => entry.total > 0));
   const genderData = capBreakdown((data.insights?.gender_breakdown || []).filter((entry) => entry.total > 0));
+  const trustTiers = data.source_trust?.tiers || {};
+  const trustData = TRUST_TIER_ORDER
+    .map((tier) => ({ tier, articles: trustTiers[tier]?.articles || 0, sources: trustTiers[tier]?.sources || 0 }))
+    .filter((entry) => entry.articles > 0);
   const ageRangeData = capBreakdown((data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0));
   const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
@@ -477,6 +485,33 @@ export default function DashboardOverview({
                 </div>
               </div>
             ) : <p className="intelligence-empty">{t('dashboard:distributions.segment.empty')}</p>}
+          </article>
+
+          <article className="glass-card intelligence-card intelligence-language-card">
+            <h3>Source trust</h3>
+            {trustData.length ? (
+              <div className="intelligence-language-layout">
+                <div className="intelligence-donut">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={trustData} dataKey="articles" nameKey="tier" outerRadius="92%" paddingAngle={3} stroke="none">
+                        {trustData.map((entry) => <Cell key={entry.tier} fill={TRUST_TIER_COLORS[entry.tier]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="intelligence-legend">
+                  {trustData.map((entry) => (
+                    <div key={entry.tier}>
+                      <span style={{ background: TRUST_TIER_COLORS[entry.tier] }} />
+                      <label>{distributionLabel(entry.tier)}</label>
+                      <strong>{percent(entry.articles, data.source_trust?.total_articles || 0)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="intelligence-empty">No sources assessed yet.</p>}
           </article>
 
         </section>
