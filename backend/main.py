@@ -72,7 +72,9 @@ from services.projects.projects_store import (
 )
 from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
 from services.articles.idea_comparisons import (
-    generate_idea_comparisons, has_run_generation_attempt, list_idea_comparisons,
+    create_comparison_fact, delete_comparison_fact, generate_idea_comparisons,
+    get_idea_comparison, has_run_generation_attempt, list_idea_comparisons,
+    regenerate_idea_comparison, update_comparison_fact,
 )
 from services.intelligence.trend_summary import generate_trend_summary
 from services.reports.report_data import build_report_data
@@ -1003,6 +1005,78 @@ def get_project_idea_comparisons_view(
                 "error_code": "llm_provider_error",
             }
     return {"comparisons": cached}
+
+
+@app.get("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}")
+def get_project_idea_comparison_detail(
+    project_id: int, idea_cluster_id: int, run_id: str | None = None,
+    user: dict = Depends(require_permission("articles.view")),
+):
+    _ensure_project_visible(project_id, user)
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found.")
+    comparison = get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)
+    if not comparison:
+        raise HTTPException(status_code=404, detail="Idea comparison not found.")
+    return {"comparison": comparison}
+
+
+@app.post("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}/facts")
+def add_project_idea_comparison_fact(
+    project_id: int, idea_cluster_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        fact = create_comparison_fact(project_id, idea_cluster_id, payload or {}, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not fact:
+        raise HTTPException(status_code=404, detail="Idea comparison not found.")
+    return {"fact": fact}
+
+
+@app.put("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}/facts/{fact_id}")
+def edit_project_idea_comparison_fact(
+    project_id: int, idea_cluster_id: int, fact_id: int, payload: dict,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        fact = update_comparison_fact(project_id, idea_cluster_id, fact_id, payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not fact:
+        raise HTTPException(status_code=404, detail="User-provided fact not found.")
+    return {"fact": fact}
+
+
+@app.delete("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}/facts/{fact_id}")
+def remove_project_idea_comparison_fact(
+    project_id: int, idea_cluster_id: int, fact_id: int,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    if not delete_comparison_fact(project_id, idea_cluster_id, fact_id):
+        raise HTTPException(status_code=404, detail="User-provided fact not found.")
+    return {"deleted": True, "fact_id": fact_id}
+
+
+@app.post("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}/regenerate")
+def regenerate_project_idea_comparison(
+    project_id: int, idea_cluster_id: int, run_id: str | None = None,
+    user: dict = Depends(require_permission("projects.update")),
+):
+    _ensure_project_visible(project_id, user)
+    try:
+        comparison = regenerate_idea_comparison(project_id, idea_cluster_id, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=503, detail=exc.user_message)
+    if not comparison:
+        raise HTTPException(status_code=404, detail="Idea comparison not found.")
+    return {"comparison": comparison}
 
 
 @app.post("/api/projects/{project_id}/reports/summary.pdf")

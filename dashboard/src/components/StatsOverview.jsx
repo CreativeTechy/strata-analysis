@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, RefreshCw, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
-import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
+import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import VariationFromLastRun from './VariationFromLastRun.jsx';
 import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
