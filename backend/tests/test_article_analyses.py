@@ -84,7 +84,9 @@ class RunScopedReadTests(unittest.TestCase):
         for column in ("an.sentiment", "an.writer_tone", "an.article_tone", "an.insight_json", "an.segment"):
             self.assertIn(column, captured["sql"])
         # ...identity from the live article row.
-        for column in ("a.url", "a.title", "a.text", "a.published", "a.verified"):
+        for column in (
+            "a.url", "a.title", "a.text", "a.published", "a.verified", "a.source_provenance",
+        ):
             self.assertIn(column, captured["sql"])
 
     def test_intelligence_reads_snapshots_when_scoped_to_a_run(self):
