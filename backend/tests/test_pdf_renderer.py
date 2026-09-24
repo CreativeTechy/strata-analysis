@@ -9,7 +9,14 @@ import unittest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from services.reports.pdf_renderer import _executive_summary_html, render_summary_pdf
+from services.reports.pdf_renderer import (
+    _comparison_html,
+    _executive_summary_html,
+    _idea_comparisons_html,
+    _top_articles_html,
+    _trust_tag_html,
+    render_summary_pdf,
+)
 
 MINIMAL_REPORT_DATA = {
     "project": {"id": 1, "name": "Acme"},
@@ -27,15 +34,20 @@ MINIMAL_REPORT_DATA = {
 }
 
 MINIMAL_COMPARISON = {
-    "status": "unavailable", "reason": "No analysis history recorded before 2026-03-04.",
-    "today_date": "2026-03-05", "yesterday_date": "2026-03-04", "timezone": "UTC",
-    "today_scope_label": "Last 30 days", "yesterday_scope_label": "As of 2026-03-04",
-    "metrics": {"today": None, "yesterday": None, "deltas": None, "coverage": None},
+    "status": "unavailable", "reason": "No previous analysis run exists.",
+    "current_date": "2026-03-05", "previous_date": "2026-03-04", "timezone": "UTC",
+    "current_scope_label": "Analysis #2", "previous_scope_label": "Analysis #1",
+    "metrics": {"current": None, "previous": None, "deltas": None, "coverage": None},
     "narrative": None, "evidence": [],
 }
 
 
 class RenderSummaryPdfTests(unittest.TestCase):
+    def test_comparison_heading_refers_to_the_last_run(self):
+        html = _comparison_html(MINIMAL_COMPARISON)
+        self.assertIn("Variation from Last Run", html)
+        self.assertNotIn("Variation from Yesterday", html)
+
     def test_renders_valid_pdf_bytes_for_an_empty_report(self):
         pdf_bytes = render_summary_pdf(MINIMAL_REPORT_DATA, MINIMAL_COMPARISON)
         self.assertIsInstance(pdf_bytes, bytes)
@@ -62,10 +74,10 @@ class RenderSummaryPdfTests(unittest.TestCase):
             **MINIMAL_COMPARISON,
             "status": "ok", "reason": None,
             "metrics": {
-                "today": {"total": 10, "positive": 6, "negative": 2, "neutral": 2, "mixed": 0, "net_sentiment": 40},
-                "yesterday": {"total": 8, "positive": 3, "negative": 3, "neutral": 2, "mixed": 0, "net_sentiment": 0},
+                "current": {"total": 10, "positive": 6, "negative": 2, "neutral": 2, "mixed": 0, "net_sentiment": 40},
+                "previous": {"total": 8, "positive": 3, "negative": 3, "neutral": 2, "mixed": 0, "net_sentiment": 0},
                 "deltas": {"total": 2, "positive": 3, "negative": -1, "neutral": 0, "mixed": 0, "net_sentiment": 40},
-                "coverage": {"today_ids": 10, "yesterday_ids": 8, "common": 6, "added": 4, "removed": 2, "sampled": False},
+                "coverage": {"current_ids": 10, "previous_ids": 8, "common": 6, "added": 4, "removed": 2, "sampled": False},
             },
             "narrative": "Ideas & Themes:\nSentiment strengthened around delivery speed.",
             "evidence": [{"point": "Delivery speed praised more often.", "article_ids": [5]}],
@@ -132,6 +144,72 @@ class ExecutiveSummaryHtmlTests(unittest.TestCase):
     def test_renders_the_generic_placeholder_when_neither_text_nor_error_is_set(self):
         html = _executive_summary_html({"executive_summary": {"text": None, "cached": False}})
         self.assertIn("No executive summary available.", html)
+
+
+IDEA_COMPARISONS = {
+    "project_wide": True, "error": None,
+    "items": [{
+        "idea": "Petrol price", "type": "claim", "diverges": True, "summary": "EIA and the memo differ.",
+        "claims": [
+            {"source": "eia.gov", "source_tier": {"tier": "trusted", "is_default": False}, "claim": "$98",
+             "article_id": 1, "title": "EIA weekly", "reference": "/articles/1"},
+            {"source": "memo.pdf", "source_tier": {"tier": "unknown", "is_default": True}, "claim": None,
+             "article_id": 2, "title": "<i>Memo</i>", "reference": "/articles/2"},
+        ],
+    }],
+}
+
+
+class TrustTierTests(unittest.TestCase):
+    def test_labels_match_the_sources_tab_and_flag_seeded_defaults(self):
+        self.assertIn(">Trusted<", _trust_tag_html({"tier": "trusted", "is_default": False}))
+        self.assertIn("Trusted (default)", _trust_tag_html({"tier": "trusted", "is_default": True}))
+        self.assertIn("Untrusted (default)", _trust_tag_html({"tier": "untrusted", "is_default": True}))
+        # "Not yet assessed" is already a statement about the default - no suffix.
+        self.assertIn(">Not yet assessed<", _trust_tag_html({"tier": "unknown", "is_default": True}))
+        self.assertIn("Not yet assessed", _trust_tag_html(None))
+        self.assertIn("Not yet assessed", _trust_tag_html({"tier": "bogus"}))
+
+    def test_top_article_source_carries_its_tier(self):
+        html = _top_articles_html({"top_articles": [{
+            "rank": 1, "article_id": 1, "title": "t", "short_summary": "s", "sentiment": "neutral",
+            "source": "bbc.co.uk", "reference": "/articles/1", "relevance_score": 0.5,
+            "source_tier": {"tier": "mixed", "is_default": False},
+        }]})
+        self.assertIn("bbc.co.uk", html)
+        self.assertIn(">Mixed<", html)
+
+
+class IdeaComparisonsHtmlTests(unittest.TestCase):
+    def test_renders_each_claim_with_source_and_tier(self):
+        html = _idea_comparisons_html({"idea_comparisons": IDEA_COMPARISONS})
+        self.assertIn("Petrol price", html)
+        self.assertIn("Sources disagree", html)
+        self.assertIn("$98", html)
+        self.assertIn("eia.gov", html)
+        self.assertIn(">Trusted<", html)
+        self.assertIn("No specific figure stated", html)
+        self.assertIn("&lt;i&gt;Memo&lt;/i&gt;", html)
+        self.assertIn("whole project", html)
+
+    def test_empty_and_error_states(self):
+        self.assertIn("No idea was discussed", _idea_comparisons_html({}))
+        html = _idea_comparisons_html({"idea_comparisons": {"items": [], "error": "Model down.", "project_wide": False}})
+        self.assertIn("Idea comparisons unavailable - Model down.", html)
+        self.assertNotIn("No idea was discussed", html)
+        self.assertIn("this analysis run", html)
+
+    def test_full_pdf_renders_the_section(self):
+        pdf_bytes = render_summary_pdf({**MINIMAL_REPORT_DATA, "idea_comparisons": IDEA_COMPARISONS}, MINIMAL_COMPARISON)
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        self.assertIn("Idea Comparisons", text)
+        self.assertIn("$98", text)
+        self.assertIn("Trusted", text)
 
 
 if __name__ == "__main__":

@@ -153,7 +153,7 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
         # A one-off retry (run_id is None - main.py's .../analyze, .../reprocess,
         # batch .../analyze) still gets snapshotted, against a synthetic
         # per-project-per-day run (see ensure_adhoc_snapshot_run) - otherwise this
-        # save is invisible to the Reports "variation from yesterday" comparison,
+        # save is invisible to point-in-time historical reporting,
         # which can only compare against what article_analyses actually recorded.
         if saved:
             snapshot_run_id = run_id or ensure_adhoc_snapshot_run(project_id)

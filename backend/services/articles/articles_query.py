@@ -210,11 +210,13 @@ def _real_source_host(url: str) -> str:
     return (urlparse(url).hostname or url).lower()
 
 
-def _source_group_identity(url, source, source_url):
+def source_group_identity(url, source, source_url):
     """(key, type, label, link) for one article row's source group - shared
     by list_project_sources() (the Sources tab) and list_project_source_keys()
     (validating a trust-tier write - see source_trust.py - targets a source
-    this project can actually see), so the two can't drift apart."""
+    this project can actually see), so the two can't drift apart. Also how the
+    Export Summary PDF (services/reports/report_data.py) looks up the same
+    tier the Sources tab shows for an article's source."""
     url = str(url or "")
     is_real = bool(url) and not url.startswith(SYNTHETIC_SOURCE_PREFIX)
     if is_real:
@@ -548,7 +550,7 @@ def list_project_sources(project_id, limit=20, offset=0):
     groups: dict[str, dict] = {}
     for row in rows:
         url = str(row.get("url") or "")
-        key, source_type, label, link = _source_group_identity(url, row.get("source"), row.get("source_url"))
+        key, source_type, label, link = source_group_identity(url, row.get("source"), row.get("source_url"))
         is_real = source_type == "real"
 
         group = groups.setdefault(key, {
@@ -620,7 +622,7 @@ def list_project_source_keys(project_id) -> dict[str, dict]:
         return {}
     keys: dict[str, dict] = {}
     for row in rows or []:
-        key, source_type, label, _link = _source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
         keys[key] = {"type": source_type, "label": label}
     return keys
 

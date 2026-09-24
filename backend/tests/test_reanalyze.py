@@ -152,7 +152,7 @@ class SnapshotOnSaveTests(unittest.TestCase):
     real run_id when this is part of a tracked analysis run, otherwise a
     synthetic per-project-per-day one (see article_analyses.
     ensure_adhoc_snapshot_run) so a one-off retry (main.py's .../analyze,
-    .../reprocess) isn't invisible to the Reports "variation from yesterday"
+    .../reprocess) isn't invisible to point-in-time historical reporting
     comparison the way it used to be."""
 
     ARTICLE_ROW = {"id": 1, "url": "https://example.com/a", "title": "t", "text": "x" * 300}

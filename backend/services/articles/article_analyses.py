@@ -296,7 +296,7 @@ def run_article_count(run_id: str) -> int:
     return int((row or {}).get("total") or 0)
 
 
-# --- Point-in-time reconstruction for the Reports "variation from yesterday" ---
+# --- General point-in-time reconstruction for historical reporting ---
 #
 # Every bulk analysis run already snapshots its own conclusions here (above).
 # The gap is one-off single-article (re)analysis - main.py's .../analyze,

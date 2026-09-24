@@ -1,5 +1,5 @@
 """services/reports/report_data.py: the single snapshot the Export Summary
-PDF and its "variation from yesterday" section are both built from."""
+PDF and its "variation from last run" section are both built from."""
 
 import os
 import unittest
@@ -139,7 +139,19 @@ class ExecutiveSummaryFreshnessTests(unittest.TestCase):
         self.assertFalse(report_data._stale_executive_summary(cached, rows))
 
 
-class BuildReportDataTests(unittest.TestCase):
+class _NoDbLookups(unittest.TestCase):
+    """build_report_data's trust-tier and idea-comparison lookups hit the
+    database; the build tests below are about counts/summary wiring, so
+    stub both out (they have their own tests further down)."""
+
+    def setUp(self):
+        for name, value in (("_source_tiers", {}), ("_idea_comparisons", {"items": [], "error": None, "project_wide": True})):
+            patcher = patch.object(report_data, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class BuildReportDataTests(_NoDbLookups):
     """Wires the pieces together for the period-scope path; run-scope is
     exercised in test_yesterday_comparison.py's scope-anchoring tests."""
 
@@ -179,7 +191,7 @@ class BuildReportDataTests(unittest.TestCase):
         self.assertTrue(gen.call_args_list[1].kwargs.get("force"))
 
 
-class ExecutiveSummaryLlmFailureTests(unittest.TestCase):
+class ExecutiveSummaryLlmFailureTests(_NoDbLookups):
     """generate_trend_summary() calls the configured LLM with no internal
     error handling of its own - build_report_data() must not let that
     failure escape and take down the whole PDF export the way an unguarded
@@ -222,6 +234,90 @@ class ExecutiveSummaryLlmFailureTests(unittest.TestCase):
                           side_effect=[stale_cache, LLMError("down", code="llm_connection_error")]):
             data = report_data.build_report_data(project, period="all", run=None)
         self.assertEqual(data["executive_summary"]["text"], "old but real")
+
+
+class SourceTiersTests(unittest.TestCase):
+    def test_resolves_one_tier_per_article_via_the_sources_tab_grouping_key(self):
+        rows = [
+            {"id": 1, "url": "https://www.bbc.co.uk/a", "source": None, "source_url": None},
+            {"id": 2, "url": "https://www.bbc.co.uk/b", "source": None, "source_url": None},
+            {"id": 3, "url": "document://project-document/7/article/9", "source": "file.pdf",
+             "source_url": "document://project-document/7"},
+        ]
+        resolved = {
+            "real:www.bbc.co.uk": {"tier": "trusted", "reason": "secret engagement note", "is_default": False},
+            "document:document://project-document/7": {"tier": "unknown", "is_default": True},
+        }
+        with patch.object(report_data.source_trust, "resolve_many", return_value=resolved) as resolve:
+            tiers = report_data._source_tiers(5, rows)
+        # Grouped once per source, not once per article.
+        self.assertEqual(len(resolve.call_args.args[0]), 2)
+        self.assertEqual(resolve.call_args.kwargs["project_id"], 5)
+        self.assertEqual(tiers[1], {"tier": "trusted", "is_default": False})
+        self.assertEqual(tiers[2], {"tier": "trusted", "is_default": False})
+        self.assertEqual(tiers[3], {"tier": "unknown", "is_default": True})
+        # The override's free-text reason never reaches the report.
+        self.assertNotIn("reason", tiers[1])
+
+    def test_lookup_failure_falls_back_to_unknown(self):
+        rows = [{"id": 1, "url": "https://x.com/a", "source": None, "source_url": None}]
+        with patch.object(report_data.source_trust, "resolve_many", side_effect=RuntimeError("db down")):
+            tiers = report_data._source_tiers(1, rows)
+        self.assertEqual(tiers[1], {"tier": "unknown", "is_default": True})
+
+
+class IdeaComparisonsTests(unittest.TestCase):
+    COMPARISON = {
+        "idea": "Petrol price", "type": "claim", "diverges": True, "summary": "They disagree.",
+        "sources": [
+            {"source_label": "eia.gov", "value": "$98", "article_id": 1, "title": "EIA"},
+            {"source_label": "project-document", "value": "", "article_id": 2, "title": "Memo"},
+        ],
+    }
+    IDENTITIES = {
+        1: {"id": 1, "url": "https://eia.gov/a", "source": None, "source_url": None},
+        2: {"id": 2, "url": "document://project-document/3/article/4", "source": "memo.pdf",
+            "source_url": "document://project-document/3"},
+    }
+
+    def _build(self, run_id=None, attempted=True, list_side_effect=None):
+        tiers = {1: {"tier": "trusted", "is_default": True}}
+        with patch.object(report_data, "list_idea_comparisons",
+                          side_effect=list_side_effect or (lambda *a, **k: [self.COMPARISON])) as listed,              patch.object(report_data, "has_run_generation_attempt", return_value=attempted),              patch.object(report_data, "generate_idea_comparisons") as generate,              patch.object(report_data, "_fetch_article_identities", return_value=self.IDENTITIES),              patch.object(report_data, "_source_tiers", return_value=tiers):
+            section = report_data._idea_comparisons(1, run_id)
+        return section, generate, listed
+
+    def test_each_source_value_becomes_a_claim_with_its_trust_tier(self):
+        section, generate, _ = self._build()
+        generate.assert_not_called()  # project-wide scope never spends an LLM call on export
+        self.assertTrue(section["project_wide"])
+        self.assertIsNone(section["error"])
+        item = section["items"][0]
+        self.assertTrue(item["diverges"])
+        first, second = item["claims"]
+        self.assertEqual(first["source"], "eia.gov")
+        self.assertEqual(first["claim"], "$98")
+        self.assertEqual(first["source_tier"], {"tier": "trusted", "is_default": True})
+        self.assertEqual(first["reference"], "/articles/1")
+        # Document article labeled by its filename, like Top Articles - not "project-document".
+        self.assertEqual(second["source"], "memo.pdf")
+        self.assertIsNone(second["claim"])
+        self.assertEqual(second["source_tier"], {"tier": "unknown", "is_default": True})
+
+    def test_run_scope_generates_lazily_on_first_request_only(self):
+        _, generate, _ = self._build(run_id="run-1", attempted=False)
+        generate.assert_called_once_with(1, run_id="run-1")
+        _, generate, _ = self._build(run_id="run-1", attempted=True)
+        generate.assert_not_called()
+
+    def test_llm_failure_keeps_cached_comparisons_and_discloses_the_error(self):
+        from llm_client import LLMError
+        with patch.object(report_data, "list_idea_comparisons", return_value=[self.COMPARISON]),              patch.object(report_data, "has_run_generation_attempt", return_value=False),              patch.object(report_data, "generate_idea_comparisons",
+                          side_effect=LLMError("down", code="llm_connection_error")),              patch.object(report_data, "_fetch_article_identities", return_value=self.IDENTITIES),              patch.object(report_data, "_source_tiers", return_value={}):
+            section = report_data._idea_comparisons(1, "run-1")
+        self.assertIsNotNone(section["error"])
+        self.assertEqual(len(section["items"]), 1)
+        self.assertFalse(section["project_wide"])
 
 
 if __name__ == "__main__":

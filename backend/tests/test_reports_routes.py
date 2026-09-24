@@ -71,7 +71,7 @@ class ExportSummaryPdfTests(ReportsRoutesTestCase):
     def test_successful_export_returns_a_pdf_with_a_meaningful_filename(self):
         with patch("main.get_project", return_value=self.PROJECT), \
              patch("main.build_report_data", return_value={"project": {"id": 1, "name": "Acme"}}) as build_data, \
-             patch("main.build_variation_from_yesterday", return_value={"status": "unavailable"}) as build_cmp, \
+             patch("main.build_variation_from_last_run", return_value={"status": "unavailable"}) as build_cmp, \
              patch("services.reports.pdf_renderer.render_summary_pdf", return_value=b"%PDF-1.7 fake") as render:
             resp = self.client.post("/api/projects/1/reports/summary.pdf?period=7d")
 
@@ -89,7 +89,7 @@ class ExportSummaryPdfTests(ReportsRoutesTestCase):
         with patch("main.get_project", return_value=self.PROJECT), \
              patch("main.get_pipeline_run", return_value=run), \
              patch("main.build_report_data", return_value={"project": {"id": 1, "name": "Acme"}}) as build_data, \
-             patch("main.build_variation_from_yesterday", return_value={"status": "unavailable"}), \
+             patch("main.build_variation_from_last_run", return_value={"status": "unavailable"}), \
              patch("services.reports.pdf_renderer.render_summary_pdf", return_value=b"%PDF-1.7 fake"):
             resp = self.client.post("/api/projects/1/reports/summary.pdf?run_id=run-1")
 
@@ -98,12 +98,12 @@ class ExportSummaryPdfTests(ReportsRoutesTestCase):
         self.assertEqual(kwargs.get("run"), run)
 
     def test_an_llm_failure_in_the_comparison_still_exports_the_rest_of_the_report(self):
-        """build_variation_from_yesterday never raises - it degrades to
+        """build_variation_from_last_run never raises - it degrades to
         status=llm_failed - so a provider outage must not turn the whole
         export into a 500."""
         with patch("main.get_project", return_value=self.PROJECT), \
              patch("main.build_report_data", return_value={"project": {"id": 1, "name": "Acme"}}), \
-             patch("main.build_variation_from_yesterday", return_value={"status": "llm_failed", "reason": "boom"}), \
+             patch("main.build_variation_from_last_run", return_value={"status": "llm_failed", "reason": "boom"}), \
              patch("services.reports.pdf_renderer.render_summary_pdf", return_value=b"%PDF-1.7 fake") as render:
             resp = self.client.post("/api/projects/1/reports/summary.pdf")
         self.assertEqual(resp.status_code, 200)
@@ -114,7 +114,7 @@ class ExportSummaryPdfTests(ReportsRoutesTestCase):
     def test_rendering_failure_is_a_500_not_a_partial_pdf(self):
         with patch("main.get_project", return_value=self.PROJECT), \
              patch("main.build_report_data", return_value={"project": {"id": 1, "name": "Acme"}}), \
-             patch("main.build_variation_from_yesterday", return_value={"status": "unavailable"}), \
+             patch("main.build_variation_from_last_run", return_value={"status": "unavailable"}), \
              patch("services.reports.pdf_renderer.render_summary_pdf", side_effect=RuntimeError("boom")):
             resp = self.client.post("/api/projects/1/reports/summary.pdf")
         self.assertEqual(resp.status_code, 500)

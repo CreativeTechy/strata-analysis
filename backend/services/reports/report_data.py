@@ -1,6 +1,6 @@
 """Builds the single report-data snapshot every section of the Reports page's
 Export Summary PDF is rendered from (services/reports/pdf_renderer.py) and
-that yesterday_comparison.py's "today" side reuses - one query, one set of
+that the run comparison's selected-run side reuses - one query, one set of
 counts/percentages, so the PDF can never show a different total or sentiment
 mix than the numbers it derived them from.
 
@@ -25,7 +25,14 @@ from zoneinfo import ZoneInfo
 import config
 import db
 from llm_client import LLMError
+from services.articles import source_trust
 from services.articles.article_analyses import fetch_run_article_rows
+from services.articles.articles_query import source_group_identity
+from services.articles.idea_comparisons import (
+    generate_idea_comparisons,
+    has_run_generation_attempt,
+    list_idea_comparisons,
+)
 from services.intelligence.intelligence import (
     VALID_SENTIMENTS,
     article_date,
@@ -169,6 +176,103 @@ def _top_articles(analyzed_rows: list[dict], limit: int) -> tuple[list[dict], bo
     return articles, not has_scores
 
 
+def _source_tiers(project_id: int, rows: list[dict]) -> dict:
+    """article id -> {tier, is_default}, resolved exactly the way the Sources
+    tab resolves it (same grouping key via source_group_identity, same
+    override/default order via source_trust.resolve_many), so the PDF never
+    shows a different tier than the page an operator sets it on. Only the
+    tier itself is carried - an override's free-text reason can name another
+    engagement, and a PDF gets forwarded far more readily than a page view.
+    One resolve for every row rather than one per article."""
+    groups: dict[str, dict] = {}
+    article_keys: dict = {}
+    for row in rows:
+        key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        groups.setdefault(key, {"key": key, "type": source_type, "label": label})
+        article_keys[row.get("id")] = key
+    try:
+        resolved = source_trust.resolve_many(list(groups.values()), project_id=project_id)
+    except Exception:
+        logger.exception("Report source trust-tier lookup failed")
+        resolved = {}
+    result = {}
+    for article_id, key in article_keys.items():
+        entry = resolved.get(key) or {}
+        tier = entry.get("tier") if entry.get("tier") in source_trust.TIERS else "unknown"
+        result[article_id] = {"tier": tier, "is_default": bool(entry.get("is_default", True))}
+    return result
+
+
+def _fetch_article_identities(article_ids: list) -> dict:
+    ids = sorted({int(i) for i in article_ids if i is not None})
+    if not ids:
+        return {}
+    rows = db.fetch_all(
+        "select id, url, source, source_url from articles where id = any(%s)",
+        (ids,),
+    ) or []
+    return {row["id"]: row for row in rows}
+
+
+def _idea_comparisons(project_id: int, run_id: str | None) -> dict:
+    """The cross-source idea comparisons (services/articles/idea_comparisons.py)
+    for the report's scope, each source's stated value surfaced as that
+    source's claim, with the source's trust tier beside it.
+
+    Reads the cache the same way /idea-comparisons does, including its lazy
+    first-view generation for a run scope - an export is often the first
+    time a given run's comparisons are ever asked for. The project-wide
+    cache has no period filter of its own (idea clusters are cumulative), so
+    a period-scoped report says so rather than implying they were cut to the
+    period. An LLM failure degrades this section to whatever was already
+    cached plus a disclosed error, the same as the executive summary."""
+    comparisons: list[dict] = []
+    error = None
+    try:
+        comparisons = list_idea_comparisons(project_id, run_id=run_id)
+        if run_id and not has_run_generation_attempt(project_id, run_id):
+            generate_idea_comparisons(project_id, run_id=run_id)
+            comparisons = list_idea_comparisons(project_id, run_id=run_id)
+    except LLMError as e:
+        logger.warning("Report idea comparison generation failed (%s): %s", e.code, e.detail or e)
+        error = e.user_message
+    except Exception:
+        logger.exception("Report idea comparisons failed unexpectedly")
+        error = "Something went wrong while loading idea comparisons."
+
+    article_ids = [s.get("article_id") for c in comparisons for s in (c.get("sources") or [])]
+    try:
+        identities = _fetch_article_identities(article_ids)
+    except Exception:
+        logger.exception("Report idea comparison source lookup failed")
+        identities = {}
+    tiers = _source_tiers(project_id, list(identities.values()))
+
+    items = []
+    for comparison in comparisons:
+        claims = []
+        for source in comparison.get("sources") or []:
+            article_id = source.get("article_id")
+            identity = identities.get(article_id)
+            claims.append({
+                "source": _source_label(identity) if identity else (source.get("source_label") or "Unknown source"),
+                "source_tier": tiers.get(article_id) or {"tier": "unknown", "is_default": True},
+                "claim": str(source.get("value") or "").strip() or None,
+                "article_id": article_id,
+                "title": str(source.get("title") or "").strip() or "(untitled)",
+                "reference": f"/articles/{article_id}" if article_id is not None else "",
+            })
+        items.append({
+            "idea": comparison.get("idea") or "",
+            "type": comparison.get("type"),
+            "diverges": bool(comparison.get("diverges")),
+            "summary": comparison.get("summary"),
+            "claims": claims,
+        })
+
+    return {"items": items, "error": error, "project_wide": run_id is None}
+
+
 def _stale_executive_summary(cached: dict | None, rows: list[dict]) -> bool:
     """Whether the cached trend summary predates the newest analysis in
     scope - i.e. an article was (re)analyzed after the cached paragraph was
@@ -261,6 +365,10 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
             cached_summary = refreshed
 
     top_articles, fallback_used = _top_articles(analyzed_rows, config.REPORT_TOP_ARTICLES_LIMIT)
+    top_ids = {item["article_id"] for item in top_articles}
+    tiers = _source_tiers(project_id, [row for row in analyzed_rows if row.get("id") in top_ids])
+    for item in top_articles:
+        item["source_tier"] = tiers.get(item["article_id"]) or {"tier": "unknown", "is_default": True}
 
     return {
         "project": {"id": project_id, "name": project.get("name") or f"Project {project_id}"},
@@ -282,7 +390,8 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
         },
         "top_articles": top_articles,
         "top_articles_fallback_used": fallback_used,
-        # Internal only - consumed by yesterday_comparison.py, not rendered
+        "idea_comparisons": _idea_comparisons(project_id, run["id"] if run else None),
+        # Internal only - consumed by the last-run comparison, not rendered
         # directly (see pdf_renderer.py's contract, which only takes the
         # public keys above plus a separately-built `comparison` dict).
         "_analyzed_rows": analyzed_rows,

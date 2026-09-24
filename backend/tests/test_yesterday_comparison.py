@@ -1,11 +1,10 @@
-"""services/reports/yesterday_comparison.py: the Export Summary PDF's
-"variation from yesterday" section - verified metrics computed in Python,
+"""The Export Summary PDF's "variation from last run" service: verified metrics,
 handed to the LLM only for the narrative, with every evidence reference
 validated against the ids actually shown to the model."""
 
 import os
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -24,30 +23,11 @@ def _row(id_, sentiment="positive", summary="s", topics=None, key_points=None, o
     }
 
 
-class DayStartUtcTests(unittest.TestCase):
-    def test_converts_local_midnight_to_the_right_utc_instant(self):
-        tz = ZoneInfo("Etc/GMT-4")  # fixed UTC+4, no DST - deterministic
-        start = yc._day_start_utc(date(2026, 3, 5), tz)
-        self.assertEqual(start, datetime(2026, 3, 4, 20, 0, tzinfo=timezone.utc))
-
-
-class ScopeDatesTests(unittest.TestCase):
-    def test_run_scope_anchors_to_the_runs_own_analysis_date_not_now(self):
-        """Requirement: a PDF exported today for a run from weeks ago must
-        compare against the day before *that run*, not the day before the
-        export click."""
-        report_data = {
-            "scope": {"type": "run"},
-            "_run": {"finished_at": datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)},
-        }
-        today, yesterday = yc._scope_dates(report_data, ZoneInfo("UTC"))
-        self.assertEqual(today, date(2026, 1, 10))
-        self.assertEqual(yesterday, date(2026, 1, 9))
-
-    def test_period_scope_yesterday_is_always_one_day_before_today(self):
-        report_data = {"scope": {"type": "period"}, "_run": None}
-        today, yesterday = yc._scope_dates(report_data, ZoneInfo("UTC"))
-        self.assertEqual(yesterday, today - timedelta(days=1))
+class RunLabelsTests(unittest.TestCase):
+    def test_run_date_and_label_use_the_runs_timestamp_and_sequence(self):
+        run = {"sequence_number": 7, "finished_at": datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)}
+        self.assertEqual(yc._run_date(run, ZoneInfo("UTC")), date(2026, 1, 10))
+        self.assertEqual(yc._run_label(run, ZoneInfo("UTC")), "Analysis #7 - Jan 10, 2026")
 
 
 class MetricsArithmeticTests(unittest.TestCase):
@@ -67,7 +47,7 @@ class MetricsArithmeticTests(unittest.TestCase):
 
     def test_coverage_counts_added_removed_and_common(self):
         coverage = yc._coverage({1, 2, 3}, {2, 3, 4}, sampled=False)
-        self.assertEqual(coverage, {"today_ids": 3, "yesterday_ids": 3, "common": 2, "added": 1, "removed": 1, "sampled": False})
+        self.assertEqual(coverage, {"current_ids": 3, "previous_ids": 3, "common": 2, "added": 1, "removed": 1, "sampled": False})
 
     def test_fingerprint_stable_for_identical_rows_and_sensitive_to_changes(self):
         rows_a = [_row(1, "positive")]
@@ -96,10 +76,10 @@ class NarrativeGroundingTests(unittest.TestCase):
 
     def _metrics(self):
         return {
-            "today": {"total": 1, "positive": 1, "negative": 0, "neutral": 0, "mixed": 0, "net_sentiment": 100},
-            "yesterday": {"total": 1, "positive": 0, "negative": 1, "neutral": 0, "mixed": 0, "net_sentiment": -100},
+            "current": {"total": 1, "positive": 1, "negative": 0, "neutral": 0, "mixed": 0, "net_sentiment": 100},
+            "previous": {"total": 1, "positive": 0, "negative": 1, "neutral": 0, "mixed": 0, "net_sentiment": -100},
             "deltas": {"total": 0, "positive": 1, "negative": -1, "neutral": 0, "mixed": 0, "net_sentiment": 200},
-            "coverage": {"today_ids": 1, "yesterday_ids": 1, "common": 0, "added": 1, "removed": 1, "sampled": False},
+            "coverage": {"current_ids": 1, "previous_ids": 1, "common": 0, "added": 1, "removed": 1, "sampled": False},
         }
 
     def test_valid_evidence_ids_are_kept(self):
@@ -132,145 +112,59 @@ class NarrativeGroundingTests(unittest.TestCase):
                 yc._generate_narrative([_row(1)], [_row(2)], self._metrics(), date(2026, 3, 5), date(2026, 3, 4))
 
 
-class BuildVariationFromYesterdayTests(unittest.TestCase):
-    def _report_data(self, analyzed_rows, scope_type="period", period="all"):
-        # period="all" by default: the fixture rows below carry no
-        # published/created_at date, and a rolling-window period would
-        # otherwise filter yesterday's reconstructed rows out entirely (see
-        # build_variation_from_yesterday's period-scope filter) - period
-        # filtering itself is report_data.py's concern, not this module's.
-        return {
-            "project": {"id": 1, "name": "Acme"},
-            "scope": {"type": scope_type, "period": period, "run_id": None, "analysis_date_label": "Last 30 days"},
-            "_analyzed_rows": analyzed_rows,
-        }
+class BuildVariationFromLastRunTests(unittest.TestCase):
+    CURRENT = {"id": "run-9", "sequence_number": 9, "project_id": 1,
+               "finished_at": datetime(2026, 8, 20, tzinfo=timezone.utc)}
+    PREVIOUS = {"id": "run-8", "sequence_number": 8, "project_id": 1,
+                "finished_at": datetime(2025, 1, 2, tzinfo=timezone.utc)}
 
-    def test_no_analyzed_articles_in_scope_is_unavailable(self):
-        with patch.object(yc, "earliest_snapshot_at", return_value=None):
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data([]))
+    def _report_data(self, rows, scope_type="run"):
+        return {"project": {"id": 1, "name": "Acme"},
+                "scope": {"type": scope_type, "run_id": "run-9" if scope_type == "run" else None},
+                "_analyzed_rows": rows}
+
+    def test_period_report_requires_a_selected_run(self):
+        with patch.object(yc, "get_previous_analysis_run") as previous:
+            result = yc.build_variation_from_last_run({"id": 1}, self._report_data([_row(1)], "period"))
         self.assertEqual(result["status"], "unavailable")
-        self.assertIn("current report scope", result["reason"])
+        self.assertIn("Select an analysis run", result["reason"])
+        previous.assert_not_called()
 
-    def test_no_history_before_yesterday_is_unavailable_but_keeps_todays_metrics(self):
-        today_rows = [_row(1, "positive")]
-        with patch.object(yc, "earliest_snapshot_at", return_value=None), \
-             patch.object(yc, "fetch_state_as_of", return_value=[]):
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data(today_rows))
+    def test_first_run_is_unavailable_but_keeps_selected_run_metrics(self):
+        with patch.object(yc, "get_previous_analysis_run", return_value=None):
+            result = yc.build_variation_from_last_run({"id": 1}, self._report_data([_row(1)]), run=self.CURRENT)
         self.assertEqual(result["status"], "unavailable")
-        self.assertIn("No analysis history recorded before", result["reason"])
-        self.assertEqual(result["metrics"]["today"]["total"], 1)
-        self.assertIsNone(result["metrics"]["yesterday"])
+        self.assertIn("No previous analysis run", result["reason"])
+        self.assertEqual(result["metrics"]["current"]["total"], 1)
 
-    def test_successful_comparison_computes_metrics_and_calls_the_llm(self):
-        today_rows = [_row(1, "positive")]
-        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
-        raw = '{"ideas": "a", "sentiment": "b", "opinions": "c", "topics": "d", "implications": "e", "evidence": []}'
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows), \
-             patch("services.reports.yesterday_comparison.config.DATABASE_URL", ""), \
-             patch.object(yc, "chat_completion", return_value=raw) as llm:
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data(today_rows))
+    def test_compares_with_previous_run_regardless_of_time_gap(self):
+        current_rows = [_row(1, "positive")]
+        previous_rows = [dict(_row(2, "negative"), analysis_status="success")]
+        raw = '{"ideas":"a","sentiment":"b","opinions":"c","topics":"d","implications":"e","evidence":[]}'
+        with patch.object(yc, "get_previous_analysis_run", return_value=self.PREVIOUS), \
+             patch.object(yc, "fetch_run_article_rows", return_value=previous_rows) as fetch, \
+             patch.object(yc, "chat_completion", return_value=raw), \
+             patch.object(yc.config, "DATABASE_URL", ""):
+            result = yc.build_variation_from_last_run({"id": 1}, self._report_data(current_rows), run=self.CURRENT)
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["metrics"]["today"]["total"], 1)
-        self.assertEqual(result["metrics"]["yesterday"]["total"], 1)
-        self.assertIsNotNone(result["narrative"])
-        llm.assert_called_once()
+        self.assertEqual(result["current_run_id"], "run-9")
+        self.assertEqual(result["previous_run_id"], "run-8")
+        self.assertEqual(result["current_date"], "2026-08-20")
+        self.assertEqual(result["previous_date"], "2025-01-02")
+        self.assertEqual(result["metrics"]["current"]["positive"], 1)
+        self.assertEqual(result["metrics"]["previous"]["negative"], 1)
+        fetch.assert_called_once_with(1, "run-8")
 
-    def test_llm_failure_keeps_verified_metrics_and_marks_narrative_unavailable(self):
-        today_rows = [_row(1, "positive")]
-        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows), \
-             patch("services.reports.yesterday_comparison.config.DATABASE_URL", ""), \
-             patch.object(yc, "chat_completion", side_effect=LLMError("boom")):
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data(today_rows))
+    def test_llm_failure_keeps_both_runs_verified_metrics(self):
+        previous_rows = [dict(_row(2, "negative"), analysis_status="success")]
+        with patch.object(yc, "get_previous_analysis_run", return_value=self.PREVIOUS), \
+             patch.object(yc, "fetch_run_article_rows", return_value=previous_rows), \
+             patch.object(yc, "chat_completion", side_effect=LLMError("boom")), \
+             patch.object(yc.config, "DATABASE_URL", ""):
+            result = yc.build_variation_from_last_run({"id": 1}, self._report_data([_row(1)]), run=self.CURRENT)
         self.assertEqual(result["status"], "llm_failed")
-        self.assertIsNone(result["narrative"])
-        self.assertIsNotNone(result["metrics"]["today"])
-        self.assertIsNotNone(result["metrics"]["yesterday"])
-
-    def test_cache_hit_with_matching_fingerprint_skips_the_llm_call(self):
-        today_rows = [_row(1, "positive")]
-        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
-        fingerprint = yc._data_fingerprint(today_rows, yesterday_rows)
-        cached_row = {
-            "status": "ok", "reason": None,
-            "today_metrics": {"total": 1}, "yesterday_metrics": {"total": 1}, "deltas": {}, "coverage": {},
-            "data_fingerprint": fingerprint, "narrative": "cached narrative", "evidence": [], "generated_at": None,
-        }
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows), \
-             patch("services.reports.yesterday_comparison.config.DATABASE_URL", "postgres://x"), \
-             patch("services.reports.yesterday_comparison.db.fetch_one", return_value=cached_row), \
-             patch.object(yc, "chat_completion") as llm:
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data(today_rows))
-        self.assertEqual(result["narrative"], "cached narrative")
-        self.assertTrue(result["cached"])
-        llm.assert_not_called()
-
-    def test_short_circuits_before_any_history_lookup_when_nothing_is_in_scope_today(self):
-        """No analyzed articles today means there's nothing to compare
-        against - reconstructing yesterday's state (a real article_analyses
-        query) is wasted work that must not run at all in that case."""
-        with patch.object(yc, "earliest_snapshot_at") as earliest, \
-             patch.object(yc, "fetch_state_as_of") as fetch:
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data([]))
-        self.assertEqual(result["status"], "unavailable")
-        earliest.assert_not_called()
-        fetch.assert_not_called()
-
-    def test_period_filter_emptying_yesterday_is_distinguished_from_no_history(self):
-        """History exists (fetch_state_as_of returns real rows) but the
-        period's rolling window - anchored to "now", not "yesterday" - excludes
-        all of it. That's a different, more specific situation than no
-        history existing at all before the cutoff, and must say so rather
-        than implying historical tracking isn't working."""
-        today_rows = [_row(1, "positive")]
-        # No published/created_at on these fixture rows -> article_date() is
-        # None -> filter_rows_for_period() drops them for any non-"all" period.
-        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows):
-            result = yc.build_variation_from_yesterday(
-                {"id": 1}, self._report_data(today_rows, period="7d"),
-            )
-        self.assertEqual(result["status"], "unavailable")
-        self.assertIn("selected period", result["reason"])
-        self.assertNotIn("No analysis history recorded", result["reason"])
-        self.assertEqual(result["metrics"]["today"]["total"], 1)
-
-    def test_genuinely_no_history_still_reports_the_no_history_reason(self):
-        """The period-filter message above must not swallow the real "no
-        history at all" case - an empty fetch_state_as_of() result (no rows
-        recorded before the cutoff) still gets the original message."""
-        today_rows = [_row(1, "positive")]
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=[]):
-            result = yc.build_variation_from_yesterday(
-                {"id": 1}, self._report_data(today_rows, period="7d"),
-            )
-        self.assertEqual(result["status"], "unavailable")
-        self.assertIn("No analysis history recorded before", result["reason"])
-
-    def test_cache_with_mismatched_fingerprint_regenerates(self):
-        today_rows = [_row(1, "positive")]
-        yesterday_rows = [dict(_row(2, "negative"), analysis_status="success")]
-        stale_cached_row = {
-            "status": "ok", "reason": None,
-            "today_metrics": {}, "yesterday_metrics": {}, "deltas": {}, "coverage": {},
-            "data_fingerprint": "stale-fingerprint-does-not-match", "narrative": "old narrative", "evidence": [], "generated_at": None,
-        }
-        raw = '{"ideas": "a", "sentiment": "b", "opinions": "c", "topics": "d", "implications": "e", "evidence": []}'
-        with patch.object(yc, "earliest_snapshot_at", return_value=datetime(2020, 1, 1, tzinfo=timezone.utc)), \
-             patch.object(yc, "fetch_state_as_of", return_value=yesterday_rows), \
-             patch("services.reports.yesterday_comparison.config.DATABASE_URL", "postgres://x"), \
-             patch("services.reports.yesterday_comparison.db.fetch_one", return_value=stale_cached_row), \
-             patch("services.reports.yesterday_comparison.db.execute") as save, \
-             patch.object(yc, "chat_completion", return_value=raw) as llm:
-            result = yc.build_variation_from_yesterday({"id": 1}, self._report_data(today_rows))
-        llm.assert_called_once()
-        self.assertNotEqual(result["narrative"], "old narrative")
-        save.assert_called_once()
+        self.assertIsNotNone(result["metrics"]["current"])
+        self.assertIsNotNone(result["metrics"]["previous"])
 
 
 if __name__ == "__main__":

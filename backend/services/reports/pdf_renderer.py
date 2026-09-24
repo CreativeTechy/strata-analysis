@@ -1,7 +1,7 @@
 """Renders the Reports page's Export Summary as a PDF, given the two dicts
 built elsewhere: `report_data` (services/reports/report_data.py's
-build_report_data) and `comparison` (yesterday_comparison.py's day-over-day
-"variation from yesterday" result). This module owns layout only - it never
+build_report_data) and `comparison` (yesterday_comparison.py's run-over-run
+"variation from last run" result). This module owns layout only - it never
 queries the database or calls the LLM.
 
 Uses PyMuPDF's Story engine (MuPDF's built-in HTML+CSS layout engine, via
@@ -64,6 +64,22 @@ SENTIMENT_LABELS = {
     "mixed": "Mixed",
 }
 
+# Same labels as the Sources tab (dashboard/src/components/SourcesPage.jsx's
+# TRUST_TIER_META), so a tier reads identically on the page it's set on.
+TRUST_TIER_COLORS = {
+    "trusted": "#2e7d32",
+    "mixed": "#b8860b",
+    "untrusted": "#c62828",
+    "unknown": "#757575",
+}
+
+TRUST_TIER_LABELS = {
+    "trusted": "Trusted",
+    "mixed": "Mixed",
+    "untrusted": "Untrusted",
+    "unknown": "Not yet assessed",
+}
+
 BASE_CSS = """
 * { font-family: sans-serif; }
 body { font-size: 10.5px; line-height: 1.45; color: #1a1a1a; }
@@ -106,6 +122,14 @@ table.bars td { border: none; padding: 3px 4px; }
                   font-size: 8.5px; color: #ffffff; }
 
 .evidence-item { font-size: 9.5px; margin: 3px 0; }
+
+.trust-tag { display: inline; padding: 1px 5px; border-radius: 3px;
+             font-size: 8px; color: #ffffff; }
+.comparison-block { margin: 6px 0 10px 0; padding-bottom: 8px;
+                    border-bottom: 1px solid #eeeeee; }
+.comparison-idea { font-size: 11px; font-weight: bold; margin: 0 0 3px 0; }
+.divergence-tag { display: inline; padding: 1px 5px; border-radius: 3px;
+                  font-size: 8.5px; color: #ffffff; }
 """
 
 
@@ -155,6 +179,20 @@ def _sentiment_tag_html(sentiment: str) -> str:
     color = SENTIMENT_COLORS.get(key, "#757575")
     label = SENTIMENT_LABELS.get(key, key.title() or "Neutral")
     return f'<span class="sentiment-tag" style="background-color:{color};">{_esc(label)}</span>'
+
+
+def _trust_tag_html(source_tier: dict | None) -> str:
+    """Tier badge for a source. A tier that is only the seeded default (no
+    operator has reviewed it) is marked as such, so "Trusted" from the
+    curated allowlist doesn't read as a human's judgment."""
+    source_tier = source_tier or {}
+    key = str(source_tier.get("tier") or "unknown").lower()
+    if key not in TRUST_TIER_LABELS:
+        key = "unknown"
+    label = TRUST_TIER_LABELS[key]
+    if key != "unknown" and source_tier.get("is_default"):
+        label += " (default)"
+    return f'<span class="trust-tag" style="background-color:{TRUST_TIER_COLORS[key]};">{_esc(label)}</span>'
 
 
 def _header_html(report_data: dict) -> str:
@@ -238,7 +276,7 @@ def _top_articles_html(report_data: dict) -> str:
         blocks.append(f"""
 <div class="article-block">
   <p class="article-title" dir="auto">{_esc(rank)}. {_esc(title)} {_sentiment_tag_html(sentiment)}</p>
-  <p class="article-meta">Source: {_esc(source)} &bull; {_esc(score_label)} &bull; {_esc(reference)}</p>
+  <p class="article-meta" dir="auto">Source: {_esc(source)} {_trust_tag_html(item.get("source_tier"))} &bull; {_esc(score_label)} &bull; {_esc(reference)}</p>
   <p dir="auto">{_esc(summary)}</p>
 </div>
 """)
@@ -272,6 +310,53 @@ def _sentiment_html(report_data: dict) -> str:
     return f"<h2>Sentiment Breakdown</h2>{table}{footer}"
 
 
+def _idea_comparisons_html(report_data: dict) -> str:
+    section = report_data.get("idea_comparisons") or {}
+    items = section.get("items") or []
+    error = section.get("error")
+
+    parts = ["<h2>Idea Comparisons</h2>"]
+    if section.get("project_wide"):
+        parts.append(
+            '<p class="muted">Ideas more than one source discussed, across the whole project '
+            "(not limited to the reporting period above).</p>"
+        )
+    else:
+        parts.append('<p class="muted">Ideas more than one source discussed in this analysis run.</p>')
+    if error:
+        parts.append(f'<div class="unavailable">Idea comparisons unavailable - {_esc(error)}</div>')
+    if not items:
+        if not error:
+            parts.append('<p class="muted">No idea was discussed by more than one source in this scope.</p>')
+        return "".join(parts)
+
+    header = "<tr><th>Source</th><th>Trust tier</th><th>Claim</th><th>Article</th></tr>"
+    for item in items:
+        if item.get("diverges"):
+            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["negative"]};">Sources disagree</span>'
+        else:
+            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["positive"]};">Sources agree</span>'
+        rows = []
+        for claim in item.get("claims") or []:
+            claim_text = claim.get("claim")
+            claim_html = _esc(claim_text) if claim_text else '<span class="muted">No specific figure stated</span>'
+            rows.append(
+                f'<tr><td dir="auto">{_esc(claim.get("source") or "Unknown source")}</td>'
+                f'<td>{_trust_tag_html(claim.get("source_tier"))}</td>'
+                f'<td dir="auto">{claim_html}</td>'
+                f'<td dir="auto">{_esc(claim.get("title"))} <span class="muted">{_esc(claim.get("reference"))}</span></td></tr>'
+            )
+        summary = item.get("summary")
+        parts.append(f"""
+<div class="comparison-block">
+  <p class="comparison-idea" dir="auto">{_esc(item.get("idea"))} {tag}</p>
+  {_esc_multiline(summary) if summary else ""}
+  <table>{header}{"".join(rows)}</table>
+</div>
+""")
+    return "".join(parts)
+
+
 def _metrics_row_html(label: str, metrics: dict | None) -> str:
     if not metrics:
         return f'<tr><td>{_esc(label)}</td><td colspan="6" class="muted">No data</td></tr>'
@@ -287,21 +372,21 @@ def _comparison_html(comparison: dict | None) -> str:
     status = comparison.get("status") or "unavailable"
     reason = comparison.get("reason")
     metrics = comparison.get("metrics") or {}
-    today_metrics = metrics.get("today")
-    yesterday_metrics = metrics.get("yesterday")
+    current_metrics = metrics.get("current")
+    previous_metrics = metrics.get("previous")
     deltas = metrics.get("deltas")
     coverage = metrics.get("coverage")
 
-    today_date = comparison.get("today_date") or ""
-    yesterday_date = comparison.get("yesterday_date") or ""
-    today_label = comparison.get("today_scope_label") or ""
-    yesterday_label = comparison.get("yesterday_scope_label") or ""
+    current_date = comparison.get("current_date") or ""
+    previous_date = comparison.get("previous_date") or ""
+    current_label = comparison.get("current_scope_label") or ""
+    previous_label = comparison.get("previous_scope_label") or ""
     tz = comparison.get("timezone") or "UTC"
 
-    parts = ["<h2>Variation from Yesterday</h2>"]
+    parts = ["<h2>Variation from Last Run</h2>"]
     parts.append(
-        f'<p class="subtitle">Today: {_esc(today_date)} ({_esc(today_label)}) vs. '
-        f"Yesterday: {_esc(yesterday_date)} ({_esc(yesterday_label)}) &bull; {_esc(tz)}</p>"
+        f'<p class="subtitle">Selected run: {_esc(current_label)} ({_esc(current_date)}) vs. '
+        f"Previous run: {_esc(previous_label)} ({_esc(previous_date)}) &bull; {_esc(tz)}</p>"
     )
 
     if status != "ok":
@@ -309,12 +394,12 @@ def _comparison_html(comparison: dict | None) -> str:
         reason_html = f" - {_esc(reason)}" if reason else ""
         parts.append(f'<div class="unavailable">{_esc(message)}{reason_html}</div>')
 
-    if today_metrics is not None or yesterday_metrics is not None:
+    if current_metrics is not None or previous_metrics is not None:
         header = (
             "<tr><th>Scope</th><th>Total</th><th>Positive</th><th>Negative</th>"
             "<th>Neutral</th><th>Mixed</th><th>Net</th></tr>"
         )
-        rows = _metrics_row_html("Today", today_metrics) + _metrics_row_html("Yesterday", yesterday_metrics)
+        rows = _metrics_row_html("Selected run", current_metrics) + _metrics_row_html("Previous run", previous_metrics)
         if deltas:
             rows += _metrics_row_html("Delta", deltas)
         parts.append(f"<table>{header}{rows}</table>")
@@ -322,9 +407,9 @@ def _comparison_html(comparison: dict | None) -> str:
     if coverage:
         parts.append(
             '<p class="muted">Coverage: '
-            f"{_fmt_num(coverage.get('common'))} article(s) common to both days, "
+            f"{_fmt_num(coverage.get('common'))} article(s) common to both runs, "
             f"{_fmt_num(coverage.get('added'))} added, {_fmt_num(coverage.get('removed'))} removed "
-            f"(today: {_fmt_num(coverage.get('today_ids'))} ids, yesterday: {_fmt_num(coverage.get('yesterday_ids'))} ids)"
+            f"(selected: {_fmt_num(coverage.get('current_ids'))} ids, previous: {_fmt_num(coverage.get('previous_ids'))} ids)"
             + (" - sampled" if coverage.get("sampled") else "")
             + "</p>"
         )
@@ -361,6 +446,7 @@ def _build_html(report_data: dict, comparison: dict) -> str:
         _executive_summary_html(report_data),
         _top_articles_html(report_data),
         _sentiment_html(report_data),
+        _idea_comparisons_html(report_data),
         _comparison_html(comparison),
     ]
     body = "\n".join(sections)

@@ -75,7 +75,7 @@ from services.articles.idea_comparisons import (
 )
 from services.intelligence.trend_summary import generate_trend_summary
 from services.reports.report_data import build_report_data
-from services.reports.yesterday_comparison import build_variation_from_yesterday
+from services.reports.yesterday_comparison import build_variation_from_last_run
 from services.pipeline.pipeline import cancel_pipeline_run, run_analysis_pipeline
 from services.pipeline.pipeline_runs import (
     ACTIVE_STATUSES,
@@ -979,15 +979,17 @@ def export_report_summary_pdf(
 ):
     """Reports page's "Export Summary" button: one PDF built from the exact
     same report-data snapshot (services/reports/report_data.py) the on-page
-    report is derived from, plus an LLM-grounded "variation from yesterday"
-    section (services/reports/yesterday_comparison.py). `period`/`run_id`
+    report is derived from, plus an LLM-grounded "variation from last run"
+    section. When `run_id` is selected, its frozen results are compared with
+    the immediately preceding eligible analysis run regardless of elapsed time.
+    `period`/`run_id`
     mirror /trend-summary and /idea-comparisons above so the same scope shown
     on screen is what gets exported.
 
     A rendering failure is a 500 (nothing partial to fall back to - the PDF
     itself is the whole response body), but an LLM failure inside either
     LLM-backed section is not: build_report_data's executive summary and
-    build_variation_from_yesterday's narrative both degrade to a disclosed
+    build_variation_from_last_run's narrative both degrade to a disclosed
     "unavailable" state on their own (never raise), so a local model being
     down still yields a full export with just those two sections noting it.
     """
@@ -1003,7 +1005,7 @@ def export_report_summary_pdf(
             raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
 
     report_data = build_report_data(project, normalize_period(period), run=run)
-    comparison = build_variation_from_yesterday(project, report_data, run=run)
+    comparison = build_variation_from_last_run(project, report_data, run=run)
 
     from services.reports.pdf_renderer import render_summary_pdf
     try:

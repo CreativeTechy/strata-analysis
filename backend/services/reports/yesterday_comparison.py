@@ -1,13 +1,12 @@
-"""The Export Summary PDF's "Variation from Yesterday" section: an LLM
+"""The Export Summary PDF's "Variation from Last Run" section: an LLM
 executive narrative built strictly on top of metrics this app computes and
 verifies itself, never on the model's own arithmetic or invention.
 
 Two distinct things happen here, and only the second one calls the LLM:
 
-1. Metrics (deterministic, in Python): reconstruct "yesterday's" analyzed
-   state from article_analyses (see services/articles/article_analyses.py's
-   fetch_state_as_of) and diff it against the report's own in-scope rows
-   (services/reports/report_data.py) - counts, sentiment, net sentiment,
+1. Metrics (deterministic, in Python): load the immediately preceding
+   analytics-eligible analysis run and diff its frozen article snapshots
+   against the selected run's snapshots - counts, sentiment, net sentiment,
    deltas, and how much the article *coverage* itself differs between the
    two snapshots (so a changed sample is never mistaken for changed
    opinions).
@@ -19,8 +18,8 @@ Two distinct things happen here, and only the second one calls the LLM:
    response degrades to `status="llm_failed"` with the verified metrics kept
    intact, never a fabricated comparison.
 
-Cached in project_report_variation_summaries per (project, scope, today/
-yesterday dates), invalidated by a data_fingerprint over the actual rows on
+Cached in project_report_variation_summaries per selected-run scope and run
+dates, invalidated by a data_fingerprint over the actual rows on
 both sides rather than by "has more time passed" - same reasoning as
 report_data.py's own executive-summary freshness check, and the same
 cache-unless-asked shape as trend_summary.py/idea_comparisons.py.
@@ -32,7 +31,7 @@ import hashlib
 import json
 import logging
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 
 import config
 import db
@@ -40,13 +39,14 @@ from analysis.json_utils import JSONParseError, parse_json_response
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from psycopg.types.json import Jsonb
-from services.articles.article_analyses import earliest_snapshot_at, fetch_state_as_of
-from services.intelligence.intelligence import VALID_SENTIMENTS, filter_rows_for_period, net_sentiment
+from services.articles.article_analyses import fetch_run_article_rows
+from services.intelligence.intelligence import VALID_SENTIMENTS, net_sentiment
+from services.pipeline.pipeline_runs import get_previous_analysis_run
 from services.reports.report_data import report_timezone
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "report-variation/1"
+PROMPT_VERSION = "report-variation/2"
 _SYSTEM_PROMPT = load_prompt("report_variation_system_prompt.txt")
 
 _SECTION_ORDER = (
@@ -63,25 +63,18 @@ _RESPONSE_SCHEMA_HINT = (
 )
 
 
-def _day_start_utc(day: date, tz) -> datetime:
-    return datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
+def _run_date(run: dict | None, tz) -> date:
+    when = (run or {}).get("finished_at") or (run or {}).get("created_at")
+    return when.astimezone(tz).date() if isinstance(when, datetime) else datetime.now(tz).date()
 
 
-def _scope_dates(report_data: dict, tz) -> tuple[date, date]:
-    scope = report_data["scope"]
-    if scope["type"] == "run":
-        # Anchor to the run's own analysis date, not "today" - a PDF exported
-        # for a run from three weeks ago must compare against the day before
-        # *that* run, not the day before the export itself.
-        run = report_data.get("_run") or {}
-        when = run.get("finished_at") or run.get("created_at")
-        if isinstance(when, datetime):
-            today = when.astimezone(tz).date()
-        else:
-            today = datetime.now(tz).date()
-    else:
-        today = datetime.now(tz).date()
-    return today, today - timedelta(days=1)
+def _run_label(run: dict | None, tz) -> str:
+    run = run or {}
+    sequence = run.get("sequence_number")
+    name = f"Analysis #{sequence}" if sequence else "Analysis run"
+    when = run.get("finished_at") or run.get("created_at")
+    date_label = when.astimezone(tz).strftime("%b %d, %Y") if isinstance(when, datetime) else "unknown date"
+    return f"{name} - {date_label}"
 
 
 def _rows_by_id(rows: list[dict]) -> dict[int, dict]:
@@ -95,17 +88,17 @@ def _sentiment_metrics(rows: list[dict]) -> dict:
     return {"total": total, **values, "net_sentiment": net_sentiment(values, total)}
 
 
-def _deltas(today: dict, yesterday: dict) -> dict:
-    return {key: today.get(key, 0) - yesterday.get(key, 0) for key in ("total", "positive", "negative", "neutral", "mixed", "net_sentiment")}
+def _deltas(current: dict, previous: dict) -> dict:
+    return {key: current.get(key, 0) - previous.get(key, 0) for key in ("total", "positive", "negative", "neutral", "mixed", "net_sentiment")}
 
 
-def _coverage(today_ids: set, yesterday_ids: set, sampled: bool) -> dict:
+def _coverage(current_ids: set, previous_ids: set, sampled: bool) -> dict:
     return {
-        "today_ids": len(today_ids),
-        "yesterday_ids": len(yesterday_ids),
-        "common": len(today_ids & yesterday_ids),
-        "added": len(today_ids - yesterday_ids),
-        "removed": len(yesterday_ids - today_ids),
+        "current_ids": len(current_ids),
+        "previous_ids": len(previous_ids),
+        "common": len(current_ids & previous_ids),
+        "added": len(current_ids - previous_ids),
+        "removed": len(previous_ids - current_ids),
         "sampled": sampled,
     }
 
@@ -115,8 +108,8 @@ def _row_fingerprint(row: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8", "ignore")).hexdigest()[:12]
 
 
-def _data_fingerprint(today_rows: list[dict], yesterday_rows: list[dict]) -> str:
-    parts = sorted(_row_fingerprint(r) for r in today_rows) + ["|"] + sorted(_row_fingerprint(r) for r in yesterday_rows)
+def _data_fingerprint(current_rows: list[dict], previous_rows: list[dict]) -> str:
+    parts = sorted(_row_fingerprint(r) for r in current_rows) + ["|"] + sorted(_row_fingerprint(r) for r in previous_rows)
     return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -150,17 +143,17 @@ def _evidence_block(rows: list[dict], label: str) -> str:
     return "\n".join(lines) if lines else "(none)"
 
 
-def _load_cached(project_id: int, scope_key: str, today: date, yesterday: date) -> dict | None:
+def _load_cached(project_id: int, scope_key: str, current_date: date, previous_date: date) -> dict | None:
     if not config.DATABASE_URL:
         return None
     row = db.fetch_one(
         """
         select status, reason, today_metrics, yesterday_metrics, deltas, coverage,
-               data_fingerprint, narrative, evidence, generated_at
+               data_fingerprint, narrative, evidence, prompt_version, generated_at
         from public.project_report_variation_summaries
         where project_id = %s and scope_key = %s and today_date = %s and yesterday_date = %s
         """,
-        (project_id, scope_key, today, yesterday),
+        (project_id, scope_key, current_date, previous_date),
     )
     if not row:
         return None
@@ -168,19 +161,20 @@ def _load_cached(project_id: int, scope_key: str, today: date, yesterday: date) 
         "status": row["status"],
         "reason": row["reason"],
         "metrics": {
-            "today": row["today_metrics"],
-            "yesterday": row["yesterday_metrics"],
+            "current": row["today_metrics"],
+            "previous": row["yesterday_metrics"],
             "deltas": row["deltas"],
             "coverage": row["coverage"],
         },
         "narrative": row["narrative"],
         "evidence": row["evidence"] or [],
+        "prompt_version": row.get("prompt_version"),
         "_fingerprint": row["data_fingerprint"],
         "cached": True,
     }
 
 
-def _save_cached(project_id: int, scope_key: str, today: date, yesterday: date, tz_name: str, result: dict) -> None:
+def _save_cached(project_id: int, scope_key: str, current_date: date, previous_date: date, tz_name: str, result: dict) -> None:
     if not config.DATABASE_URL:
         return
     metrics = result["metrics"]
@@ -208,10 +202,10 @@ def _save_cached(project_id: int, scope_key: str, today: date, yesterday: date, 
             generated_at = now()
         """,
         (
-            project_id, scope_key, today, yesterday, tz_name,
+            project_id, scope_key, current_date, previous_date, tz_name,
             result["status"], result.get("reason"),
-            Jsonb(metrics["today"]) if metrics["today"] is not None else None,
-            Jsonb(metrics["yesterday"]) if metrics["yesterday"] is not None else None,
+            Jsonb(metrics["current"]) if metrics["current"] is not None else None,
+            Jsonb(metrics["previous"]) if metrics["previous"] is not None else None,
             Jsonb(metrics["deltas"]) if metrics["deltas"] is not None else None,
             Jsonb(metrics["coverage"]) if metrics["coverage"] is not None else None,
             result["_fingerprint"], result.get("narrative"), Jsonb(result.get("evidence") or []),
@@ -220,32 +214,32 @@ def _save_cached(project_id: int, scope_key: str, today: date, yesterday: date, 
     )
 
 
-def _generate_narrative(today_rows: list[dict], yesterday_rows: list[dict], metrics: dict, today_date: date, yesterday_date: date) -> tuple[str | None, list[dict]]:
-    today_sample, today_sampled = _sample(today_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
-    yesterday_sample, yesterday_sampled = _sample(yesterday_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
-    allowed_ids = {int(r["id"]) for r in today_sample if r.get("id") is not None} | {
-        int(r["id"]) for r in yesterday_sample if r.get("id") is not None
+def _generate_narrative(current_rows: list[dict], previous_rows: list[dict], metrics: dict, current_label: str, previous_label: str) -> tuple[str | None, list[dict]]:
+    current_sample, current_sampled = _sample(current_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
+    previous_sample, previous_sampled = _sample(previous_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
+    allowed_ids = {int(r["id"]) for r in current_sample if r.get("id") is not None} | {
+        int(r["id"]) for r in previous_sample if r.get("id") is not None
     }
 
     sampling_note = ""
-    if today_sampled or yesterday_sampled:
+    if current_sampled or previous_sampled:
         sampling_note = (
             f"\nNote: this project has more analyzed articles than fit in one prompt; the evidence below is a "
-            f"representative sample (today: {len(today_sample)}/{metrics['today']['total']}, "
-            f"yesterday: {len(yesterday_sample)}/{metrics['yesterday']['total']}), not the full set."
+            f"representative sample (selected run: {len(current_sample)}/{metrics['current']['total']}, "
+            f"previous run: {len(previous_sample)}/{metrics['previous']['total']}), not the full set."
         )
 
     user_prompt = (
-        f"TODAY ({today_date.isoformat()}) verified metrics: {json.dumps(metrics['today'])}\n"
-        f"YESTERDAY ({yesterday_date.isoformat()}) verified metrics: {json.dumps(metrics['yesterday'])}\n"
+        f"SELECTED RUN ({current_label}) verified metrics: {json.dumps(metrics['current'])}\n"
+        f"PREVIOUS RUN ({previous_label}) verified metrics: {json.dumps(metrics['previous'])}\n"
         f"Change: {json.dumps(metrics['deltas'])}\n"
         f"Article coverage: {json.dumps(metrics['coverage'])}"
         f"{sampling_note}\n\n"
-        f"TODAY's articles:\n{_evidence_block(today_sample, 'today')}\n\n"
-        f"YESTERDAY's articles:\n{_evidence_block(yesterday_sample, 'yesterday')}\n\n"
+        f"SELECTED RUN's articles:\n{_evidence_block(current_sample, 'current')}\n\n"
+        f"PREVIOUS RUN's articles:\n{_evidence_block(previous_sample, 'previous')}\n\n"
         f"Respond with JSON matching exactly: {_RESPONSE_SCHEMA_HINT}\n"
         f"article_ids in `evidence` must be article ids from the lists above only, prefixed with nothing "
-        f"(just the number), e.g. an id referenced as [today#41] is 41."
+        f"(just the number), e.g. an id referenced as [current#41] is 41."
     )
 
     raw = chat_completion(
@@ -285,98 +279,95 @@ def _generate_narrative(today_rows: list[dict], yesterday_rows: list[dict], metr
     return "\n\n".join(sections), evidence
 
 
-def build_variation_from_yesterday(project: dict, report_data: dict, run: dict | None = None, force: bool = False) -> dict:
-    """`report_data` is the dict report_data.build_report_data() returned for
-    this same export - its `_analyzed_rows` become the "today" side so the
-    PDF's comparison section can never disagree with its own sentiment
-    section about which articles are in scope. `run` is passed through
-    separately (report_data doesn't keep the raw pipeline_runs row) only to
-    anchor the comparison date for a run-scoped export."""
-    project_id = report_data["project"]["id"]
-    scope = report_data["scope"]
-    scope_key = f"run:{scope['run_id']}" if scope["type"] == "run" else f"period:{scope['period']}"
-    tz = report_timezone()
-    report_data = {**report_data, "_run": run}
-    today_date, yesterday_date = _scope_dates(report_data, tz)
+def build_variation_from_last_run(project: dict, report_data: dict, run: dict | None = None, force: bool = False) -> dict:
+    """Compare the selected analysis run with its immediately preceding run.
 
-    today_rows = report_data.get("_analyzed_rows") or []
+    The comparison is based solely on run order. Calendar distance between
+    the runs has no effect. Both sides use immutable `article_analyses`
+    snapshots, with the selected side reused from `report_data` so its totals
+    cannot disagree with the rest of the PDF.
+    """
+    project_id = report_data["project"]["id"]
+    tz = report_timezone()
+    current_rows = report_data.get("_analyzed_rows") or []
+    current_date = _run_date(run, tz)
+    current_label = _run_label(run, tz)
 
     base_result = {
         "status": "unavailable",
         "reason": None,
-        "today_date": today_date.isoformat(),
-        "yesterday_date": yesterday_date.isoformat(),
+        "current_date": current_date.isoformat(),
+        "previous_date": None,
         "timezone": config.REPORT_TIMEZONE,
-        "today_scope_label": f"{report_data['scope']['analysis_date_label']}",
-        "yesterday_scope_label": f"As of {yesterday_date.isoformat()}",
-        "metrics": {"today": None, "yesterday": None, "deltas": None, "coverage": None},
+        "current_scope_label": current_label,
+        "previous_scope_label": None,
+        "current_run_id": (run or {}).get("id"),
+        "previous_run_id": None,
+        "metrics": {"current": None, "previous": None, "deltas": None, "coverage": None},
         "narrative": None,
         "evidence": [],
         "cached": False,
     }
 
-    if not today_rows:
-        # Bail out before touching article_analyses at all - reconstructing
-        # "yesterday" is pointless work when there's nothing on the "today"
-        # side to compare it against.
-        base_result["reason"] = "No analyzed articles in the current report scope."
+    if not run or report_data.get("scope", {}).get("type") != "run":
+        base_result["reason"] = "Select an analysis run to compare it with the previous run."
         return base_result
 
-    earliest = earliest_snapshot_at(project_id)
-    yesterday_cutoff = _day_start_utc(today_date, tz)
-    if not earliest or earliest >= yesterday_cutoff:
-        base_result["reason"] = f"No analysis history recorded before {yesterday_date.isoformat()}."
-        base_result["metrics"]["today"] = _sentiment_metrics(today_rows)
+    if not current_rows:
+        base_result["reason"] = "No analyzed articles exist in the selected run."
         return base_result
 
-    yesterday_rows_raw = fetch_state_as_of(project_id, yesterday_cutoff)
-    yesterday_success_rows = [r for r in yesterday_rows_raw if str(r.get("analysis_status") or "").lower() == "success"]
-    yesterday_rows = yesterday_success_rows
-    if scope["type"] == "period" and scope.get("period") and scope["period"] != "all":
-        # Same rolling window as today's report (relative to the real "now",
-        # not re-anchored to yesterday) - so both sides describe the exact
-        # same population definition, just at two different points in time.
-        yesterday_rows = filter_rows_for_period(yesterday_success_rows, scope["period"])
-
-    if not yesterday_rows:
-        if yesterday_success_rows:
-            # There *is* recorded history before the cutoff - it's the
-            # period's rolling window (anchored to "now", not "yesterday")
-            # that excludes all of it, not an absence of history. Distinct
-            # from the "no history at all" case above so this doesn't read
-            # as "historical tracking isn't working" when it actually is.
-            base_result["reason"] = "No analyzed articles from yesterday fall within the selected period."
-        else:
-            base_result["reason"] = f"No analysis history recorded before {yesterday_date.isoformat()}."
-        base_result["metrics"]["today"] = _sentiment_metrics(today_rows)
+    base_result["metrics"]["current"] = _sentiment_metrics(current_rows)
+    previous_run = get_previous_analysis_run(project_id, run["id"])
+    if not previous_run:
+        base_result["reason"] = "No previous analysis run with saved results exists for this project."
         return base_result
 
-    today_ids = {int(r["id"]) for r in today_rows if r.get("id") is not None}
-    yesterday_ids = {int(r["id"]) for r in yesterday_rows if r.get("id") is not None}
-    today_metrics = _sentiment_metrics(today_rows)
-    yesterday_metrics = _sentiment_metrics(yesterday_rows)
+    previous_date = _run_date(previous_run, tz)
+    previous_label = _run_label(previous_run, tz)
+    base_result.update({
+        "previous_date": previous_date.isoformat(),
+        "previous_scope_label": previous_label,
+        "previous_run_id": previous_run["id"],
+    })
+    previous_rows = [
+        row for row in fetch_run_article_rows(project_id, previous_run["id"])
+        if str(row.get("analysis_status") or "").lower() == "success"
+    ]
+    if not previous_rows:
+        base_result["reason"] = "The previous analysis run has no successfully analyzed articles."
+        return base_result
+
+    current_ids = {int(r["id"]) for r in current_rows if r.get("id") is not None}
+    previous_ids = {int(r["id"]) for r in previous_rows if r.get("id") is not None}
+    current_metrics = _sentiment_metrics(current_rows)
+    previous_metrics = _sentiment_metrics(previous_rows)
     metrics = {
-        "today": today_metrics,
-        "yesterday": yesterday_metrics,
-        "deltas": _deltas(today_metrics, yesterday_metrics),
-        "coverage": _coverage(today_ids, yesterday_ids, sampled=False),
+        "current": current_metrics,
+        "previous": previous_metrics,
+        "deltas": _deltas(current_metrics, previous_metrics),
+        "coverage": _coverage(current_ids, previous_ids, sampled=False),
     }
-    fingerprint = _data_fingerprint(today_rows, yesterday_rows)
+    fingerprint = _data_fingerprint(current_rows, previous_rows)
+    scope_key = f"run:{run['id']}"
 
     if not force:
-        cached = _load_cached(project_id, scope_key, today_date, yesterday_date)
-        if cached and cached["_fingerprint"] == fingerprint:
+        cached = _load_cached(project_id, scope_key, current_date, previous_date)
+        if (cached and cached["_fingerprint"] == fingerprint
+                and cached.get("prompt_version") == PROMPT_VERSION):
             return {**base_result, "status": cached["status"], "reason": cached["reason"],
-                     "metrics": cached["metrics"], "narrative": cached["narrative"],
-                     "evidence": cached["evidence"], "cached": True}
+                    "metrics": cached["metrics"], "narrative": cached["narrative"],
+                    "evidence": cached["evidence"], "cached": True}
 
     result = {**base_result, "status": "ok", "metrics": metrics}
     try:
-        narrative, evidence = _generate_narrative(today_rows, yesterday_rows, metrics, today_date, yesterday_date)
+        narrative, evidence = _generate_narrative(
+            current_rows, previous_rows, metrics, current_label, previous_label,
+        )
         result["narrative"] = narrative
         result["evidence"] = evidence
-        if metrics["coverage"] and (len(today_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE
-                                      or len(yesterday_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE):
+        if (len(current_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE
+                or len(previous_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE):
             metrics["coverage"]["sampled"] = True
     except LLMError as e:
         logger.warning("Report variation narrative failed (%s): %s", e.code, e.detail or e)
@@ -391,5 +382,10 @@ def build_variation_from_yesterday(project: dict, report_data: dict, run: dict |
         result["status"] = "llm_failed"
         result["reason"] = "Something went wrong while generating the AI narrative."
 
-    _save_cached(project_id, scope_key, today_date, yesterday_date, config.REPORT_TIMEZONE, {**result, "_fingerprint": fingerprint})
+    _save_cached(project_id, scope_key, current_date, previous_date, config.REPORT_TIMEZONE, {**result, "_fingerprint": fingerprint})
     return result
+
+
+# Transitional alias for callers outside this repository that imported the
+# old name. Its behavior is intentionally run-to-run.
+build_variation_from_yesterday = build_variation_from_last_run
