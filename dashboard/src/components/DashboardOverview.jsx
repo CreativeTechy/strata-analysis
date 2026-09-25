@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
+  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Layers, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
@@ -31,6 +31,14 @@ const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', 
 // Sources tab's own tier order (trusted -> mixed -> untrusted -> unknown).
 const TRUST_TIER_ORDER = ['trusted', 'mixed', 'untrusted', 'unknown'];
 const TRUST_TIER_COLORS = { trusted: '#16a34a', mixed: '#f59e0b', untrusted: '#e11d48', unknown: '#64748b' };
+// Idea types (see analysis/normalize.py's _FREQUENT_IDEA_TYPES) that count as
+// a concern for the first-screen "Top concerns" card; praise/suggestion stay
+// reachable through that card's "All ideas" tab.
+const CONCERN_IDEA_TYPES = new Set(['issue', 'complaint']);
+const TOP_IDEAS_LIMIT = 6;
+// Per-viewer memory of whether the "Detailed breakdowns" area is expanded -
+// collapsed by default so the first screen stays on the key signals.
+const DETAILED_BREAKDOWNS_STORAGE_KEY = 'dashboard-detailed-breakdowns-open';
 
 // SENTIMENT_KEYS/idea "type"/EMOTION_AXES are fixed, small enums, so they go
 // through a real translation lookup (object keys stay the untranslated code -
@@ -153,6 +161,44 @@ function IdeaRow({ idea, maxFrequency, projectId }) {
   return <div className={`intelligence-idea ${idea.type || 'issue'}`}>{body}</div>;
 }
 
+// One donut + legend card for a single distribution (language, region,
+// gender, ...). `nameKey` is the bucket field, `valueKey` the count field,
+// and `valueTotal` the denominator the legend percentages are taken against.
+function DistributionCard({ title, entries, nameKey, valueKey, valueTotal, colorFor, labelFor, emptyText }) {
+  const { t, i18n } = useTranslation('dashboard');
+  const locale = i18n.language;
+  return <article className="glass-card intelligence-card intelligence-language-card">
+    <h3>{title}</h3>
+    {entries.length ? (
+      <div className="intelligence-language-layout">
+        <div className="intelligence-donut">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={entries} dataKey={valueKey} nameKey={nameKey} outerRadius="92%" paddingAngle={3} stroke="none">
+                {entries.map((entry, index) => <Cell key={entry[nameKey]} fill={colorFor(entry, index)} />)}
+              </Pie>
+              <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), labelFor(name)]} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="intelligence-legend">
+          {entries.map((entry, index) => (
+            <div key={entry[nameKey]}>
+              <span style={{ background: colorFor(entry, index) }} />
+              <label>{labelFor(entry[nameKey])}</label>
+              <strong>{formatPercent(percent(entry[valueKey], valueTotal), locale, { alreadyWhole: true })}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    ) : <p className="intelligence-empty">{emptyText}</p>}
+  </article>;
+}
+
+function paletteColor(entry, index) {
+  return LANGUAGE_COLORS[index % LANGUAGE_COLORS.length];
+}
+
 function formatRunLabel(run, locale, t) {
   const value = run?.finished_at || run?.created_at;
   const date = value ? new Date(value) : null;
@@ -218,6 +264,24 @@ export default function DashboardOverview({
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   const [platformListPage, setPlatformListPage] = useState(0);
+  const [ideaFilter, setIdeaFilter] = useState('concerns');
+  const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(DETAILED_BREAKDOWNS_STORAGE_KEY) === 'open';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleDetailedBreakdowns = () => {
+    const next = !detailedBreakdownsOpen;
+    setDetailedBreakdownsOpen(next);
+    try {
+      window.localStorage.setItem(DETAILED_BREAKDOWNS_STORAGE_KEY, next ? 'open' : 'closed');
+    } catch {
+      // ignore - persistence is a nicety, not a requirement
+    }
+  };
   // Set right before bumping ideaComparisonsNonce from the Regenerate button
   // below, and consumed (and cleared) by the effect - the same
   // forceRegenerateRef/nonce pattern StatsOverview.jsx's trend-summary
@@ -284,6 +348,11 @@ export default function DashboardOverview({
     (ideaComparisonsPage + 1) * IDEA_COMPARISONS_PAGE_SIZE,
   );
 
+  const frequentIdeas = data.insights?.frequent_ideas || [];
+  const concernIdeas = frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
+  const visibleIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
+  const maxIdeaFrequency = Math.max(1, ...visibleIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
+
   const platformListTotalPages = Math.max(1, Math.ceil(sortedPlatformData.length / PLATFORM_LIST_PAGE_SIZE));
   const safePlatformListPage = Math.min(platformListPage, platformListTotalPages - 1);
   const pagedPlatformData = sortedPlatformData.slice(
@@ -338,186 +407,39 @@ export default function DashboardOverview({
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status || t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
         <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" />
         <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
         <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
+        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status || t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
       </section>
 
       {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
+        <section className="intelligence-priority-grid">
+          <article className="glass-card intelligence-card intelligence-line-card"><div className="intelligence-card-heading"><h3>{t('dashboard:sentimentTrend.title')}</h3><span>{t('dashboard:volumeOverTime.title')}</span></div><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
+          <article className="glass-card intelligence-card intelligence-ideas-card">
+            <div className="intelligence-card-heading">
+              <div>
+                <h3>{ideaFilter === 'concerns' ? t('dashboard:topConcerns.title') : t('dashboard:ideas.title')}</h3>
+                <span>{ideaFilter === 'concerns' ? t('dashboard:topConcerns.subtitle') : t('dashboard:ideas.subtitle')}</span>
+              </div>
+              <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('dashboard:topConcerns.filterAria')}>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => setIdeaFilter('concerns')}>{t('dashboard:topConcerns.concernsTab')}</button>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => setIdeaFilter('all')}>{t('dashboard:topConcerns.allTab')}</button>
+              </div>
+            </div>
+            {visibleIdeas.map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={maxIdeaFrequency} projectId={selectedProjectId} />)}
+            {!visibleIdeas.length && <p className="intelligence-empty">{ideaFilter === 'concerns' ? t('dashboard:topConcerns.empty') : t('dashboard:ideas.empty')}</p>}
+          </article>
+        </section>
+
         <section className="intelligence-top-grid">
           <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <div key={entry.name}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}</div></div></article>
-          <article className="glass-card intelligence-card intelligence-line-card"><h3>{t('dashboard:volumeOverTime.title')}</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
           <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
+          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span dir="auto">{item.platform}</span><div>{SENTIMENT_KEYS.map((tone) => <i key={tone} title={t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 })} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
         </section>
 
-        <section className="intelligence-language-grid">
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>{t('dashboard:distributions.language.title')}</h3>
-            {languageData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={languageData} dataKey="count" nameKey="language" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {languageData.map((entry, index) => <Cell key={entry.language} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), languageLabel(t, locale, name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {languageData.map((entry, index) => (
-                    <div key={entry.language}>
-                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{languageLabel(t, locale, entry.language)}</label>
-                      <strong>{formatPercent(percent(entry.count, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">{t('dashboard:distributions.language.empty')}</p>}
-          </article>
-
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>{t('dashboard:distributions.region.title')}</h3>
-            {regionData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {regionData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {regionData.map((entry, index) => (
-                    <div key={entry.value}>
-                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
-                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">{t('dashboard:distributions.region.empty')}</p>}
-          </article>
-
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>{t('dashboard:distributions.gender.title')}</h3>
-            {genderData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {genderData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {genderData.map((entry, index) => (
-                    <div key={entry.value}>
-                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
-                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">{t('dashboard:distributions.gender.empty')}</p>}
-          </article>
-
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>{t('dashboard:distributions.ageRange.title')}</h3>
-            {ageRangeData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {ageRangeData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {ageRangeData.map((entry, index) => (
-                    <div key={entry.value}>
-                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
-                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">{t('dashboard:distributions.ageRange.empty')}</p>}
-          </article>
-
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>{t('dashboard:distributions.segment.title')}</h3>
-            {segmentData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {segmentData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {segmentData.map((entry, index) => (
-                    <div key={entry.value}>
-                      <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
-                      <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">{t('dashboard:distributions.segment.empty')}</p>}
-          </article>
-
-          <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Source trust</h3>
-            {trustData.length ? (
-              <div className="intelligence-language-layout">
-                <div className="intelligence-donut">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={trustData} dataKey="articles" nameKey="tier" outerRadius="92%" paddingAngle={3} stroke="none">
-                        {trustData.map((entry) => <Cell key={entry.tier} fill={TRUST_TIER_COLORS[entry.tier]} />)}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="intelligence-legend">
-                  {trustData.map((entry) => (
-                    <div key={entry.tier}>
-                      <span style={{ background: TRUST_TIER_COLORS[entry.tier] }} />
-                      <label>{distributionLabel(entry.tier)}</label>
-                      <strong>{percent(entry.articles, data.source_trust?.total_articles || 0)}%</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : <p className="intelligence-empty">No sources assessed yet.</p>}
-          </article>
-
-        </section>
-
-        <section className="intelligence-middle-grid">
-          <article className="glass-card intelligence-card">
+        <section className="intelligence-bottom-grid">
+          <article className={`glass-card intelligence-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}>
             <h3>{t('dashboard:wherePosted.title')}</h3>
             <div className="intelligence-platform-list">{pagedPlatformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div>
             {platformListTotalPages > 1 ? (
@@ -544,8 +466,7 @@ export default function DashboardOverview({
               </div>
             ) : null}
           </article>
-          <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>{t('dashboard:ideas.title')}</h3><span>{t('dashboard:ideas.subtitle')}</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">{t('dashboard:ideas.empty')}</p>}</article>
-          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span dir="auto">{item.platform}</span><div>{SENTIMENT_KEYS.map((tone) => <i key={tone} title={t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 })} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
+          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>{t('dashboard:trending.title')}</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={t('dashboard:trending.linkTitle', { term: term.term })}><b dir="auto">{term.term}</b> <em>{formatNumber(term.mentions, locale)}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">{t('dashboard:trending.empty')}</p>}</div></article> : null}
         </section>
 
         <section className="intelligence-idea-comparisons-grid">
@@ -673,16 +594,42 @@ export default function DashboardOverview({
           </article>
         </section>
 
-        <section className="intelligence-bottom-grid">
-          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>{t('dashboard:trending.title')}</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={t('dashboard:trending.linkTitle', { term: term.term })}><b dir="auto">{term.term}</b> <em>{formatNumber(term.mentions, locale)}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">{t('dashboard:trending.empty')}</p>}</div></article> : null}
-          <article className={`glass-card intelligence-card intelligence-pipeline-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}><div className="intelligence-card-heading"><h3>{t('dashboard:articlesByRun.title')}</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index, t)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [t('dashboard:counts.articlesCount', { count: value }), t('dashboard:articlesByRun.tooltipLabel')]} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:articlesByRun.empty')}</p>}</article>
-        </section>
-
         <section className="intelligence-run-sentiment-grid">
+          <article className="glass-card intelligence-card intelligence-pipeline-card"><div className="intelligence-card-heading"><h3>{t('dashboard:articlesByRun.title')}</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index, t)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [t('dashboard:counts.articlesCount', { count: value }), t('dashboard:articlesByRun.tooltipLabel')]} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:articlesByRun.empty')}</p>}</article>
           <article className="glass-card intelligence-card intelligence-run-sentiment-card">
             <h3>{t('dashboard:sentimentAcrossRuns.title')}</h3>
             {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index, t)} minTickGap={18} /><YAxis domain={[-100, 100]} tickFormatter={(value) => formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 }), t('dashboard:sentimentAcrossRuns.tooltipLabel')]} /><ReferenceLine y={0} stroke="rgba(15,23,42,.25)" /><Line type="monotone" dataKey="net_sentiment" name={t('dashboard:sentimentAcrossRuns.tooltipLabel')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:sentimentAcrossRuns.empty')}</p>}
           </article>
+        </section>
+
+        <section className="intelligence-detailed-breakdowns">
+          <button
+            type="button"
+            className="glass-card intelligence-detailed-breakdowns-toggle"
+            aria-expanded={detailedBreakdownsOpen}
+            aria-controls="intelligence-detailed-breakdowns-panel"
+            onClick={toggleDetailedBreakdowns}
+          >
+            <span className="intelligence-metric-icon"><Layers size={18} /></span>
+            <span className="intelligence-detailed-breakdowns-text">
+              <strong>{t('dashboard:detailedBreakdowns.title')}</strong>
+              <small>{t('dashboard:detailedBreakdowns.summary')}</small>
+            </span>
+            <span className="intelligence-detailed-breakdowns-action">
+              {detailedBreakdownsOpen ? t('dashboard:detailedBreakdowns.hide') : t('dashboard:detailedBreakdowns.show')}
+              <ChevronDown size={16} />
+            </span>
+          </button>
+          {detailedBreakdownsOpen ? (
+            <div id="intelligence-detailed-breakdowns-panel" className="intelligence-language-grid">
+              <DistributionCard title={t('dashboard:distributions.language.title')} entries={languageData} nameKey="language" valueKey="count" valueTotal={total} colorFor={paletteColor} labelFor={(code) => languageLabel(t, locale, code)} emptyText={t('dashboard:distributions.language.empty')} />
+              <DistributionCard title={t('dashboard:distributions.region.title')} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.region.empty')} />
+              <DistributionCard title={t('dashboard:distributions.gender.title')} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.gender.empty')} />
+              <DistributionCard title={t('dashboard:distributions.ageRange.title')} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.ageRange.empty')} />
+              <DistributionCard title={t('dashboard:distributions.segment.title')} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.segment.empty')} />
+              <DistributionCard title="Source trust" entries={trustData} nameKey="tier" valueKey="articles" valueTotal={data.source_trust?.total_articles || 0} colorFor={(entry) => TRUST_TIER_COLORS[entry.tier]} labelFor={distributionLabel} emptyText="No sources assessed yet." />
+            </div>
+          ) : null}
         </section>
       </>}
     </>) : null}
