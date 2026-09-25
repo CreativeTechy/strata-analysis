@@ -91,6 +91,9 @@
     "title": "Sentiment breakdown",
     "netSentimentCaption": "net sentiment"
   },
+  "sentimentTrend": {
+    "title": "Sentiment trend"
+  },
   "volumeOverTime": {
     "title": "Article volume & sentiment over time"
   },
@@ -126,6 +129,12 @@
       "unknown": "Unknown"
     }
   },
+  "detailedBreakdowns": {
+    "title": "Detailed breakdowns",
+    "summary": "Language, region, gender, age range, segment and source trust",
+    "show": "Show breakdowns",
+    "hide": "Hide breakdowns"
+  },
   "wherePosted": {
     "title": "Where it’s being said",
     "prev": "Prev",
@@ -136,6 +145,14 @@
     "subtitle": "Grouped by theme",
     "empty": "No repeated ideas detected yet.",
     "backLabel": "Back to Dashboard"
+  },
+  "topConcerns": {
+    "title": "Top concerns",
+    "subtitle": "Recurring complaints and issues",
+    "empty": "No recurring concerns detected yet.",
+    "filterAria": "Show concerns or all ideas",
+    "concernsTab": "Concerns",
+    "allTab": "All ideas"
   },
   "sentimentByPlatform": {
     "title": "Sentiment by platform",
