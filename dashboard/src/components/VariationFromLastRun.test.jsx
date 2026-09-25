@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import VariationFromLastRun from './VariationFromLastRun.jsx';
 import { getReportVariation } from '../api/projectsApi.js';
 import i18n from '../i18n/index.js';
@@ -67,11 +67,13 @@ describe('VariationFromLastRun', () => {
     expect(await screen.findByText('No previous analysis run with saved results exists for this project.')).toBeInTheDocument();
   });
 
-  it('shows the generic narrative-failure notice instead of the raw reason', async () => {
+  it('shows the translated narrative-failure notice with the server reason visible', async () => {
     getReportVariation.mockResolvedValue({ ...COMPARISON, status: 'llm_failed', narrative: null, reason: 'Model host unreachable' });
     render(<VariationFromLastRun projectId={1} runId="run-3" />);
-    const notice = await screen.findByText('The narrative could not be generated; verified metrics are still shown.');
-    expect(notice).toHaveAttribute('title', 'Model host unreachable');
+    const notice = await screen.findByText(/The narrative could not be generated; verified metrics are still shown\./);
+    // The reason is operator-actionable (model host down, quota, wrong URL), so
+    // it stays on screen next to the translated notice, not only in a tooltip.
+    expect(within(notice).getByText('Model host unreachable')).toBeInTheDocument();
     expect(screen.getByText('Selected run articles')).toBeInTheDocument();
   });
 

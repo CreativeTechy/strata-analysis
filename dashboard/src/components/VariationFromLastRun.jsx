@@ -152,8 +152,9 @@ export default function VariationFromLastRun({ projectId, runId, number = '02' }
 
           {loading ? <p className="report-trend-summary-status">{t('reports:variation.regenerating')}</p> : null}
           {!loading && llmFailed ? (
-            <p className="report-trend-summary-status report-trend-summary-error" title={comparison.reason || undefined}>
+            <p className="report-trend-summary-status report-trend-summary-error">
               {t('reports:variation.llmFailed')}
+              {comparison.reason ? <span dir="auto"> {comparison.reason}</span> : null}
             </p>
           ) : null}
         </>
