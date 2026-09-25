@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle2, ExternalLink, FileText, Lightbulb, Loader2,
+  ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Lightbulb, Loader2,
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
@@ -14,6 +14,37 @@ import {
 } from '../api/projectsApi.js';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/IdeaComparisonDetail.css';
+
+// A comparison's sources and facts arrive in one response (sources are stored
+// as one JSONB list and the numeric evidence is derived from all of them), so
+// paging is client-side - the lists just aren't bounded in size.
+const EVIDENCE_PAGE_SIZE = 3;
+const FACTS_PAGE_SIZE = 3;
+
+const pageCountFor = (total, size) => Math.max(1, Math.ceil(total / size));
+const clampPage = (page, total, size) => Math.min(Math.max(0, page), pageCountFor(total, size) - 1);
+const pageSlice = (items, page, size) => items.slice(page * size, (page + 1) * size);
+
+function ListPagination({ label, page, total, pageSize, onChange }) {
+  const pageCount = pageCountFor(total, pageSize);
+  if (pageCount <= 1) return null;
+  const first = page * pageSize + 1;
+  const last = Math.min(total, (page + 1) * pageSize);
+  return (
+    <nav className="comparison-pagination" aria-label={`${label} pagination`}>
+      <span className="comparison-pagination-range">Showing {first}–{last} of {total}</span>
+      <div>
+        <button type="button" className="btn-secondary" onClick={() => onChange(page - 1)} disabled={page === 0} aria-label={`Previous ${label} page`}>
+          <ChevronLeft size={14} className="rtl-mirror" /> Prev
+        </button>
+        <span className="comparison-pagination-status">Page {page + 1} of {pageCount}</span>
+        <button type="button" className="btn-secondary" onClick={() => onChange(page + 1)} disabled={page >= pageCount - 1} aria-label={`Next ${label} page`}>
+          Next <ChevronRight size={14} className="rtl-mirror" />
+        </button>
+      </div>
+    </nav>
+  );
+}
 
 const emptyObservation = (metric = '') => ({ metric, numeric_value: '', unit: '', period_label: '', value_kind: 'unknown' });
 const emptyFact = () => ({ fact_text: '', reference_label: '', reference_url: '', observed_at: '', observations: [] });
@@ -66,7 +97,7 @@ function ChangeIndicator({ change, unit, referenceLabel }) {
   );
 }
 
-function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benchmarkLabel, unit }) {
+function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benchmarkLabel, unit, onReveal }) {
   const values = observations.map((item) => item.numeric_value);
   const rawMinimum = Math.min(...values, benchmark);
   const rawMaximum = Math.max(...values, benchmark);
@@ -100,7 +131,7 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
             : changeDetails(item.numeric_value, benchmark);
           const isBenchmark = benchmarkItem?.id === item.id;
           return (
-            <a className={`comparison-benchmark-row ${isBenchmark ? 'is-benchmark' : ''}`} href={`#${item.evidence_id}`} key={item.id}>
+            <a className={`comparison-benchmark-row ${isBenchmark ? 'is-benchmark' : ''}`} href={`#${item.evidence_id}`} onClick={(event) => onReveal(event, item.evidence_id)} key={item.id}>
               <div className="comparison-benchmark-source"><i className={`comparison-origin-dot ${item.origin}`} /><span>{item.source_label}</span><strong>{readableDisplayValue(item.display_value)}</strong></div>
               <div className="comparison-benchmark-track">
                 <i className="comparison-benchmark-line" style={{ left: `${benchmarkPosition}%` }} />
@@ -134,7 +165,7 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
   );
 }
 
-function NumericEvidence({ evidence }) {
+function NumericEvidence({ evidence, onReveal }) {
   if (!evidence?.groups?.length) return null;
   return (
     <section className="glass-card comparison-numeric-card">
@@ -183,7 +214,7 @@ function NumericEvidence({ evidence }) {
                 </div>
               ) : null}
               {group.display_type === 'single' ? (
-                <a className="comparison-single-value" href={`#${group.observations[0].evidence_id}`}>
+                <a className="comparison-single-value" href={`#${group.observations[0].evidence_id}`} onClick={(event) => onReveal(event, group.observations[0].evidence_id)}>
                   <strong>{group.observations[0].display_value}</strong>
                   <span>{group.observations[0].source_label}</span>
                 </a>
@@ -204,12 +235,12 @@ function NumericEvidence({ evidence }) {
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                ) : <BenchmarkComparisonChart observations={group.observations} benchmarkItem={userBenchmark} benchmark={benchmark} benchmarkLabel={benchmarkLabel} unit={group.unit} />
+                ) : <BenchmarkComparisonChart observations={group.observations} benchmarkItem={userBenchmark} benchmark={benchmark} benchmarkLabel={benchmarkLabel} unit={group.unit} onReveal={onReveal} />
               )}
               {group.observations.length > 1 && group.display_type === 'trend' ? (
                 <div className="comparison-number-table">
                   {chartData.map((item, index) => (
-                    <a href={`#${item.evidence_id}`} key={item.id}>
+                    <a href={`#${item.evidence_id}`} onClick={(event) => onReveal(event, item.evidence_id)} key={item.id}>
                       <span><i className={`comparison-origin-dot ${item.origin}`} />{item.source_label}</span>
                       <strong>{item.display_value}</strong>
                       <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || 'Period not specified'}</small>
@@ -244,6 +275,9 @@ export default function IdeaComparisonDetailPage() {
   const [includeNumbers, setIncludeNumbers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [evidencePage, setEvidencePage] = useState(0);
+  const [factsPage, setFactsPage] = useState(0);
+  const [targetId, setTargetId] = useState('');
 
   const load = useCallback(async (signal) => {
     setLoading(true);
@@ -264,6 +298,54 @@ export default function IdeaComparisonDetailPage() {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [load]);
 
+  // The numbers section links each figure to its evidence row by anchor, but
+  // that row may sit on a page that isn't rendered. Flip the owning list to
+  // the right page first, then scroll once it has rendered. Plain `:target`
+  // can't be relied on for the highlight either, since the element didn't
+  // exist when the fragment was navigated to.
+  const pageForEvidence = useCallback((id) => {
+    if (!comparison || !id) return false;
+    const documentMatch = /^document-evidence-(\d+)$/.exec(id);
+    if (documentMatch) {
+      const index = Number(documentMatch[1]);
+      if (index >= comparison.sources.length) return false;
+      setEvidencePage(Math.floor(index / EVIDENCE_PAGE_SIZE));
+      return true;
+    }
+    const factMatch = /^user-fact-(.+)$/.exec(id);
+    if (factMatch) {
+      const index = comparison.facts.findIndex((fact) => String(fact.id) === factMatch[1]);
+      if (index < 0) return false;
+      setFactsPage(Math.floor(index / FACTS_PAGE_SIZE));
+      return true;
+    }
+    return false;
+  }, [comparison]);
+
+  const revealEvidence = (event, id) => {
+    if (!pageForEvidence(id)) return;
+    event.preventDefault();
+    // replaceState rather than a fragment navigation keeps the router state
+    // that carries the "Back to dashboard" destination.
+    window.history.replaceState(window.history.state, '', `#${id}`);
+    setTargetId(id);
+  };
+
+  // A deep link (or a reload after following one) lands with the hash
+  // already set; honour it once, not again every time the comparison reloads.
+  const initialHash = useRef(location.hash);
+  useEffect(() => {
+    if (!comparison || initialHash.current === null) return;
+    const id = decodeURIComponent(initialHash.current.replace(/^#/, ''));
+    initialHash.current = null;
+    if (id && pageForEvidence(id)) setTargetId(id);
+  }, [comparison, pageForEvidence]);
+
+  useEffect(() => {
+    if (!targetId) return;
+    document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [targetId, evidencePage, factsPage]);
+
   const closeForm = () => {
     setFormOpen(false);
     setEditingFactId(null);
@@ -283,6 +365,9 @@ export default function IdeaComparisonDetailPage() {
     setFormOpen(true);
     setMessage('');
   };
+
+  const changeEvidencePage = (page) => { setTargetId(''); setEvidencePage(page); };
+  const changeFactsPage = (page) => { setTargetId(''); setFactsPage(page); };
 
   const regenerate = async () => {
     setRegenerating(true);
@@ -309,7 +394,11 @@ export default function IdeaComparisonDetailPage() {
     try {
       const payload = { ...form, observations: includeNumbers ? form.observations : [] };
       if (editingFactId) await updateIdeaComparisonFact(projectId, clusterId, editingFactId, payload);
-      else await createIdeaComparisonFact(projectId, clusterId, payload);
+      else {
+        await createIdeaComparisonFact(projectId, clusterId, payload);
+        // Facts are listed oldest first, so a new one lands on the last page.
+        setFactsPage(Number.MAX_SAFE_INTEGER);
+      }
       closeForm();
       await regenerate();
     } catch (err) {
@@ -338,6 +427,10 @@ export default function IdeaComparisonDetailPage() {
       <Link className="btn-secondary" to={backTo}><ArrowLeft size={15} /> Back to dashboard</Link>
     </div>
   );
+
+  const safeEvidencePage = clampPage(evidencePage, comparison.sources.length, EVIDENCE_PAGE_SIZE);
+  const evidenceOffset = safeEvidencePage * EVIDENCE_PAGE_SIZE;
+  const safeFactsPage = clampPage(factsPage, comparison.facts.length, FACTS_PAGE_SIZE);
 
   return (
     <div className="admin-page-shell comparison-detail-page">
@@ -368,7 +461,7 @@ export default function IdeaComparisonDetailPage() {
         <p>{comparison.summary || 'No summary has been generated yet.'}</p>
       </section>
 
-      <NumericEvidence evidence={comparison.numeric_evidence} />
+      <NumericEvidence evidence={comparison.numeric_evidence} onReveal={revealEvidence} />
 
       <section className="comparison-evidence-grid">
         <article className="glass-card comparison-evidence-card">
@@ -376,8 +469,11 @@ export default function IdeaComparisonDetailPage() {
             <div><span>Document evidence</span><small>{comparison.sources.length} source{comparison.sources.length === 1 ? '' : 's'}</small></div>
           </div>
           <div className="comparison-evidence-list">
-            {comparison.sources.map((source, index) => (
-              <div className="comparison-evidence-row" id={`document-evidence-${index}`} key={`${source.article_id || 'source'}-${index}`}>
+            {pageSlice(comparison.sources, safeEvidencePage, EVIDENCE_PAGE_SIZE).map((source, pageIndex) => {
+              const index = evidenceOffset + pageIndex;
+              const id = `document-evidence-${index}`;
+              return (
+              <div className={`comparison-evidence-row ${targetId === id ? 'is-targeted' : ''}`} id={id} key={`${source.article_id || 'source'}-${index}`}>
                 <div className="comparison-evidence-number">{index + 1}</div>
                 <div className="comparison-evidence-content">
                   <div><FileText size={14} /><strong>{source.source_label}</strong></div>
@@ -387,8 +483,10 @@ export default function IdeaComparisonDetailPage() {
                 </div>
                 {source.url ? <a href={source.url} target="_blank" rel="noreferrer" aria-label={`Open ${source.source_label}`}><ExternalLink size={16} /></a> : null}
               </div>
-            ))}
+              );
+            })}
           </div>
+          <ListPagination label="document evidence" page={safeEvidencePage} total={comparison.sources.length} pageSize={EVIDENCE_PAGE_SIZE} onChange={changeEvidencePage} />
         </article>
 
         <article className="glass-card comparison-evidence-card">
@@ -436,8 +534,8 @@ export default function IdeaComparisonDetailPage() {
           ) : null}
           {comparison.facts.length ? (
             <div className="comparison-facts-list">
-              {comparison.facts.map((fact) => (
-                <div className="comparison-fact" id={`user-fact-${fact.id}`} key={fact.id}>
+              {pageSlice(comparison.facts, safeFactsPage, FACTS_PAGE_SIZE).map((fact) => (
+                <div className={`comparison-fact ${targetId === `user-fact-${fact.id}` ? 'is-targeted' : ''}`} id={`user-fact-${fact.id}`} key={fact.id}>
                   <div className="comparison-fact-icon"><UserRound size={16} /></div>
                   <div>
                     <span>User-provided fact{fact.reference_label ? ` · ${fact.reference_label}` : ''}</span>
@@ -451,6 +549,7 @@ export default function IdeaComparisonDetailPage() {
               ))}
             </div>
           ) : <p className="comparison-empty-facts">No user-provided facts yet.</p>}
+          <ListPagination label="user-provided facts" page={safeFactsPage} total={comparison.facts.length} pageSize={FACTS_PAGE_SIZE} onChange={changeFactsPage} />
         </article>
       </section>
     </div>
