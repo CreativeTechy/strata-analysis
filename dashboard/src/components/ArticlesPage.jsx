@@ -11,7 +11,7 @@ import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import {
-  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
+  SENTIMENTS, ARTICLE_STATUSES, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
   FULL_IMPORT_ACCEPT, getPageNumbers,
 } from '../lib/articleHelpers.jsx';
 import {
@@ -56,6 +56,13 @@ const SENTIMENT_LABEL_KEYS = {
   mixed: 'sentiment.mixed',
 };
 
+const STATUS_LABEL_KEYS = {
+  assessed: 'status.assessed',
+  pending: 'status.pending',
+  failed: 'status.failed',
+  not_assessed: 'status.notAssessed',
+};
+
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const { t, i18n } = useTranslation(['articles', 'common']);
   const locale = i18n.language;
@@ -78,6 +85,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [sentiment, setSentiment] = useState(() => searchParams.get('sentiment') || 'all');
+  const [status, setStatus] = useState(() => searchParams.get('status') || 'all');
   const [projectFilter, setProjectFilter] = useState(() => (
     searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
   ));
@@ -144,12 +152,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -168,13 +176,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (sourceFilter !== 'all') next.set('source', sourceFilter);
     if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
+    if (status !== 'all') next.set('status', status);
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
     if (sort !== 'published.desc') next.set('sort', sort);
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, status, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -255,6 +264,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         const data = await listArticles({
           search: search || undefined,
           sentiment: sentiment !== 'all' ? sentiment : undefined,
+          status: status !== 'all' ? status : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
           source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
@@ -282,7 +292,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -337,6 +347,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       setSearchInput('');
       setSearch('');
       setSentiment('all');
+      setStatus('all');
       setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
       setSourceFilter('all');
       setSourceHostFilter('all');
@@ -359,6 +370,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       const blob = await exportArticles({
         search: search || undefined,
         sentiment: sentiment !== 'all' ? sentiment : undefined,
+        status: status !== 'all' ? status : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
         source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
@@ -710,6 +722,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
               {SENTIMENTS.map((value) => (
                 <option key={value} value={value}>
                   {value === 'all' ? t('filters.allSentiments') : t(SENTIMENT_LABEL_KEYS[value] || 'sentiment.neutral')}
+                </option>
+              ))}
+            </select>
+
+            <select className="filter-select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('filters.statusAriaLabel')}>
+              {ARTICLE_STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {value === 'all' ? t('filters.allStatuses') : t(STATUS_LABEL_KEYS[value])}
                 </option>
               ))}
             </select>

@@ -66,4 +66,11 @@ describe('translated sentiment label vs. raw enum code', () => {
     // capitalized) word, not the raw "negative" code.
     expect(badge.textContent).toBe('Negative')
   })
+
+  it('shows Not assessed instead of Neutral for a model-less success placeholder', () => {
+    render(<ArticleCard article={{ ...MIXED_ARTICLE, sentiment: 'neutral', analysis_status: 'success', sentiment_status: null }} search="" index={0} isRefreshing={false} onShowDetails={() => {}} />)
+    const badge = document.querySelector('.badge.not_assessed')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).toBe('Not assessed')
+  })
 })

@@ -89,7 +89,8 @@
   },
   "sentimentBreakdown": {
     "title": "Sentiment breakdown",
-    "netSentimentCaption": "net sentiment"
+    "netSentimentCaption": "net sentiment",
+    "denominator": "Sentiment from {{assessed}} of {{total}} articles · {{notAssessed}} not assessed"
   },
   "volumeOverTime": {
     "title": "Article volume & sentiment over time"

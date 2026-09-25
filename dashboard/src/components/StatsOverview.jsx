@@ -207,7 +207,15 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>{t('dashboard:report.errorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>{t('dashboard:report.tryAgain')}</button>}</div></section>;
 
   const total = totalArticles;
-  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>{t('dashboard:report.noArticlesTitle')}</strong><p className="subtitle">{t('dashboard:report.noArticlesBody', { scope: resolvedScopeLabel })}</p><Link to="/pipeline-runs" className="btn-secondary">{t('dashboard:report.goToRuns')}</Link></div></section>;
+  const assessedTotal = Number(intelligence.sentiment_assessed ?? total);
+  const populationTotal = Number(intelligence.articles_total ?? assessedTotal);
+  const notAssessedTotal = Number(intelligence.sentiment_not_assessed ?? Math.max(0, populationTotal - assessedTotal));
+  const sentimentDenominator = t('dashboard:sentimentBreakdown.denominator', {
+    assessed: formatNumber(assessedTotal, locale),
+    total: formatNumber(populationTotal, locale),
+    notAssessed: formatNumber(notAssessedTotal, locale),
+  });
+  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>{t('dashboard:report.noArticlesTitle')}</strong><p className="subtitle">{sentimentDenominator}</p><p className="subtitle">{t('dashboard:report.noArticlesBody', { scope: resolvedScopeLabel })}</p><Link to="/pipeline-runs" className="btn-secondary">{t('dashboard:report.goToRuns')}</Link></div></section>;
 
   const sentiments = SENTIMENT_KEYS.map((name) => ({ name, value: Number(intelligence[name] || 0) }));
   const insights = intelligence.insights || {};
@@ -281,6 +289,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     <VariationFromLastRun projectId={projectId} runId={runId} number="02" />
 
     <Section number="03" title={t('dashboard:report.sections.sentimentAnalysis')}>
+      <p className="subtitle">
+        {sentimentDenominator}
+      </p>
       <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
     </Section>
 

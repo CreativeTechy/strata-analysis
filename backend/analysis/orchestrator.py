@@ -80,6 +80,33 @@ def _describe_extraction_model() -> str:
     return f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}"
 
 
+def _stage_outcome(result: dict, configured_model: str | None) -> str:
+    """Translate a classifier result into the persisted stage contract.
+
+    A zero-score fallback with no raw label is the existing signal emitted
+    when a model is unavailable or produced no result.  Low-confidence model
+    output still counts as ``ran`` because it did produce a score/label and
+    the UI may truthfully show that confidence.
+    """
+    explicit = result.get("outcome")
+    if explicit in {"ran", "skipped_model_unavailable", "failed"}:
+        return explicit
+    if not (configured_model or "").strip():
+        return "skipped_model_unavailable"
+    if result.get("raw_label") is None and result.get("low_confidence") and not float(result.get("score") or 0):
+        return "skipped_model_unavailable"
+    return "ran"
+
+
+def _combined_stage_outcome(results: tuple[dict, ...], configured_model: str | None) -> str:
+    outcomes = {_stage_outcome(result, configured_model) for result in results}
+    if "failed" in outcomes:
+        return "failed"
+    if "ran" in outcomes:
+        return "ran"
+    return "skipped_model_unavailable"
+
+
 def analyze_article(article: dict, *, project_context: str = "") -> dict:
     title = article.get("title", "")
     started_at = datetime.now(timezone.utc).isoformat()
@@ -196,10 +223,15 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
         "sentiment_score": float(sentiment_result.get("score", 0.0)),
         "sentiment_low_confidence": bool(sentiment_result.get("low_confidence")),
         "sentiment_model": config.SENTIMENT_CLASSIFIER_MODEL or None,
+        "sentiment_status": _stage_outcome(sentiment_result, config.SENTIMENT_CLASSIFIER_MODEL),
         "category_confidence": float(category_result.get("score", 0.0)),
         "writer_tone_confidence": float(writer_tone_result.get("score", 0.0)),
         "article_tone_confidence": float(article_tone_result.get("score", 0.0)),
         "classification_model": config.CLASSIFICATION_MODEL or None,
+        "classification_status": _combined_stage_outcome(
+            (category_result, writer_tone_result, article_tone_result),
+            config.CLASSIFICATION_MODEL,
+        ),
         "extraction_model": f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}" if config.LLM_CHAT_MODEL else None,
         "analysis_pipeline_version": PIPELINE_VERSION,
         "source_language": language_result.get("language"),

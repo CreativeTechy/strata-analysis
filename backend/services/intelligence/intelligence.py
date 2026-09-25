@@ -324,6 +324,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         select a.id, a.url, a.source, a.source_url, a.source_provenance,
                a.title, a.summary, a.text,
                a.sentiment, a.writer_tone, a.article_tone, a.region, a.gender, a.age_range, a.segment, a.insight_json,
+               a.sentiment_status, a.classification_status, a.analysis_status,
                a.source_domain,
                a.published, a.created_at, a.pipeline_run_id, a.source_language
         from articles a
@@ -402,9 +403,14 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
     from services.articles.articles_query import source_trust_summary_for_rows
     period = normalize_period(period)
     if run_id:
-        rows = _fetch_project_rows(project["id"], run_id=run_id)
+        all_rows = _fetch_project_rows(project["id"], run_id=run_id)
     else:
-        rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+        all_rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
+    rows = [
+        row for row in all_rows
+        if row.get("sentiment_status") == "ran"
+        or ("sentiment_status" not in row and row.get("analysis_status") in (None, "success"))
+    ]
     pipeline_runs = _fetch_pipeline_runs(project["id"])
     counts = Counter(str(row.get("sentiment") or "").lower() for row in rows)
     sentiment = {key: int(counts[key]) for key in ("positive", "negative", "neutral", "mixed")}
@@ -435,6 +441,9 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         "period": period,
         "run_id": run_id,
         "total": len(rows),
+        "articles_total": len(all_rows),
+        "sentiment_assessed": len(rows),
+        "sentiment_not_assessed": len(all_rows) - len(rows),
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
         "document_count": _fetch_document_count(project["id"]),

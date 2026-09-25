@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info } from 'lucide-react';
 import {
   prettyLabel, formatMatchScore, highlightMatches,
-  articleSourceLink, articleSourceLabel,
+  articleSourceLink, articleSourceLabel, sentimentBadgeState,
 } from '../../lib/articleHelpers.jsx';
 import { formatDate, formatDateTime, formatNumber, formatLanguageName } from '../../lib/i18nFormat.js';
 
@@ -17,7 +17,10 @@ const SENTIMENT_KEYS = {
 };
 
 function sentimentLabel(t, sentiment) {
-  return t(SENTIMENT_KEYS[sentiment?.toLowerCase()] || 'sentiment.neutral');
+  if (sentiment === 'pending') return t('sentiment.pending');
+  if (sentiment === 'failed') return t('sentiment.failed');
+  if (sentiment === 'not_assessed') return t('sentiment.notAssessed');
+  return t(SENTIMENT_KEYS[sentiment] || 'sentiment.neutral');
 }
 
 // articleHelpers.jsx's articleDate()/addedAtLabel() are ad hoc,
@@ -42,6 +45,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
   const { t, i18n } = useTranslation(['articles', 'common']);
   const locale = i18n.language;
   const sourceLink = articleSourceLink(article);
+  const sentimentState = sentimentBadgeState(article);
   return (
     <motion.div
       layout
@@ -58,8 +62,8 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
         onClick={onToggleExpanded}
         aria-expanded={isExpanded}
       >
-        <span className={`badge ${article.sentiment?.toLowerCase() || 'neutral'}`}>
-          {sentimentLabel(t, article.sentiment)}
+        <span className={`badge ${sentimentState}`}>
+          {sentimentLabel(t, sentimentState)}
         </span>
         <span className="article-row-title" dir="auto">{highlightMatches(article.title || t('common.untitledArticle'), search)}</span>
         <span className="article-row-source" dir="auto">{articleSourceLabel(article)}</span>

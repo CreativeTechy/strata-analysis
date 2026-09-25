@@ -105,7 +105,8 @@
   },
   "sentimentBreakdown": {
     "title": "توزيع المشاعر",
-    "netSentimentCaption": "صافي المشاعر"
+    "netSentimentCaption": "صافي المشاعر",
+    "denominator": "المشاعر من {{assessed}} من أصل {{total}} مقالة · {{notAssessed}} لم تُقيَّم"
   },
   "volumeOverTime": {
     "title": "حجم المقالات والمشاعر عبر الزمن"

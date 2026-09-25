@@ -4,6 +4,21 @@
 // component.
 
 export const SENTIMENTS = ['all', 'positive', 'negative', 'neutral', 'mixed'];
+export const ARTICLE_STATUSES = ['all', 'assessed', 'pending', 'failed', 'not_assessed'];
+
+export function sentimentBadgeState(article = {}) {
+  const analysisStatus = String(article.analysis_status || '').toLowerCase();
+  const stageStatus = article.sentiment_status;
+  if (analysisStatus === 'pending' || analysisStatus === 'processing') return 'pending';
+  if (analysisStatus === 'failed' || analysisStatus === 'partial' || stageStatus === 'failed') return 'failed';
+  if (!(Object.prototype.hasOwnProperty.call(article, 'sentiment_status')) && article.sentiment) {
+    return String(article.sentiment).toLowerCase();
+  }
+  if (stageStatus !== 'ran') {
+    return 'not_assessed';
+  }
+  return String(article.sentiment || 'neutral').toLowerCase();
+}
 export const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },
   { value: 'published.asc', label: 'Oldest first' },

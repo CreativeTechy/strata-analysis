@@ -106,6 +106,8 @@ class AnalyzeArticleTests(unittest.TestCase):
         self.assertEqual(result["source_language"], "en")
         self.assertEqual(result["source_language_confidence"], 0.98)
         self.assertEqual(result["analysis_status"], "success")
+        self.assertEqual(result["sentiment_status"], "ran")
+        self.assertEqual(result["classification_status"], "ran")
         self.assertIsNone(result["analysis_error"])
         self.assertEqual(result["analysis_attempt_count"], 1)
         self.assertIsNotNone(result["analysis_started_at"])
@@ -116,6 +118,28 @@ class AnalyzeArticleTests(unittest.TestCase):
         # identifier is "<provider>:<model>" rather than a bare model name.
         self.assertIn(":", result["extraction_model"])
         self.assertTrue(result["extraction_model"].startswith(f"{config.LLM_PROVIDER}:"))
+
+    def test_records_model_unavailable_instead_of_treating_fallback_as_neutral(self):
+        with patch(
+            "analysis.orchestrator.classify_article_sentiment",
+            return_value={"label": "neutral", "score": 0.0, "low_confidence": True, "raw_label": None},
+        ):
+            result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(result["sentiment"], "neutral")
+        self.assertEqual(result["sentiment_status"], "skipped_model_unavailable")
+
+    def test_explicit_stage_failure_is_preserved(self):
+        self.assertEqual(
+            orchestrator._stage_outcome({"outcome": "failed"}, "classifier/model"),
+            "failed",
+        )
+        self.assertEqual(
+            orchestrator._combined_stage_outcome(
+                ({"outcome": "ran"}, {"outcome": "failed"}),
+                "classifier/model",
+            ),
+            "failed",
+        )
 
     def test_entity_extraction_override_replaces_extraction_entities_when_enabled(self):
         with patch(

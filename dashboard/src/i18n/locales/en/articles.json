@@ -41,7 +41,9 @@
     "searchPlaceholder": "Search title, summary, source...",
     "searchAriaLabel": "Search articles",
     "clearSearchAriaLabel": "Clear search",
-    "allSentiments": "All sentiments"
+    "allSentiments": "All sentiments",
+    "allStatuses": "All statuses",
+    "statusAriaLabel": "Filter articles by assessment status"
   },
   "sort": {
     "publishedDesc": "Newest first",
@@ -106,7 +108,16 @@
     "positive": "Positive",
     "negative": "Negative",
     "neutral": "Neutral",
-    "mixed": "Mixed"
+    "mixed": "Mixed",
+    "pending": "Pending",
+    "failed": "Failed",
+    "notAssessed": "Not assessed"
+  },
+  "status": {
+    "assessed": "Assessed",
+    "pending": "Pending",
+    "failed": "Failed",
+    "notAssessed": "Not assessed"
   },
   "common": {
     "byAuthor": "By {{author}}",

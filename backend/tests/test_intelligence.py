@@ -218,6 +218,22 @@ class GetProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["run_id"], "run-123")
         self.assertEqual(result["total"], 0)
 
+    def test_excludes_unassessed_sentiment_and_reports_the_denominator(self):
+        rows = [
+            {"id": 1, "sentiment": "neutral", "sentiment_status": None, "analysis_status": "success"},
+            {"id": 2, "sentiment": "positive", "sentiment_status": "ran", "analysis_status": "success"},
+        ]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
+            result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, period="all")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["articles_total"], 2)
+        self.assertEqual(result["positive"], 1)
+        self.assertEqual(result["neutral"], 0)
+        self.assertEqual(result["sentiment_not_assessed"], 1)
+
     def test_platform_totals_include_every_supported_social_platform(self):
         rows = [
             {"url": "https://example.com/a", "sentiment": "neutral"},

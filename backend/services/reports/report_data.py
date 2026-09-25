@@ -96,6 +96,7 @@ def _fetch_period_rows(project_id: int) -> list[dict]:
         """
         select a.id, a.url, a.source, a.source_url, a.title, a.summary,
                a.sentiment, a.relevance_score, a.analysis_status,
+               a.sentiment_status, a.classification_status,
                a.topics, a.key_points, a.insight_json,
                a.published, a.created_at
         from articles a
@@ -350,6 +351,10 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
         in_scope_rows = filter_rows_for_period(all_rows, normalize_period(period))
 
     analyzed_rows = [row for row in in_scope_rows if str(row.get("analysis_status") or "").lower() in ANALYZED_STATUSES]
+    sentiment_rows = [
+        row for row in analyzed_rows
+        if row.get("sentiment_status") == "ran" or "sentiment_status" not in row
+    ]
 
     analysis_date_label, run_label = _scope_label(scope_type, period, run, tz)
 
@@ -382,7 +387,11 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "counts": _status_counts(in_scope_rows),
-        "sentiment": _sentiment_breakdown(analyzed_rows),
+        "sentiment": {
+            **_sentiment_breakdown(sentiment_rows),
+            "articles_total": len(in_scope_rows),
+            "not_assessed": len(in_scope_rows) - len(sentiment_rows),
+        },
         "executive_summary": {
             "text": (cached_summary or {}).get("summary"),
             "cached": bool((cached_summary or {}).get("cached")),

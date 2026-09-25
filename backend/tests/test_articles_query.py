@@ -387,6 +387,17 @@ class WherePartsSourceHostTests(unittest.TestCase):
         mock_resolve.assert_not_called()
         self.assertIn("id = -1", where_sql)
 
+    def test_sentiment_filter_only_matches_assessed_values(self):
+        where_sql, params = articles_query._where_parts(sentiment="neutral")
+        self.assertIn("sentiment = %s", where_sql)
+        self.assertIn("sentiment_status = 'ran'", where_sql)
+        self.assertIn("neutral", params)
+
+    def test_not_assessed_status_excludes_pending_and_failed_rows(self):
+        where_sql, _ = articles_query._where_parts(status="not_assessed")
+        self.assertIn("analysis_status = 'success'", where_sql)
+        self.assertIn("skipped_model_unavailable", where_sql)
+
     def test_no_precomputed_ids_falls_back_to_resolving_from_source_host(self):
         with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
              patch("services.articles.articles_query.list_article_ids_for_source_host", return_value=[3]) as mock_resolve:
