@@ -303,6 +303,14 @@ def build_variation_from_last_run(project: dict, report_data: dict, run: dict | 
         "previous_scope_label": None,
         "current_run_id": (run or {}).get("id"),
         "previous_run_id": None,
+        # Raw ingredients of the two *_scope_label strings above, so a
+        # non-English UI can build its own label instead of showing this
+        # module's English one.
+        "current_sequence_number": (run or {}).get("sequence_number"),
+        "previous_sequence_number": None,
+        # Stable machine-readable counterpart of `reason` (which stays English
+        # prose for the PDF) so the dashboard can show a translated message.
+        "reason_code": None,
         "metrics": {"current": None, "previous": None, "deltas": None, "coverage": None},
         "narrative": None,
         "evidence": [],
@@ -310,16 +318,19 @@ def build_variation_from_last_run(project: dict, report_data: dict, run: dict | 
     }
 
     if not run or report_data.get("scope", {}).get("type") != "run":
+        base_result["reason_code"] = "no_run_selected"
         base_result["reason"] = "Select an analysis run to compare it with the previous run."
         return base_result
 
     if not current_rows:
+        base_result["reason_code"] = "no_current_articles"
         base_result["reason"] = "No analyzed articles exist in the selected run."
         return base_result
 
     base_result["metrics"]["current"] = _sentiment_metrics(current_rows)
     previous_run = get_previous_analysis_run(project_id, run["id"])
     if not previous_run:
+        base_result["reason_code"] = "no_previous_run"
         base_result["reason"] = "No previous analysis run with saved results exists for this project."
         return base_result
 
@@ -329,12 +340,14 @@ def build_variation_from_last_run(project: dict, report_data: dict, run: dict | 
         "previous_date": previous_date.isoformat(),
         "previous_scope_label": previous_label,
         "previous_run_id": previous_run["id"],
+        "previous_sequence_number": previous_run.get("sequence_number"),
     })
     previous_rows = [
         row for row in fetch_run_article_rows(project_id, previous_run["id"])
         if str(row.get("analysis_status") or "").lower() == "success"
     ]
     if not previous_rows:
+        base_result["reason_code"] = "no_previous_articles"
         base_result["reason"] = "The previous analysis run has no successfully analyzed articles."
         return base_result
 

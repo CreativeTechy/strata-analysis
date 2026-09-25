@@ -97,7 +97,8 @@ export default function ReportsView({
       anchor.remove();
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
-      setExportError(err?.message || 'Failed to export the report summary.');
+      console.error('Failed to export the report summary', err);
+      setExportError({ detail: err?.detail || null });
     } finally {
       setExportingSummary(false);
     }
@@ -163,7 +164,7 @@ export default function ReportsView({
                   {hasProjects ? (
                     projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.name} ({project.status || 'draft'})
+                        {project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
                       </option>
                     ))
                   ) : (
@@ -190,17 +191,18 @@ export default function ReportsView({
               onClick={handleExportSummary}
               disabled={exportingSummary || !hasProjects || selectedProjectId == null || !totalArticles}
               aria-busy={exportingSummary}
-              title={!totalArticles ? 'No analyzed articles in this scope yet' : 'Download a PDF summary of this report'}
+              title={!totalArticles ? t('export.noArticlesTitle') : t('export.title')}
             >
               <Download size={16} className={exportingSummary ? 'spin' : ''} />
-              {exportingSummary ? 'Preparing...' : 'Export Summary'}
+              {exportingSummary ? t('export.preparing') : t('export.button')}
             </button>
           </div>
         </div>
 
         {exportError ? (
           <p className="report-export-summary-error" role="alert">
-            <AlertCircle size={13} aria-hidden="true" /> {exportError}
+            <AlertCircle size={13} aria-hidden="true" /> {t('export.failed')}
+            {exportError.detail ? <span dir="auto"> {exportError.detail}</span> : null}
           </p>
         ) : null}
 
