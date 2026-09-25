@@ -123,6 +123,10 @@
     "segment": {
       "title": "Segment distribution",
       "empty": "No life-situation/occupation segment detected on analyzed articles yet."
+    },
+    "bucket": {
+      "other": "Other",
+      "unknown": "Unknown"
     }
   },
   "detailedBreakdowns": {
@@ -166,7 +170,8 @@
     "sourcesCount": "Sources ({{count}})",
     "viewDetails": "View details for {{idea}}",
     "prev": "Prev",
-    "next": "Next"
+    "next": "Next",
+    "viewDetailsTitle": "View comparison details"
   },
   "trending": {
     "title": "Trending keywords & hashtags",
@@ -222,7 +227,8 @@
       "errorTitle": "Couldn’t load keyword existence",
       "noMatchesTitle": "No matches for this filter",
       "noMatchesBody": "No analyzed articles matched the selected source and keyword combination in this date range.",
-      "loadErrorFallback": "Failed to load keyword existence"
+      "loadErrorFallback": "Failed to load keyword existence",
+      "documentFallback": "Document #{{id}}"
     },
     "feedback": {
       "positiveDrivers": "Positive drivers",
@@ -254,5 +260,9 @@
     "publishedResults": "Published survey results",
     "populationFallback": "Survey population",
     "note": "These percentages are published survey observations. They are separate from sentiment inferred from analyzed records."
+  },
+  "sourceTrust": {
+    "title": "Source trust",
+    "empty": "No sources assessed yet."
   }
 }

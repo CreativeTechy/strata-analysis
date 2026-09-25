@@ -69,11 +69,29 @@ function languageLabel(t, locale, code) {
 // Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
 // - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
 // Open-ended DB text, so this stays a plain transform rather than a
-// translation lookup.
-function distributionLabel(value) {
-  return String(value || 'unknown')
+// translation lookup - except the "other"/"unknown" buckets, which the app
+// itself generates (capBreakdown() below, or a missing value) and so do
+// have a fixed translation.
+function distributionLabel(t, value) {
+  const key = String(value || 'unknown');
+  if (key === 'other' || key === 'unknown') return t(`dashboard:distributions.bucket.${key}`);
+  return key
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// Same fixed tiers (and labels) the Sources tab uses - see sources.json's
+// trustTier.* and TRUST_TIER_ORDER above.
+function trustTierLabel(t, tier) {
+  return t(`sources:trustTier.${tier}`, tier);
+}
+
+// queued/running/success/failed/cancelled are stored run-status enum values;
+// same label lookup PipelineRunsPage.jsx's runStatusLabel() uses.
+function runStatusLabel(t, status) {
+  if (status === 'success') return t('common:status.success');
+  if (status === 'failed') return t('common:status.failed');
+  return t(`analysis:shared.runStatusLabels.${status}`, status);
 }
 
 // region/gender/age_range/segment are all open-ended text buckets, so every
@@ -410,7 +428,7 @@ export default function DashboardOverview({
         <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" />
         <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
         <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
-        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status || t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
+        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
       </section>
 
       {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
@@ -522,7 +540,7 @@ export default function DashboardOverview({
                           to={`/projects/${selectedProjectId}/idea-comparisons/${comparison.idea_cluster_id}${selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : ''}`}
                           state={{ from: `${location.pathname}${location.search}` }}
                           aria-label={t('dashboard:ideaComparisons.viewDetails', { idea: comparison.idea })}
-                          title="View comparison details"
+                          title={t('dashboard:ideaComparisons.viewDetailsTitle')}
                         ><ChevronRight size={17} /></Link>
                       </div>
                     </div>
@@ -623,11 +641,11 @@ export default function DashboardOverview({
           {detailedBreakdownsOpen ? (
             <div id="intelligence-detailed-breakdowns-panel" className="intelligence-language-grid">
               <DistributionCard title={t('dashboard:distributions.language.title')} entries={languageData} nameKey="language" valueKey="count" valueTotal={total} colorFor={paletteColor} labelFor={(code) => languageLabel(t, locale, code)} emptyText={t('dashboard:distributions.language.empty')} />
-              <DistributionCard title={t('dashboard:distributions.region.title')} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.region.empty')} />
-              <DistributionCard title={t('dashboard:distributions.gender.title')} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.gender.empty')} />
-              <DistributionCard title={t('dashboard:distributions.ageRange.title')} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.ageRange.empty')} />
-              <DistributionCard title={t('dashboard:distributions.segment.title')} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={distributionLabel} emptyText={t('dashboard:distributions.segment.empty')} />
-              <DistributionCard title="Source trust" entries={trustData} nameKey="tier" valueKey="articles" valueTotal={data.source_trust?.total_articles || 0} colorFor={(entry) => TRUST_TIER_COLORS[entry.tier]} labelFor={distributionLabel} emptyText="No sources assessed yet." />
+              <DistributionCard title={t('dashboard:distributions.region.title')} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.region.empty')} />
+              <DistributionCard title={t('dashboard:distributions.gender.title')} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.gender.empty')} />
+              <DistributionCard title={t('dashboard:distributions.ageRange.title')} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.ageRange.empty')} />
+              <DistributionCard title={t('dashboard:distributions.segment.title')} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.segment.empty')} />
+              <DistributionCard title={t('dashboard:sourceTrust.title')} entries={trustData} nameKey="tier" valueKey="articles" valueTotal={data.source_trust?.total_articles || 0} colorFor={(entry) => TRUST_TIER_COLORS[entry.tier]} labelFor={(tier) => trustTierLabel(t, tier)} emptyText={t('dashboard:sourceTrust.empty')} />
             </div>
           ) : null}
         </section>

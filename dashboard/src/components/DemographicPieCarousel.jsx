@@ -26,6 +26,14 @@ function sentimentLabel(t, key) {
   return t(`dashboard:sentiment.${key}`, labelize(key));
 }
 
+// The "other"/"unknown" buckets are app-generated (capBreakdown() below, or
+// a missing value) rather than DB text, so unlike the rest they translate.
+function bucketLabel(t, value) {
+  const key = String(value || 'unknown');
+  if (key === 'other' || key === 'unknown') return t(`dashboard:distributions.bucket.${key}`);
+  return labelize(key);
+}
+
 // These breakdowns are open-ended text buckets, so navigation is capped to
 // the top `limit` buckets (already sorted desc by the backend) with the
 // long tail folded into one "Other" slice, rather than growing unbounded.
@@ -76,7 +84,7 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
         >
           <ChevronLeft size={22} className="rtl-mirror" />
         </button>
-        <span className="demographic-pie-carousel-label" dir="auto">{labelize(bucket.value)}</span>
+        <span className="demographic-pie-carousel-label" dir="auto">{bucketLabel(t, bucket.value)}</span>
         <button
           type="button"
           className="demographic-pie-carousel-arrow"
@@ -106,7 +114,7 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
               type="button"
               className={`demographic-pie-carousel-dot ${entryIndex === safeIndex ? 'active' : ''}`}
               onClick={() => goTo(entryIndex)}
-              aria-label={t('dashboard:carousel.showValueAria', { value: labelize(entry.value) })}
+              aria-label={t('dashboard:carousel.showValueAria', { value: bucketLabel(t, entry.value) })}
               aria-current={entryIndex === safeIndex}
             />
           ))}
