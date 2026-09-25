@@ -7,10 +7,12 @@ import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import VariationFromLastRun from './VariationFromLastRun.jsx';
+import IntelligenceEmptyState, { PendingAnalysisNotice, ReportSkeleton } from './IntelligenceEmptyState.jsx';
 import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
 import { formatDate as formatLocaleDate, formatNumber, formatPercent } from '../lib/i18nFormat.js';
+import { resolveIntelligenceState } from '../lib/intelligenceState.js';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
@@ -67,7 +69,10 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
   })}</ul> : <p>{t('dashboard:report.feedback.noSignals')}</p>}</article>;
 }
 
-export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null }) {
+export default function StatsOverview({
+  intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null,
+  rangeLabel, onShowAllTime, onAnalysisStarted,
+}) {
   const { t, i18n } = useTranslation(['dashboard', 'reports']);
   const locale = i18n.language;
   const projectId = project?.id ?? null;
@@ -116,7 +121,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   // from a dependency change (project/period/run switch) must NOT force a
   // fresh LLM call, only the explicit refresh click should.
   const forceRegenerateRef = useRef(false);
-  const totalArticles = Number(intelligence?.total || 0);
+  const scopeState = resolveIntelligenceState(intelligence);
+  // Only a scope with real analysis behind it counts - `total` also includes
+  // articles still holding neutral placeholders (see intelligenceState.js),
+  // and the trend summary below spends an LLM call on whatever it's given.
+  const totalArticles = !loading && scopeState.kind === 'ready' ? Number(intelligence?.total || 0) : 0;
 
   useEffect(() => {
     setSourceFilter('all');
@@ -203,11 +212,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, period, runId, totalArticles, trendSummaryNonce, trendSummaryLocale]);
 
-  if (loading) return <section className="report-brief glass-card intelligence-loading">{t('dashboard:report.loading')}</section>;
+  if (loading) return <ReportSkeleton />;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>{t('dashboard:report.errorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>{t('dashboard:report.tryAgain')}</button>}</div></section>;
 
   const total = totalArticles;
-  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>{t('dashboard:report.noArticlesTitle')}</strong><p className="subtitle">{t('dashboard:report.noArticlesBody', { scope: resolvedScopeLabel })}</p><Link to="/pipeline-runs" className="btn-secondary">{t('dashboard:report.goToRuns')}</Link></div></section>;
+  if (!total) return <section className="report-brief"><IntelligenceEmptyState state={scopeState} project={project} rangeLabel={rangeLabel} onShowAllTime={onShowAllTime} onAnalysisStarted={onAnalysisStarted} /></section>;
 
   const sentiments = SENTIMENT_KEYS.map((name) => ({ name, value: Number(intelligence[name] || 0) }));
   const insights = intelligence.insights || {};
@@ -229,6 +238,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const keywordHasMatches = keywordSeriesData.some((point) => keywordSeriesKeys.some((key) => Number(point[key] || 0) > 0));
 
   return <section className="report-brief">
+    <PendingAnalysisNotice state={scopeState} project={project} onAnalysisStarted={onAnalysisStarted} />
     <Section
       number="01"
       title={t('dashboard:report.sections.executiveSummary')}

@@ -53,6 +53,9 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [pipelineRuns, setPipelineRuns] = useState([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  // False until the first projects fetch settles, so the Dashboard/Reports
+  // don't flash a "no projects yet" state in the frame before it starts.
+  const [hasLoadedProjects, setHasLoadedProjects] = useState(false);
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [lastIntelligenceSyncAt, setLastIntelligenceSyncAt] = useState(null);
@@ -69,6 +72,12 @@ export default function App() {
     return stored ? Number(stored) : null;
   });
   const pipelineRunsPollRef = useRef(null);
+  // Latest loadIntelligence() call - an older response (a previous project or
+  // period) landing after a newer one is dropped instead of overwriting it.
+  const intelligenceRequestRef = useRef(0);
+  // {projectId, runId} of the selected project's in-flight analysis run, as
+  // last seen by the pipeline-runs poll - see the effect that reads it below.
+  const activeAnalysisRunRef = useRef({ projectId: null, runId: null });
   // Which (page, project) pairs have already had their pipeline-run default
   // applied - so picking a period tab (which clears the run selection) isn't
   // immediately overridden back to "the latest run" on the next fetch.
@@ -190,6 +199,7 @@ export default function App() {
       setProjects([]);
     } finally {
       setIsLoadingProjects(false);
+      setHasLoadedProjects(true);
     }
   };
 
@@ -205,23 +215,33 @@ export default function App() {
     }
   };
 
-  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod, runId = null) => {
+  // `silent` refreshes in place (no skeleton) - used when a run finishes
+  // while the page is already showing this scope.
+  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod, runId = null, { silent = false } = {}) => {
     const scopedProjectId = coerceProjectId(projectId);
+    const requestId = intelligenceRequestRef.current + 1;
+    intelligenceRequestRef.current = requestId;
     if (scopedProjectId == null) {
       setIntelligence(null);
+      setIsLoadingIntelligence(false);
       return;
     }
-    setIsLoadingIntelligence(true);
-    setIntelligenceError(null);
+    if (!silent) {
+      setIsLoadingIntelligence(true);
+      setIntelligenceError(null);
+    }
     try {
       const data = await getProjectIntelligence(scopedProjectId, { period, run_id: runId });
+      if (requestId !== intelligenceRequestRef.current) return;
       setIntelligence(data);
+      setIntelligenceError(null);
       setLastIntelligenceSyncAt(new Date().toISOString());
     } catch (error) {
+      if (requestId !== intelligenceRequestRef.current) return;
       console.error('Failed to load project intelligence', error);
-      setIntelligenceError(error?.message || 'Failed to load project intelligence');
+      if (!silent) setIntelligenceError(error?.message || 'Failed to load project intelligence');
     } finally {
-      setIsLoadingIntelligence(false);
+      if (requestId === intelligenceRequestRef.current) setIsLoadingIntelligence(false);
     }
   };
 
@@ -305,6 +325,31 @@ export default function App() {
     loadProjectRuns(selectedProjectId, pathname === '/dashboard' ? 'dashboard' : 'reports');
   }, [isAuthenticated, pathname, selectedProjectId]);
 
+  // The pipeline-runs poll above already sees every run's status, so when the
+  // selected project's in-flight analysis run finishes, the Dashboard/Reports
+  // refresh on their own - otherwise an "Analysis in progress" empty state
+  // (or a "still waiting for analysis" notice) would sit there until a
+  // manual reload even though the results are ready.
+  useEffect(() => {
+    const active = pipelineRuns.find((run) => (
+      Number(run?.project_id) === Number(selectedProjectId) && ['queued', 'running'].includes(run?.status)
+    ));
+    const previous = activeAnalysisRunRef.current;
+    const next = { projectId: selectedProjectId, runId: active?.id ?? null };
+    activeAnalysisRunRef.current = next;
+    if (previous.projectId !== next.projectId || !previous.runId || previous.runId === next.runId) return;
+    if (!['/dashboard', '/reports'].includes(pathname)) return;
+    const onDashboard = pathname === '/dashboard';
+    loadIntelligence(
+      selectedProjectId,
+      onDashboard ? dashboardPeriod : reportPeriod,
+      onDashboard ? dashboardRunId : reportRunId,
+      { silent: true },
+    );
+    loadProjectRuns(selectedProjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineRuns]);
+
   // The backend echoes back the fully-normalized project (including resolved
   // user_ids), so we can patch it into local state directly instead of waiting
   // on a full projects refetch.
@@ -379,13 +424,15 @@ export default function App() {
       loading={isLoadingIntelligence}
       error={intelligenceError}
       pipelineHealth={selectedPipelineHealth}
+      isLoadingProjects={isLoadingProjects || !hasLoadedProjects}
+      onRefresh={() => loadIntelligence(selectedProjectId, dashboardPeriod, dashboardRunId)}
     />
   );
 
   const renderReportsView = () => (
     <ReportsView
       projects={projects}
-      isLoadingProjects={isLoadingProjects}
+      isLoadingProjects={isLoadingProjects || !hasLoadedProjects}
       selectedProject={selectedProject}
       selectedProjectId={selectedProjectId}
       onSelectedProjectIdChange={setSelectedProjectId}

@@ -4,7 +4,9 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import StatsOverview from './StatsOverview';
+import { MetricValueSkeleton, NoProjectsState, ReportSkeleton } from './IntelligenceEmptyState.jsx';
 import { exportReportSummaryPdf } from '../api/projectsApi.js';
+import { resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { REPORT_PERIODS, SENTIMENT_COLORS, pipelineRunNumber } from '../lib/appHelpers.js';
 import { formatNumber, formatPercent, formatRelativeTime } from '../lib/i18nFormat.js';
 
@@ -41,7 +43,14 @@ export default function ReportsView({
   const locale = i18n.language;
   const hasProjects = projects.length > 0;
   const liveReport = intelligence || {};
-  const totalArticles = Number(liveReport.total) || 0;
+  // Same stale-intelligence guard as DashboardOverview: App's one shared
+  // `intelligence` can still describe the previously selected project.
+  const isStale = !intelligence || Number(intelligence.project_id) !== Number(selectedProjectId);
+  const showLoading = !intelligenceError && selectedProjectId != null && (isLoadingIntelligence || isStale);
+  const isReady = !showLoading && resolveIntelligenceState(intelligence).kind === 'ready';
+  // Not-yet-analyzed articles still count toward `total` (with neutral
+  // placeholder sentiment), so nothing here reads it until the scope is ready.
+  const totalArticles = isReady ? Number(liveReport.total) || 0 : 0;
 
   // Duplicated (rather than imported from appHelpers.js's
   // dominantSentimentFromStats) because that shared helper bakes in an
@@ -49,7 +58,7 @@ export default function ReportsView({
   // signature - recomputing the same small ranking here keeps this page's
   // translation self-contained without touching a file other areas rely on.
   const dominantSentiment = (() => {
-    const total = Number(liveReport.total) || 0;
+    const total = totalArticles;
     if (!total) return { label: t('sentimentLabels.noDataYet'), color: 'var(--text-light)' };
     const entries = ['positive', 'negative', 'neutral', 'mixed'].map((key) => ({
       key, value: Number(liveReport[key]) || 0,
@@ -289,12 +298,12 @@ export default function ReportsView({
           <li className="report-chip">
             <Activity size={13} aria-hidden="true" />
             <span className="report-chip-label">{t('summaryChips.articlesAnalyzed')}</span>
-            <strong>{formatNumber(totalArticles, locale)}</strong>
+            <strong>{showLoading ? <MetricValueSkeleton /> : formatNumber(totalArticles, locale)}</strong>
           </li>
           <li className="report-chip">
             <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
             <span className="report-chip-label">{t('summaryChips.dominantSentiment')}</span>
-            <strong style={{ color: dominantSentiment.color }}>{dominantSentiment.label}</strong>
+            <strong style={{ color: dominantSentiment.color }}>{showLoading ? <MetricValueSkeleton /> : dominantSentiment.label}</strong>
           </li>
           <li className="report-chip">
             <CalendarClock size={13} aria-hidden="true" />
@@ -324,18 +333,23 @@ export default function ReportsView({
         <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel={t('backToReports')} />
       ) : null}
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-        <StatsOverview
-          intelligence={liveReport}
-          scopeLabel={selectedProject ? selectedProject.name : t('noProjectSelectedScope')}
-          loading={isLoadingIntelligence}
-          error={intelligenceError}
-          onRetry={onRefresh}
-          project={selectedProject}
-          period={reportPeriod}
-          runId={reportRunId}
-        />
-      </motion.div>
+      {!selectedProject && !isLoadingProjects && !hasProjects ? <NoProjectsState /> : !selectedProject ? <ReportSkeleton /> : (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <StatsOverview
+            intelligence={liveReport}
+            scopeLabel={selectedProject ? selectedProject.name : t('noProjectSelectedScope')}
+            loading={showLoading}
+            error={intelligenceError}
+            onRetry={onRefresh}
+            project={selectedProject}
+            period={reportPeriod}
+            runId={reportRunId}
+            rangeLabel={t(`periods.${reportPeriod}`)}
+            onShowAllTime={reportRunId || reportPeriod !== 'all' ? () => { onReportRunIdChange(null); onReportPeriodChange('all'); } : undefined}
+            onAnalysisStarted={onRefresh}
+          />
+        </motion.div>
+      )}
     </div>
   );
 }
