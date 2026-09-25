@@ -1,6 +1,6 @@
 /**
  * Client for the article library: search/filter/list, per-article analysis
- * detail/reprocessing, bulk delete, JSONL export/import, the analysis-health
+ * detail/reprocessing, per-project removal, JSONL export/import, the analysis-health
  * dashboard, and the Intelligence Copilot chat.
  *
  * Most exports share the same request() shape as competitorApi.js/
@@ -38,17 +38,6 @@ async function request(path, { method = 'GET', body, signal, form } = {}) {
   return payload ?? {};
 }
 
-/** Same as request(), but also throws when the body carries `error` on an
- *  otherwise-200 response - the shape POST /articles/import and its status
- *  endpoint use, since a job can fail after being successfully queued. */
-async function requestSoftError(path, opts = {}) {
-  const data = await request(path, opts);
-  if (data?.error) {
-    throw new Error(data?.detail || data?.error);
-  }
-  return data;
-}
-
 function query(params = {}) {
   const search = new URLSearchParams(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
@@ -64,7 +53,14 @@ export const reprocessArticle = (articleId) => request(`/articles/${articleId}/r
 /** Batch retry: force-reruns analysis for the given article ids regardless of
  *  their current status. */
 export const analyzeArticles = (body) => request('/articles/analyze', { method: 'POST', body });
-export const deleteAllArticles = () => requestSoftError('/articles', { method: 'DELETE' });
+/** What removing one project's articles would affect (counts + any in-flight
+ *  analysis run) - shown in the confirmation dialog before committing. */
+export const getProjectArticleRemovalPreview = (projectId, signal) =>
+  request(`/projects/${projectId}/articles/removal-preview`, { signal });
+/** Removes every article from one project. `confirm` must be the project's
+ *  exact name - the backend rejects anything else with a 400. */
+export const removeProjectArticles = (projectId, confirm) =>
+  request(`/projects/${projectId}/articles`, { method: 'DELETE', body: { confirm } });
 export const deleteArticle = (articleId) => request(`/articles/${articleId}`, { method: 'DELETE' });
 
 // --- analysis health (Performance Logs page) --------------------------------

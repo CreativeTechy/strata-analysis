@@ -9,16 +9,7 @@
     "projectScopeAriaLabel": "Project scope for articles",
     "allProjectsOption": "All projects",
     "draftStatus": "draft",
-    "deleteAllButton": "Delete All Articles",
-    "deletingButton": "Deleting...",
     "backToDashboard": "Back to Dashboard",
-    "deleteAllModal": {
-      "title": "Delete all articles?",
-      "message": "This will remove every row in the articles table and cannot be undone.",
-      "confirmLabel": "Delete all articles",
-      "confirmLabelBusy": "Deleting...",
-      "cancelLabel": "Keep articles"
-    },
     "exportModal": {
       "title": "Export articles?",
       "message_one": "This will export {{formatted}} article matching your current filters as a JSONL file.",
@@ -99,7 +90,6 @@
   },
   "errors": {
     "loadFailed": "Failed to load articles.",
-    "deleteAllFailed": "Failed to delete articles.",
     "exportFailed": "Failed to export articles."
   },
   "sentiment": {
@@ -216,6 +206,33 @@
       "complaint": "complaint",
       "issue": "issue",
       "suggestion": "suggestion"
+    }
+  },
+  "removeProject": {
+    "openButton": "Remove this project's articles…",
+    "title": "Remove all articles from {{name}}?",
+    "intro": "Articles that exist only in this project are permanently deleted, with their analysis. Articles that are also in other projects stay there. Uploaded documents and the analysis run history are kept; this project's generated summaries, evidence and idea comparisons are cleared.",
+    "loading": "Checking what this would affect…",
+    "previewFailed": "Couldn't check what this would affect. Close this and try again.",
+    "countLinked": "Articles in this project",
+    "countDeleted": "Deleted permanently",
+    "countKept": "Kept in other projects",
+    "empty": "This project has no articles to remove.",
+    "activeRun": "An analysis run is in progress for this project ({{analyzed}} of {{selected}} analyzed). Stop it before removing articles.",
+    "activeRunLink": "Open the run",
+    "confirmLabel": "Type the project name to confirm:",
+    "submit": "Remove articles",
+    "submitting": "Removing…",
+    "success": "Removed the articles from {{name}} ({{removed}} in total).",
+    "dismiss": "Dismiss",
+    "dangerZoneTitle": "Danger zone",
+    "dangerZoneAction": "Remove all articles",
+    "dangerZoneBody": "Removes every article from this project. Articles shared with other projects stay there; documents and run history are kept.",
+    "errors": {
+      "mismatch": "The name doesn't match. Type the project name exactly as shown.",
+      "activeRun": "An analysis run started for this project. Stop it before removing articles.",
+      "notFound": "This project no longer exists.",
+      "failed": "The articles couldn't be removed, and nothing was changed. Try again."
     }
   }
 }
