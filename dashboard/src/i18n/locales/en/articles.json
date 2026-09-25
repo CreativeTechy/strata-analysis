@@ -217,5 +217,26 @@
       "issue": "issue",
       "suggestion": "suggestion"
     }
+  },
+  "evidence": {
+    "title": "Showing the articles behind",
+    "ariaLabel": "Evidence filters from a dashboard selection",
+    "scope": "Scope",
+    "runFallback": "Analysis run",
+    "remove": "Remove filter: {{label}}",
+    "clear": "Clear evidence filters",
+    "runNote": "Sentiment, summaries and demographics on these articles are shown as {{run}} concluded them.",
+    "dimensions": {
+      "sentiment": "Sentiment",
+      "platform": "Platform",
+      "language": "Language",
+      "region": "Region",
+      "gender": "Gender",
+      "age_range": "Age range",
+      "segment": "Segment",
+      "trust": "Source trust",
+      "emotion": "Emotion",
+      "date": "Published"
+    }
   }
 }

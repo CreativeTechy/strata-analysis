@@ -247,5 +247,12 @@
   "sourceTrust": {
     "title": "Source trust",
     "empty": "No sources assessed yet."
+  },
+  "evidence": {
+    "openArticles": "Open the articles behind {{label}}",
+    "openScope": "Open the articles counted here",
+    "openRuns": "Open analysis runs",
+    "openSources": "Open this project's documents",
+    "chartHint": "Select a point or slice to open its articles."
   }
 }

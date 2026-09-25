@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Briefcase, CalendarRange, CircleMinus, FileText, Globe2, Languages, RefreshCw, Tag, ThumbsDown, ThumbsUp, Users } from 'lucide-react';
 import { CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import SearchableSelect from './SearchableSelect';
@@ -11,6 +11,7 @@ import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
 import { formatDate as formatLocaleDate, formatNumber, formatPercent } from '../lib/i18nFormat.js';
+import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
@@ -117,6 +118,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   // fresh LLM call, only the explicit refresh click should.
   const forceRegenerateRef = useRef(false);
   const totalArticles = Number(intelligence?.total || 0);
+  const navigate = useNavigate();
+  // Same evidence links as the dashboard (lib/evidenceLinks.js), in the
+  // report's own project and scope.
+  const evidencePath = (filters = {}) => articlesEvidencePath({ projectId, period, runId, filters });
+  const openArticlesTitle = (label) => t('dashboard:evidence.openArticles', { label });
 
   useEffect(() => {
     setSourceFilter('all');
@@ -272,16 +278,16 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
         </p>
       ) : null}
       <div className="report-brief-metrics">
-        <div><strong>{formattedTotal}</strong><span>{t('dashboard:metrics.analyzedArticles.label')}</span></div>
-        <div><strong className={intelligence.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{formattedNetSentiment}</strong><span>{t('dashboard:metrics.netSentiment.label')}</span></div>
-        <div><strong>{formatNumber(intelligence.document_count || 0, locale)}</strong><span>{t('dashboard:metrics.documents.label')}</span></div>
+        <Link className="report-brief-metric-link" to={evidencePath()} title={t('dashboard:evidence.openScope')}><strong>{formattedTotal}</strong><span>{t('dashboard:metrics.analyzedArticles.label')}</span></Link>
+        <Link className="report-brief-metric-link" to={evidencePath()} title={t('dashboard:evidence.openScope')}><strong className={intelligence.net_sentiment >= 0 ? 'positive-text' : 'negative-text'}>{formattedNetSentiment}</strong><span>{t('dashboard:metrics.netSentiment.label')}</span></Link>
+        <Link className="report-brief-metric-link" to="/sources" title={t('dashboard:evidence.openSources')}><strong>{formatNumber(intelligence.document_count || 0, locale)}</strong><span>{t('dashboard:metrics.documents.label')}</span></Link>
       </div>
     </Section>
 
     <VariationFromLastRun projectId={projectId} runId={runId} number="02" />
 
     <Section number="03" title={t('dashboard:report.sections.sentimentAnalysis')}>
-      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
+      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => { const name = sector?.payload?.name ?? sector?.name; if (name) navigate(evidencePath({ sentiment: name })); }}>{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => { const row = <><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></>; return entry.value > 0 ? <Link key={entry.name} className="report-sentiment-link" to={evidencePath({ sentiment: entry.name })} title={openArticlesTitle(sentimentLabel(t, entry.name))}>{row}</Link> : <div key={entry.name}>{row}</div>; })}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
     </Section>
 
     <Section number="04" title={t('dashboard:report.sections.keywordExistence')}>
@@ -356,7 +362,8 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     </Section>
 
     <Section number="05" title={t('dashboard:report.sections.volumeTrend')}>
-      <ResponsiveContainer width="100%" height={285}><LineChart data={intelligence.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line dataKey="total" name={t('dashboard:series.total')} type="monotone" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line dataKey="positive" name={t('dashboard:series.positive')} type="monotone" stroke={COLORS.positive} strokeWidth={2} dot={false} /><Line dataKey="negative" name={t('dashboard:series.negative')} type="monotone" stroke={COLORS.negative} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+      <ResponsiveContainer width="100%" height={285}><LineChart data={intelligence.sentiment_over_time || []} className="intelligence-clickable-chart" onClick={(state) => { if (state?.activeLabel) navigate(evidencePath({ date: state.activeLabel })); }}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line dataKey="total" name={t('dashboard:series.total')} type="monotone" stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line dataKey="positive" name={t('dashboard:series.positive')} type="monotone" stroke={COLORS.positive} strokeWidth={2} dot={false} /><Line dataKey="negative" name={t('dashboard:series.negative')} type="monotone" stroke={COLORS.negative} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>
+      <p className="intelligence-chart-hint">{t('dashboard:evidence.chartHint')}</p>
     </Section>
 
     <Section number="06" title={t('dashboard:report.sections.categorizedFeedback')}>
@@ -371,19 +378,19 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       <div className="report-demographics-grid">
         <div className="report-demographics-block">
           <h4><Users size={16} />{t('dashboard:report.demographics.gender')}</h4>
-          <DemographicPieCarousel data={insights.gender_breakdown} emptyLabel={t('dashboard:distributions.gender.empty')} />
+          <DemographicPieCarousel data={insights.gender_breakdown} pathFor={(value, sentiment) => (isLinkableBucket(value) ? evidencePath({ gender: value, sentiment }) : null)} emptyLabel={t('dashboard:distributions.gender.empty')} />
         </div>
         <div className="report-demographics-block">
           <h4><Globe2 size={16} />{t('dashboard:report.demographics.region')}</h4>
-          <DemographicPieCarousel data={insights.region_breakdown} emptyLabel={t('dashboard:distributions.region.empty')} />
+          <DemographicPieCarousel data={insights.region_breakdown} pathFor={(value, sentiment) => (isLinkableBucket(value) ? evidencePath({ region: value, sentiment }) : null)} emptyLabel={t('dashboard:distributions.region.empty')} />
         </div>
         <div className="report-demographics-block">
           <h4><CalendarRange size={16} />{t('dashboard:report.demographics.ageRange')}</h4>
-          <DemographicPieCarousel data={insights.age_range_breakdown} emptyLabel={t('dashboard:distributions.ageRange.empty')} />
+          <DemographicPieCarousel data={insights.age_range_breakdown} pathFor={(value, sentiment) => (isLinkableBucket(value) ? evidencePath({ age_range: value, sentiment }) : null)} emptyLabel={t('dashboard:distributions.ageRange.empty')} />
         </div>
         <div className="report-demographics-block">
           <h4><Briefcase size={16} />{t('dashboard:report.demographics.segment')}</h4>
-          <DemographicPieCarousel data={insights.segment_breakdown} emptyLabel={t('dashboard:distributions.segment.empty')} />
+          <DemographicPieCarousel data={insights.segment_breakdown} pathFor={(value, sentiment) => (isLinkableBucket(value) ? evidencePath({ segment: value, sentiment }) : null)} emptyLabel={t('dashboard:distributions.segment.empty')} />
         </div>
       </div>
     </Section>

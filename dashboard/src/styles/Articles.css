@@ -245,6 +245,96 @@
   border-inline-start-color: #ff4757;
 }
 
+/* Evidence links (lib/evidenceLinks.js): the scope + chart bucket a
+   dashboard/report selection opened this list on, as removable chips. */
+.articles-page-shell .articles-evidence-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  border-inline-start: 4px solid #2563eb;
+}
+
+.articles-page-shell .articles-evidence-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.articles-page-shell .articles-evidence-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  /* A real basis, not 0: with flex: 1 the list stayed on the title's line at
+     narrow widths and shrank to a sliver instead of wrapping below it. */
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.articles-page-shell .articles-evidence-chip {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #1e3a8a;
+  background: rgba(37, 99, 235, 0.1);
+  padding: 4px 6px 4px 10px;
+  max-width: 100%;
+}
+
+.articles-page-shell .articles-evidence-chip-label {
+  color: #475569;
+}
+
+.articles-page-shell .articles-evidence-chip strong {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.articles-page-shell .articles-evidence-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.articles-page-shell .articles-evidence-chip button:hover,
+.articles-page-shell .articles-evidence-chip button:focus-visible {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.articles-page-shell .articles-evidence-clear {
+  border: none;
+  background: none;
+  color: #1d4ed8;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.articles-page-shell .articles-evidence-clear:hover {
+  text-decoration: underline;
+}
+
+.articles-page-shell .articles-evidence-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
 .articles-page-shell .articles-import-batch-label {
   margin: 0 0 4px;
   font-size: 0.8rem;

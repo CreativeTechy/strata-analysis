@@ -91,4 +91,40 @@ describe('DashboardOverview', () => {
     expect(screen.getByText('لم يتم تقييم أي مصادر بعد.')).toBeInTheDocument();
     await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
   });
+
+  // SM-107: every metric and chart selection is an evidence link that keeps
+  // the project and the dashboard's scope.
+  describe('evidence links', () => {
+    beforeEach(async () => { await i18n.changeLanguage('en'); });
+
+    function linkParams(link) {
+      return new URL(link.getAttribute('href'), 'http://x').searchParams;
+    }
+
+    it('opens a sentiment bucket in the same project and period', async () => {
+      renderDashboard({ intelligence: { ...INTELLIGENCE, insights: { ...INTELLIGENCE.insights, region_breakdown: [{ value: 'Gulf', total: 4 }] } } });
+      const params = linkParams(screen.getByTitle('Open the articles behind negative'));
+      expect(Object.fromEntries(params)).toEqual({ project_id: '1', period: '30d', sentiment: 'negative' });
+      expect(Object.fromEntries(linkParams(screen.getByTitle('Open the articles behind Gulf')))).toEqual({ project_id: '1', period: '30d', region: 'Gulf' });
+      expect(Object.fromEntries(linkParams(screen.getByTitle('Open the articles behind Trusted')))).toEqual({ project_id: '1', period: '30d', trust: 'trusted' });
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
+
+    it('carries a selected run instead of the period', async () => {
+      renderDashboard({ selectedRunId: 'run-9', runs: [{ id: 'run-9', sequence_number: 4, finished_at: '2026-09-01T10:00:00Z' }] });
+      const params = linkParams(screen.getByTitle('Open the articles behind positive'));
+      expect(Object.fromEntries(params)).toEqual({ project_id: '1', run_id: 'run-9', sentiment: 'positive' });
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
+
+    it('links the headline metrics and leaves empty or folded buckets unlinked', async () => {
+      renderDashboard();
+      const analyzed = screen.getByRole('link', { name: /Analyzed articles: 10/ });
+      expect(Object.fromEntries(linkParams(analyzed))).toEqual({ project_id: '1', period: '30d' });
+      // mixed has 0 articles; the region fixture is the folded "other" slice.
+      expect(screen.queryByTitle('Open the articles behind mixed')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Open the articles behind Other')).not.toBeInTheDocument();
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
+  });
 });

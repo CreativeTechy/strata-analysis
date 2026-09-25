@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
@@ -14,6 +14,7 @@ import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
+import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PLATFORM_LIST_PAGE_SIZE = 5;
@@ -131,11 +132,30 @@ function Change({ value }) {
   return <span className={`intelligence-change ${positive ? 'positive' : 'negative'}`}><Icon size={13} />{t('dashboard:change.vsPrevious', { value: formattedValue })}</span>;
 }
 
-function MetricCard({ icon, label, value, detail, tone = 'blue' }) {
-  return <article className={`intelligence-metric intelligence-metric-${tone}`}>
+// `to` makes the whole card an evidence link (see lib/evidenceLinks.js) -
+// every headline number opens what it was counted from.
+function MetricCard({ icon, label, value, detail, tone = 'blue', to, linkTitle }) {
+  const body = <>
     <span className="intelligence-metric-icon">{icon}</span>
     <div><span className="intelligence-metric-label">{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>
-  </article>;
+  </>;
+  if (to) {
+    return <Link className={`intelligence-metric intelligence-metric-link intelligence-metric-${tone}`} to={to} title={linkTitle} aria-label={linkTitle ? `${label}: ${value}. ${linkTitle}` : undefined}>{body}</Link>;
+  }
+  return <article className={`intelligence-metric intelligence-metric-${tone}`}>{body}</article>;
+}
+
+// One legend row of a donut: a link to that slice's articles, or a plain
+// row for the folded "other" slice, which has no single bucket to open.
+function LegendRow({ to, title, children }) {
+  if (!to) return <div>{children}</div>;
+  return <Link className="intelligence-legend-link" to={to} title={title}>{children}</Link>;
+}
+
+// Recharts hands a Pie's onClick the sector, whose original datum is on
+// `payload` - read the bucket off whichever carries it.
+function sliceValue(sector, key) {
+  return sector?.payload?.[key] ?? sector?.[key];
 }
 
 // A topic's `sources` come back from the API as {id, url, title,
@@ -228,6 +248,27 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
+  const navigate = useNavigate();
+  // Every selection opens the Articles page on exactly what it counted, in
+  // the same project and scope (period, or the selected run) - see
+  // lib/evidenceLinks.js.
+  const evidencePath = (filters = {}) => articlesEvidencePath({ projectId: selectedProjectId, period, runId: selectedRunId, filters });
+  const bucketPath = (dimension, value) => (isLinkableBucket(value) ? evidencePath({ [dimension]: value }) : null);
+  const openBucket = (dimension, value) => {
+    const path = bucketPath(dimension, value);
+    if (path) navigate(path);
+  };
+  const openArticlesTitle = (label) => t('dashboard:evidence.openArticles', { label });
+  // A run point on the cross-run charts opens that run's articles - a run
+  // scope of its own, whatever the dashboard's current scope is.
+  const openRunPoint = (points, state) => {
+    // Recharts reports the index as a string, and null off any point -
+    // guarded before converting, since Number(null) would read as run 0.
+    const raw = state?.activeTooltipIndex ?? state?.activeIndex;
+    const index = raw == null || raw === '' ? NaN : Number(raw);
+    const runId = Number.isInteger(index) ? points?.[index]?.run_id : null;
+    if (runId) navigate(articlesEvidencePath({ projectId: selectedProjectId, runId }));
+  };
 
   const [ideaComparisons, setIdeaComparisons] = useState([]);
   const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
@@ -356,17 +397,17 @@ export default function DashboardOverview({
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
-        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" />
-        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
-        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
+        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" to={pipelineHealth?.lastRun?.id ? `/pipeline-runs/${pipelineHealth.lastRun.id}` : '/pipeline-runs'} linkTitle={t('dashboard:evidence.openRuns')} />
+        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" to={!loading && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
+        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} to={!loading && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
+        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" to="/sources" linkTitle={t('dashboard:evidence.openSources')} />
       </section>
 
       {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
         <section className="intelligence-top-grid">
-          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none">{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <div key={entry.name}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}</div></div></article>
-          <article className="glass-card intelligence-card intelligence-line-card"><h3>{t('dashboard:volumeOverTime.title')}</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
-          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
+          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
+          <article className="glass-card intelligence-card intelligence-line-card"><h3>{t('dashboard:volumeOverTime.title')}</h3><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('date', state?.activeLabel)}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer><p className="intelligence-chart-hint">{t('dashboard:evidence.chartHint')}</p></article>
+          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
         </section>
 
         <section className="intelligence-language-grid">
@@ -377,7 +418,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={languageData} dataKey="count" nameKey="language" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={languageData} dataKey="count" nameKey="language" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('language', sliceValue(sector, 'language'))}>
                         {languageData.map((entry, index) => <Cell key={entry.language} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), languageLabel(t, locale, name)]} />
@@ -386,11 +427,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {languageData.map((entry, index) => (
-                    <div key={entry.language}>
+                    <LegendRow key={entry.language} to={bucketPath('language', entry.language)} title={openArticlesTitle(languageLabel(t, locale, entry.language))}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{languageLabel(t, locale, entry.language)}</label>
                       <strong>{formatPercent(percent(entry.count, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -404,7 +445,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('region', sliceValue(sector, 'value'))}>
                         {regionData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
@@ -413,11 +454,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {regionData.map((entry, index) => (
-                    <div key={entry.value}>
+                    <LegendRow key={entry.value} to={bucketPath('region', entry.value)} title={openArticlesTitle(distributionLabel(t, entry.value))}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -431,7 +472,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('gender', sliceValue(sector, 'value'))}>
                         {genderData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
@@ -440,11 +481,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {genderData.map((entry, index) => (
-                    <div key={entry.value}>
+                    <LegendRow key={entry.value} to={bucketPath('gender', entry.value)} title={openArticlesTitle(distributionLabel(t, entry.value))}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -458,7 +499,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('age_range', sliceValue(sector, 'value'))}>
                         {ageRangeData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
@@ -467,11 +508,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {ageRangeData.map((entry, index) => (
-                    <div key={entry.value}>
+                    <LegendRow key={entry.value} to={bucketPath('age_range', entry.value)} title={openArticlesTitle(distributionLabel(t, entry.value))}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -485,7 +526,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('segment', sliceValue(sector, 'value'))}>
                         {segmentData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
@@ -494,11 +535,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {segmentData.map((entry, index) => (
-                    <div key={entry.value}>
+                    <LegendRow key={entry.value} to={bucketPath('segment', entry.value)} title={openArticlesTitle(distributionLabel(t, entry.value))}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
                       <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -512,7 +553,7 @@ export default function DashboardOverview({
                 <div className="intelligence-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={trustData} dataKey="articles" nameKey="tier" outerRadius="92%" paddingAngle={3} stroke="none">
+                      <Pie data={trustData} dataKey="articles" nameKey="tier" outerRadius="92%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('trust', sliceValue(sector, 'tier'))}>
                         {trustData.map((entry) => <Cell key={entry.tier} fill={TRUST_TIER_COLORS[entry.tier]} />)}
                       </Pie>
                       <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), trustTierLabel(t, name)]} />
@@ -521,11 +562,11 @@ export default function DashboardOverview({
                 </div>
                 <div className="intelligence-legend">
                   {trustData.map((entry) => (
-                    <div key={entry.tier}>
+                    <LegendRow key={entry.tier} to={bucketPath('trust', entry.tier)} title={openArticlesTitle(trustTierLabel(t, entry.tier))}>
                       <span style={{ background: TRUST_TIER_COLORS[entry.tier] }} />
                       <label>{trustTierLabel(t, entry.tier)}</label>
                       <strong>{formatPercent(percent(entry.articles, data.source_trust?.total_articles || 0), locale, { alreadyWhole: true })}</strong>
-                    </div>
+                    </LegendRow>
                   ))}
                 </div>
               </div>
@@ -537,7 +578,7 @@ export default function DashboardOverview({
         <section className="intelligence-middle-grid">
           <article className="glass-card intelligence-card">
             <h3>{t('dashboard:wherePosted.title')}</h3>
-            <div className="intelligence-platform-list">{pagedPlatformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div>
+            <div className="intelligence-platform-list">{pagedPlatformData.map((item) => { const row = <><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></>; return item.total > 0 ? <Link key={item.platform} className="intelligence-platform-link" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)}>{row}</Link> : <div key={item.platform}>{row}</div>; })}</div>
             {platformListTotalPages > 1 ? (
               <div className="intelligence-idea-comparison-pagination">
                 <button
@@ -563,7 +604,7 @@ export default function DashboardOverview({
             ) : null}
           </article>
           <article className="glass-card intelligence-card intelligence-ideas-card"><div className="intelligence-card-heading"><h3>{t('dashboard:ideas.title')}</h3><span>{t('dashboard:ideas.subtitle')}</span></div>{(data.insights?.frequent_ideas || []).slice(0, 6).map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={Math.max(1, data.insights?.frequent_ideas?.[0]?.frequency_estimate || 1)} projectId={selectedProjectId} />)}{!(data.insights?.frequent_ideas || []).length && <p className="intelligence-empty">{t('dashboard:ideas.empty')}</p>}</article>
-          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}><span dir="auto">{item.platform}</span><div>{SENTIMENT_KEYS.map((tone) => <i key={tone} title={t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 })} style={{ width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }} />)}</div></div>)}</div></article>
+          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)} dir="auto">{item.platform}</Link> : <span dir="auto">{item.platform}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${item.platform}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
         </section>
 
         <section className="intelligence-idea-comparisons-grid">
@@ -692,14 +733,14 @@ export default function DashboardOverview({
         </section>
 
         <section className="intelligence-bottom-grid">
-          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>{t('dashboard:trending.title')}</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={`/articles?search=${encodeURIComponent(term.term.replace(/^#/, ''))}${selectedProjectId != null ? `&project_id=${selectedProjectId}` : ''}`} className={`intelligence-term-link ${term.kind}`} title={t('dashboard:trending.linkTitle', { term: term.term })}><b dir="auto">{term.term}</b> <em>{formatNumber(term.mentions, locale)}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">{t('dashboard:trending.empty')}</p>}</div></article> : null}
-          <article className={`glass-card intelligence-card intelligence-pipeline-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}><div className="intelligence-card-heading"><h3>{t('dashboard:articlesByRun.title')}</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index, t)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [t('dashboard:counts.articlesCount', { count: value }), t('dashboard:articlesByRun.tooltipLabel')]} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:articlesByRun.empty')}</p>}</article>
+          {selectedProject?.mode !== 'competitor' ? <article className="glass-card intelligence-card"><h3>{t('dashboard:trending.title')}</h3><div className="intelligence-term-list">{(data.trending_terms || []).filter((term) => term.mentions > 0).map((term) => <Link key={`${term.kind}-${term.term}`} to={evidencePath({ search: term.term.replace(/^#/, '') })} className={`intelligence-term-link ${term.kind}`} title={t('dashboard:trending.linkTitle', { term: term.term })}><b dir="auto">{term.term}</b> <em>{formatNumber(term.mentions, locale)}</em></Link>)}{!(data.trending_terms || []).some((term) => term.mentions > 0) && <p className="intelligence-empty">{t('dashboard:trending.empty')}</p>}</div></article> : null}
+          <article className={`glass-card intelligence-card intelligence-pipeline-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}><div className="intelligence-card-heading"><h3>{t('dashboard:articlesByRun.title')}</h3>{latestRun && <Change value={latestRun.change_pct} />}</div>{(data.pipeline_discovery || []).length ? <ResponsiveContainer width="100%" height={210}><LineChart data={data.pipeline_discovery} className="intelligence-clickable-chart" onClick={(state) => openRunPoint(data.pipeline_discovery, state)}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.pipeline_discovery[index], index, t)} minTickGap={18} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [t('dashboard:counts.articlesCount', { count: value }), t('dashboard:articlesByRun.tooltipLabel')]} /><Line type="monotone" dataKey="articles_discovered" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:articlesByRun.empty')}</p>}</article>
         </section>
 
         <section className="intelligence-run-sentiment-grid">
           <article className="glass-card intelligence-card intelligence-run-sentiment-card">
             <h3>{t('dashboard:sentimentAcrossRuns.title')}</h3>
-            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index, t)} minTickGap={18} /><YAxis domain={[-100, 100]} tickFormatter={(value) => formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 }), t('dashboard:sentimentAcrossRuns.tooltipLabel')]} /><ReferenceLine y={0} stroke="rgba(15,23,42,.25)" /><Line type="monotone" dataKey="net_sentiment" name={t('dashboard:sentimentAcrossRuns.tooltipLabel')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:sentimentAcrossRuns.empty')}</p>}
+            {(data.sentiment_by_pipeline_run || []).some((run) => run.total > 0) ? <ResponsiveContainer width="100%" height={240}><LineChart data={data.sentiment_by_pipeline_run} className="intelligence-clickable-chart" onClick={(state) => openRunPoint(data.sentiment_by_pipeline_run, state)}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="completed_at" tickFormatter={(value, index) => pipelineRunShortLabel(data.sentiment_by_pipeline_run[index], index, t)} minTickGap={18} /><YAxis domain={[-100, 100]} tickFormatter={(value) => formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} /><Tooltip labelFormatter={(value, payload) => { const item = payload?.[0]?.payload; return item ? `${pipelineRunShortLabel(item, 0, t)} · ${formatDate(item.completed_at, locale)}` : value; }} formatter={(value) => [formatNumber(value, locale, { signDisplay: 'always', maximumFractionDigits: 0 }), t('dashboard:sentimentAcrossRuns.tooltipLabel')]} /><ReferenceLine y={0} stroke="rgba(15,23,42,.25)" /><Line type="monotone" dataKey="net_sentiment" name={t('dashboard:sentimentAcrossRuns.tooltipLabel')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={{ r: 4 }} /></LineChart></ResponsiveContainer> : <p className="intelligence-empty">{t('dashboard:sentimentAcrossRuns.empty')}</p>}
           </article>
         </section>
       </>}
