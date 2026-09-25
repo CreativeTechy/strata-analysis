@@ -840,7 +840,7 @@ h1, h2, h3 {
   border-radius: 999px;
   background: rgba(249, 115, 22, 0.12);
   color: #c2410c;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -872,7 +872,7 @@ h1, h2, h3 {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -996,11 +996,17 @@ h1, h2, h3 {
 
 .report-chip-label {
   color: var(--text-light);
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   flex-shrink: 0;
+}
+
+/* See IntelligenceDashboard.css: tracking breaks Arabic letter joins. */
+[dir="rtl"] :is(.report-kicker, .report-project-control-label, .report-chip-label) {
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .report-sync-chip.report-sync-loading {

@@ -168,7 +168,11 @@ export async function exportReportSummaryPdf(projectId, params) {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data?.detail || data?.error || `Failed to export the report summary (${response.status})`);
+    const error = new Error(data?.detail || data?.error || `Failed to export the report summary (${response.status})`);
+    // The server's own message (if any), kept apart from the generic
+    // fallback above so the caller can show it next to a translated one.
+    error.detail = data?.detail || data?.error || null;
+    throw error;
   }
   return response.blob();
 }

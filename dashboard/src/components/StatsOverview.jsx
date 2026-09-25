@@ -86,9 +86,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const documentOptions = useMemo(
     () => documents.map((document) => ({
       value: `document://project-document/${document.id}`,
-      label: document.original_filename || `Document #${document.id}`,
+      label: document.original_filename || t('dashboard:report.keyword.documentFallback', { id: document.id }),
     })),
-    [documents],
+    [documents, t],
   );
 
   const [sourceFilter, setSourceFilter] = useState('all');
