@@ -22,6 +22,11 @@ from services.articles.articles_query import (
 from services.articles.articles_search import search_results
 
 
+# Idea types (see analysis/normalize.py's _FREQUENT_IDEA_TYPES) that count
+# as a concern - praise and suggestions don't.
+CONCERN_IDEA_TYPES = {"issue", "complaint"}
+
+
 def compute_overall_tone(article_tone, writer_tone):
     """Deterministic overall_tone for a single article. Never guessed by the AI."""
     article_tone = _normalize_tone(article_tone)
@@ -414,6 +419,11 @@ def _topic_summary(rows):
         "safety_feedback": as_top_items(safety_feedback),
         "people_opinions": people_opinions[:10],
         "frequent_ideas": frequent_ideas_rollup[:12],
+        # Taken from the whole rollup, not from frequent_ideas' top-12 slice:
+        # filtering that slice would drop every concern that ranks below 12
+        # more-repeated praise/suggestion ideas (the dashboard's "Top
+        # concerns" card reads this).
+        "frequent_concerns": [item for item in frequent_ideas_rollup if item["type"] in CONCERN_IDEA_TYPES][:12],
     }
 
 

@@ -129,6 +129,70 @@ describe('DashboardOverview', () => {
     await screen.findByText(/No cross-source comparisons yet/);
   });
 
+  it('remembers whether the detailed breakdowns were left open', async () => {
+    const { unmount } = renderDashboard();
+    fireEvent.click(screen.getByRole('button', { name: /Detailed breakdowns/ }));
+    expect(window.localStorage.getItem('dashboard-detailed-breakdowns-open')).toBe('open');
+    await screen.findByText(/No cross-source comparisons yet/);
+    unmount();
+
+    renderDashboard();
+    expect(screen.getByRole('button', { name: /Detailed breakdowns/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: 'Language distribution' })).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('points the breakdowns toggle at a panel that exists even while collapsed', async () => {
+    const { container } = renderDashboard();
+    const toggle = screen.getByRole('button', { name: /Detailed breakdowns/ });
+    const panel = container.querySelector(`#${toggle.getAttribute('aria-controls')}`);
+    expect(panel).not.toBeNull();
+    expect(panel).toHaveAttribute('hidden');
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('prefers the backend concern ranking over filtering the top-12 idea slice', async () => {
+    renderDashboard({
+      intelligence: {
+        ...INTELLIGENCE,
+        insights: {
+          ...INTELLIGENCE.insights,
+          frequent_ideas: [{ idea: 'Great customer support', type: 'praise', frequency_estimate: 5 }],
+          frequent_concerns: [{ idea: 'Refunds take weeks', type: 'complaint', frequency_estimate: 2 }],
+        },
+      },
+    });
+    expect(within(ideasCard()).getByText('Refunds take weeks')).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('returns to Top concerns when the project changes', async () => {
+    const { rerender } = renderDashboard({ projects: [PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }] });
+    fireEvent.click(within(ideasCard()).getByRole('tab', { name: 'All ideas' }));
+    expect(within(ideasCard()).getByRole('heading', { name: 'Most talked-about ideas' })).toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <DashboardOverview
+          projects={[PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }]}
+          selectedProjectId={2}
+          onProjectChange={vi.fn()}
+          period="30d"
+          onPeriodChange={vi.fn()}
+          intelligence={INTELLIGENCE}
+          loading={false}
+          error={null}
+          pipelineHealth={{ lastRun: { status: 'success' }, lastFinished: null }}
+          runs={[]}
+          selectedRunId={null}
+          onRunChange={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(within(ideasCard()).getByRole('heading', { name: 'Top concerns' })).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
   it('labels the source trust card with the Sources tab tiers', async () => {
     renderDashboard();
     openDetailedBreakdowns();

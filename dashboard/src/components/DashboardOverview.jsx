@@ -31,9 +31,10 @@ const LANGUAGE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', 
 // Sources tab's own tier order (trusted -> mixed -> untrusted -> unknown).
 const TRUST_TIER_ORDER = ['trusted', 'mixed', 'untrusted', 'unknown'];
 const TRUST_TIER_COLORS = { trusted: '#16a34a', mixed: '#f59e0b', untrusted: '#e11d48', unknown: '#64748b' };
-// Idea types (see analysis/normalize.py's _FREQUENT_IDEA_TYPES) that count as
-// a concern for the first-screen "Top concerns" card; praise/suggestion stay
-// reachable through that card's "All ideas" tab.
+// Idea types that count as a concern - the fallback filter for an
+// intelligence payload without insights.frequent_concerns (see
+// articles_analytics.CONCERN_IDEA_TYPES); praise/suggestion stay reachable
+// through the "Top concerns" card's "All ideas" tab.
 const CONCERN_IDEA_TYPES = new Set(['issue', 'complaint']);
 const TOP_IDEAS_LIMIT = 6;
 // Per-viewer memory of whether the "Detailed breakdowns" area is expanded -
@@ -282,7 +283,11 @@ export default function DashboardOverview({
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   const [platformListPage, setPlatformListPage] = useState(0);
-  const [ideaFilter, setIdeaFilter] = useState('concerns');
+  // Keyed by project so switching project lands back on Top concerns - the
+  // first screen's point - rather than carrying over another project's tab.
+  const [ideaFilterState, setIdeaFilterState] = useState({ projectId: selectedProjectId, value: 'concerns' });
+  const ideaFilter = ideaFilterState.projectId === selectedProjectId ? ideaFilterState.value : 'concerns';
+  const setIdeaFilter = (value) => setIdeaFilterState({ projectId: selectedProjectId, value });
   const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
     try {
       return window.localStorage.getItem(DETAILED_BREAKDOWNS_STORAGE_KEY) === 'open';
@@ -367,7 +372,11 @@ export default function DashboardOverview({
   );
 
   const frequentIdeas = data.insights?.frequent_ideas || [];
-  const concernIdeas = frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
+  // frequent_concerns is ranked over every idea, not just frequent_ideas'
+  // top-12 slice - filtering that slice would drop concerns outranked by 12
+  // more-repeated praise/suggestion ideas.
+  const concernIdeas = data.insights?.frequent_concerns
+    || frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
   const visibleIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
   const maxIdeaFrequency = Math.max(1, ...visibleIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
 
@@ -457,7 +466,7 @@ export default function DashboardOverview({
         </section>
 
         <section className="intelligence-bottom-grid">
-          <article className={`glass-card intelligence-card${selectedProject?.mode === 'competitor' ? ' intelligence-pipeline-card-full' : ''}`}>
+          <article className={`glass-card intelligence-card${selectedProject?.mode === 'competitor' ? ' intelligence-card-full' : ''}`}>
             <h3>{t('dashboard:wherePosted.title')}</h3>
             <div className="intelligence-platform-list">{pagedPlatformData.map((item) => <div key={item.platform}><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></div>)}</div>
             {platformListTotalPages > 1 ? (
@@ -638,16 +647,18 @@ export default function DashboardOverview({
               <ChevronDown size={16} />
             </span>
           </button>
-          {detailedBreakdownsOpen ? (
-            <div id="intelligence-detailed-breakdowns-panel" className="intelligence-language-grid">
+          {/* Always rendered so the toggle's aria-controls resolves; the
+              charts themselves only mount while it's open. */}
+          <div id="intelligence-detailed-breakdowns-panel" className="intelligence-language-grid" hidden={!detailedBreakdownsOpen}>
+            {detailedBreakdownsOpen ? (<>
               <DistributionCard title={t('dashboard:distributions.language.title')} entries={languageData} nameKey="language" valueKey="count" valueTotal={total} colorFor={paletteColor} labelFor={(code) => languageLabel(t, locale, code)} emptyText={t('dashboard:distributions.language.empty')} />
               <DistributionCard title={t('dashboard:distributions.region.title')} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.region.empty')} />
               <DistributionCard title={t('dashboard:distributions.gender.title')} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.gender.empty')} />
               <DistributionCard title={t('dashboard:distributions.ageRange.title')} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.ageRange.empty')} />
               <DistributionCard title={t('dashboard:distributions.segment.title')} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.segment.empty')} />
               <DistributionCard title={t('dashboard:sourceTrust.title')} entries={trustData} nameKey="tier" valueKey="articles" valueTotal={data.source_trust?.total_articles || 0} colorFor={(entry) => TRUST_TIER_COLORS[entry.tier]} labelFor={(tier) => trustTierLabel(t, tier)} emptyText={t('dashboard:sourceTrust.empty')} />
-            </div>
-          ) : null}
+            </>) : null}
+          </div>
         </section>
       </>}
     </>) : null}
