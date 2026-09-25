@@ -323,6 +323,10 @@ export default function IdeaComparisonDetailPage() {
   }, [comparison]);
 
   const revealEvidence = (event, id) => {
+    // Let modifier/middle-click through so "open in new tab" still works on
+    // these evidence links, instead of hijacking every click into an
+    // in-page repage.
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     if (!pageForEvidence(id)) return;
     event.preventDefault();
     // replaceState rather than a fragment navigation keeps the router state
