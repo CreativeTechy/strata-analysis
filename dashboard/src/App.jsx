@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useDocumentLocaleSync } from './i18n/useLocale.js';
 import AppShell from './components/AppShell';
 import DashboardOverview from './components/DashboardOverview';
@@ -39,10 +39,12 @@ import {
   listProjects, createProject as apiCreateProject, updateProject as apiUpdateProject,
   deleteProject as apiDeleteProject, setProjectUsers as apiSetProjectUsers, getProjectIntelligence,
 } from './api/projectsApi.js';
+import { clearIntelligenceScope, readIntelligenceScope, writeIntelligenceScope } from './lib/intelligenceScope.js';
 
 export default function App() {
   useDocumentLocaleSync();
   const location = useLocation();
+  const navigate = useNavigate();
   const pathname = location.pathname;
   const { user, loading: authLoading } = useAuth();
   // App mounts once at the router root and never unmounts across login/logout,
@@ -56,10 +58,6 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [lastIntelligenceSyncAt, setLastIntelligenceSyncAt] = useState(null);
-  const [reportPeriod, setReportPeriod] = useState('all');
-  const [dashboardPeriod, setDashboardPeriod] = useState('30d');
-  const [dashboardRunId, setDashboardRunId] = useState(null);
-  const [reportRunId, setReportRunId] = useState(null);
   const [projectRuns, setProjectRuns] = useState([]);
   const [intelligence, setIntelligence] = useState(null);
   const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false);
@@ -69,11 +67,21 @@ export default function App() {
     return stored ? Number(stored) : null;
   });
   const pipelineRunsPollRef = useRef(null);
-  // Which (page, project) pairs have already had their pipeline-run default
-  // applied - so picking a period tab (which clears the run selection) isn't
-  // immediately overridden back to "the latest run" on the next fetch.
-  const dashboardRunDefaultedRef = useRef(new Set());
-  const reportRunDefaultedRef = useRef(new Set());
+  // Which projects have already had their pipeline-run default applied. A URL
+  // scope is explicit and never gets replaced by this default.
+  const runDefaultedRef = useRef(new Set());
+
+  const defaultPeriod = pathname === '/reports' ? 'all' : '30d';
+  const intelligenceScope = readIntelligenceScope(location.search, defaultPeriod);
+  const scopePeriod = intelligenceScope.period;
+  const scopeRunId = intelligenceScope.runId;
+
+  const updateIntelligenceScope = ({ period = scopePeriod, runId = null }) => {
+    navigate({
+      pathname,
+      search: writeIntelligenceScope(location.search, { period, runId }),
+    }, { replace: true });
+  };
 
   const selectedProject = useMemo(
     () => projects.find((project) => Number(project.id) === Number(selectedProjectId)) || null,
@@ -94,8 +102,8 @@ export default function App() {
     // card should reflect that run rather than whatever ran most recently
     // for the project - otherwise picking an older run leaves the card
     // silently describing a different run than the rest of the page.
-    if (dashboardRunId) {
-      const selectedRun = projectRuns.find((run) => Number(run.id) === Number(dashboardRunId)) || null;
+    if (scopeRunId) {
+      const selectedRun = projectRuns.find((run) => String(run.id) === String(scopeRunId)) || null;
       return {
         lastRun: selectedRun,
         lastFinished: selectedRun?.finished_at ? selectedRun : null,
@@ -108,7 +116,7 @@ export default function App() {
       lastRun: scoped[0] || null,
       lastFinished: scoped.find((run) => run?.finished_at) || null,
     };
-  }, [pipelineRuns, projectRuns, selectedProjectId, dashboardRunId]);
+  }, [pipelineRuns, projectRuns, selectedProjectId, scopeRunId]);
 
 
   const coerceProjectId = (value) => {
@@ -138,7 +146,7 @@ export default function App() {
     }
   };
 
-  const loadProjectRuns = async (projectId, page = null) => {
+  const loadProjectRuns = async (projectId) => {
     const scopedProjectId = coerceProjectId(projectId);
     if (scopedProjectId == null) {
       setProjectRuns([]);
@@ -152,29 +160,13 @@ export default function App() {
         .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime());
       setProjectRuns(completed);
 
-      // Default to the latest run the first time this project is viewed on
-      // this page - after that, respect whatever the user picks (including
-      // switching back to a period tab). A project with zero completed runs
-      // has nothing to show in any recent window (Reports already starts at
-      // 'all' - see reportPeriod's initial state above), so the Dashboard's
-      // usual 'Last 30 days' default is switched to 'All time' instead of
-      // implying a narrower time window would ever surface something.
-      if (page) {
-        const selectedRun = page === 'dashboard' ? dashboardRunId : reportRunId;
-        if (selectedRun && !completed.some((run) => run.id === selectedRun)) {
-          if (page === 'dashboard') setDashboardRunId(completed[0]?.id || null);
-          else setReportRunId(completed[0]?.id || null);
-        }
-        const defaultedRef = page === 'dashboard' ? dashboardRunDefaultedRef : reportRunDefaultedRef;
-        if (!defaultedRef.current.has(scopedProjectId)) {
-          defaultedRef.current.add(scopedProjectId);
-          if (completed.length > 0) {
-            if (page === 'dashboard') setDashboardRunId(completed[0].id);
-            else setReportRunId(completed[0].id);
-          } else if (page === 'dashboard') {
-            setDashboardPeriod('all');
-          }
-        }
+      // A bookmarked scope wins over defaults. Invalid bookmarked runs fall
+      // back to the latest eligible run (or all time when no run exists).
+      if (scopeRunId && !completed.some((run) => String(run.id) === String(scopeRunId))) {
+        updateIntelligenceScope({ period: 'all', runId: completed[0]?.id || null });
+      } else if (!intelligenceScope.explicit && !runDefaultedRef.current.has(scopedProjectId)) {
+        runDefaultedRef.current.add(scopedProjectId);
+        updateIntelligenceScope({ period: 'all', runId: completed[0]?.id || null });
       }
     } catch {
       setProjectRuns([]);
@@ -205,7 +197,7 @@ export default function App() {
     }
   };
 
-  const loadIntelligence = async (projectId = selectedProjectId, period = dashboardPeriod, runId = null) => {
+  const loadIntelligence = async (projectId = selectedProjectId, period = scopePeriod, runId = null) => {
     const scopedProjectId = coerceProjectId(projectId);
     if (scopedProjectId == null) {
       setIntelligence(null);
@@ -242,14 +234,14 @@ export default function App() {
   useEffect(() => {
     if (projects.length === 0) {
       if (selectedProjectId != null) {
-        setSelectedProjectId(null);
+        selectProject(null);
       }
       return;
     }
 
     const currentExists = projects.some((project) => Number(project.id) === Number(selectedProjectId));
     if (selectedProjectId != null && !currentExists) {
-      setSelectedProjectId(null);
+      selectProject(null);
     }
   }, [projects, selectedProjectId]);
 
@@ -263,38 +255,25 @@ export default function App() {
     }
   }, [selectedProjectId]);
 
-  // A selected analysis run belongs to exactly one project - carrying it over
-  // to a newly-selected project would silently scope the intelligence fetch
-  // to a run_id/project_id pair that can never match (see
-  // intelligence.py's _fetch_project_rows, which ANDs both), showing an
-  // empty "analysis run" tab strip instead of the period tabs below it.
-  // Clearing the one-shot "already defaulted" markers too means switching
-  // back into a project always re-applies its correct default (latest run,
-  // or 'All time' for a project with none - see loadProjectRuns below)
-  // rather than carrying over whatever was picked for a *different* project.
-  useEffect(() => {
-    if (selectedProjectId != null) {
-      dashboardRunDefaultedRef.current.delete(selectedProjectId);
-      reportRunDefaultedRef.current.delete(selectedProjectId);
-    }
-    setDashboardRunId(null);
-    setReportRunId(null);
-  }, [selectedProjectId]);
-
   useEffect(() => {
     if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname)) return;
 
     // Reports is project-scoped only (no "all projects" aggregate), so pick a
     // default project as soon as one is available instead of showing an empty state.
     if (selectedProjectId == null && projects.length > 0) {
-      setSelectedProjectId(Number(projects[0].id));
+      selectProject(Number(projects[0].id));
       return;
     }
+    if (selectedProjectId == null) return;
 
-    const period = pathname === '/dashboard' ? dashboardPeriod : reportPeriod;
-    const runId = pathname === '/dashboard' ? dashboardRunId : reportRunId;
-    loadIntelligence(selectedProjectId, period, runId);
-  }, [isAuthenticated, pathname, selectedProjectId, projects, dashboardPeriod, reportPeriod, dashboardRunId, reportRunId]);
+    // On a first (non-bookmarked) visit, loadProjectRuns below is about to
+    // resolve a default run and correct the URL - skip this fetch until that
+    // lands instead of fetching once against the fallback scope and again
+    // moments later against the corrected one.
+    if (!intelligenceScope.explicit && !runDefaultedRef.current.has(selectedProjectId)) return;
+
+    loadIntelligence(selectedProjectId, scopePeriod, scopeRunId);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, scopePeriod, scopeRunId]);
 
   useEffect(() => {
     if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname) || selectedProjectId == null) return;
@@ -302,8 +281,24 @@ export default function App() {
     // selection - otherwise picking a period tab (which clears the run
     // selection) would immediately re-trigger the "default to latest run"
     // logic inside loadProjectRuns and undo the user's choice.
-    loadProjectRuns(selectedProjectId, pathname === '/dashboard' ? 'dashboard' : 'reports');
+    loadProjectRuns(selectedProjectId);
   }, [isAuthenticated, pathname, selectedProjectId]);
+
+  // Every path that changes the selected project - the dropdown, auto-picking
+  // a default project, and a project disappearing (deleted, or filtered out of
+  // `projects`) - must go through this so the URL's run scope never survives
+  // into a different project. A run belongs to exactly one project, so
+  // carrying it over would silently pair it with a project it can't match.
+  const selectProject = (projectId) => {
+    const scopedProjectId = coerceProjectId(projectId);
+    if (Number(scopedProjectId) === Number(selectedProjectId)) return;
+    if (scopedProjectId != null) runDefaultedRef.current.delete(scopedProjectId);
+    setSelectedProjectId(scopedProjectId);
+    // Analysis runs belong to one project. Clear the old project's run from
+    // the URL so the newly selected project can apply its own latest-run
+    // default instead of briefly requesting an impossible project/run pair.
+    navigate({ pathname, search: clearIntelligenceScope(location.search) }, { replace: true });
+  };
 
   // The backend echoes back the fully-normalized project (including resolved
   // user_ids), so we can patch it into local state directly instead of waiting
@@ -356,7 +351,7 @@ export default function App() {
       await apiDeleteProject(projectId);
       await refreshProjects();
       if (Number(selectedProjectId) === Number(projectId)) {
-        setSelectedProjectId(null);
+        selectProject(null);
       }
       return true;
     } catch (error) {
@@ -369,12 +364,12 @@ export default function App() {
     <DashboardOverview
       projects={projects}
       selectedProjectId={selectedProjectId}
-      onProjectChange={setSelectedProjectId}
-      period={dashboardPeriod}
-      onPeriodChange={(key) => { setDashboardPeriod(key); setDashboardRunId(null); }}
+      onProjectChange={selectProject}
+      period={scopePeriod}
+      onPeriodChange={(key) => updateIntelligenceScope({ period: key, runId: null })}
       runs={projectRuns}
-      selectedRunId={dashboardRunId}
-      onRunChange={setDashboardRunId}
+      selectedRunId={scopeRunId}
+      onRunChange={(runId) => updateIntelligenceScope({ period: scopePeriod, runId })}
       intelligence={intelligence}
       loading={isLoadingIntelligence}
       error={intelligenceError}
@@ -388,17 +383,17 @@ export default function App() {
       isLoadingProjects={isLoadingProjects}
       selectedProject={selectedProject}
       selectedProjectId={selectedProjectId}
-      onSelectedProjectIdChange={setSelectedProjectId}
+      onSelectedProjectIdChange={selectProject}
       intelligence={intelligence}
       isLoadingIntelligence={isLoadingIntelligence}
       intelligenceError={intelligenceError}
       lastIntelligenceSyncAt={lastIntelligenceSyncAt}
-      reportPeriod={reportPeriod}
-      onReportPeriodChange={setReportPeriod}
-      reportRunId={reportRunId}
-      onReportRunIdChange={setReportRunId}
+      reportPeriod={scopePeriod}
+      onReportPeriodChange={(period) => updateIntelligenceScope({ period, runId: null })}
+      reportRunId={scopeRunId}
+      onReportRunIdChange={(runId) => updateIntelligenceScope({ period: scopePeriod, runId })}
       projectRuns={projectRuns}
-      onRefresh={() => loadIntelligence(selectedProjectId, reportPeriod, reportRunId)}
+      onRefresh={() => loadIntelligence(selectedProjectId, scopePeriod, scopeRunId)}
     />
   );
 
