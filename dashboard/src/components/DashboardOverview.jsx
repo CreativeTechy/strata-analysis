@@ -11,8 +11,10 @@ import {
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
+import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
@@ -249,6 +251,7 @@ function pipelineRunShortLabel(run, index, t) {
 export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
   loading, error, pipelineHealth, runs = [], selectedRunId, onRunChange,
+  isLoadingProjects = false, onRefresh,
 }) {
   const { t, i18n } = useTranslation(['dashboard', 'common']);
   const locale = i18n.language;
@@ -274,6 +277,11 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
+  const isStale = isIntelligenceStale(intelligence, selectedProjectId);
+  const showLoading = !error && (loading || isStale);
+  const scopeState = resolveIntelligenceState(intelligence);
+  const isReady = !showLoading && scopeState.kind === 'ready';
+  const periodLabel = t(PERIODS.find((item) => item.key === period)?.labelKey || '');
 
   const [ideaComparisons, setIdeaComparisons] = useState([]);
   const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
@@ -420,18 +428,28 @@ export default function DashboardOverview({
       <CompetitorPulseCard studyId={selectedProject.id} backTo="/dashboard" backLabel={t('dashboard:overview.competitorBackLabel')} />
     ) : null}
 
-    {!selectedProject ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.noProjectTitle')}</strong><p className="subtitle">{t('dashboard:overview.noProjectBody')}</p></div> : null}
-    {error ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.loadErrorTitle')}</strong><p className="subtitle" dir="auto">{error}</p></div> : null}
+    {/* App auto-selects the first project once the list lands, so "projects
+        but none selected" is a transient state, not an empty one. */}
+    {!selectedProject && (isLoadingProjects || projects.length > 0) ? <DashboardSkeleton /> : null}
+    {!selectedProject && !isLoadingProjects && !projects.length ? <NoProjectsState /> : null}
+    {selectedProject && error ? <div className="glass-card admin-empty-state report-error-state" role="alert"><strong>{t('dashboard:overview.loadErrorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRefresh ? <button type="button" className="btn-secondary" onClick={onRefresh}>{t('dashboard:report.tryAgain')}</button> : null}</div> : null}
 
     {selectedProject && !error ? (<>
-      <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" />
-        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
-        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
+      <section className="intelligence-metric-grid" aria-busy={showLoading}>
+        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(isReady ? total : 0, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : periodLabel} tone="blue" />
+        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={showLoading ? <MetricValueSkeleton /> : isReady ? formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 }) : '—'} detail={t('dashboard:metrics.netSentiment.detail')} tone={!isReady || Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
+        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
         <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
       </section>
 
-      {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
+      {showLoading ? <DashboardSkeleton /> : !isReady ? <IntelligenceEmptyState
+        state={scopeState}
+        project={selectedProject}
+        rangeLabel={periodLabel}
+        onShowAllTime={selectedRunId || period !== 'all' ? () => onPeriodChange('all') : undefined}
+        onAnalysisStarted={onRefresh}
+      /> : <>
+        <PendingAnalysisNotice state={scopeState} project={selectedProject} onAnalysisStarted={onRefresh} />
         <section className="intelligence-priority-grid">
           <article className="glass-card intelligence-card intelligence-line-card"><div className="intelligence-card-heading"><h3>{t('dashboard:sentimentTrend.title')}</h3><span>{t('dashboard:volumeOverTime.title')}</span></div><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></article>
           <article className="glass-card intelligence-card intelligence-ideas-card">

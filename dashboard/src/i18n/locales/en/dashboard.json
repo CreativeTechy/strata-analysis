@@ -263,6 +263,60 @@
     "populationFallback": "Survey population",
     "note": "These percentages are published survey observations. They are separate from sentiment inferred from analyzed records."
   },
+  "states": {
+    "noDocuments": {
+      "title": "No documents uploaded yet",
+      "body": "This project has nothing to analyze yet. Upload the documents or JSONL exports it should track — analysis starts automatically once they're split into articles.",
+      "noArticlesTitle": "No articles extracted yet",
+      "noArticlesBody_one": "{{formattedCount}} document was uploaded, but no articles came out of it. Check its status or upload another file.",
+      "noArticlesBody_other": "{{formattedCount}} documents were uploaded, but no articles came out of them. Check their status or upload another file.",
+      "upload": "Upload documents",
+      "reviewDocuments": "View documents",
+      "noPermission": "Ask a project manager to upload documents for this project."
+    },
+    "analysisPending": {
+      "extractingTitle": "Documents are still processing",
+      "extractingBody_one": "{{formattedCount}} document is being extracted and split into articles. Analysis starts automatically once it's ready.",
+      "extractingBody_other": "{{formattedCount}} documents are being extracted and split into articles. Analysis starts automatically once they're ready.",
+      "runningTitle": "Analysis in progress",
+      "runningBody": "An analysis run is working through this project's articles. Results appear here as soon as it finishes.",
+      "queuedTitle": "Analysis pending",
+      "queuedBody_one": "{{formattedCount}} article is waiting to be analyzed. Start an analysis run to populate this view.",
+      "queuedBody_other": "{{formattedCount}} articles are waiting to be analyzed. Start an analysis run to populate this view.",
+      "failedTitle": "Analysis didn't complete",
+      "failedBody_one": "Analysis failed for {{formattedCount}} article. Check that the model server is reachable, then retry.",
+      "failedBody_other": "Analysis failed for {{formattedCount}} articles. Check that the model server is reachable, then retry.",
+      "viewRun": "View run progress",
+      "start": "Start analysis",
+      "starting": "Starting…",
+      "retry": "Retry analysis",
+      "viewLogs": "View performance logs",
+      "goToRuns": "Go to Analysis Runs",
+      "startFailed": "Couldn't start the analysis run.",
+      "noPermission": "Ask someone with permission to run analyses to start one."
+    },
+    "noResults": {
+      "periodTitle": "No results in this range",
+      "periodBody_one": "This project has {{formattedCount}} analyzed article, but none fall within the selected range ({{range}}).",
+      "periodBody_other": "This project has {{formattedCount}} analyzed articles, but none fall within the selected range ({{range}}).",
+      "runTitle": "No results for this run",
+      "runBody": "The selected analysis run didn't produce any results for this project.",
+      "showAllTime": "Show all time"
+    },
+    "pendingNotice": {
+      "articles_one": "{{formattedCount}} article is still waiting for analysis — figures below will update once it's done.",
+      "articles_other": "{{formattedCount}} articles are still waiting for analysis — figures below will update once they're done.",
+      "documents_one": "{{formattedCount}} document is still being split into articles — figures below will update once it's done.",
+      "documents_other": "{{formattedCount}} documents are still being split into articles — figures below will update once they're done.",
+      "viewRun": "View progress"
+    },
+    "noProjects": {
+      "title": "No projects yet",
+      "body": "Create a project and upload its documents to start tracking intelligence.",
+      "create": "Create project",
+      "noPermission": "Ask an administrator to create a project or give you access to one."
+    }
+  },
   "sourceTrust": {
     "title": "Source trust",
     "empty": "No sources assessed yet."

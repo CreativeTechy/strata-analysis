@@ -17,7 +17,7 @@ function baseProps(overrides = {}) {
     selectedProject: PROJECT,
     selectedProjectId: 1,
     onSelectedProjectIdChange: vi.fn(),
-    intelligence: { total: 10, positive: 6, negative: 2, neutral: 2, mixed: 0 },
+    intelligence: { project_id: 1, total: 10, positive: 6, negative: 2, neutral: 2, mixed: 0 },
     isLoadingIntelligence: false,
     intelligenceError: null,
     lastIntelligenceSyncAt: null,
@@ -47,6 +47,23 @@ describe('ReportsView', () => {
   it('shows a syncing status while loading', () => {
     render(<ReportsView {...baseProps({ isLoadingIntelligence: true })} />)
     expect(screen.getByText('Syncing')).toBeInTheDocument()
+  })
+
+  it('treats intelligence for a different project as still loading', () => {
+    render(<ReportsView {...baseProps({ intelligence: { project_id: 2, total: 10, positive: 10 } })} />)
+    expect(screen.queryByText('10')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
+  })
+
+  it('does not count placeholder articles when nothing has been analyzed yet', () => {
+    const intelligence = {
+      project_id: 1, total: 4, neutral: 4,
+      coverage: { documents: 1, documents_in_progress: 0, articles: 4, analyzed: 0, pending: 4, failed: 0, active_run: null },
+    }
+    render(<ReportsView {...baseProps({ intelligence })} />)
+    expect(screen.queryByText('4')).not.toBeInTheDocument()
+    expect(screen.getByText('No data yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
   it('calls onReportPeriodChange when a period tab is clicked', () => {
@@ -142,7 +159,7 @@ describe('ReportsView - Export Summary', () => {
   })
 
   it('disables the export button when there are no analyzed articles in scope', () => {
-    render(<ReportsView {...baseProps({ intelligence: { total: 0 } })} />)
+    render(<ReportsView {...baseProps({ intelligence: { project_id: 1, total: 0 } })} />)
     expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
