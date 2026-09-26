@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import StatsOverview from './StatsOverview.jsx';
 import { getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
+import { useAuth } from '../auth/useAuth.js';
 
 vi.mock('../api/projectsApi.js', () => ({
   getKeywordExistence: vi.fn(),
@@ -11,6 +12,7 @@ vi.mock('../api/projectsApi.js', () => ({
   getTrendSummary: vi.fn(),
 }));
 vi.mock('../api/projectDocumentsApi.js', () => ({ listDocuments: vi.fn() }));
+vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
 
 const INTELLIGENCE = {
   total: 10,
@@ -25,6 +27,7 @@ describe('StatsOverview sentiment score', () => {
   beforeEach(() => {
     getTrendSummary.mockResolvedValue({ ok: true, data: {} });
     listDocuments.mockResolvedValue({ documents: [] });
+    useAuth.mockReturnValue({ hasPermission: () => true });
   });
 
   it('shows the net sentiment score in the Sentiment analysis section', () => {

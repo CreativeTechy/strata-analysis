@@ -230,3 +230,35 @@ a.intelligence-idea-comparison-source:hover, a.intelligence-idea-comparison-sour
 @media (max-width: 900px) { .intelligence-header { flex-direction: column; } .intelligence-controls { justify-content: flex-start; } .intelligence-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .intelligence-priority-grid, .intelligence-top-grid, .intelligence-bottom-grid, .intelligence-run-sentiment-grid { grid-template-columns: 1fr; } .intelligence-top-grid > :last-child { grid-column: auto; } }
 @media (max-width: 700px) { .report-brief-section { padding: 20px; } .report-brief-metrics, .report-sentiment-grid, .report-feedback-grid { grid-template-columns: 1fr; } .report-donut { height: 210px; } }
 @media (max-width: 600px) { .intelligence-metric-grid { grid-template-columns: 1fr; } .intelligence-controls { align-items: flex-start; flex-direction: column; } .intelligence-controls .source-type-tabs { width: 100%; overflow-x: auto; flex-wrap: nowrap; } .intelligence-sentiment-layout { grid-template-columns: 1fr; } .intelligence-legend { grid-template-columns: repeat(2, minmax(0,1fr)); } .intelligence-card { padding: 18px; } .intelligence-detailed-breakdowns-toggle { flex-wrap: wrap; } .intelligence-detailed-breakdowns-text { flex-basis: calc(100% - 47px); } .intelligence-detailed-breakdowns-action { margin-inline-start: 47px; } .report-sentiment-bars > div { grid-template-columns: 90px minmax(55px,1fr) 30px; gap: 8px; } }
+
+/* Loading skeletons + empty states (Dashboard and Reports). The shared
+   .skeleton-shimmer in index.css is a white-on-glass sweep that vanishes on
+   these near-white cards, so these use a slate tint instead. */
+@keyframes intelligence-skeleton-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.intelligence-skeleton { display: grid; gap: 16px; }
+.intelligence-skeleton-card { display: flex; flex-direction: column; gap: 14px; }
+.intelligence-skeleton-bar, .intelligence-skeleton-donut, .intelligence-skeleton-chart { display: block; border-radius: 999px; background: linear-gradient(90deg, #eef2f7 0%, #e2e8f0 40%, #eef2f7 80%); background-size: 200% 100%; animation: intelligence-skeleton-sweep 1.4s ease-in-out infinite; }
+.intelligence-skeleton-donut { width: 150px; height: 150px; margin: 6px auto; border-radius: 50%; -webkit-mask: radial-gradient(circle, transparent 42%, #000 43%); mask: radial-gradient(circle, transparent 42%, #000 43%); }
+.intelligence-skeleton-donut.small { width: 96px; height: 96px; margin: 0; flex: 0 0 auto; }
+.intelligence-skeleton-chart { height: 210px; border-radius: 12px; }
+.intelligence-skeleton-row { display: flex; align-items: center; gap: 18px; }
+.intelligence-skeleton-lines { display: grid; gap: 10px; flex: 1; min-width: 0; }
+.intelligence-skeleton-metric { width: 64px; height: 20px; margin: 2px 0; }
+.report-brief.intelligence-skeleton .report-brief-section { display: grid; gap: 12px; }
+.report-brief.intelligence-skeleton .report-brief-section > header { margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { .intelligence-skeleton-bar, .intelligence-skeleton-donut, .intelligence-skeleton-chart { animation: none; } }
+
+.intelligence-state { padding: 40px 20px; }
+.intelligence-state .subtitle { margin: 0; line-height: 1.55; }
+.intelligence-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
+.intelligence-state-action { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; font-size: .86rem; text-decoration: none; }
+.admin-empty-state .intelligence-state-action.btn-secondary { margin-top: 0; }
+.intelligence-state-hint { margin: 4px 0 0; font-size: .8rem; color: var(--text-light); }
+.intelligence-state-error { margin: 4px 0 0; font-size: .8rem; color: #be123c; }
+.intelligence-state-tone-error .admin-empty-state-icon { background: rgba(255, 71, 87, 0.14); color: #e11d48; }
+
+.intelligence-pending-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border: 1px solid #fde68a; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: .84rem; }
+.intelligence-pending-notice > span { flex: 1 1 240px; min-width: 0; }
+.intelligence-pending-notice a, .intelligence-pending-notice button { flex: 0 0 auto; padding: 5px 11px; border: 1px solid #fcd34d; border-radius: 8px; background: #fff; color: #92400e; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+.intelligence-pending-notice button:disabled { opacity: .6; cursor: default; }
+.intelligence-pending-notice .intelligence-state-error { flex-basis: 100%; }

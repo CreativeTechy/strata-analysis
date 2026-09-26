@@ -384,7 +384,14 @@ def _fetch_sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
     return counts_by_run
 
 
-def _fetch_document_count(project_id: int) -> int:
+def _documents_table(mode: str | None) -> str:
+    # Competitor studies upload into their own table (see
+    # competitor_documents_store.py) - reading project_documents for one
+    # always reported zero documents.
+    return "competitor_documents" if mode == "competitor" else "project_documents"
+
+
+def _fetch_document_count(project_id: int, mode: str | None = None) -> int:
     """Documents uploaded to this project - the input side of the same story
     the article counts tell, and the closest thing this product has to the
     "how much is being watched" number a source count used to give."""
@@ -392,10 +399,60 @@ def _fetch_document_count(project_id: int) -> int:
         return 0
     import db
     row = db.fetch_one(
-        "select count(*)::int as total from project_documents where project_id = %s",
+        f"select count(*)::int as total from {_documents_table(mode)} where project_id = %s",
         (int(project_id),),
     )
     return int((row or {}).get("total") or 0)
+
+
+def _fetch_documents_in_progress(project_id: int, mode: str | None = None) -> int:
+    """Documents still being extracted or split into articles - the step
+    before an article exists for analysis to pick up."""
+    if not _database_ready():
+        return 0
+    import db
+    try:
+        row = db.fetch_one(
+            f"""
+            select count(*)::int as total from {_documents_table(mode)}
+            where project_id = %s
+              and (status in ('uploaded', 'processing') or articles_status in ('pending', 'generating'))
+            """,
+            (int(project_id),),
+        )
+    except Exception:
+        return 0
+    return int((row or {}).get("total") or 0)
+
+
+def _fetch_coverage(project: dict, document_count: int) -> dict:
+    """Project-wide (not period/run-scoped) counts of where the project's
+    material is in the upload -> split -> analyze pipeline, so an empty
+    dashboard can say *why* it is empty - nothing uploaded, analysis not
+    finished yet, or just nothing in the selected range - instead of one
+    generic "no data" message. `total` alone can't tell these apart: it counts
+    every linked article, including ones still carrying DEFAULT_ENRICHMENT's
+    neutral placeholders because no analysis has succeeded for them yet."""
+    from services.articles.articles_query import get_analysis_status_counts
+    from services.pipeline.pipeline_runs import get_active_run_for_project
+
+    project_id = project["id"]
+    counts = get_analysis_status_counts(project_id=project_id) if _database_ready() else {}
+    active_run = get_active_run_for_project(project_id) if _database_ready() else None
+    return {
+        "documents": document_count,
+        "documents_in_progress": _fetch_documents_in_progress(project_id, project.get("mode")),
+        "articles": sum(counts.values()),
+        "analyzed": counts.get("success", 0) + counts.get("partial", 0),
+        "pending": counts.get("pending", 0) + counts.get("processing", 0),
+        "failed": counts.get("failed", 0),
+        "active_run": {
+            "id": active_run.get("id"),
+            "status": active_run.get("status"),
+            "articles_selected": active_run.get("articles_selected"),
+            "articles_analyzed": active_run.get("articles_analyzed"),
+        } if active_run else None,
+    }
 
 
 def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
@@ -436,6 +493,7 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         if value in VALID_SENTIMENTS:
             bucket[value] += 1
 
+    document_count = _fetch_document_count(project["id"], project.get("mode"))
     return {
         "project_id": project["id"],
         "period": period,
@@ -446,7 +504,8 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         "sentiment_not_assessed": len(all_rows) - len(rows),
         **sentiment,
         "net_sentiment": net_sentiment(counts, len(rows)),
-        "document_count": _fetch_document_count(project["id"]),
+        "document_count": document_count,
+        "coverage": _fetch_coverage(project, document_count),
         "source_trust": source_trust_summary_for_rows(rows, project_id=project["id"]),
         "sentiment_over_time": [
             {"date": date, "total": values["total"], **{key: values[key] for key in VALID_SENTIMENTS}}
