@@ -133,7 +133,7 @@ a.intelligence-idea-comparison-source:hover, a.intelligence-idea-comparison-sour
 .report-brief-metrics span { color: var(--text-light); font-size: .75rem; }
 .report-sentiment-grid { display: grid; grid-template-columns: minmax(220px,.7fr) minmax(300px,1.3fr); align-items: center; gap: 25px; }
 .report-donut { position: relative; height: 240px; }
-.report-donut-score { position: absolute; inset: 50% auto auto 50%; display: grid; gap: 2px; width: 112px; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+.report-donut-score { position: absolute; inset: 50% auto auto 50%; display: grid; gap: 2px; width: 112px; transform: translate(-50%, -50%); text-align: center; }
 .report-donut-score strong { font-family: var(--font-display); font-size: 1.8rem; line-height: 1; }
 .report-donut-score span { color: var(--text-light); font-size: .65rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .report-donut-score.positive strong { color: #15803d; }
