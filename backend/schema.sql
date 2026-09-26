@@ -328,6 +328,9 @@ create table if not exists public.articles (
     article_tone_confidence   numeric,
     classification_model      text,
     classification_status     text,
+    category_status           text,
+    writer_tone_status        text,
+    article_tone_status       text,
 
     -- Stage output: structured extraction and entities.
     insight_json              jsonb default '{}'::jsonb,
@@ -384,7 +387,13 @@ create table if not exists public.articles (
     constraint articles_sentiment_status_check
         check (sentiment_status is null or sentiment_status in ('ran', 'skipped_model_unavailable', 'failed')),
     constraint articles_classification_status_check
-        check (classification_status is null or classification_status in ('ran', 'skipped_model_unavailable', 'failed'))
+        check (classification_status is null or classification_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_category_status_check
+        check (category_status is null or category_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_writer_tone_status_check
+        check (writer_tone_status is null or writer_tone_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_article_tone_status_check
+        check (article_tone_status is null or article_tone_status in ('ran', 'skipped_model_unavailable', 'failed'))
 );
 
 -- `create table if not exists` does not add columns to an existing table.
@@ -396,6 +405,12 @@ alter table public.articles
     add column if not exists sentiment_status text;
 alter table public.articles
     add column if not exists classification_status text;
+alter table public.articles
+    add column if not exists category_status text;
+alter table public.articles
+    add column if not exists writer_tone_status text;
+alter table public.articles
+    add column if not exists article_tone_status text;
 alter table public.articles
     add column if not exists coverage_evidence jsonb not null default '{}'::jsonb;
 

@@ -232,6 +232,14 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
             (category_result, writer_tone_result, article_tone_result),
             config.CLASSIFICATION_MODEL,
         ),
+        # classification_status above is a combined flag across all three
+        # independent classify_* calls (see this module's docstring) - it
+        # can read "ran" even when one specific sub-stage actually fell
+        # back, so each confidence field needs its own outcome to gate on
+        # (articles_query._shape_article_analysis reads these per-field).
+        "category_status": _stage_outcome(category_result, config.CLASSIFICATION_MODEL),
+        "writer_tone_status": _stage_outcome(writer_tone_result, config.CLASSIFICATION_MODEL),
+        "article_tone_status": _stage_outcome(article_tone_result, config.CLASSIFICATION_MODEL),
         "extraction_model": f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}" if config.LLM_CHAT_MODEL else None,
         "analysis_pipeline_version": PIPELINE_VERSION,
         "source_language": language_result.get("language"),

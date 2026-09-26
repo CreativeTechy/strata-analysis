@@ -538,6 +538,29 @@ class GetArticleAnalysisTests(unittest.TestCase):
         self.assertEqual(result["analysis_error"], "model_unavailable")
         self.assertTrue(result["confidence"]["sentiment_low_confidence"])
 
+    def test_a_single_fallen_back_classification_substage_hides_only_its_own_confidence(self):
+        # classification_status is a combined flag across category/writer_tone/
+        # article_tone - it reads "ran" as soon as any one of the three
+        # produced a result. writer_tone fell back here while the other two
+        # succeeded, so only writer_tone_confidence should be suppressed.
+        row = {
+            "id": 1, "url": "u", "title": "t", "source": "s", "published": None,
+            "sentiment": "neutral", "article_category": "review",
+            "writer_tone": "neutral", "article_tone": "positive",
+            "insight_json": {}, "analyzed_at": None, "analysis_model": None, "analysis_prompt_version": None,
+            "analysis_status": "success", "analysis_error": None,
+            "classification_status": "ran",
+            "category_status": "ran", "writer_tone_status": "skipped_model_unavailable", "article_tone_status": "ran",
+            "category_confidence": 0.9, "writer_tone_confidence": 0.0, "article_tone_confidence": 0.85,
+        }
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=[{"column_name": k} for k in row]):
+                with patch("services.articles.articles_query.db.fetch_one", return_value=row):
+                    result = articles_query.get_article_analysis(1)
+        self.assertEqual(result["confidence"]["category"], 0.9)
+        self.assertIsNone(result["confidence"]["writer_tone"])
+        self.assertEqual(result["confidence"]["article_tone"], 0.85)
+
     def test_query_error_returns_none(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
             with patch("services.articles.articles_query.db.fetch_all", return_value=[]):

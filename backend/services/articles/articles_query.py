@@ -776,7 +776,9 @@ _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "sentiment_status",
     "category_confidence", "writer_tone_confidence", "article_tone_confidence",
     "region_confidence",
-    "classification_model", "classification_status", "extraction_model", "analysis_pipeline_version",
+    "classification_model", "classification_status",
+    "category_status", "writer_tone_status", "article_tone_status",
+    "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
     "source_domain",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
@@ -804,6 +806,19 @@ def _article_analysis_select_columns():
     live = _live_articles_columns()
     metadata_columns = [c for c in _ARTICLE_ANALYSIS_METADATA_COLUMNS if c in live] if live else []
     return list(_ARTICLE_ANALYSIS_BASE_COLUMNS) + metadata_columns
+
+
+def _classification_substage_ran(row: dict, status_key: str) -> bool:
+    """Whether one specific classification sub-stage (category/writer_tone/
+    article_tone) actually produced a result, not just whether *any* of the
+    three did - classification_status is an OR across all three independent
+    classify_* calls (see analysis/orchestrator.py's _combined_stage_outcome),
+    so it can read "ran" while this particular sub-stage fell back. Falls
+    back to the combined flag when the per-stage column isn't there yet
+    (older row/database predating its migration)."""
+    if status_key in row:
+        return row.get(status_key) == "ran"
+    return row.get("classification_status") == "ran" or "classification_status" not in row
 
 
 def _shape_article_analysis(row: dict) -> dict:
@@ -844,11 +859,11 @@ def _shape_article_analysis(row: dict) -> dict:
             if row.get("sentiment_status") == "ran" or "sentiment_status" not in row else None,
             "sentiment_low_confidence": bool(row.get("sentiment_low_confidence")),
             "category": row.get("category_confidence")
-            if row.get("classification_status") == "ran" or "classification_status" not in row else None,
+            if _classification_substage_ran(row, "category_status") else None,
             "writer_tone": row.get("writer_tone_confidence")
-            if row.get("classification_status") == "ran" or "classification_status" not in row else None,
+            if _classification_substage_ran(row, "writer_tone_status") else None,
             "article_tone": row.get("article_tone_confidence")
-            if row.get("classification_status") == "ran" or "classification_status" not in row else None,
+            if _classification_substage_ran(row, "article_tone_status") else None,
             "region": row.get("region_confidence"),
         },
         "source_language": row.get("source_language"),
