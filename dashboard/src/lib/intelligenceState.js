@@ -13,6 +13,15 @@ function count(value) {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
+// App holds one `intelligence` for both Dashboard and Reports, so right after
+// a project switch (or before the first fetch lands) it can still describe
+// another project - callers must treat that as loading, not as an empty
+// result. Single owner for that check so Dashboard/Reports/Stats can't drift
+// on the rule (e.g. if it later also needs to compare run_id).
+export function isIntelligenceStale(intelligence, selectedProjectId) {
+  return !intelligence || Number(intelligence.project_id) !== Number(selectedProjectId);
+}
+
 export function resolveIntelligenceState(intelligence) {
   const data = intelligence || {};
   const total = count(data.total);

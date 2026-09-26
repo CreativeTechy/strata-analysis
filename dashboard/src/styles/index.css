@@ -840,7 +840,7 @@ h1, h2, h3 {
   border-radius: 999px;
   background: rgba(249, 115, 22, 0.12);
   color: #c2410c;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -872,7 +872,7 @@ h1, h2, h3 {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -996,11 +996,17 @@ h1, h2, h3 {
 
 .report-chip-label {
   color: var(--text-light);
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   flex-shrink: 0;
+}
+
+/* See IntelligenceDashboard.css: tracking breaks Arabic letter joins. */
+[dir="rtl"] :is(.report-kicker, .report-project-control-label, .report-chip-label) {
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .report-sync-chip.report-sync-loading {
@@ -2150,6 +2156,135 @@ h1, h2, h3 {
 
 .confirm-modal-close:hover {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* Destructive confirm button: solid dark red so white text clears 4.5:1,
+   unlike the light-orange .btn-primary gradient. */
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 12px;
+  background: #b42318;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #912018;
+}
+
+.btn-danger:disabled {
+  background: #e8c3bf;
+  color: #7a271a;
+  cursor: not-allowed;
+}
+
+.btn-danger:focus-visible,
+.remove-articles-confirm input:focus-visible {
+  outline: 2px solid #0e7490;
+  outline-offset: 2px;
+}
+
+.remove-articles-dialog {
+  width: min(100%, 540px);
+}
+
+.remove-articles-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.remove-articles-counts > div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.remove-articles-counts dt {
+  font-size: 0.78rem;
+  color: var(--text-light);
+}
+
+.remove-articles-counts dd {
+  margin: 2px 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.remove-articles-status {
+  color: var(--text-light);
+  margin-bottom: 14px;
+}
+
+.remove-articles-error {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: #fdecea;
+  color: #912018;
+}
+
+.remove-articles-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.remove-articles-confirm label {
+  font-weight: 600;
+}
+
+.remove-articles-expected {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  color: var(--text-dark);
+  overflow-wrap: anywhere;
+}
+
+.remove-articles-confirm input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  background: #fff;
+  font: inherit;
+}
+
+@media (max-width: 560px) {
+  .remove-articles-counts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.danger-zone {
+  border: 1px solid rgba(180, 35, 24, 0.25);
+}
+
+.danger-zone-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.danger-zone-row p {
+  margin: 4px 0 0;
+  color: var(--text-light);
+  max-width: 60ch;
 }
 
 .spin {

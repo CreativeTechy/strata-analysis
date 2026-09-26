@@ -6,7 +6,7 @@ import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import StatsOverview from './StatsOverview';
 import { MetricValueSkeleton, NoProjectsState, ReportSkeleton } from './IntelligenceEmptyState.jsx';
 import { exportReportSummaryPdf } from '../api/projectsApi.js';
-import { resolveIntelligenceState } from '../lib/intelligenceState.js';
+import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { REPORT_PERIODS, SENTIMENT_COLORS, pipelineRunNumber } from '../lib/appHelpers.js';
 import { formatNumber, formatPercent, formatRelativeTime } from '../lib/i18nFormat.js';
 
@@ -43,9 +43,7 @@ export default function ReportsView({
   const locale = i18n.language;
   const hasProjects = projects.length > 0;
   const liveReport = intelligence || {};
-  // Same stale-intelligence guard as DashboardOverview: App's one shared
-  // `intelligence` can still describe the previously selected project.
-  const isStale = !intelligence || Number(intelligence.project_id) !== Number(selectedProjectId);
+  const isStale = isIntelligenceStale(intelligence, selectedProjectId);
   const showLoading = !intelligenceError && selectedProjectId != null && (isLoadingIntelligence || isStale);
   const isReady = !showLoading && resolveIntelligenceState(intelligence).kind === 'ready';
   // Not-yet-analyzed articles still count toward `total` (with neutral
@@ -106,7 +104,8 @@ export default function ReportsView({
       anchor.remove();
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
-      setExportError(err?.message || 'Failed to export the report summary.');
+      console.error('Failed to export the report summary', err);
+      setExportError({ detail: err?.detail || null });
     } finally {
       setExportingSummary(false);
     }
@@ -172,7 +171,7 @@ export default function ReportsView({
                   {hasProjects ? (
                     projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.name} ({project.status || 'draft'})
+                        {project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
                       </option>
                     ))
                   ) : (
@@ -199,17 +198,18 @@ export default function ReportsView({
               onClick={handleExportSummary}
               disabled={exportingSummary || !hasProjects || selectedProjectId == null || !totalArticles}
               aria-busy={exportingSummary}
-              title={!totalArticles ? 'No analyzed articles in this scope yet' : 'Download a PDF summary of this report'}
+              title={!totalArticles ? t('export.noArticlesTitle') : t('export.title')}
             >
               <Download size={16} className={exportingSummary ? 'spin' : ''} />
-              {exportingSummary ? 'Preparing...' : 'Export Summary'}
+              {exportingSummary ? t('export.preparing') : t('export.button')}
             </button>
           </div>
         </div>
 
         {exportError ? (
           <p className="report-export-summary-error" role="alert">
-            <AlertCircle size={13} aria-hidden="true" /> {exportError}
+            <AlertCircle size={13} aria-hidden="true" /> {t('export.failed')}
+            {exportError.detail ? <span dir="auto"> {exportError.detail}</span> : null}
           </p>
         ) : null}
 

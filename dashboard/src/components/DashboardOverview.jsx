@@ -14,7 +14,7 @@ import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
-import { resolveIntelligenceState } from '../lib/intelligenceState.js';
+import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
@@ -63,11 +63,29 @@ function languageLabel(t, locale, code) {
 // Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
 // - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
 // Open-ended DB text, so this stays a plain transform rather than a
-// translation lookup.
-function distributionLabel(value) {
-  return String(value || 'unknown')
+// translation lookup - except the "other"/"unknown" buckets, which the app
+// itself generates (capBreakdown() below, or a missing value) and so do
+// have a fixed translation.
+function distributionLabel(t, value) {
+  const key = String(value || 'unknown');
+  if (key === 'other' || key === 'unknown') return t(`dashboard:distributions.bucket.${key}`);
+  return key
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// Same fixed tiers (and labels) the Sources tab uses - see sources.json's
+// trustTier.* and TRUST_TIER_ORDER above.
+function trustTierLabel(t, tier) {
+  return t(`sources:trustTier.${tier}`, tier);
+}
+
+// queued/running/success/failed/cancelled are stored run-status enum values;
+// same label lookup PipelineRunsPage.jsx's runStatusLabel() uses.
+function runStatusLabel(t, status) {
+  if (status === 'success') return t('common:status.success');
+  if (status === 'failed') return t('common:status.failed');
+  return t(`analysis:shared.runStatusLabels.${status}`, status);
 }
 
 // region/gender/age_range/segment are all open-ended text buckets, so every
@@ -213,10 +231,7 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
-  // App holds one `intelligence` for both Dashboard and Reports, so right
-  // after a project switch (or before the first fetch lands) it can still
-  // describe another project - treat that as loading, not as an empty result.
-  const isStale = !intelligence || Number(intelligence.project_id) !== Number(selectedProjectId);
+  const isStale = isIntelligenceStale(intelligence, selectedProjectId);
   const showLoading = !error && (loading || isStale);
   const scopeState = resolveIntelligenceState(intelligence);
   const isReady = !showLoading && scopeState.kind === 'ready';
@@ -352,7 +367,7 @@ export default function DashboardOverview({
 
     {selectedProject && !error ? (<>
       <section className="intelligence-metric-grid" aria-busy={showLoading}>
-        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status || t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
+        <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" />
         <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(isReady ? total : 0, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : periodLabel} tone="blue" />
         <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={showLoading ? <MetricValueSkeleton /> : isReady ? formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 }) : '—'} detail={t('dashboard:metrics.netSentiment.detail')} tone={!isReady || Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} />
         <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" />
@@ -410,7 +425,7 @@ export default function DashboardOverview({
                       <Pie data={regionData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {regionData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -418,7 +433,7 @@ export default function DashboardOverview({
                   {regionData.map((entry, index) => (
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
+                      <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
@@ -437,7 +452,7 @@ export default function DashboardOverview({
                       <Pie data={genderData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {genderData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -445,7 +460,7 @@ export default function DashboardOverview({
                   {genderData.map((entry, index) => (
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
+                      <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
@@ -464,7 +479,7 @@ export default function DashboardOverview({
                       <Pie data={ageRangeData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {ageRangeData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -472,7 +487,7 @@ export default function DashboardOverview({
                   {ageRangeData.map((entry, index) => (
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
+                      <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
@@ -491,7 +506,7 @@ export default function DashboardOverview({
                       <Pie data={segmentData} dataKey="total" nameKey="value" outerRadius="92%" paddingAngle={3} stroke="none">
                         {segmentData.map((entry, index) => <Cell key={entry.value} fill={LANGUAGE_COLORS[index % LANGUAGE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), distributionLabel(t, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -499,7 +514,7 @@ export default function DashboardOverview({
                   {segmentData.map((entry, index) => (
                     <div key={entry.value}>
                       <span style={{ background: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length] }} />
-                      <label>{distributionLabel(entry.value)}</label>
+                      <label>{distributionLabel(t, entry.value)}</label>
                       <strong>{formatPercent(percent(entry.total, total), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
@@ -509,7 +524,7 @@ export default function DashboardOverview({
           </article>
 
           <article className="glass-card intelligence-card intelligence-language-card">
-            <h3>Source trust</h3>
+            <h3>{t('dashboard:sourceTrust.title')}</h3>
             {trustData.length ? (
               <div className="intelligence-language-layout">
                 <div className="intelligence-donut">
@@ -518,7 +533,7 @@ export default function DashboardOverview({
                       <Pie data={trustData} dataKey="articles" nameKey="tier" outerRadius="92%" paddingAngle={3} stroke="none">
                         {trustData.map((entry) => <Cell key={entry.tier} fill={TRUST_TIER_COLORS[entry.tier]} />)}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [`${value} articles`, distributionLabel(name)]} />
+                      <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), trustTierLabel(t, name)]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -526,13 +541,13 @@ export default function DashboardOverview({
                   {trustData.map((entry) => (
                     <div key={entry.tier}>
                       <span style={{ background: TRUST_TIER_COLORS[entry.tier] }} />
-                      <label>{distributionLabel(entry.tier)}</label>
-                      <strong>{percent(entry.articles, data.source_trust?.total_articles || 0)}%</strong>
+                      <label>{trustTierLabel(t, entry.tier)}</label>
+                      <strong>{formatPercent(percent(entry.articles, data.source_trust?.total_articles || 0), locale, { alreadyWhole: true })}</strong>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : <p className="intelligence-empty">No sources assessed yet.</p>}
+            ) : <p className="intelligence-empty">{t('dashboard:sourceTrust.empty')}</p>}
           </article>
 
         </section>
@@ -622,7 +637,7 @@ export default function DashboardOverview({
                           to={`/projects/${selectedProjectId}/idea-comparisons/${comparison.idea_cluster_id}${selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : ''}`}
                           state={{ from: `${location.pathname}${location.search}` }}
                           aria-label={t('dashboard:ideaComparisons.viewDetails', { idea: comparison.idea })}
-                          title="View comparison details"
+                          title={t('dashboard:ideaComparisons.viewDetailsTitle')}
                         ><ChevronRight size={17} /></Link>
                       </div>
                     </div>
