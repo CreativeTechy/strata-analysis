@@ -86,9 +86,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const documentOptions = useMemo(
     () => documents.map((document) => ({
       value: `document://project-document/${document.id}`,
-      label: document.original_filename || `Document #${document.id}`,
+      label: document.original_filename || t('dashboard:report.keyword.documentFallback', { id: document.id }),
     })),
-    [documents],
+    [documents, t],
   );
 
   const [sourceFilter, setSourceFilter] = useState('all');
@@ -223,6 +223,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const leadingConcern = insights.negative_feedback?.[0]?.text || insights.complaints?.[0]?.text;
   const formattedTotal = formatNumber(total, locale);
   const formattedNetSentiment = formatNumber(intelligence.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 });
+  const netSentimentTone = Number(intelligence.net_sentiment || 0) > 0
+    ? 'positive'
+    : Number(intelligence.net_sentiment || 0) < 0 ? 'negative' : 'neutral';
   const headline = leadingIdea
     ? (leadingConcern
       ? t('dashboard:report.headlineWithIdeaConcern', { scope: resolvedScopeLabel, total: formattedTotal, idea: leadingIdea, concern: leadingConcern })
@@ -292,7 +295,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
       <p className="subtitle">
         {sentimentDenominator}
       </p>
-      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
+      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><div className={`report-donut-score ${netSentimentTone}`} aria-label={t('dashboard:report.sentimentScoreAria', { score: formattedNetSentiment })} title={t('dashboard:report.sentimentScoreHelp')}><strong>{formattedNetSentiment}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
     </Section>
 
     <Section number="04" title={t('dashboard:report.sections.keywordExistence')}>

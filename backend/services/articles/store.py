@@ -817,17 +817,252 @@ def save_articles(articles, batch_size=50, project_id=None, run_id=None):
     return sent, dict(saved_by_source)
 
 
-def delete_all_articles():
+# The exact phrase DELETE /api/articles requires before wiping every project's
+# articles - the same phrase strata-scraper's equivalent endpoint uses, so an
+# admin scripting either app types the same thing.
+DELETE_ALL_ARTICLES_CONFIRMATION = "DELETE ALL ARTICLES"
+
+# Project-scoped output built *from* a project's articles: evidence, survey
+# observations, generated summaries and idea comparisons. Once the project's
+# articles are gone these would otherwise keep describing articles that no
+# longer exist (a trend summary quoting a removed article, an evidence claim
+# with no evidence), so removing a project's articles clears them too.
+# idea_clusters themselves are deliberately *not* here: idea_comparison_facts
+# (the operator's own hand-entered facts) cascade from idea_clusters, so only
+# the cluster->article links are cleared (see _clear_project_derived_rows).
+# evidence_generations/evidence_run_status are run bookkeeping, not content,
+# and stay so the evidence workspace still knows which runs it has built.
+_PROJECT_DERIVED_TABLES = (
+    "evidence_claims",
+    "evidence_claim_candidates",
+    "evidence_run_articles",
+    "evidence_article_screenings",
+    "evidence_article_screening_reviews",
+    "evidence_provenance_reviews",
+    "evidence_relevance_reviews",
+    "survey_observations",
+    "project_trend_summaries",
+    "project_trend_summaries_localized",
+    "project_report_variation_summaries",
+    "idea_comparisons",
+    "idea_comparisons_generation_attempts",
+)
+
+# The document-candidate tables whose approved rows point at an article. When
+# that article is removed their article_id goes NULL (ON DELETE SET NULL), and
+# an approved candidate with no article reads as "Analyzing..." forever in the
+# upload wizard - so removal marks them rejected instead.
+_CANDIDATE_TABLES = ("project_document_articles", "competitor_document_articles")
+
+
+def _existing_tables(cur, table_names):
+    cur.execute(
+        """
+        select table_name from information_schema.tables
+        where table_schema = 'public' and table_name = any(%s)
+        """,
+        (list(table_names),),
+    )
+    return {row["table_name"] for row in cur.fetchall()}
+
+
+def _clear_project_derived_rows(cur, project_id, existing):
+    """Deletes everything in _PROJECT_DERIVED_TABLES plus the per-run article
+    snapshots and cluster/competitor links for one project."""
+    for table in _PROJECT_DERIVED_TABLES:
+        if table in existing:
+            cur.execute(f"delete from {table} where project_id = %s", (project_id,))
+    if "article_analyses" in existing:
+        cur.execute(
+            "delete from article_analyses where run_id in (select id from pipeline_runs where project_id = %s)",
+            (project_id,),
+        )
+    if "idea_cluster_articles" in existing:
+        cur.execute(
+            "delete from idea_cluster_articles where idea_cluster_id in (select id from idea_clusters where project_id = %s)",
+            (project_id,),
+        )
+    if "competitor_articles" in existing:
+        cur.execute(
+            "delete from competitor_articles where competitor_id in (select id from competitors where project_id = %s)",
+            (project_id,),
+        )
+
+
+_REMOVAL_TABLES = (
+    _PROJECT_DERIVED_TABLES
+    + _CANDIDATE_TABLES
+    + ("article_analyses", "idea_cluster_articles", "competitor_articles")
+)
+
+
+class ArticleRemovalConflict(Exception):
+    """A collection/analysis run still owns the articles being removed."""
+
+
+def _guard_article_removal(cur, project_id=None):
+    # Serialize with run creation/status changes and project-link writes until
+    # commit. Checking only in the route leaves a check/delete race.
+    cur.execute("lock table pipeline_runs in share row exclusive mode")
+    cur.execute(
+        "select id from pipeline_runs where status in ('queued', 'running')"
+        + (" and project_id = %s" if project_id is not None else "")
+        + " limit 1",
+        (project_id,) if project_id is not None else (),
+    )
+    if cur.fetchone():
+        raise ArticleRemovalConflict("A run is in progress. Wait for it to finish before removing articles.")
+    cur.execute("lock table article_projects in share row exclusive mode")
+
+
+def preview_project_article_removal(project_id):
+    """What remove_project_articles(project_id) would do, without doing it -
+    the numbers the confirmation dialog shows. None on a database error."""
+    if not config.DATABASE_URL:
+        return None
+    try:
+        row = db.fetch_one(
+            """
+            select
+                count(*)::int as linked,
+                count(*) filter (
+                    where not exists (
+                        select 1 from article_projects other
+                        where other.article_id = ap.article_id and other.project_id <> ap.project_id
+                    )
+                )::int as only_in_project
+            from article_projects ap
+            where ap.project_id = %s
+            """,
+            (int(project_id),),
+        ) or {}
+        linked = int(row.get("linked") or 0)
+        only_in_project = int(row.get("only_in_project") or 0)
+        return {
+            "linked_articles": linked,
+            "only_in_project": only_in_project,
+            "shared_with_other_projects": linked - only_in_project,
+        }
+    except Exception as e:
+        _log_db_error("  article removal preview error", e)
+        return None
+
+
+def remove_project_articles(project_id, actor=None):
+    """Removes every article from one project, in one transaction.
+
+    An article that also belongs to another project is only unlinked from this
+    one - it keeps its row, its analysis and its other project links. An
+    article that belonged only to this project is deleted outright (its
+    analysis/translations/tags go with it via ON DELETE CASCADE). Either way
+    this project's approved document candidates for those articles become
+    'rejected' (see _CANDIDATE_TABLES), and this project's article-derived
+    output is cleared (see _PROJECT_DERIVED_TABLES). Uploaded documents and
+    the analysis run history are kept.
+
+    Returns the counts, or None on a database error (nothing is changed then -
+    the whole thing rolls back).
+    """
+    if not config.DATABASE_URL:
+        logger.warning("Database credentials not set, skipping project article removal.")
+        return None
+
+    project_id = int(project_id)
+    try:
+        with db.transaction() as cur:
+            _guard_article_removal(cur, project_id)
+            existing = _existing_tables(cur, _REMOVAL_TABLES)
+            cur.execute(
+                "select article_id from article_projects where project_id = %s",
+                (project_id,),
+            )
+            article_ids = [row["article_id"] for row in cur.fetchall()]
+
+            candidates_rejected = 0
+            for table in _CANDIDATE_TABLES:
+                if table in existing and article_ids:
+                    cur.execute(
+                        f"""
+                        update {table}
+                        set status = 'rejected', article_id = null, updated_at = now()
+                        where project_id = %s and article_id = any(%s)
+                        """,
+                        (project_id, article_ids),
+                    )
+                    candidates_rejected += cur.rowcount or 0
+
+            _clear_project_derived_rows(cur, project_id, existing)
+
+            cur.execute("delete from article_projects where project_id = %s", (project_id,))
+            unlinked = cur.rowcount or 0
+
+            deleted = 0
+            if article_ids:
+                cur.execute(
+                    """
+                    delete from articles a
+                    where a.id = any(%s)
+                      and not exists (select 1 from article_projects ap where ap.article_id = a.id)
+                    """,
+                    (article_ids,),
+                )
+                deleted = cur.rowcount or 0
+
+        result = {
+            "project_id": project_id,
+            "articles_removed": unlinked,
+            "articles_deleted": deleted,
+            "articles_kept_in_other_projects": unlinked - deleted,
+            "candidates_rejected": candidates_rejected,
+        }
+        logger.warning(
+            "REMOVE PROJECT ARTICLES: project %s - %s unlinked, %s deleted, %s kept in other projects; by %r.",
+            project_id, unlinked, deleted, unlinked - deleted, actor,
+        )
+        return result
+    except ArticleRemovalConflict:
+        raise
+    except Exception as e:
+        _log_db_error("  project article removal error", e)
+        return None
+
+
+def delete_all_articles(actor=None):
+    """Deletes every article in every project. Admin-only at the route (see
+    main.py's DELETE /api/articles) - the dashboard no longer offers it; the
+    project-scoped remove_project_articles() above is what it uses instead.
+
+    Returns the number of articles deleted, or None on a database error.
+    """
     if not config.DATABASE_URL:
         logger.warning("Database credentials not set, skipping article delete.")
-        return 0
+        return None
 
     try:
-        db.execute("delete from articles")
-        return 1
+        with db.transaction() as cur:
+            _guard_article_removal(cur)
+            existing = _existing_tables(cur, _REMOVAL_TABLES)
+            for table in _CANDIDATE_TABLES:
+                if table in existing:
+                    cur.execute(
+                        f"""
+                        update {table}
+                        set status = 'rejected', article_id = null, updated_at = now()
+                        where article_id is not null
+                        """
+                    )
+            cur.execute("select id from projects")
+            for row in cur.fetchall():
+                _clear_project_derived_rows(cur, row["id"], existing)
+            cur.execute("delete from articles")
+            deleted = cur.rowcount or 0
+        logger.warning("DELETE ALL ARTICLES: %s row(s) removed by %r.", deleted, actor)
+        return deleted
+    except ArticleRemovalConflict:
+        raise
     except Exception as e:
         _log_db_error("  article delete error", e)
-        return 0
+        return None
 
 
 def delete_article(article_id):

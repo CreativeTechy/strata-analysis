@@ -221,6 +221,16 @@
   margin-bottom: 18px;
 }
 
+.articles-page-shell .articles-notice-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #14532d;
+  border-inline-start: 4px solid #15803d;
+  margin-bottom: 18px;
+}
+
 .articles-page-shell .articles-import-banner {
   display: flex;
   align-items: flex-start;

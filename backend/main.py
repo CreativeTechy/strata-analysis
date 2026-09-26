@@ -1500,19 +1500,101 @@ def trigger_analysis_run(
     }
 
 
-@app.delete("/api/articles")
-def delete_articles(user: dict = Depends(require_permission("articles.delete"))):
-    """Delete all stored articles from Postgres."""
-    from services.articles.store import delete_all_articles
+def _actor_name(user: dict):
+    return user.get("username") or user.get("email") or user.get("id")
 
-    deleted = delete_all_articles()
-    if not deleted:
-        detail = "Check database connection settings."
-        return {
-            "error": "Unable to delete articles.",
-            "detail": detail,
-        }
-    return {"ok": True}
+
+@app.delete("/api/articles")
+def delete_articles(confirm: str = "", user: dict = Depends(require_permission("articles.delete"))):
+    """Delete every project's articles. Admin-only, and only with the exact
+    confirmation phrase - the dashboard no longer offers this at all (it
+    removes one project's articles instead, see remove_project_articles_route
+    below); this stays for an administrator doing a deliberate full reset."""
+    from services.articles.store import ArticleRemovalConflict, DELETE_ALL_ARTICLES_CONFIRMATION, delete_all_articles
+
+    if not permissions_store.user_is_full_access(user):
+        raise HTTPException(status_code=403, detail="Only administrators can delete every project's articles.")
+    if confirm != DELETE_ALL_ARTICLES_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Pass ?confirm={DELETE_ALL_ARTICLES_CONFIRMATION.replace(" ", "%20")} to confirm this irreversible action.',
+        )
+
+    try:
+        deleted = delete_all_articles(actor=_actor_name(user))
+    except ArticleRemovalConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if deleted is None:
+        raise HTTPException(status_code=503, detail="Unable to delete articles. Check database connection settings.")
+    return {"ok": True, "deleted": deleted}
+
+
+def _active_run_summary(run):
+    if not run:
+        return None
+    return {
+        "id": run.get("id"),
+        "status": run.get("status"),
+        "articles_selected": run.get("articles_selected"),
+        "articles_analyzed": run.get("articles_analyzed"),
+    }
+
+
+@app.get("/api/projects/{project_id}/articles/removal-preview")
+def project_article_removal_preview(project_id: int, user: dict = Depends(require_permission("articles.delete"))):
+    """What removing this project's articles would affect - the numbers its
+    confirmation dialog shows before the user commits."""
+    from services.articles.store import preview_project_article_removal
+
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    counts = preview_project_article_removal(project_id)
+    if counts is None:
+        raise HTTPException(status_code=503, detail="Unable to read this project's articles.")
+    return {
+        "project": {"id": project.get("id"), "name": project.get("name")},
+        **counts,
+        "active_run": _active_run_summary(get_active_run_for_project(project_id)),
+    }
+
+
+@app.delete("/api/projects/{project_id}/articles")
+def remove_project_articles_route(
+    project_id: int,
+    payload: dict | None = None,
+    user: dict = Depends(require_permission("articles.delete")),
+):
+    """Remove every article from one project. Needs the project's exact name
+    in `confirm` - checked here, not only by the dashboard's disabled button -
+    and refuses while an analysis run for the project is in flight (its
+    workers would be writing analysis for articles being removed)."""
+    from services.articles.store import ArticleRemovalConflict, remove_project_articles
+
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    expected = str(project.get("name") or "").strip()
+    confirm = str((payload or {}).get("confirm") or "").strip()
+    if not confirm or confirm != expected:
+        raise HTTPException(status_code=400, detail="Type the project name exactly to confirm.")
+
+    if get_active_run_for_project(project_id):
+        raise HTTPException(
+            status_code=409,
+            detail="An analysis run is in progress for this project. Stop it before removing its articles.",
+        )
+
+    try:
+        result = remove_project_articles(project_id, actor=_actor_name(user))
+    except ArticleRemovalConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=503, detail="Unable to remove this project's articles. Nothing was changed.")
+    return {"ok": True, **result}
 
 
 @app.delete("/api/articles/{article_id}")

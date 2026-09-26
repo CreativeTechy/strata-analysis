@@ -19,9 +19,10 @@ import {
   ChevronDown,
   X,
 } from 'lucide-react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
 import LanguageSwitcher from './LanguageSwitcher.jsx';
+import { transferableIntelligenceScope } from '../lib/intelligenceScope.js';
 
 // The two experiences answer different questions and are kept visibly apart:
 // "Insights" is what people are saying (sentiment, opinions); "Monitoring" is
@@ -96,8 +97,10 @@ export default function Sidebar({
   const { t } = useTranslation(['nav', 'common']);
   const { user, hasPermission, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [openSections, setOpenSections] = useState(loadSectionState);
   const navSections = buildNavSections(t);
+  const isScopePage = ['/dashboard', '/reports'].includes(location.pathname);
 
   // On mobile the drawer always renders fully expanded; only the desktop rail collapses.
   const showCollapsed = collapsed && !mobileOpen;
@@ -171,10 +174,15 @@ export default function Sidebar({
           );
           if (!visible.length) return null;
 
-          const links = visible.map(({ to, label, icon: Icon }) => (
+          const links = visible.map(({ to, label, icon: Icon }) => {
+            const carriesScope = ['/dashboard', '/reports'].includes(to);
+            const destination = isScopePage && carriesScope
+              ? { pathname: to, search: transferableIntelligenceScope(location.search) }
+              : to;
+            return (
             <NavLink
               key={to}
-              to={to}
+              to={destination}
               className="btn-secondary sidebar-nav-link"
               style={navStyle}
               title={showCollapsed ? label : undefined}
@@ -182,7 +190,8 @@ export default function Sidebar({
             >
               <Icon size={18} /> {!showCollapsed && <span>{label}</span>}
             </NavLink>
-          ));
+            );
+          });
 
           // Collapsed desktop rail stays a flat icon list; no headers to toggle.
           if (showCollapsed) {
