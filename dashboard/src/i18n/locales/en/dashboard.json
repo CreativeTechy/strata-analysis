@@ -196,6 +196,8 @@
     "generateError": "Couldn't generate an AI trend summary right now — showing a quick overview instead.",
     "trendSummaryErrorFallback": "Failed to generate the trend summary",
     "sentimentNote": "Sentiment is calculated from the analyzed article content already stored for this project.",
+    "sentimentScoreAria": "Net sentiment score: {{score}} out of 100",
+    "sentimentScoreHelp": "Net sentiment ranges from -100 (all negative) to +100 (all positive).",
     "keyword": {
       "noKeywordsTitle": "No keywords configured",
       "noKeywordsBody": "Add keywords to {{scope}} to track how often they show up in analyzed articles over time.",
