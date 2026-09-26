@@ -100,6 +100,44 @@ describe('App routing', () => {
     expect(dashboard).toHaveAttribute('data-run-id', '')
   })
 
+  it('clears a bookmarked run scope when auto-selecting the only available project', async () => {
+    useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
+    fetch.mockImplementation((url) => {
+      if (String(url).startsWith('/api/projects')) {
+        return Promise.resolve(emptyJsonResponse({ projects: [{ id: 1, name: 'Acme Study', status: 'active' }] }))
+      }
+      return Promise.resolve(emptyJsonResponse({}))
+    })
+    // No project selected yet (fresh localStorage), but the URL carries a run
+    // scope that belongs to some other, already-forgotten project - the auto-
+    // pick-a-default-project path must not carry that stale run_id forward.
+    renderAppAt('/dashboard?run_id=stale-run')
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Current location')).not.toHaveTextContent('run_id=stale-run'))
+    expect(screen.getByTestId('dashboard-overview')).toHaveAttribute('data-run-id', '')
+  })
+
+  it('clears a stale run scope when the currently selected project disappears from the list', async () => {
+    useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
+    window.localStorage.setItem('strata.selectedProjectId', '1')
+    fetch.mockImplementation((url) => {
+      // Project 1 (the one selected via localStorage) is gone - e.g. deleted -
+      // only project 2 remains.
+      if (String(url).startsWith('/api/projects')) {
+        return Promise.resolve(emptyJsonResponse({ projects: [{ id: 2, name: 'Other Study', status: 'active' }] }))
+      }
+      return Promise.resolve(emptyJsonResponse({}))
+    })
+    renderAppAt('/dashboard?run_id=run-belonging-to-project-1')
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Current location')).not.toHaveTextContent('run_id=run-belonging-to-project-1'))
+    expect(screen.getByTestId('dashboard-overview')).toHaveAttribute('data-run-id', '')
+
+    window.localStorage.removeItem('strata.selectedProjectId')
+  })
+
   it('renders the reports view with a project scope selector and sync status at /reports', async () => {
     useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
     fetch.mockImplementation((url) => {

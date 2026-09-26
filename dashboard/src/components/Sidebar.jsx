@@ -100,6 +100,7 @@ export default function Sidebar({
   const location = useLocation();
   const [openSections, setOpenSections] = useState(loadSectionState);
   const navSections = buildNavSections(t);
+  const isScopePage = ['/dashboard', '/reports'].includes(location.pathname);
 
   // On mobile the drawer always renders fully expanded; only the desktop rail collapses.
   const showCollapsed = collapsed && !mobileOpen;
@@ -174,7 +175,6 @@ export default function Sidebar({
           if (!visible.length) return null;
 
           const links = visible.map(({ to, label, icon: Icon }) => {
-            const isScopePage = ['/dashboard', '/reports'].includes(location.pathname);
             const carriesScope = ['/dashboard', '/reports'].includes(to);
             const destination = isScopePage && carriesScope
               ? { pathname: to, search: transferableIntelligenceScope(location.search) }
