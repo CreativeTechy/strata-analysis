@@ -315,6 +315,7 @@ create table if not exists public.articles (
     sentiment_score           numeric,
     sentiment_low_confidence  boolean not null default false,
     sentiment_model           text,
+    sentiment_status          text,
     relevance_score           numeric,
 
     -- Stage output: classification.
@@ -326,6 +327,10 @@ create table if not exists public.articles (
     article_tone              text,
     article_tone_confidence   numeric,
     classification_model      text,
+    classification_status     text,
+    category_status           text,
+    writer_tone_status        text,
+    article_tone_status       text,
 
     -- Stage output: structured extraction and entities.
     insight_json              jsonb default '{}'::jsonb,
@@ -378,7 +383,17 @@ create table if not exists public.articles (
         check (published_precision is null
                or published_precision in ('exact', 'day', 'unknown')),
     constraint articles_analysis_status_check
-        check (analysis_status in ('pending', 'processing', 'success', 'failed', 'partial'))
+        check (analysis_status in ('pending', 'processing', 'success', 'failed', 'partial')),
+    constraint articles_sentiment_status_check
+        check (sentiment_status is null or sentiment_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_classification_status_check
+        check (classification_status is null or classification_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_category_status_check
+        check (category_status is null or category_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_writer_tone_status_check
+        check (writer_tone_status is null or writer_tone_status in ('ran', 'skipped_model_unavailable', 'failed')),
+    constraint articles_article_tone_status_check
+        check (article_tone_status is null or article_tone_status in ('ran', 'skipped_model_unavailable', 'failed'))
 );
 
 -- `create table if not exists` does not add columns to an existing table.
@@ -386,6 +401,16 @@ create table if not exists public.articles (
 -- baseline upgrades an existing database before the indexes below are built.
 alter table public.articles
     add column if not exists source_domain text;
+alter table public.articles
+    add column if not exists sentiment_status text;
+alter table public.articles
+    add column if not exists classification_status text;
+alter table public.articles
+    add column if not exists category_status text;
+alter table public.articles
+    add column if not exists writer_tone_status text;
+alter table public.articles
+    add column if not exists article_tone_status text;
 alter table public.articles
     add column if not exists coverage_evidence jsonb not null default '{}'::jsonb;
 
@@ -448,6 +473,7 @@ create index if not exists articles_sentiment_idx on public.articles (sentiment)
 create index if not exists articles_article_category_idx on public.articles (article_category);
 create index if not exists articles_source_language_idx on public.articles (source_language);
 create index if not exists articles_analysis_status_idx on public.articles (analysis_status);
+create index if not exists articles_sentiment_status_idx on public.articles (sentiment_status);
 create index if not exists articles_pipeline_run_id_idx on public.articles (pipeline_run_id);
 create index if not exists articles_story_idx on public.articles (story_id);
 create index if not exists articles_verified_idx on public.articles (verified);

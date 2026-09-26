@@ -29,6 +29,7 @@ SYNTHETIC_SOURCE_PREFIX = "document://"
 ARTICLES_SELECT = (
     "id,url,source,source_url,title,author,published,text,fetched_at,summary,"
     "sentiment,relevance_score,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,"
+    "sentiment_status,classification_status,analysis_status,"
     "insight_json,analysis_model,"
     "analysis_prompt_version,analyzed_at,organizations,entities,topics,key_points,"
     "risks,opportunities,brands,car_models,embedding_json,embedding_model,embedding_source,embedded_at,created_at,"
@@ -255,7 +256,7 @@ def list_article_ids_for_source_host(project_id, host):
     return matches
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None):
     clauses = []
     params = []
 
@@ -275,6 +276,20 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     if sentiment_value and sentiment_value != "all":
         clauses.append("sentiment = %s")
         params.append(sentiment_value)
+        clauses.append("sentiment_status = 'ran'")
+
+    status_value = _normalize_text(status).lower()
+    if status_value == "pending":
+        clauses.append("analysis_status in ('pending', 'processing')")
+    elif status_value == "failed":
+        clauses.append("(analysis_status in ('failed', 'partial') or sentiment_status = 'failed')")
+    elif status_value == "not_assessed":
+        clauses.append(
+            "analysis_status = 'success' and "
+            "(sentiment_status is null or sentiment_status = 'skipped_model_unavailable')"
+        )
+    elif status_value in {"assessed", "success"}:
+        clauses.append("analysis_status = 'success' and sentiment_status = 'ran'")
 
     category_value = _normalize_category(category)
     if category_value and category_value != "all":
@@ -342,7 +357,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None, max_limit=MAX_LIMIT):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -361,6 +376,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         source_host_ids=source_host_ids,
         added_from=added_from,
         added_to=added_to,
+        status=status,
     )
 
     try:
@@ -676,10 +692,10 @@ def source_trust_summary_for_rows(rows: list[dict], project_id=None) -> dict:
 
 
 def get_analysis_status_counts(project_id=None):
-    """Article counts grouped by analysis_status (pending/processing/success/
-    failed/partial), optionally scoped to a project - lets an operator see
-    how many articles need reprocessing. {} on a database that hasn't had
-    schema.sql re-run yet (analysis_status doesn't exist).
+    """Counts grouped by user-visible assessment state.
+
+    A row is only ``success`` when sentiment actually ran; the historical
+    success + model-less placeholder is reported as ``not_assessed``.
     """
     if not config.DATABASE_URL:
         return {}
@@ -687,17 +703,28 @@ def get_analysis_status_counts(project_id=None):
         if project_id is not None:
             rows = db.fetch_all(
                 """
-                select a.analysis_status, count(*)::int as total
+                select case
+                         when a.analysis_status in ('pending', 'processing') then a.analysis_status
+                         when a.analysis_status in ('failed', 'partial') or a.sentiment_status = 'failed' then 'failed'
+                         when a.sentiment_status = 'ran' then 'success'
+                         else 'not_assessed'
+                       end as analysis_status, count(*)::int as total
                 from articles a
                 join article_projects ap on ap.article_id = a.id
                 where ap.project_id = %s
-                group by a.analysis_status
+                group by 1
                 """,
                 (int(project_id),),
             )
         else:
             rows = db.fetch_all(
-                "select analysis_status, count(*)::int as total from articles group by analysis_status"
+                """select case
+                         when analysis_status in ('pending', 'processing') then analysis_status
+                         when analysis_status in ('failed', 'partial') or sentiment_status = 'failed' then 'failed'
+                         when sentiment_status = 'ran' then 'success'
+                         else 'not_assessed'
+                       end as analysis_status, count(*)::int as total
+                   from articles group by 1"""
             )
         return {(row.get("analysis_status") or "unknown"): int(row.get("total") or 0) for row in rows or []}
     except Exception:
@@ -746,9 +773,12 @@ _ARTICLE_ANALYSIS_BASE_COLUMNS = (
 
 _ARTICLE_ANALYSIS_METADATA_COLUMNS = (
     "sentiment_score", "sentiment_low_confidence", "sentiment_model",
+    "sentiment_status",
     "category_confidence", "writer_tone_confidence", "article_tone_confidence",
     "region_confidence",
-    "classification_model", "extraction_model", "analysis_pipeline_version",
+    "classification_model", "classification_status",
+    "category_status", "writer_tone_status", "article_tone_status",
+    "extraction_model", "analysis_pipeline_version",
     "source_language", "source_language_confidence", "embedding_dimensions",
     "source_domain",
     "analysis_status", "analysis_error", "analysis_started_at", "analysis_finished_at",
@@ -778,6 +808,19 @@ def _article_analysis_select_columns():
     return list(_ARTICLE_ANALYSIS_BASE_COLUMNS) + metadata_columns
 
 
+def _classification_substage_ran(row: dict, status_key: str) -> bool:
+    """Whether one specific classification sub-stage (category/writer_tone/
+    article_tone) actually produced a result, not just whether *any* of the
+    three did - classification_status is an OR across all three independent
+    classify_* calls (see analysis/orchestrator.py's _combined_stage_outcome),
+    so it can read "ran" while this particular sub-stage fell back. Falls
+    back to the combined flag when the per-stage column isn't there yet
+    (older row/database predating its migration)."""
+    if status_key in row:
+        return row.get(status_key) == "ran"
+    return row.get("classification_status") == "ran" or "classification_status" not in row
+
+
 def _shape_article_analysis(row: dict) -> dict:
     """Normalize one articles row into the analysis-detail response shape -
     the single source of truth for what GET .../analysis returns, so a
@@ -797,6 +840,8 @@ def _shape_article_analysis(row: dict) -> dict:
         "published": row.get("published"),
         "text": row.get("text"),
         "sentiment": _normalize_sentiment(row.get("sentiment")) or "neutral",
+        "sentiment_status": row.get("sentiment_status"),
+        "classification_status": row.get("classification_status"),
         "article_category": _normalize_article_category(row.get("article_category")),
         "writer_tone": writer_tone,
         "article_tone": article_tone,
@@ -810,11 +855,15 @@ def _shape_article_analysis(row: dict) -> dict:
         "analysis_model": row.get("analysis_model"),
         "analysis_pipeline_version": row.get("analysis_pipeline_version") or row.get("analysis_prompt_version"),
         "confidence": {
-            "sentiment": row.get("sentiment_score"),
+            "sentiment": row.get("sentiment_score")
+            if row.get("sentiment_status") == "ran" or "sentiment_status" not in row else None,
             "sentiment_low_confidence": bool(row.get("sentiment_low_confidence")),
-            "category": row.get("category_confidence"),
-            "writer_tone": row.get("writer_tone_confidence"),
-            "article_tone": row.get("article_tone_confidence"),
+            "category": row.get("category_confidence")
+            if _classification_substage_ran(row, "category_status") else None,
+            "writer_tone": row.get("writer_tone_confidence")
+            if _classification_substage_ran(row, "writer_tone_status") else None,
+            "article_tone": row.get("article_tone_confidence")
+            if _classification_substage_ran(row, "article_tone_status") else None,
             "region": row.get("region_confidence"),
         },
         "source_language": row.get("source_language"),

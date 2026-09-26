@@ -36,7 +36,9 @@
     "searchPlaceholder": "ابحث في العنوان أو الملخص أو المصدر...",
     "searchAriaLabel": "البحث في المقالات",
     "clearSearchAriaLabel": "مسح البحث",
-    "allSentiments": "جميع المشاعر"
+    "allSentiments": "جميع المشاعر",
+    "allStatuses": "جميع الحالات",
+    "statusAriaLabel": "تصفية المقالات حسب حالة التقييم"
   },
   "sort": {
     "publishedDesc": "الأحدث أولاً",
@@ -120,7 +122,16 @@
     "positive": "إيجابي",
     "negative": "سلبي",
     "neutral": "محايد",
-    "mixed": "متباين"
+    "mixed": "متباين",
+    "pending": "قيد الانتظار",
+    "failed": "فشل",
+    "notAssessed": "لم يُقيَّم"
+  },
+  "status": {
+    "assessed": "تم التقييم",
+    "pending": "قيد الانتظار",
+    "failed": "فشل",
+    "notAssessed": "لم يُقيَّم"
   },
   "common": {
     "byAuthor": "بقلم {{author}}",

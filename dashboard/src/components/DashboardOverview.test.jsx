@@ -4,16 +4,19 @@ import { MemoryRouter } from 'react-router-dom';
 import DashboardOverview from './DashboardOverview.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import i18n from '../i18n/index.js';
+import { useAuth } from '../auth/useAuth.js';
 
 vi.mock('../api/projectsApi.js', () => ({ getIdeaComparisons: vi.fn() }));
 vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => null }));
 // Charts need real layout to draw anything, so they're stubbed out - these
 // tests are about the text around them.
 vi.mock('./ResponsiveChartContainer.jsx', () => ({ default: () => null }));
+vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
 
 const PROJECT = { id: 1, name: 'Acme Study', mode: 'opinion' };
 
 const INTELLIGENCE = {
+  project_id: 1,
   total: 10, positive: 5, negative: 3, neutral: 2, mixed: 0, net_sentiment: 20, document_count: 2,
   sentiment_over_time: [{ date: '2026-09-01', total: 10, positive: 5, negative: 3, neutral: 2 }],
   source_trust: {
@@ -78,6 +81,7 @@ describe('DashboardOverview', () => {
     }
     getIdeaComparisons.mockReset();
     getIdeaComparisons.mockResolvedValue({ ok: true, data: { comparisons: [] } });
+    useAuth.mockReturnValue({ hasPermission: () => true });
   });
 
   it('shows the sentiment trend and top concerns on the first screen', async () => {
