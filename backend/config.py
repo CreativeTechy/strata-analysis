@@ -298,7 +298,7 @@ REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE = int(
 # articles' summaries/topics/key points), so it gets a longer budget than the
 # general chat_completion() default.
 REPORT_VARIATION_LLM_TIMEOUT_SECONDS = int(
-    os.environ.get("REPORT_VARIATION_LLM_TIMEOUT_SECONDS", "120") or 360
+    os.environ.get("REPORT_VARIATION_LLM_TIMEOUT_SECONDS", "360") or 360
 )
 
 

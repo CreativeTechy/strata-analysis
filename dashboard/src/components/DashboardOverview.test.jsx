@@ -106,6 +106,30 @@ describe('DashboardOverview', () => {
     await screen.findByText(/No cross-source comparisons yet/);
   });
 
+  it('paginates ideas 3 at a time and resets to page 1 when the filter changes', async () => {
+    renderDashboard();
+    const card = ideasCard();
+
+    fireEvent.click(within(card).getByRole('tab', { name: 'All ideas' }));
+    expect(within(card).getByText('Great customer support')).toBeInTheDocument();
+    expect(within(card).getByText('Checkout keeps failing')).toBeInTheDocument();
+    expect(within(card).getByText('Add a dark mode')).toBeInTheDocument();
+    expect(within(card).queryByText('Prices went up')).not.toBeInTheDocument();
+    expect(within(card).getByText('Page 1 of 2')).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Next' }));
+    expect(within(card).getByText('Prices went up')).toBeInTheDocument();
+    expect(within(card).queryByText('Great customer support')).not.toBeInTheDocument();
+    expect(within(card).getByText('Page 2 of 2')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    fireEvent.click(within(card).getByRole('tab', { name: 'Concerns' }));
+    expect(within(card).getByText('Checkout keeps failing')).toBeInTheDocument();
+    expect(within(card).getByText('Prices went up')).toBeInTheDocument();
+    expect(within(card).queryByText(/^Page \d+ of \d+$/)).not.toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
   it('shows an empty state when there are ideas but none are concerns', async () => {
     renderDashboard({
       intelligence: { ...INTELLIGENCE, insights: { ...INTELLIGENCE.insights, frequent_ideas: [{ idea: 'Love it', type: 'praise', frequency_estimate: 1 }] } },
