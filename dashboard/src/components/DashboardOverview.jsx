@@ -19,6 +19,7 @@ import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, forma
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PLATFORM_LIST_PAGE_SIZE = 5;
+const IDEAS_PAGE_SIZE = 3;
 const PERIODS = [
   { key: '7d', labelKey: 'dashboard:periods.last7d' },
   { key: '30d', labelKey: 'dashboard:periods.last30d' },
@@ -292,6 +293,7 @@ export default function DashboardOverview({
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   const [platformListPage, setPlatformListPage] = useState(0);
+  const [ideasPage, setIdeasPage] = useState(0);
   const [ideaFilter, setIdeaFilter] = useState('concerns');
   const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
     try {
@@ -378,8 +380,11 @@ export default function DashboardOverview({
 
   const frequentIdeas = data.insights?.frequent_ideas || [];
   const concernIdeas = frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
-  const visibleIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
-  const maxIdeaFrequency = Math.max(1, ...visibleIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
+  const filteredIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
+  const ideasTotalPages = Math.max(1, Math.ceil(filteredIdeas.length / IDEAS_PAGE_SIZE));
+  const safeIdeasPage = Math.min(ideasPage, ideasTotalPages - 1);
+  const visibleIdeas = filteredIdeas.slice(safeIdeasPage * IDEAS_PAGE_SIZE, (safeIdeasPage + 1) * IDEAS_PAGE_SIZE);
+  const maxIdeaFrequency = Math.max(1, ...filteredIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
 
   const platformListTotalPages = Math.max(1, Math.ceil(sortedPlatformData.length / PLATFORM_LIST_PAGE_SIZE));
   const safePlatformListPage = Math.min(platformListPage, platformListTotalPages - 1);
@@ -461,12 +466,35 @@ export default function DashboardOverview({
                 <span>{ideaFilter === 'concerns' ? t('dashboard:topConcerns.subtitle') : t('dashboard:ideas.subtitle')}</span>
               </div>
               <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('dashboard:topConcerns.filterAria')}>
-                <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => setIdeaFilter('concerns')}>{t('dashboard:topConcerns.concernsTab')}</button>
-                <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => setIdeaFilter('all')}>{t('dashboard:topConcerns.allTab')}</button>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => { setIdeaFilter('concerns'); setIdeasPage(0); }}>{t('dashboard:topConcerns.concernsTab')}</button>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => { setIdeaFilter('all'); setIdeasPage(0); }}>{t('dashboard:topConcerns.allTab')}</button>
               </div>
             </div>
             {visibleIdeas.map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={maxIdeaFrequency} projectId={selectedProjectId} />)}
             {!visibleIdeas.length && <p className="intelligence-empty">{ideaFilter === 'concerns' ? t('dashboard:topConcerns.empty') : t('dashboard:ideas.empty')}</p>}
+            {ideasTotalPages > 1 ? (
+              <div className="intelligence-idea-comparison-pagination">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIdeasPage((current) => Math.max(0, current - 1))}
+                  disabled={safeIdeasPage === 0}
+                >
+                  <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
+                </button>
+                <span className="intelligence-idea-comparison-pagination-status">
+                  {t('common:pagination.pageOfTotal', { page: safeIdeasPage + 1, totalPages: ideasTotalPages })}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIdeasPage((current) => Math.min(ideasTotalPages - 1, current + 1))}
+                  disabled={safeIdeasPage >= ideasTotalPages - 1}
+                >
+                  {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
+                </button>
+              </div>
+            ) : null}
           </article>
         </section>
 
