@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import ReportsView from './ReportsView.jsx'
 import i18n from '../i18n/index.js'
 import { exportReportSummaryPdf } from '../api/projectsApi.js'
@@ -62,7 +62,7 @@ describe('ReportsView', () => {
     }
     render(<ReportsView {...baseProps({ intelligence })} />)
     expect(screen.queryByText('4')).not.toBeInTheDocument()
-    expect(screen.getByText('No data yet')).toBeInTheDocument()
+    expect(screen.getByText('0')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
@@ -85,10 +85,22 @@ describe('ReportsView', () => {
     const runs = [{ id: 'run-1', sequence_number: 1, finished_at: '2026-01-01T00:00:00Z' }]
     render(<ReportsView {...baseProps({ projectRuns: runs, reportRunId: 'run-1' })} />)
     expect(screen.getByRole('tab', { name: 'Analysis run' })).toBeInTheDocument()
-    // Appears twice by design: the run tab strip and the "Range" summary chip.
+    // Appears twice by design: the run tab strip and the prominent scope-bar range label.
     expect(screen.getAllByText(/Pipeline #1:/).length).toBeGreaterThan(0)
   })
 })
+
+// The Export Summary button now opens a confirmation dialog (project, scope,
+// output language, included sections) before the actual download starts -
+// these helpers drive that extra step so each test below still exercises the
+// same underlying export flow.
+function openExportDialog() {
+  fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+}
+
+function confirmExport(name = /Download PDF/i) {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
 
 describe('ReportsView - Export Summary', () => {
   let createObjectURL
@@ -111,7 +123,8 @@ describe('ReportsView - Export Summary', () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     render(<ReportsView {...baseProps()} />)
-    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+    openExportDialog()
+    confirmExport()
 
     expect(await screen.findByText('Preparing...')).toBeInTheDocument()
     expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: undefined })
@@ -131,7 +144,8 @@ describe('ReportsView - Export Summary', () => {
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     render(<ReportsView {...baseProps({ reportRunId: 'run-42' })} />)
-    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+    openExportDialog()
+    confirmExport()
 
     await waitFor(() => expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: 'run-42' }))
   })
@@ -140,7 +154,8 @@ describe('ReportsView - Export Summary', () => {
     exportReportSummaryPdf.mockRejectedValue(Object.assign(new Error('Report generation failed'), { detail: 'Report generation failed' }))
 
     render(<ReportsView {...baseProps()} />)
-    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+    openExportDialog()
+    confirmExport()
 
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't export the report summary.")
     // The server's own detail still shows next to the translated message.
@@ -152,7 +167,8 @@ describe('ReportsView - Export Summary', () => {
     exportReportSummaryPdf.mockRejectedValue(new TypeError('Failed to fetch'))
 
     render(<ReportsView {...baseProps()} />)
-    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+    openExportDialog()
+    confirmExport()
 
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't export the report summary.")
     expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument()
@@ -163,6 +179,17 @@ describe('ReportsView - Export Summary', () => {
     expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
+  it('shows the project, scope, and included sections before exporting', () => {
+    render(<ReportsView {...baseProps()} />)
+    openExportDialog()
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Acme Study')).toBeInTheDocument()
+    expect(within(dialog).getByText('Last 30 days')).toBeInTheDocument()
+    expect(within(dialog).getByText('Executive summary')).toBeInTheDocument()
+    expect(within(dialog).getByText('Sentiment by demographics')).toBeInTheDocument()
+  })
+
   it('prevents a duplicate request while one is already in flight', async () => {
     let resolveExport
     exportReportSummaryPdf.mockReturnValue(new Promise((resolve) => { resolveExport = resolve }))
@@ -170,7 +197,10 @@ describe('ReportsView - Export Summary', () => {
 
     render(<ReportsView {...baseProps()} />)
     const button = screen.getByRole('button', { name: /Export Summary/i })
-    fireEvent.click(button)
+    openExportDialog()
+    confirmExport()
+    // The dialog is gone and the trigger button is now mid-export - further
+    // clicks on it must not start a second request.
     fireEvent.click(button)
     fireEvent.click(button)
 
@@ -196,6 +226,7 @@ describe('ReportsView - Arabic', () => {
     exportReportSummaryPdf.mockRejectedValue(new Error('boom'))
     render(<ReportsView {...baseProps()} />)
     fireEvent.click(screen.getByRole('button', { name: /تصدير الملخص/ }))
+    fireEvent.click(screen.getByRole('button', { name: /تنزيل PDF/ }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('تعذّر تصدير ملخص التقرير.')
   })

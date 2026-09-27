@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3, Download } from 'lucide-react';
+import { RefreshCw, FolderKanban, CalendarClock, ChevronRight, Activity, CheckCircle2, AlertCircle, BarChart3, Download, Languages, ListChecks } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import StatsOverview from './StatsOverview';
+import ConfirmModal from './ConfirmModal.jsx';
 import { MetricValueSkeleton, NoProjectsState, ReportSkeleton } from './IntelligenceEmptyState.jsx';
 import { exportReportSummaryPdf } from '../api/projectsApi.js';
 import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
-import { REPORT_PERIODS, SENTIMENT_COLORS, pipelineRunNumber } from '../lib/appHelpers.js';
-import { formatNumber, formatPercent, formatRelativeTime } from '../lib/i18nFormat.js';
+import { REPORT_PERIODS, pipelineRunNumber } from '../lib/appHelpers.js';
+import { formatNumber, formatRelativeTime } from '../lib/i18nFormat.js';
 
 // Sanitized the same way the backend names the file (main.py's
 // export_report_summary_pdf) - not load-bearing for correctness (the
@@ -50,24 +51,6 @@ export default function ReportsView({
   // placeholder sentiment), so nothing here reads it until the scope is ready.
   const totalArticles = isReady ? Number(liveReport.total) || 0 : 0;
 
-  // Duplicated (rather than imported from appHelpers.js's
-  // dominantSentimentFromStats) because that shared helper bakes in an
-  // English label and other in-progress work depends on its current
-  // signature - recomputing the same small ranking here keeps this page's
-  // translation self-contained without touching a file other areas rely on.
-  const dominantSentiment = (() => {
-    const total = totalArticles;
-    if (!total) return { label: t('sentimentLabels.noDataYet'), color: 'var(--text-light)' };
-    const entries = ['positive', 'negative', 'neutral', 'mixed'].map((key) => ({
-      key, value: Number(liveReport[key]) || 0,
-    })).sort((a, b) => b.value - a.value);
-    const top = entries[0];
-    return {
-      label: `${t(`sentimentLabels.${top.key}`)} - ${formatPercent(top.value / total, locale)}`,
-      color: SENTIMENT_COLORS[top.key],
-    };
-  })();
-
   const runTabLabel = (run, index) => t('runLabel', {
     number: pipelineRunNumber(run, index),
     date: run ? formatDateTimeShort(run) : '',
@@ -83,6 +66,14 @@ export default function ReportsView({
 
   const [exportingSummary, setExportingSummary] = useState(false);
   const [exportError, setExportError] = useState(null);
+  const [exportPreviewOpen, setExportPreviewOpen] = useState(false);
+
+  const scopeRangeLabel = reportRunId
+    ? runTabLabel(
+        projectRuns.find((run) => run.id === reportRunId),
+        projectRuns.findIndex((run) => run.id === reportRunId),
+      )
+    : t(`periods.${reportPeriod}`);
 
   const handleExportSummary = async () => {
     if (exportingSummary || selectedProjectId == null) return;
@@ -137,6 +128,16 @@ export default function ReportsView({
     };
   }
 
+  const exportedSections = [
+    t('dashboard:report.sections.executiveSummary'),
+    t('variation.title'),
+    t('dashboard:report.sections.sentimentAnalysis'),
+    t('dashboard:report.sections.keywordExistence'),
+    t('dashboard:report.sections.volumeTrend'),
+    t('dashboard:report.sections.categorizedFeedback'),
+    t('dashboard:report.sections.sentimentByDemographics'),
+  ];
+
   return (
     <div className="content-shell">
       <header className="report-header">
@@ -154,33 +155,6 @@ export default function ReportsView({
           </div>
 
           <div className="report-header-actions">
-            <div className="report-project-control">
-              <label className="report-project-control-label" htmlFor="reports-project-select">
-                <FolderKanban size={13} /> {t('header.projectScopeLabel')}
-              </label>
-              <div className="report-project-select-wrap">
-                <FolderKanban size={16} aria-hidden="true" />
-                <select
-                  id="reports-project-select"
-                  className="filter-select report-project-select"
-                  value={selectedProjectId ?? ''}
-                  onChange={(e) => onSelectedProjectIdChange(e.target.value ? Number(e.target.value) : null)}
-                  disabled={isLoadingProjects || !hasProjects}
-                  aria-label={t('header.projectScopeAriaLabel')}
-                >
-                  {hasProjects ? (
-                    projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">{t('header.noProjectsYet')}</option>
-                  )}
-                </select>
-              </div>
-            </div>
-
             <button
               type="button"
               className="btn-secondary toolbar-button report-refresh-btn"
@@ -194,8 +168,8 @@ export default function ReportsView({
 
             <button
               type="button"
-              className="btn-secondary toolbar-button report-export-summary-btn"
-              onClick={handleExportSummary}
+              className="btn-primary toolbar-button report-export-summary-btn"
+              onClick={() => setExportPreviewOpen(true)}
               disabled={exportingSummary || !hasProjects || selectedProjectId == null || !totalArticles}
               aria-busy={exportingSummary}
               title={!totalArticles ? t('export.noArticlesTitle') : t('export.title')}
@@ -213,7 +187,42 @@ export default function ReportsView({
           </p>
         ) : null}
 
+        <div className="report-scope-bar">
+          <div className="report-project-control">
+            <label className="report-project-control-label" htmlFor="reports-project-select">
+              <FolderKanban size={13} /> {t('header.projectScopeLabel')}
+            </label>
+            <div className="report-project-select-wrap">
+              <FolderKanban size={16} aria-hidden="true" />
+              <select
+                id="reports-project-select"
+                className="filter-select report-project-select"
+                value={selectedProjectId ?? ''}
+                onChange={(e) => onSelectedProjectIdChange(e.target.value ? Number(e.target.value) : null)}
+                disabled={isLoadingProjects || !hasProjects}
+                aria-label={t('header.projectScopeAriaLabel')}
+              >
+                {hasProjects ? (
+                  projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
+                    </option>
+                  ))
+                ) : (
+                  <option value="">{t('header.noProjectsYet')}</option>
+                )}
+              </select>
+            </div>
+          </div>
+
+          <span className="report-scope-range" dir="auto">
+            <CalendarClock size={14} aria-hidden="true" />
+            {t('summaryChips.range')}: <strong>{scopeRangeLabel}</strong>
+          </span>
+        </div>
+
         <div className="report-filter-row">
+          <p className="report-filter-row-note">{t('header.scopeFiltersNote')}</p>
           <div className="filter-tabs-shell">
             <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('header.filterTypeAriaLabel')}>
               <button
@@ -289,45 +298,46 @@ export default function ReportsView({
           </div>
         </div>
 
-        <ul className="report-summary-chips" aria-label={t('summaryChips.ariaLabel')}>
-          <li className="report-chip">
-            <FolderKanban size={13} aria-hidden="true" />
-            <span className="report-chip-label">{t('summaryChips.project')}</span>
-            <strong dir="auto">{selectedProject ? selectedProject.name : t('summaryChips.noneSelected')}</strong>
-          </li>
-          <li className="report-chip">
+        <p className="report-scope-secondary">
+          <span className="report-scope-stat">
             <Activity size={13} aria-hidden="true" />
-            <span className="report-chip-label">{t('summaryChips.articlesAnalyzed')}</span>
-            <strong>{showLoading ? <MetricValueSkeleton /> : formatNumber(totalArticles, locale)}</strong>
-          </li>
-          <li className="report-chip">
-            <BarChart3 size={13} aria-hidden="true" style={{ color: dominantSentiment.color }} />
-            <span className="report-chip-label">{t('summaryChips.dominantSentiment')}</span>
-            <strong style={{ color: dominantSentiment.color }}>{showLoading ? <MetricValueSkeleton /> : dominantSentiment.label}</strong>
-          </li>
-          <li className="report-chip">
-            <CalendarClock size={13} aria-hidden="true" />
-            <span className="report-chip-label">{t('summaryChips.range')}</span>
-            <strong>
-              {reportRunId
-                ? runTabLabel(
-                    projectRuns.find((run) => run.id === reportRunId),
-                    projectRuns.findIndex((run) => run.id === reportRunId),
-                  )
-                : t(`periods.${reportPeriod}`)}
-            </strong>
-          </li>
-          <li
-            className={`report-chip report-sync-chip report-sync-${syncStatus.tone}`}
+            <strong>{showLoading ? <MetricValueSkeleton /> : formatNumber(totalArticles, locale)}</strong> {t('summaryChips.articlesAnalyzed')}
+          </span>
+          <span className="report-scope-divider" aria-hidden="true">·</span>
+          <span
+            className={`report-scope-stat report-sync-${syncStatus.tone}`}
             role="status"
             aria-live="polite"
           >
             {syncStatus.icon}
-            <span className="report-chip-label">{syncStatus.label}</span>
-            <strong dir="auto">{syncStatus.detail}</strong>
-          </li>
-        </ul>
+            <span>{syncStatus.label}</span>
+            <span dir="auto">{syncStatus.detail}</span>
+          </span>
+        </p>
       </header>
+
+      <ConfirmModal
+        open={exportPreviewOpen}
+        title={t('export.dialogTitle')}
+        confirmLabel={t('export.confirmButton')}
+        onConfirm={() => { setExportPreviewOpen(false); handleExportSummary(); }}
+        onClose={() => setExportPreviewOpen(false)}
+      >
+        <div className="report-export-preview">
+          <dl className="report-export-preview-facts">
+            <div><dt>{t('export.dialogProjectLabel')}</dt><dd dir="auto">{selectedProject ? selectedProject.name : t('summaryChips.noneSelected')}</dd></div>
+            <div><dt>{t('export.dialogScopeLabel')}</dt><dd>{scopeRangeLabel}</dd></div>
+            <div>
+              <dt><Languages size={13} aria-hidden="true" /> {t('export.dialogLanguageLabel')}</dt>
+              <dd>{t('export.dialogLanguageValue')}</dd>
+            </div>
+          </dl>
+          <p className="report-export-preview-includes-title"><ListChecks size={14} aria-hidden="true" /> {t('export.dialogIncludesTitle')}</p>
+          <ul className="report-export-preview-includes">
+            {exportedSections.map((title) => <li key={title}>{title}</li>)}
+          </ul>
+        </div>
+      </ConfirmModal>
 
       {selectedProject?.mode === 'competitor' ? (
         <CompetitorPulseCard studyId={selectedProject.id} backTo="/reports" backLabel={t('backToReports')} />

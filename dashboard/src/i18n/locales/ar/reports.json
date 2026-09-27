@@ -19,14 +19,13 @@
     "dateRangeTab": "النطاق الزمني",
     "analysisRunTab": "عملية تحليل",
     "runFilterAriaLabel": "التصفية حسب عملية التحليل",
-    "dateRangeFilterAriaLabel": "النطاق الزمني للتقرير"
+    "dateRangeFilterAriaLabel": "النطاق الزمني للتقرير",
+    "scopeFiltersNote": "تحدّد ألسنة النطاق الزمني / عملية التحليل هذه نطاق التقرير بأكمله أدناه."
   },
   "summaryChips": {
     "ariaLabel": "ملخص التقرير",
-    "project": "المشروع",
     "noneSelected": "لم يتم التحديد",
-    "articlesAnalyzed": "المقالات المُحلَّلة",
-    "dominantSentiment": "المشاعر السائدة",
+    "articlesAnalyzed": "مقالة مُحلَّلة",
     "range": "النطاق",
     "syncFailed": "فشلت المزامنة",
     "syncing": "جارٍ المزامنة",
@@ -55,7 +54,14 @@
     "preparing": "جارٍ التحضير...",
     "title": "تنزيل ملخص PDF لهذا التقرير",
     "noArticlesTitle": "لا توجد مقالات محلَّلة ضمن هذا النطاق بعد",
-    "failed": "تعذّر تصدير ملخص التقرير."
+    "failed": "تعذّر تصدير ملخص التقرير.",
+    "dialogTitle": "راجع قبل التصدير",
+    "dialogProjectLabel": "المشروع",
+    "dialogScopeLabel": "النطاق",
+    "dialogLanguageLabel": "لغة الإخراج",
+    "dialogLanguageValue": "الإنجليزية (يُنشأ ملف PDF المُصدَّر دائمًا بالإنجليزية، بصرف النظر عن لغة عرض التقرير على الشاشة)",
+    "dialogIncludesTitle": "سيتضمن ملف PDF هذا:",
+    "confirmButton": "تنزيل PDF"
   },
   "variation": {
     "title": "التغيّر منذ آخر عملية تحليل",

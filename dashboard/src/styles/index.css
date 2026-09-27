@@ -950,11 +950,46 @@ h1, h2, h3 {
   color: #b91c1c;
 }
 
+/* One consolidated scope bar: project selector + a prominent exact
+   range/run label, so the project no longer has to repeat across a
+   separate title, selector, and chip row (see reports feedback). */
+.report-scope-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.report-scope-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-dark);
+  padding-bottom: 8px;
+}
+
+.report-scope-range strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+}
+
+.report-scope-range svg {
+  color: var(--secondary-color);
+}
+
 .report-filter-row {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-filter-row-note {
+  font-size: 0.76rem;
+  color: var(--text-light);
+  margin: 0;
 }
 
 .report-compare-toggle {
@@ -993,64 +1028,50 @@ h1, h2, h3 {
   outline-offset: 2px;
 }
 
-.report-summary-chips {
+/* Secondary line: article count + last-updated status, in plain text
+   rather than a chip row - the header's job is now just scope (project +
+   range), this is supporting detail underneath it. */
+.report-scope-secondary {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  list-style: none;
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-light);
 }
 
-.report-chip {
+.report-scope-stat {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid var(--border-soft);
-  font-size: 0.82rem;
-  color: var(--text-dark);
-  max-width: 100%;
+  gap: 6px;
 }
 
-.report-chip strong {
+.report-scope-stat strong {
   font-weight: 800;
   font-family: var(--font-display);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-dark);
 }
 
-.report-chip-label {
-  color: var(--text-light);
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
+.report-scope-divider {
+  color: var(--border-soft);
 }
 
 /* See IntelligenceDashboard.css: tracking breaks Arabic letter joins. */
-[dir="rtl"] :is(.report-kicker, .report-project-control-label, .report-chip-label) {
+[dir="rtl"] :is(.report-kicker, .report-project-control-label) {
   letter-spacing: normal;
   text-transform: none;
 }
 
-.report-sync-chip.report-sync-loading {
-  background: rgba(255, 159, 67, 0.14);
-  border-color: rgba(255, 159, 67, 0.24);
+.report-scope-stat.report-sync-loading {
   color: #d46b08;
 }
 
-.report-sync-chip.report-sync-success {
-  background: rgba(46, 213, 115, 0.14);
-  border-color: rgba(46, 213, 115, 0.22);
+.report-scope-stat.report-sync-success {
   color: #1a7f4e;
 }
 
-.report-sync-chip.report-sync-error {
-  background: rgba(255, 71, 87, 0.14);
-  border-color: rgba(255, 71, 87, 0.26);
+.report-scope-stat.report-sync-error {
   color: #b42318;
 }
 
@@ -2168,6 +2189,14 @@ h1, h2, h3 {
   flex-wrap: wrap;
 }
 
+.report-export-preview { margin-bottom: 18px; }
+.report-export-preview-facts { display: grid; gap: 10px; margin: 0 0 16px; padding: 14px; border-radius: 14px; background: rgba(37, 99, 235, .06); }
+.report-export-preview-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.report-export-preview-facts dt { display: inline-flex; align-items: center; gap: 5px; color: var(--text-light); font-size: .8rem; font-weight: 700; }
+.report-export-preview-facts dd { margin: 0; text-align: end; color: var(--text-dark); font-weight: 700; font-size: .86rem; max-width: 60%; }
+.report-export-preview-includes-title { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: .84rem; font-weight: 700; color: var(--text-dark); }
+.report-export-preview-includes { margin: 0; padding-inline-start: 20px; color: var(--text-light); font-size: .86rem; line-height: 1.7; }
+
 .confirm-modal-close {
   width: 38px;
   height: 38px;
@@ -3057,13 +3086,18 @@ h1, h2, h3 {
     align-items: stretch;
   }
 
-  .report-summary-chips {
+  .report-scope-bar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .report-chip {
-    justify-content: space-between;
+  .report-scope-secondary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .report-scope-divider {
+    display: none;
   }
 
   .articles-toolbar {

@@ -19,14 +19,13 @@
     "dateRangeTab": "Date range",
     "analysisRunTab": "Analysis run",
     "runFilterAriaLabel": "Filter by analysis run",
-    "dateRangeFilterAriaLabel": "Report date range"
+    "dateRangeFilterAriaLabel": "Report date range",
+    "scopeFiltersNote": "These date range / analysis run tabs set the scope for the whole report below."
   },
   "summaryChips": {
     "ariaLabel": "Report summary",
-    "project": "Project",
     "noneSelected": "None selected",
-    "articlesAnalyzed": "Articles analyzed",
-    "dominantSentiment": "Dominant sentiment",
+    "articlesAnalyzed": "articles analyzed",
     "range": "Range",
     "syncFailed": "Sync failed",
     "syncing": "Syncing",
@@ -55,7 +54,14 @@
     "preparing": "Preparing...",
     "title": "Download a PDF summary of this report",
     "noArticlesTitle": "No analyzed articles in this scope yet",
-    "failed": "Couldn't export the report summary."
+    "failed": "Couldn't export the report summary.",
+    "dialogTitle": "Review before exporting",
+    "dialogProjectLabel": "Project",
+    "dialogScopeLabel": "Scope",
+    "dialogLanguageLabel": "Output language",
+    "dialogLanguageValue": "English (the exported PDF is always generated in English, independent of the on-screen report language)",
+    "dialogIncludesTitle": "This PDF will include:",
+    "confirmButton": "Download PDF"
   },
   "variation": {
     "title": "Variation from last run",
