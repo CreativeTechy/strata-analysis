@@ -833,6 +833,7 @@ def get_articles(
     sort: str = "published.desc",
     added_from: str | None = None,
     added_to: str | None = None,
+    status: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     if project_id is not None:
@@ -849,6 +850,7 @@ def get_articles(
         sort=sort,
         added_from=added_from,
         added_to=added_to,
+        status=status,
     )
 
 
@@ -1156,6 +1158,7 @@ def export_report_summary_pdf(
 def export_articles_jsonl(
     search: str | None = None,
     sentiment: str | None = None,
+    status: str | None = None,
     category: str | None = None,
     project_id: int | None = None,
     source_url: str | None = None,
@@ -1175,6 +1178,7 @@ def export_articles_jsonl(
         rows = export_articles(
             search=search,
             sentiment=sentiment,
+            status=status,
             category=category,
             project_id=project_id,
             source_url=source_url,

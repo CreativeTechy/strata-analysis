@@ -51,6 +51,12 @@ describe('formatPercent', () => {
     expect(formatPercent(0.62, 'en')).toBe('62%');
   });
 
+  it('does not turn missing confidence into zero percent', () => {
+    expect(formatPercent(null, 'en')).toBe('');
+    expect(formatPercent(undefined, 'en')).toBe('');
+    expect(formatPercent('', 'en')).toBe('');
+  });
+
   it('formats an already-computed whole number (e.g. Math.round(count/total*100)) with alreadyWhole', () => {
     expect(formatPercent(62, 'en', { alreadyWhole: true })).toBe('62%');
   });

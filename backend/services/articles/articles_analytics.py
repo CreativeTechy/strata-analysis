@@ -435,7 +435,7 @@ def _fetch_rows_for_stats(search=None, category=None, project_id=None, limit=100
             category=category,
             project_id=project_id,
             order="created_at.desc",
-            select="id,url,title,sentiment,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,insight_json,summary,published,pipeline_run_id,source_language",
+            select="id,url,title,sentiment,sentiment_status,classification_status,analysis_status,category,article_category,writer_tone,article_tone,region,gender,age_range,segment,verified,insight_json,summary,published,pipeline_run_id,source_language",
             date_from=date_from,
             date_to=date_to,
             max_limit=page_size,
@@ -498,7 +498,12 @@ def get_article_stats(search=None, category=None, project_id=None, date_from=Non
     else:
         rows = _fetch_rows_for_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
 
-    insights = _topic_summary(rows)
+    assessed_rows = [
+        row for row in rows
+        if row.get("sentiment_status") == "ran"
+        or ("sentiment_status" not in row and row.get("analysis_status") in (None, "success"))
+    ]
+    insights = _topic_summary(assessed_rows)
     survey_observations = []
     if project_id is not None:
         try:
@@ -513,6 +518,8 @@ def get_article_stats(search=None, category=None, project_id=None, date_from=Non
     insights["survey_observations"] = survey_observations
     return {
         "total": total,
+        "sentiment_assessed": positive + negative + neutral + mixed,
+        "sentiment_not_assessed": max(0, total - (positive + negative + neutral + mixed)),
         "positive": positive,
         "negative": negative,
         "neutral": neutral,
