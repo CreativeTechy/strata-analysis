@@ -98,19 +98,43 @@ body::after {
 .language-switcher {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border-soft);
+}
+
+.language-switcher-icon {
+  margin-inline: 6px 2px;
   color: var(--text-light);
 }
 
-.language-switcher-select {
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 8px;
-  padding: 6px 10px;
+.language-switcher-option {
+  border: 0;
+  background: transparent;
+  color: var(--text-light);
   font-family: var(--font-sans);
-  font-size: 0.85rem;
-  color: var(--text-dark);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
   cursor: pointer;
+}
+
+.language-switcher-option[lang='ar'] {
+  font-family: 'Noto Sans Arabic', 'Inter', sans-serif;
+}
+
+.language-switcher-option.is-active {
+  background: white;
+  color: var(--text-dark);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.language-switcher-option:focus-visible {
+  outline: 2px solid var(--secondary-color);
+  outline-offset: 2px;
 }
 
 .login-language-switcher {
