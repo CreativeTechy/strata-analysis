@@ -14,15 +14,23 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, Calendar, Check, ChevronRight, ExternalLink, FileText,
+  Activity, AlertTriangle, Calendar, Check, ChevronRight, Download, ExternalLink, FileText,
   Filter, Info, Lightbulb, ShieldCheck, Sparkles, Target, ThumbsDown,
 } from 'lucide-react';
 import {
   EFFORT_LABELS, IMPACT_LABELS, SIZE_TIER_LABELS, URGENCY_LABELS, avatarGradient,
-  getFinding, initials, validateFinding,
+  exportFindingReportPdf, getFinding, initials, validateFinding,
 } from '../api/competitorApi.js';
 import { formatDate, formatRelativeTime } from '../lib/i18nFormat.js';
 import '../styles/Competitors.css';
+
+// Sanitized the same way the backend names the file (competitor_api.py's
+// export_finding_report_pdf) - not load-bearing for correctness (the
+// Content-Disposition header already names it), just avoids a flash of the
+// browser's default download name before that header is read.
+function safeFileFragment(value) {
+  return String(value || '').trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'competitor';
+}
 
 function impactLabel(t, level) {
   return t(`labels.impact.${level}`, { defaultValue: IMPACT_LABELS[level] || level });
@@ -51,6 +59,8 @@ export default function CompetitorReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
   // Fetch inside the effect with a cancel guard, so navigating away mid-request
   // does not resolve into state for a report that is no longer on screen.
@@ -81,6 +91,29 @@ export default function CompetitorReportPage() {
       setError(caught.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExportReport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const blob = await exportFindingReportPdf(findingId);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const dateFragment = new Date().toISOString().slice(0, 10);
+      anchor.href = objectUrl;
+      anchor.download = `${safeFileFragment(data?.finding?.competitor_name)}-report-${dateFragment}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (caught) {
+      console.error('Failed to export the competitor report', caught);
+      setExportError({ detail: caught?.detail || null });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -115,9 +148,32 @@ export default function CompetitorReportPage() {
 
   return (
     <div className="cs-page cs-report">
-      <Link to={backTo} className="cs-link-back">
-        <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {backLabel}
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <Link to={backTo} className="cs-link-back">
+          <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {backLabel}
+        </Link>
+        <button
+          type="button"
+          className="cs-btn cs-btn-sm"
+          onClick={handleExportReport}
+          disabled={exporting}
+          aria-busy={exporting}
+          title={t('reportPage.export.title')}
+        >
+          <Download size={13} className={exporting ? 'spin' : ''} />
+          {exporting ? t('reportPage.export.preparing') : t('reportPage.export.button')}
+        </button>
+      </div>
+
+      {exportError ? (
+        <p className="cs-alert cs-alert-error" role="alert" style={{ marginTop: 10 }}>
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span dir="auto">
+            {t('reportPage.export.failed')}
+            {exportError.detail ? <span dir="auto"> {exportError.detail}</span> : null}
+          </span>
+        </p>
+      ) : null}
 
       <div className="cs-report-hero">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
