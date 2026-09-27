@@ -43,6 +43,8 @@ from datetime import datetime, timezone
 
 import fitz
 
+import config
+
 PAGE_SIZE = "a4"
 MARGIN_LEFT = 36
 MARGIN_RIGHT = 36
@@ -170,6 +172,12 @@ def _fmt_iso(value: str | None) -> str:
 
 def _fmt_num(value, default="0") -> str:
     if value is None:
+        return default
+    return _esc(value)
+
+
+def _esc_or(value, default="Unknown") -> str:
+    if value is None or value == "":
         return default
     return _esc(value)
 
@@ -472,15 +480,11 @@ def _stamp_page_numbers(pdf_bytes: bytes) -> bytes:
         doc.close()
 
 
-def render_summary_pdf(report_data: dict, comparison: dict) -> bytes:
-    """Renders the Export Summary PDF for one project/scope. Both arguments
-    are plain dicts already assembled by callers (report_data.py's
-    build_report_data / yesterday_comparison.py) - every string value inside
-    them is treated as untrusted, document-derived content and is
-    html.escape()'d before it reaches the HTML template. Returns the PDF as
-    bytes; this function performs no filesystem writes itself."""
-    html_doc = _build_html(report_data or {}, comparison or {})
-
+def _render_story_pdf(html_doc: str) -> bytes:
+    """Lays out one already-built HTML document through fitz.Story and
+    returns the finished PDF bytes. Shared by every renderer in this module
+    so a new report type gets the same RTL/Arabic-safe pagination as the
+    Export Summary PDF for free, rather than a second copy of this loop."""
     story = fitz.Story(html=html_doc, user_css=BASE_CSS)
     mediabox = fitz.paper_rect(PAGE_SIZE)
     where = mediabox + (MARGIN_LEFT, MARGIN_TOP, -MARGIN_RIGHT, -MARGIN_BOTTOM)
@@ -500,3 +504,199 @@ def render_summary_pdf(report_data: dict, comparison: dict) -> bytes:
     writer.close()
 
     return _stamp_page_numbers(buffer.getvalue())
+
+
+def render_summary_pdf(report_data: dict, comparison: dict) -> bytes:
+    """Renders the Export Summary PDF for one project/scope. Both arguments
+    are plain dicts already assembled by callers (report_data.py's
+    build_report_data / yesterday_comparison.py) - every string value inside
+    them is treated as untrusted, document-derived content and is
+    html.escape()'d before it reaches the HTML template. Returns the PDF as
+    bytes; this function performs no filesystem writes itself."""
+    html_doc = _build_html(report_data or {}, comparison or {})
+    return _render_story_pdf(html_doc)
+
+
+def _processing_location_label() -> str:
+    """Where the analysis behind this report actually ran, for the evidence
+    appendix - the same "nothing leaves the machine except the configured
+    LLM" fact this fork is built around (see the project's CLAUDE.md), made
+    legible to whoever the report is handed to. Read from the app's *current*
+    configuration rather than a value captured at generation time (no such
+    column exists on competitor_findings), so this describes the operator's
+    present setup, not necessarily the exact run that produced this finding.
+    """
+    provider = config.COMPETITOR_ANALYSIS_LLM_PROVIDER
+    if provider == "ollama":
+        location = "This machine (self-hosted, via Ollama)"
+    else:
+        location = f"Hosted third-party API ({provider})"
+    offloaded_stages = [
+        label
+        for label, provider_setting in (
+            ("sentiment", config.SENTIMENT_CLASSIFIER_PROVIDER),
+            ("classification", config.CLASSIFICATION_PROVIDER),
+        )
+        if provider_setting == "hf_api"
+    ]
+    if offloaded_stages:
+        location += f"; {', '.join(offloaded_stages)} analysis via the Hugging Face Inference API"
+    return location
+
+
+def _competitor_header_html(finding: dict) -> str:
+    competitor_name = finding.get("competitor_name") or "Unknown competitor"
+    headline = finding.get("headline") or ""
+    generated_at = _fmt_iso(finding.get("generated_at"))
+
+    period_html = ""
+    if finding.get("period_start"):
+        period_html = (
+            f'<p class="subtitle">Period: {_fmt_iso(finding.get("period_start"))} '
+            f'to {_fmt_iso(finding.get("period_end"))}</p>'
+        )
+
+    return f"""
+<h1 dir="auto">Competitor Report - {_esc(competitor_name)}</h1>
+<p class="subtitle" dir="auto">{_esc(headline)}</p>
+{period_html}
+<p class="subtitle">Generated: {generated_at}</p>
+"""
+
+
+_NOT_AVAILABLE_HTML = '<p class="muted">Not available.</p>'
+
+
+def _competitor_body_html(finding: dict) -> str:
+    whats_up_html = _esc_multiline(finding.get("whats_up")) or _NOT_AVAILABLE_HTML
+    impact_html = _esc_multiline(finding.get("impact")) or _NOT_AVAILABLE_HTML
+    parts = [
+        f'<h2>What They’re Up To</h2>{whats_up_html}',
+        f'<h2>How It Affects Us</h2>{impact_html}',
+    ]
+
+    parts.append("<h2>Suggested Actions</h2>")
+    actions = finding.get("actions") or []
+    if actions:
+        blocks = []
+        for index, item in enumerate(actions, start=1):
+            rationale = item.get("rationale")
+            meta = " &bull; ".join(
+                _esc(value) for value in (item.get("urgency"), item.get("effort")) if value
+            )
+            blocks.append(f"""
+<div class="article-block">
+  <p class="article-title" dir="auto">{index}. {_esc(item.get("action"))}</p>
+  {f'<p class="article-meta" dir="auto">{_esc(rationale)}</p>' if rationale else ""}
+  {f'<p class="muted">{meta}</p>' if meta else ""}
+</div>
+""")
+        parts.append("".join(blocks))
+    else:
+        parts.append('<p class="muted">No actions proposed - the evidence did not support a specific recommendation.</p>')
+
+    signals = finding.get("signals") or []
+    if signals:
+        badges = " ".join(
+            f'<span class="trust-tag" style="background-color:#555555;">{_esc(signal)}</span>'
+            for signal in signals
+        )
+        parts.append(f"<h2>Signals</h2><p>{badges}</p>")
+
+    return "".join(parts)
+
+
+def _competitor_appendix_html(finding: dict, rejected_evidence: list[dict]) -> str:
+    """The evidence appendix: which documents/excerpts this report actually
+    rests on, when it was generated, and where the analysis ran - so a
+    hand-off doesn't lose the detail a screenshot of the page would drop."""
+    evidence = finding.get("evidence") or []
+    parts = ["<h2>Evidence Appendix</h2>"]
+    parts.append(
+        f'<p class="subtitle">Generated: {_fmt_iso(finding.get("generated_at"))} &bull; '
+        f'Processing location: {_esc(_processing_location_label())}</p>'
+    )
+
+    if not evidence:
+        parts.append('<p class="muted">No evidence attached to this report.</p>')
+    else:
+        # Grouped by source - a document's filename for evidence split out of
+        # an uploaded file (see competitor_document_articles.py), or the
+        # outlet name for anything else - so a reader sees which documents
+        # this report is actually built from, not just a flat excerpt list.
+        grouped: dict[str, list[dict]] = {}
+        for item in evidence:
+            key = item.get("source") or "Unknown source"
+            grouped.setdefault(key, []).append(item)
+
+        parts.append(f'<p class="muted">Documents cited ({len(grouped)}):</p>')
+        for source, items in grouped.items():
+            parts.append(f'<h3 dir="auto">{_esc(source)}</h3>')
+            for item in items:
+                title = item.get("title") or item.get("url") or "(untitled)"
+                published = (
+                    _fmt_iso(item.get("published_at")) if item.get("published_at") else "Unknown date"
+                )
+                excerpt = item.get("excerpt") or ""
+                parts.append(f"""
+<div class="article-block">
+  <p class="article-title" dir="auto">{_esc(title)}</p>
+  <p class="article-meta">{published}</p>
+  {f'<p class="evidence-item" dir="auto">{_esc(excerpt)}</p>' if excerpt else ""}
+</div>
+""")
+
+    if rejected_evidence:
+        parts.append(f"<h3>Filtered out ({len(rejected_evidence)})</h3>")
+        rows = "".join(
+            f'<tr><td dir="auto">{_esc(item.get("title") or item.get("url"))}</td>'
+            f'<td dir="auto">{_esc(item.get("source"))}</td>'
+            f'<td>{_esc(str(item.get("rejected_reason") or "").replace("_", " "))}</td>'
+            f'<td>{_fmt_iso(item.get("dated"))}</td></tr>'
+            for item in rejected_evidence
+        )
+        parts.append(
+            f'<table><tr><th>Title</th><th>Source</th><th>Reason excluded</th><th>Date</th></tr>{rows}</table>'
+        )
+
+    confidence = finding.get("confidence")
+    confidence_label = f"{round(float(confidence) * 100)}%" if confidence is not None else "Not assessed"
+    other_rows = [
+        ("Validation status", _esc_or(finding.get("validation_status"))),
+        ("Confidence", _esc(confidence_label)),
+        ("Independent stories", _fmt_num(finding.get("story_count"))),
+        ("Articles used", _fmt_num(finding.get("article_count"))),
+        ("Analysis model", _esc_or(finding.get("analysis_model"))),
+    ]
+    other_html = "".join(
+        f'<tr><td>{_esc(label)}</td><td dir="auto">{value}</td></tr>' for label, value in other_rows
+    )
+    parts.append(f"<h2>Other Information</h2><table>{other_html}</table>")
+
+    return "".join(parts)
+
+
+def _build_competitor_report_html(finding: dict, rejected_evidence: list[dict]) -> str:
+    finding = finding or {}
+    rejected_evidence = rejected_evidence or []
+    sections = [
+        _competitor_header_html(finding),
+        _competitor_body_html(finding),
+        _competitor_appendix_html(finding, rejected_evidence),
+    ]
+    return f"<html><body>{''.join(sections)}</body></html>"
+
+
+def render_competitor_report_pdf(finding: dict, rejected_evidence: list[dict]) -> bytes:
+    """Renders one competitor finding as a standalone PDF - the Competitor
+    Report page's "Export report (PDF)" button. `finding` is the dict
+    competitor_analysis.get_finding() returns (headline/whats_up/impact/
+    actions/signals/evidence/...), `rejected_evidence` is
+    competitor_analysis.rejected_evidence()'s filtered-out list. Every string
+    value inside them is treated as untrusted, document-derived content and
+    is html.escape()'d before it reaches the HTML template. Reuses the same
+    fitz.Story pipeline as render_summary_pdf (via _render_story_pdf), so a
+    hand-off from this page gets the same RTL/Arabic-safe layout as the
+    Reports page's own export."""
+    html_doc = _build_competitor_report_html(finding, rejected_evidence)
+    return _render_story_pdf(html_doc)

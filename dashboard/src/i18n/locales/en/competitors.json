@@ -303,6 +303,12 @@
     "keepStudy": "Keep study"
   },
   "reportPage": {
+    "export": {
+      "button": "Export report (PDF)",
+      "preparing": "Preparing...",
+      "title": "Download a PDF of this report, with an evidence appendix",
+      "failed": "Couldn't export the report."
+    },
     "backToWorkspace": "Back to workspace",
     "notFound": "This report could not be found.",
     "sizeRank": "#{{rank}} by size",

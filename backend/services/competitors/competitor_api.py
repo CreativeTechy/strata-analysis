@@ -14,8 +14,10 @@ polls, since either can run well past a gateway timeout.
 from __future__ import annotations
 
 import json
+import logging
+import re
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile
 
 import config
 from services.competitors import analysis_runs_store
@@ -30,6 +32,7 @@ from services.auth.authz import ensure_project_visible, visible_project_ids_or_n
 from services.projects.projects_store import delete_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
+logger = logging.getLogger(__name__)
 
 
 def _project_or_404(project_id: int, user: dict) -> dict:
@@ -560,6 +563,38 @@ def get_finding(finding_id: int, user: dict = Depends(require_permission("compet
             finding["project_id"], competitor_id=finding["competitor_id"], latest_only=False,
         ),
     }
+
+
+@router.post("/findings/{finding_id}/report.pdf")
+def export_finding_report_pdf(finding_id: int, user: dict = Depends(require_permission("competitors.view"))):
+    """Competitor Report page's "Export report (PDF)" button - the same
+    local, no-network PDF path as the Reports page's Export Summary
+    (services/reports/pdf_renderer.py's fitz.Story pipeline), plus an
+    evidence appendix so the hand-off keeps the documents/excerpts a
+    screenshot would drop."""
+    finding = competitor_analysis.get_finding(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    ensure_project_visible(finding["project_id"], user)
+
+    from services.reports.pdf_renderer import render_competitor_report_pdf
+
+    rejected = competitor_analysis.rejected_evidence(finding["competitor_id"])
+    try:
+        pdf_bytes = render_competitor_report_pdf(finding, rejected)
+    except Exception:
+        logger.exception("Failed to render competitor report PDF for finding %s", finding_id)
+        raise HTTPException(status_code=500, detail="Failed to generate the report PDF.")
+
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", finding.get("competitor_name") or f"competitor-{finding['competitor_id']}").strip("-")
+    safe_name = safe_name or f"competitor-{finding['competitor_id']}"
+    filename = f"{safe_name}-report-{finding_id}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/findings/{finding_id}/validate")
