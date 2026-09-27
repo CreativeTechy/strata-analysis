@@ -387,6 +387,17 @@ class WherePartsSourceHostTests(unittest.TestCase):
         mock_resolve.assert_not_called()
         self.assertIn("id = -1", where_sql)
 
+    def test_sentiment_filter_only_matches_assessed_values(self):
+        where_sql, params = articles_query._where_parts(sentiment="neutral")
+        self.assertIn("sentiment = %s", where_sql)
+        self.assertIn("sentiment_status = 'ran'", where_sql)
+        self.assertIn("neutral", params)
+
+    def test_not_assessed_status_excludes_pending_and_failed_rows(self):
+        where_sql, _ = articles_query._where_parts(status="not_assessed")
+        self.assertIn("analysis_status = 'success'", where_sql)
+        self.assertIn("skipped_model_unavailable", where_sql)
+
     def test_no_precomputed_ids_falls_back_to_resolving_from_source_host(self):
         with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
              patch("services.articles.articles_query.list_article_ids_for_source_host", return_value=[3]) as mock_resolve:
@@ -526,6 +537,29 @@ class GetArticleAnalysisTests(unittest.TestCase):
         self.assertEqual(result["analysis_status"], "failed")
         self.assertEqual(result["analysis_error"], "model_unavailable")
         self.assertTrue(result["confidence"]["sentiment_low_confidence"])
+
+    def test_a_single_fallen_back_classification_substage_hides_only_its_own_confidence(self):
+        # classification_status is a combined flag across category/writer_tone/
+        # article_tone - it reads "ran" as soon as any one of the three
+        # produced a result. writer_tone fell back here while the other two
+        # succeeded, so only writer_tone_confidence should be suppressed.
+        row = {
+            "id": 1, "url": "u", "title": "t", "source": "s", "published": None,
+            "sentiment": "neutral", "article_category": "review",
+            "writer_tone": "neutral", "article_tone": "positive",
+            "insight_json": {}, "analyzed_at": None, "analysis_model": None, "analysis_prompt_version": None,
+            "analysis_status": "success", "analysis_error": None,
+            "classification_status": "ran",
+            "category_status": "ran", "writer_tone_status": "skipped_model_unavailable", "article_tone_status": "ran",
+            "category_confidence": 0.9, "writer_tone_confidence": 0.0, "article_tone_confidence": 0.85,
+        }
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=[{"column_name": k} for k in row]):
+                with patch("services.articles.articles_query.db.fetch_one", return_value=row):
+                    result = articles_query.get_article_analysis(1)
+        self.assertEqual(result["confidence"]["category"], 0.9)
+        self.assertIsNone(result["confidence"]["writer_tone"])
+        self.assertEqual(result["confidence"]["article_tone"], 0.85)
 
     def test_query_error_returns_none(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):

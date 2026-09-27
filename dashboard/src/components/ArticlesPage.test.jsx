@@ -268,4 +268,46 @@ describe('ArticlesPage', () => {
       .map((href) => new URL(href, 'http://localhost').searchParams.get('offset'))
     expect(offsetsRequested.every((offset) => offset === '48')).toBe(true)
   })
+
+  // SM-101: there is no "delete every project's articles" control on this
+  // page any more - only removal scoped to the selected project.
+  it('offers no article removal while showing all projects', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /Delete All Articles/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: "Remove this project's articles…" })).not.toBeInTheDocument()
+  })
+
+  it('offers removal scoped to the selected project, and opens its confirmation', async () => {
+    fetch.mockImplementation((url) => {
+      const href = String(url)
+      if (href.startsWith('/api/articles?')) {
+        return Promise.resolve(jsonResponse({ articles: ARTICLES, total: ARTICLES.length }))
+      }
+      if (href === '/api/projects/5/articles/removal-preview') {
+        return Promise.resolve(jsonResponse({
+          project: { id: 5, name: 'Riverside' }, linked_articles: 2, only_in_project: 2,
+          shared_with_other_projects: 0, active_run: null,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('Project scope for articles'), { target: { value: '5' } })
+    fireEvent.click(await screen.findByRole('button', { name: "Remove this project's articles…" }))
+
+    expect(await screen.findByRole('dialog', { name: 'Remove all articles from Riverside?' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Articles in this project').nextSibling).toHaveTextContent('2'))
+  })
+
+  it('hides the removal action from users without articles.delete', async () => {
+    useAuth.mockReturnValue({ hasPermission: (key) => key !== 'articles.delete' })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Battery fires spark recall')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Project scope for articles'), { target: { value: '5' } })
+    await waitFor(() => expect(screen.getByLabelText('Project scope for articles')).toHaveValue('5'))
+    expect(screen.queryByRole('button', { name: "Remove this project's articles…" })).not.toBeInTheDocument()
+  })
 })

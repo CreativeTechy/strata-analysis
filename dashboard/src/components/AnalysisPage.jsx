@@ -8,13 +8,14 @@ import { getAnalysisStatus, listAnalysisErrors, reprocessArticle, analyzeArticle
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime, formatNumber, formatPercent } from '../lib/i18nFormat.js';
 
-const STATUS_ORDER = ['success', 'failed', 'processing', 'pending', 'partial'];
+const STATUS_ORDER = ['success', 'not_assessed', 'failed', 'processing', 'pending', 'partial'];
 const STATUS_COLORS = {
   success: '#2ed573',
   failed: '#ff4757',
   processing: '#ffb13b',
   pending: '#9aa0aa',
   partial: '#f59e0b',
+  not_assessed: '#6b7280',
 };
 
 // success/failed/processing/pending are stored analysis_status enum values -
@@ -25,6 +26,7 @@ const STATUS_COMMON_KEYS = { success: 'success', failed: 'failed', processing: '
 function statusLabel(t, key) {
   if (STATUS_COMMON_KEYS[key]) return t(`common:status.${STATUS_COMMON_KEYS[key]}`);
   if (key === 'partial') return t('performanceLogs.statusPartial');
+  if (key === 'not_assessed') return t('performanceLogs.statusNotAssessed');
   return key;
 }
 

@@ -13,16 +13,16 @@ describe('LanguageSwitcher', () => {
 
   it('shows both supported languages with English selected by default', () => {
     render(<LanguageSwitcher />);
-    const select = screen.getByRole('combobox');
-    expect(select.value).toBe('en');
-    expect(screen.getByRole('option', { name: 'English' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'العربية' })).toBeInTheDocument();
+    const english = screen.getByRole('button', { name: 'English' });
+    const arabic = screen.getByRole('button', { name: 'العربية' });
+    expect(english).toHaveAttribute('aria-pressed', 'true');
+    expect(arabic).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('switches the active i18next language and persists the choice on selection', async () => {
     const user = userEvent.setup();
     render(<LanguageSwitcher />);
-    await user.selectOptions(screen.getByRole('combobox'), 'ar');
+    await user.click(screen.getByRole('button', { name: 'العربية' }));
 
     await waitFor(() => expect(i18n.language).toBe('ar'));
     expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('ar');

@@ -49,5 +49,45 @@
     "noDataYet": "لا توجد بيانات بعد"
   },
   "backToReports": "العودة إلى التقارير",
-  "noProjectSelectedScope": "لم يتم اختيار مشروع"
+  "noProjectSelectedScope": "لم يتم اختيار مشروع",
+  "export": {
+    "button": "تصدير الملخص",
+    "preparing": "جارٍ التحضير...",
+    "title": "تنزيل ملخص PDF لهذا التقرير",
+    "noArticlesTitle": "لا توجد مقالات محلَّلة ضمن هذا النطاق بعد",
+    "failed": "تعذّر تصدير ملخص التقرير."
+  },
+  "variation": {
+    "title": "التغيّر منذ آخر عملية تحليل",
+    "regenerateAria": "إعادة إنشاء التغيّر منذ آخر عملية تحليل",
+    "selectRunFirst": "اختر عملية تحليل أولاً",
+    "selectRunPrompt": "اختر عملية تحليل لمقارنتها بعملية التحليل السابقة لها مباشرةً.",
+    "generating": "جارٍ إنشاء مقارنة عمليات التحليل…",
+    "regenerating": "جارٍ إعادة إنشاء مقارنة عمليات التحليل…",
+    "loadError": "تعذّر تحميل مقارنة عمليات التحليل.",
+    "regenerateError": "تعذّرت إعادة إنشاء مقارنة عمليات التحليل.",
+    "comparedWith": "{{current}} مقارنةً مع {{previous}}",
+    "scopeLabel": "التحليل رقم {{number}} - {{date}}",
+    "scopeLabelNoNumber": "عملية تحليل - {{date}}",
+    "selectedRunArticles": "مقالات عملية التحليل المحددة",
+    "previousRunArticles": "مقالات عملية التحليل السابقة",
+    "netSentimentChange": "التغيّر في صافي المشاعر",
+    "coverage": "{{common}} · {{added}} · {{removed}}",
+    "coverageCommon_zero": "لا توجد مقالات مشتركة بين العمليتين",
+    "coverageCommon_one": "مقالة واحدة مشتركة بين العمليتين",
+    "coverageCommon_two": "مقالتان مشتركتان بين العمليتين",
+    "coverageCommon_few": "{{count}} مقالات مشتركة بين العمليتين",
+    "coverageCommon_many": "{{count}} مقالة مشتركة بين العمليتين",
+    "coverageCommon_other": "{{count}} مقالة مشتركة بين العمليتين",
+    "coverageAdded": "المُضافة: {{count}}",
+    "coverageRemoved": "المحذوفة: {{count}}",
+    "llmFailed": "تعذّر إنشاء السرد؛ لا تزال المقاييس المُتحقَّق منها معروضة.",
+    "reasons": {
+      "no_run_selected": "اختر عملية تحليل لمقارنتها بالعملية السابقة.",
+      "no_current_articles": "لا توجد مقالات محلَّلة في عملية التحليل المحددة.",
+      "no_previous_run": "لا توجد عملية تحليل سابقة ذات نتائج محفوظة لهذا المشروع.",
+      "no_previous_articles": "لا تحتوي عملية التحليل السابقة على مقالات محلَّلة بنجاح.",
+      "fallback": "لا تتوفر مقارنة لعملية التحليل هذه بعد."
+    }
+  }
 }

@@ -7,10 +7,12 @@ import SearchableSelect from './SearchableSelect';
 import DemographicPieCarousel from './DemographicPieCarousel';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import VariationFromLastRun from './VariationFromLastRun.jsx';
+import IntelligenceEmptyState, { PendingAnalysisNotice, ReportSkeleton } from './IntelligenceEmptyState.jsx';
 import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
 import { formatDate as formatLocaleDate, formatNumber, formatPercent } from '../lib/i18nFormat.js';
+import { resolveIntelligenceState } from '../lib/intelligenceState.js';
 import '../styles/IntelligenceDashboard.css';
 
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
@@ -67,7 +69,10 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
   })}</ul> : <p>{t('dashboard:report.feedback.noSignals')}</p>}</article>;
 }
 
-export default function StatsOverview({ intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null }) {
+export default function StatsOverview({
+  intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null,
+  rangeLabel, onShowAllTime, onAnalysisStarted,
+}) {
   const { t, i18n } = useTranslation(['dashboard', 'reports']);
   const locale = i18n.language;
   const projectId = project?.id ?? null;
@@ -86,9 +91,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const documentOptions = useMemo(
     () => documents.map((document) => ({
       value: `document://project-document/${document.id}`,
-      label: document.original_filename || `Document #${document.id}`,
+      label: document.original_filename || t('dashboard:report.keyword.documentFallback', { id: document.id }),
     })),
-    [documents],
+    [documents, t],
   );
 
   const [sourceFilter, setSourceFilter] = useState('all');
@@ -116,7 +121,11 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   // from a dependency change (project/period/run switch) must NOT force a
   // fresh LLM call, only the explicit refresh click should.
   const forceRegenerateRef = useRef(false);
-  const totalArticles = Number(intelligence?.total || 0);
+  const scopeState = resolveIntelligenceState(intelligence);
+  // Only a scope with real analysis behind it counts - `total` also includes
+  // articles still holding neutral placeholders (see intelligenceState.js),
+  // and the trend summary below spends an LLM call on whatever it's given.
+  const totalArticles = !loading && scopeState.kind === 'ready' ? Number(intelligence?.total || 0) : 0;
 
   useEffect(() => {
     setSourceFilter('all');
@@ -203,11 +212,19 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, period, runId, totalArticles, trendSummaryNonce, trendSummaryLocale]);
 
-  if (loading) return <section className="report-brief glass-card intelligence-loading">{t('dashboard:report.loading')}</section>;
+  if (loading) return <ReportSkeleton />;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>{t('dashboard:report.errorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>{t('dashboard:report.tryAgain')}</button>}</div></section>;
 
   const total = totalArticles;
-  if (!total) return <section className="report-brief"><div className="glass-card admin-empty-state"><strong>{t('dashboard:report.noArticlesTitle')}</strong><p className="subtitle">{t('dashboard:report.noArticlesBody', { scope: resolvedScopeLabel })}</p><Link to="/pipeline-runs" className="btn-secondary">{t('dashboard:report.goToRuns')}</Link></div></section>;
+  const assessedTotal = Number(intelligence.sentiment_assessed ?? total);
+  const populationTotal = Number(intelligence.articles_total ?? assessedTotal);
+  const notAssessedTotal = Number(intelligence.sentiment_not_assessed ?? Math.max(0, populationTotal - assessedTotal));
+  const sentimentDenominator = t('dashboard:sentimentBreakdown.denominator', {
+    assessed: formatNumber(assessedTotal, locale),
+    total: formatNumber(populationTotal, locale),
+    notAssessed: formatNumber(notAssessedTotal, locale),
+  });
+  if (!total) return <section className="report-brief"><IntelligenceEmptyState state={scopeState} project={project} rangeLabel={rangeLabel} onShowAllTime={onShowAllTime} onAnalysisStarted={onAnalysisStarted} /></section>;
 
   const sentiments = SENTIMENT_KEYS.map((name) => ({ name, value: Number(intelligence[name] || 0) }));
   const insights = intelligence.insights || {};
@@ -215,6 +232,9 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const leadingConcern = insights.negative_feedback?.[0]?.text || insights.complaints?.[0]?.text;
   const formattedTotal = formatNumber(total, locale);
   const formattedNetSentiment = formatNumber(intelligence.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 });
+  const netSentimentTone = Number(intelligence.net_sentiment || 0) > 0
+    ? 'positive'
+    : Number(intelligence.net_sentiment || 0) < 0 ? 'negative' : 'neutral';
   const headline = leadingIdea
     ? (leadingConcern
       ? t('dashboard:report.headlineWithIdeaConcern', { scope: resolvedScopeLabel, total: formattedTotal, idea: leadingIdea, concern: leadingConcern })
@@ -229,6 +249,7 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
   const keywordHasMatches = keywordSeriesData.some((point) => keywordSeriesKeys.some((key) => Number(point[key] || 0) > 0));
 
   return <section className="report-brief">
+    <PendingAnalysisNotice state={scopeState} project={project} onAnalysisStarted={onAnalysisStarted} />
     <Section
       number="01"
       title={t('dashboard:report.sections.executiveSummary')}
@@ -281,7 +302,10 @@ export default function StatsOverview({ intelligence = {}, scopeLabel, loading, 
     <VariationFromLastRun projectId={projectId} runId={runId} number="02" />
 
     <Section number="03" title={t('dashboard:report.sections.sentimentAnalysis')}>
-      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
+      <p className="subtitle">
+        {sentimentDenominator}
+      </p>
+      <div className="report-sentiment-grid"><div className="report-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentiments} dataKey="value" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sentiments.map((entry) => <Cell key={entry.name} fill={COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><div className={`report-donut-score ${netSentimentTone}`} aria-label={t('dashboard:report.sentimentScoreAria', { score: formattedNetSentiment })} title={t('dashboard:report.sentimentScoreHelp')}><strong>{formattedNetSentiment}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div></div><div className="report-sentiment-bars">{sentiments.map((entry) => <div key={entry.name}><span><i style={{ background: COLORS[entry.name] }} />{sentimentLabel(t, entry.name)}</span><div><b style={{ width: `${percent(entry.value, total)}%`, background: COLORS[entry.name] }} /></div><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></div>)}<p>{t('dashboard:report.sentimentNote')}</p></div></div>
     </Section>
 
     <Section number="04" title={t('dashboard:report.sections.keywordExistence')}>

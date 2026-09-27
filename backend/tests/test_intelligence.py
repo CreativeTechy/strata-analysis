@@ -209,6 +209,37 @@ class GetProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["document_count"], 0)
         self.assertIn("insights", result)
+        self.assertEqual(result["coverage"], {
+            "documents": 0, "documents_in_progress": 0, "articles": 0,
+            "analyzed": 0, "pending": 0, "failed": 0, "active_run": None,
+        })
+
+    def test_coverage_groups_analysis_statuses_and_reports_the_active_run(self):
+        """The dashboard's empty states key off these project-wide counts, so
+        pending/processing both read as "waiting", partial counts as analyzed,
+        and failed stays separate from pending."""
+        counts = {"success": 4, "partial": 1, "pending": 3, "processing": 2, "failed": 1}
+        active = {"id": "run-9", "status": "running", "articles_selected": 5, "articles_analyzed": 2, "stage": "analyze"}
+        with patch.object(intelligence, "_database_ready", return_value=True), \
+             patch("services.articles.articles_query.get_analysis_status_counts", return_value=counts), \
+             patch("services.pipeline.pipeline_runs.get_active_run_for_project", return_value=active), \
+             patch.object(intelligence, "_fetch_documents_in_progress", return_value=1):
+            coverage = intelligence._fetch_coverage({"id": 7}, document_count=3)
+        self.assertEqual(coverage, {
+            "documents": 3, "documents_in_progress": 1, "articles": 11,
+            "analyzed": 5, "pending": 5, "failed": 1,
+            "active_run": {"id": "run-9", "status": "running", "articles_selected": 5, "articles_analyzed": 2},
+        })
+
+    def test_document_counts_read_the_competitor_table_for_a_competitor_study(self):
+        with patch.object(intelligence, "_database_ready", return_value=True), \
+             patch("db.fetch_one", return_value={"total": 2}) as fetch:
+            self.assertEqual(intelligence._fetch_document_count(5, "competitor"), 2)
+            self.assertIn("from competitor_documents", fetch.call_args.args[0])
+            self.assertEqual(intelligence._fetch_documents_in_progress(5, "competitor"), 2)
+            self.assertIn("from competitor_documents", fetch.call_args.args[0])
+            intelligence._fetch_document_count(5)
+            self.assertIn("from project_documents", fetch.call_args.args[0])
 
     def test_run_id_passes_through_into_the_response(self):
         """When a specific analysis run is selected, the response should echo
@@ -217,6 +248,22 @@ class GetProjectIntelligenceTests(unittest.TestCase):
             result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, run_id="run-123")
         self.assertEqual(result["run_id"], "run-123")
         self.assertEqual(result["total"], 0)
+
+    def test_excludes_unassessed_sentiment_and_reports_the_denominator(self):
+        rows = [
+            {"id": 1, "sentiment": "neutral", "sentiment_status": None, "analysis_status": "success"},
+            {"id": 2, "sentiment": "positive", "sentiment_status": "ran", "analysis_status": "success"},
+        ]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
+            result = get_project_intelligence({"id": 1, "hashtags": [], "keywords": []}, period="all")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["articles_total"], 2)
+        self.assertEqual(result["positive"], 1)
+        self.assertEqual(result["neutral"], 0)
+        self.assertEqual(result["sentiment_not_assessed"], 1)
 
     def test_platform_totals_include_every_supported_social_platform(self):
         rows = [

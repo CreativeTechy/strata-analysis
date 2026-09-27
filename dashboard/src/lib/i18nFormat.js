@@ -84,6 +84,7 @@ export function formatNumber(value, locale, options) {
  *  already-computed "62" meaning 62%, as several call sites currently
  *  compute by hand via Math.round((count/total)*100)). */
 export function formatPercent(value, locale, { alreadyWhole = false, maximumFractionDigits = 0 } = {}) {
+  if (value === null || value === undefined || value === '') return '';
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
   const ratio = alreadyWhole ? number / 100 : number;

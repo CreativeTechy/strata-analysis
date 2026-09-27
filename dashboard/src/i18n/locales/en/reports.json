@@ -49,5 +49,41 @@
     "noDataYet": "No data yet"
   },
   "backToReports": "Back to reports",
-  "noProjectSelectedScope": "no project selected"
+  "noProjectSelectedScope": "no project selected",
+  "export": {
+    "button": "Export Summary",
+    "preparing": "Preparing...",
+    "title": "Download a PDF summary of this report",
+    "noArticlesTitle": "No analyzed articles in this scope yet",
+    "failed": "Couldn't export the report summary."
+  },
+  "variation": {
+    "title": "Variation from last run",
+    "regenerateAria": "Regenerate variation from last run",
+    "selectRunFirst": "Select an analysis run first",
+    "selectRunPrompt": "Select an analysis run to compare it with the immediately preceding run.",
+    "generating": "Generating run comparison…",
+    "regenerating": "Regenerating run comparison…",
+    "loadError": "Couldn't load the run comparison.",
+    "regenerateError": "Couldn't regenerate the run comparison.",
+    "comparedWith": "{{current}} compared with {{previous}}",
+    "scopeLabel": "Analysis #{{number}} - {{date}}",
+    "scopeLabelNoNumber": "Analysis run - {{date}}",
+    "selectedRunArticles": "Selected run articles",
+    "previousRunArticles": "Previous run articles",
+    "netSentimentChange": "Net sentiment change",
+    "coverage": "{{common}} · {{added}} · {{removed}}",
+    "coverageCommon_one": "{{count}} article in both runs",
+    "coverageCommon_other": "{{count}} articles in both runs",
+    "coverageAdded": "{{count}} added",
+    "coverageRemoved": "{{count}} removed",
+    "llmFailed": "The narrative could not be generated; verified metrics are still shown.",
+    "reasons": {
+      "no_run_selected": "Select an analysis run to compare it with the previous run.",
+      "no_current_articles": "No analyzed articles exist in the selected run.",
+      "no_previous_run": "No previous analysis run with saved results exists for this project.",
+      "no_previous_articles": "The previous analysis run has no successfully analyzed articles.",
+      "fallback": "No comparison is available for this run yet."
+    }
+  }
 }

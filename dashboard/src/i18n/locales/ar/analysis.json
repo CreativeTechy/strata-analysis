@@ -25,6 +25,7 @@
     "noAnalysisDataTitle": "لا توجد بيانات تحليل بعد",
     "noAnalysisDataHint": "شغّل خط المعالجة لعرض حالة المعالجة هنا.",
     "statusPartial": "جزئي",
+    "statusNotAssessed": "لم يُقيَّم",
     "percentOfTotal": "{{percent}} من {{total}}",
     "failedAnalysisHeading": "التحليلات الفاشلة",
     "loadingErrors": "جارٍ التحميل...",

@@ -128,6 +128,7 @@ class BuildVariationFromLastRunTests(unittest.TestCase):
             result = yc.build_variation_from_last_run({"id": 1}, self._report_data([_row(1)], "period"))
         self.assertEqual(result["status"], "unavailable")
         self.assertIn("Select an analysis run", result["reason"])
+        self.assertEqual(result["reason_code"], "no_run_selected")
         previous.assert_not_called()
 
     def test_first_run_is_unavailable_but_keeps_selected_run_metrics(self):
@@ -135,6 +136,9 @@ class BuildVariationFromLastRunTests(unittest.TestCase):
             result = yc.build_variation_from_last_run({"id": 1}, self._report_data([_row(1)]), run=self.CURRENT)
         self.assertEqual(result["status"], "unavailable")
         self.assertIn("No previous analysis run", result["reason"])
+        self.assertEqual(result["reason_code"], "no_previous_run")
+        self.assertEqual(result["current_sequence_number"], 9)
+        self.assertIsNone(result["previous_sequence_number"])
         self.assertEqual(result["metrics"]["current"]["total"], 1)
 
     def test_compares_with_previous_run_regardless_of_time_gap(self):
@@ -149,6 +153,9 @@ class BuildVariationFromLastRunTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["current_run_id"], "run-9")
         self.assertEqual(result["previous_run_id"], "run-8")
+        self.assertEqual(result["current_sequence_number"], 9)
+        self.assertEqual(result["previous_sequence_number"], 8)
+        self.assertIsNone(result["reason_code"])
         self.assertEqual(result["current_date"], "2026-08-20")
         self.assertEqual(result["previous_date"], "2025-01-02")
         self.assertEqual(result["metrics"]["current"]["positive"], 1)

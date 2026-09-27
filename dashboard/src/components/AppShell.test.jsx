@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import i18n from '../i18n/index.js';
@@ -9,17 +9,23 @@ import AppShell from './AppShell.jsx';
 
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
 
-function renderShell() {
+function LocationView({ page }) {
+  const location = useLocation();
+  return <div>{page} content <output aria-label="Current search">{location.search}</output></div>;
+}
+
+function renderShell(initialEntry = '/dashboard') {
   useAuth.mockReturnValue({
     user: { username: 'jsmith', role: 'admin' },
     hasPermission: () => true,
     logout: vi.fn(),
   });
   return render(
-    <MemoryRouter initialEntries={['/dashboard']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route element={<AppShell />}>
-          <Route path="/dashboard" element={<div>Dashboard content</div>} />
+          <Route path="/dashboard" element={<LocationView page="Dashboard" />} />
+          <Route path="/reports" element={<LocationView page="Reports" />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -81,5 +87,18 @@ describe('AppShell / Sidebar - RTL navigation and mobile drawer', () => {
     expect(screen.getByText('تسجيل الخروج')).toBeInTheDocument();
     const roleChip = screen.getByText('admin');
     expect(roleChip).toHaveAttribute('dir', 'auto');
+  });
+
+  it.each([
+    ['period selection', '/dashboard?period=7d', '?period=7d'],
+    ['analysis run selection', '/dashboard?run_id=run-42', '?run_id=run-42'],
+  ])('preserves the %s when navigating from dashboard to reports', async (_label, initialEntry, expectedSearch) => {
+    const user = userEvent.setup();
+    renderShell(initialEntry);
+
+    await user.click(screen.getByRole('link', { name: 'Reports' }));
+
+    expect(screen.getByText('Reports content')).toBeInTheDocument();
+    expect(screen.getByLabelText('Current search')).toHaveTextContent(expectedSearch);
   });
 });

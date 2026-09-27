@@ -383,28 +383,53 @@ class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
     module-level import graph checked out fine while this deferred import
     still pointed at the pre-move module path."""
 
-    def test_deletes_all_articles(self):
+    CONFIRM = "/api/articles?confirm=DELETE%20ALL%20ARTICLES"
+
+    def test_deletes_all_articles_for_an_admin_with_the_confirmation_phrase(self):
         with patch(
             "services.auth.permissions_store.user_permission_keys",
             return_value={"articles.delete"},
         ), patch(
             "services.articles.store.delete_all_articles", return_value=7
         ) as mock_delete:
-            resp = self.client.delete("/api/articles")
+            resp = self.client.delete(self.CONFIRM)
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {"ok": True})
-        mock_delete.assert_called_once()
+        self.assertEqual(resp.json(), {"ok": True, "deleted": 7})
+        mock_delete.assert_called_once_with(actor="admin")
 
-    def test_reports_error_when_store_reports_failure(self):
+    def test_refuses_without_the_confirmation_phrase(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch("services.articles.store.delete_all_articles") as mock_delete:
+            resp = self.client.delete("/api/articles")
+            wrong = self.client.delete("/api/articles?confirm=yes")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(wrong.status_code, 400)
+        mock_delete.assert_not_called()
+
+    def test_refuses_a_non_admin_even_with_articles_delete(self):
+        """articles.delete alone covers one project's articles (see
+        RemoveProjectArticlesRouteTests); wiping every project is admin-only."""
         with patch(
             "services.auth.permissions_store.user_permission_keys",
             return_value={"articles.delete"},
         ), patch(
-            "services.articles.store.delete_all_articles", return_value=0
+            "services.auth.permissions_store.user_is_full_access", return_value=False
+        ), patch("services.articles.store.delete_all_articles") as mock_delete:
+            resp = self.client.delete(self.CONFIRM)
+        self.assertEqual(resp.status_code, 403)
+        mock_delete.assert_not_called()
+
+    def test_reports_a_503_when_the_store_fails(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_all_articles", return_value=None
         ):
-            resp = self.client.delete("/api/articles")
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("error", resp.json())
+            resp = self.client.delete(self.CONFIRM)
+        self.assertEqual(resp.status_code, 503)
 
     def test_deletes_one_article(self):
         with patch(
@@ -426,6 +451,118 @@ class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
             "services.articles.store.delete_article", return_value=False
         ):
             resp = self.client.delete("/api/articles/999")
+        self.assertEqual(resp.status_code, 404)
+
+
+class RemoveProjectArticlesRouteTests(AnalysisRoutesTestCase):
+    """Removing one project's articles: needs articles.delete, visibility of
+    that project, its exact name as confirmation, and no in-flight run."""
+
+    PROJECT = {"id": 1, "name": "UK Oil Evidence"}
+    RESULT = {
+        "project_id": 1, "articles_removed": 37, "articles_deleted": 30,
+        "articles_kept_in_other_projects": 7, "candidates_rejected": 30,
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._delete_perm_patcher = patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.view", "articles.delete"},
+        )
+        cls._delete_perm_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._delete_perm_patcher.stop()
+        super().tearDownClass()
+
+    def _remove(self, confirm):
+        return self.client.request("DELETE", "/api/projects/1/articles", json={"confirm": confirm})
+
+    def test_removes_with_the_exact_project_name(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch("services.articles.store.remove_project_articles", return_value=self.RESULT) as mock_remove:
+            resp = self._remove("  UK Oil Evidence ")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"ok": True, **self.RESULT})
+        mock_remove.assert_called_once_with(1, actor="admin")
+
+    def test_refuses_a_wrong_or_empty_confirmation(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            wrong = self._remove("uk oil evidence")
+            empty = self._remove("")
+            missing = self.client.delete("/api/projects/1/articles")
+        self.assertEqual([wrong.status_code, empty.status_code, missing.status_code], [400, 400, 400])
+        mock_remove.assert_not_called()
+
+    def test_an_unnamed_project_cannot_be_confirmed_with_an_empty_string(self):
+        with patch("main.get_project", return_value={"id": 1, "name": ""}), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            resp = self._remove("")
+        self.assertEqual(resp.status_code, 400)
+        mock_remove.assert_not_called()
+
+    def test_refuses_while_an_analysis_run_is_in_flight(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value={"id": "run-1", "status": "running"}), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            resp = self._remove("UK Oil Evidence")
+        self.assertEqual(resp.status_code, 409)
+        mock_remove.assert_not_called()
+
+    def test_404_for_an_unknown_project(self):
+        with patch("main.get_project", return_value=None), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            resp = self._remove("anything")
+        self.assertEqual(resp.status_code, 404)
+        mock_remove.assert_not_called()
+
+    def test_404_for_a_project_the_user_is_not_linked_to(self):
+        with patch("services.auth.permissions_store.user_is_full_access", return_value=False), \
+             patch("services.auth.authz.list_project_ids_for_user", return_value=[2]), \
+             patch("main.get_project", return_value=self.PROJECT), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            resp = self._remove("UK Oil Evidence")
+        self.assertEqual(resp.status_code, 404)
+        mock_remove.assert_not_called()
+
+    def test_403_without_articles_delete(self):
+        with patch("services.auth.permissions_store.user_permission_keys", return_value={"articles.view"}), \
+             patch("services.articles.store.remove_project_articles") as mock_remove:
+            resp = self._remove("UK Oil Evidence")
+        self.assertEqual(resp.status_code, 403)
+        mock_remove.assert_not_called()
+
+    def test_503_when_the_store_fails(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch("services.articles.store.remove_project_articles", return_value=None):
+            resp = self._remove("UK Oil Evidence")
+        self.assertEqual(resp.status_code, 503)
+
+    def test_preview_returns_counts_and_the_active_run(self):
+        counts = {"linked_articles": 37, "only_in_project": 30, "shared_with_other_projects": 7}
+        run = {"id": "run-1", "status": "running", "articles_selected": 25, "articles_analyzed": 12, "error": None}
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=run), \
+             patch("services.articles.store.preview_project_article_removal", return_value=counts):
+            resp = self.client.get("/api/projects/1/articles/removal-preview")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "project": {"id": 1, "name": "UK Oil Evidence"},
+            **counts,
+            "active_run": {"id": "run-1", "status": "running", "articles_selected": 25, "articles_analyzed": 12},
+        })
+
+    def test_preview_404_for_an_unknown_project(self):
+        with patch("main.get_project", return_value=None):
+            resp = self.client.get("/api/projects/1/articles/removal-preview")
         self.assertEqual(resp.status_code, 404)
 
 

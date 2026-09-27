@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import ReportsView from './ReportsView.jsx'
+import i18n from '../i18n/index.js'
 import { exportReportSummaryPdf } from '../api/projectsApi.js'
 
 vi.mock('./StatsOverview', () => ({ default: () => <div data-testid="stats-overview" /> }))
@@ -16,7 +17,7 @@ function baseProps(overrides = {}) {
     selectedProject: PROJECT,
     selectedProjectId: 1,
     onSelectedProjectIdChange: vi.fn(),
-    intelligence: { total: 10, positive: 6, negative: 2, neutral: 2, mixed: 0 },
+    intelligence: { project_id: 1, total: 10, positive: 6, negative: 2, neutral: 2, mixed: 0 },
     isLoadingIntelligence: false,
     intelligenceError: null,
     lastIntelligenceSyncAt: null,
@@ -46,6 +47,23 @@ describe('ReportsView', () => {
   it('shows a syncing status while loading', () => {
     render(<ReportsView {...baseProps({ isLoadingIntelligence: true })} />)
     expect(screen.getByText('Syncing')).toBeInTheDocument()
+  })
+
+  it('treats intelligence for a different project as still loading', () => {
+    render(<ReportsView {...baseProps({ intelligence: { project_id: 2, total: 10, positive: 10 } })} />)
+    expect(screen.queryByText('10')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
+  })
+
+  it('does not count placeholder articles when nothing has been analyzed yet', () => {
+    const intelligence = {
+      project_id: 1, total: 4, neutral: 4,
+      coverage: { documents: 1, documents_in_progress: 0, articles: 4, analyzed: 0, pending: 4, failed: 0, active_run: null },
+    }
+    render(<ReportsView {...baseProps({ intelligence })} />)
+    expect(screen.queryByText('4')).not.toBeInTheDocument()
+    expect(screen.getByText('No data yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
   it('calls onReportPeriodChange when a period tab is clicked', () => {
@@ -119,17 +137,29 @@ describe('ReportsView - Export Summary', () => {
   })
 
   it('shows an error message when the export fails, without crashing', async () => {
-    exportReportSummaryPdf.mockRejectedValue(new Error('Report generation failed'))
+    exportReportSummaryPdf.mockRejectedValue(Object.assign(new Error('Report generation failed'), { detail: 'Report generation failed' }))
 
     render(<ReportsView {...baseProps()} />)
     fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
 
-    expect(await screen.findByText('Report generation failed')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't export the report summary.")
+    // The server's own detail still shows next to the translated message.
+    expect(screen.getByText('Report generation failed')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Export Summary/i })).not.toBeDisabled()
   })
 
+  it('shows only the translated message when the failure carries no server detail', async () => {
+    exportReportSummaryPdf.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    render(<ReportsView {...baseProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Export Summary/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't export the report summary.")
+    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument()
+  })
+
   it('disables the export button when there are no analyzed articles in scope', () => {
-    render(<ReportsView {...baseProps({ intelligence: { total: 0 } })} />)
+    render(<ReportsView {...baseProps({ intelligence: { project_id: 1, total: 0 } })} />)
     expect(screen.getByRole('button', { name: /Export Summary/i })).toBeDisabled()
   })
 
@@ -147,5 +177,26 @@ describe('ReportsView - Export Summary', () => {
     resolveExport(new Blob(['%PDF-1.7']))
     await waitFor(() => expect(button).not.toBeDisabled())
     expect(exportReportSummaryPdf).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ReportsView - Arabic', () => {
+  it('renders the export button, its tooltip and the project status in Arabic', async () => {
+    await i18n.changeLanguage('ar')
+    render(<ReportsView {...baseProps()} />)
+
+    const exportButton = screen.getByRole('button', { name: /تصدير الملخص/ })
+    expect(exportButton).toHaveAttribute('title', 'تنزيل ملخص PDF لهذا التقرير')
+    expect(screen.getByRole('option', { name: 'Acme Study (نشط)' })).toBeInTheDocument()
+    expect(screen.queryByText(/Export Summary/)).not.toBeInTheDocument()
+  })
+
+  it('shows the Arabic export error', async () => {
+    await i18n.changeLanguage('ar')
+    exportReportSummaryPdf.mockRejectedValue(new Error('boom'))
+    render(<ReportsView {...baseProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: /تصدير الملخص/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('تعذّر تصدير ملخص التقرير.')
   })
 })
