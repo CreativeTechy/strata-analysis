@@ -323,7 +323,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const hasNext = offset + limit < total;
   const isInitialLoading = loading && articles.length === 0;
   const isRefreshing = loading && articles.length > 0;
-  const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.name || t('toolbar.activeProjectScope'));
+  const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.name || t('toolbar.selectedProjectScope'));
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
   const searchBusy = Boolean(searchInput) && (searchInput.trim() !== search || loading);
