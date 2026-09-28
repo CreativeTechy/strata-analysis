@@ -266,6 +266,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     setSourceFilter('all');
     setSourceHostFilter('all');
     setEvidence({});
+    setSentiment('all');
   };
 
   // "Analysis #N" for a run-scoped link's chip - the run id alone means

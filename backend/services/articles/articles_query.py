@@ -665,7 +665,7 @@ def _resolve_group_tiers(groups: dict[str, dict], project_id=None) -> dict[str, 
     # other DB-backed helpers - every group falls back to 'unknown' rather than
     # attempting a connection, so an unconfigured/unreachable DATABASE_URL fails
     # fast instead of blocking the whole intelligence response on a pool timeout.
-    trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id else None) if config.DATABASE_URL else {}
+    trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id is not None else None) if config.DATABASE_URL else {}
     resolved = {}
     for key in groups:
         tier = (trust_by_key.get(key) or {}).get("tier") or "unknown"
