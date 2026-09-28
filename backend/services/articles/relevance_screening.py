@@ -22,6 +22,13 @@ models, malformed LLM responses, and any other failure fail open as
 ``needs_review`` rather than silently discarding material a human never saw.
 A manual override always wins over any automatic decision, in either
 direction.
+
+`screen_project_articles`'s `article_ids` restricts screening to one run's
+candidate set (see services/pipeline/pipeline.py's `_select_articles`) rather
+than every article the project has ever held - a pending-only run only pays
+to screen the articles it might actually analyze, and a run's screened/
+included/excluded counters describe that run's own selection instead of the
+project's entire history.
 """
 
 from __future__ import annotations
@@ -231,19 +238,35 @@ def _record_run_screenings(run_id: str, project_id: int, results: list[dict]) ->
         )
 
 
-def screen_project_articles(project_id: int, run_id: str, mode: str | None = None) -> dict:
+def screen_project_articles(
+    project_id: int, run_id: str, mode: str | None = None, article_ids: list[int] | None = None,
+) -> dict:
+    """`article_ids`, when not None, restricts screening to that specific set
+    (a run's own candidate articles) rather than everything article_projects
+    links to this project. An empty list means "nothing to screen" - a run
+    with no candidate articles skips the query entirely, the same way
+    services/pipeline/pipeline.py's `_select_articles` treats an empty
+    relevance filter."""
     mode = str(mode or config.ARTICLE_RELEVANCE_SCREENING_MODE).strip().lower()
     if mode not in {"off", "observe", "enforce"}:
         mode = "observe"
+    if article_ids is not None and not article_ids:
+        return {"mode": mode, "results": [], "included_ids": [], "screened": 0,
+                "included": 0, "excluded": 0, "needs_review": 0}
+    id_filter = ""
+    params: list = [int(project_id)]
+    if article_ids is not None:
+        id_filter = "and a.id = any(%s)"
+        params.append([int(article_id) for article_id in article_ids])
     rows = db.fetch_all(
-        """select a.id,a.title,a.text,a.content_hash,a.embedding_json,a.embedding_model,
+        f"""select a.id,a.title,a.text,a.content_hash,a.embedding_json,a.embedding_model,
                   a.embedding_source,ap.similarity_score,ap.relevance_decision,
                   ap.relevance_explanation,ap.relevance_source,ap.relevance_scope_hash,
                   ap.relevance_content_hash,ap.relevance_model,ap.relevance_rules_version,
                   ap.manual_relevance_override,ap.manual_relevance_reason
              from articles a join article_projects ap on ap.article_id=a.id
-            where ap.project_id=%s order by a.id""",
-        (int(project_id),),
+            where ap.project_id=%s {id_filter} order by a.id""",
+        tuple(params),
     ) or []
     if not rows:
         return {"mode": mode, "results": [], "included_ids": [], "screened": 0,

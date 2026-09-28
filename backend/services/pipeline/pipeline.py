@@ -382,9 +382,16 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             prepare_started_at=started,
         )
 
+        # This run's own candidate set (respecting `scope`) - screening below
+        # only evaluates these, not every article the project has ever held,
+        # so a pending-only run doesn't pay to re-screen articles it already
+        # analyzed and isn't about to touch again.
+        candidate_rows = _select_articles(project_id, scope)
+        candidate_ids = [int(row["id"]) for row in candidate_rows]
+
         update_pipeline_run(run_id, message="Screening articles for project relevance...")
         try:
-            screening = screen_project_articles(project_id, run_id)
+            screening = screen_project_articles(project_id, run_id, article_ids=candidate_ids)
         except Exception:
             # Relevance is an optimization and safety gate, not a reason to
             # lose an analysis run. Any infrastructure or classifier failure
@@ -408,10 +415,8 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
         )
 
         rows = _select_articles(project_id, scope, screening["included_ids"])
-        # Freeze only the corpus admitted by the relevance gate. For a
-        # pending-only run this still includes previously analyzed, relevant
-        # articles so evidence can corroborate new claims without allowing
-        # unrelated material into the workspace.
+        # Freeze the corpus admitted by the relevance gate - this run's own
+        # candidates, minus anything screening excluded.
         capture_run_snapshot(run_id, project_id, article_ids=screening["included_ids"])
         document_stats = _initial_document_stats(rows)
         upsert_pipeline_run_document_stats(run_id, document_stats)

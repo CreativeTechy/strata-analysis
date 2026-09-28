@@ -79,6 +79,19 @@ class ArticleRelevanceScreeningTests(unittest.TestCase):
     def test_malformed_llm_payload_is_rejected(self):
         self.assertIsNone(screening._validate_llm_results({"results": [{"id": 1, "relevance": "relevant"}]}, {1, 2}))
 
+    def test_article_ids_restricts_the_query_to_that_set(self):
+        with patch.object(screening, "_article_vectors", return_value={1: [1.0, 0.0]}):
+            screening.screen_project_articles(9, "run-6", mode="enforce", article_ids=[1])
+        query, params = screening.db.fetch_all.call_args[0]
+        self.assertIn("a.id = any", query)
+        self.assertEqual(params, (9, [1]))
+
+    def test_empty_article_ids_skips_the_database_query(self):
+        result = screening.screen_project_articles(9, "run-7", mode="enforce", article_ids=[])
+        screening.db.fetch_all.assert_not_called()
+        self.assertEqual(result, {"mode": "enforce", "results": [], "included_ids": [], "screened": 0,
+                                   "included": 0, "excluded": 0, "needs_review": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

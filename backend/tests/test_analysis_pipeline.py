@@ -6,7 +6,7 @@ failed" from "the model host is unreachable and every article failed".
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from services.pipeline import pipeline
 from services.pipeline import pipeline_runs
@@ -89,6 +89,17 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         pipeline.generate_for_run.assert_not_called()
         pipeline._queue_evidence_after_analysis.assert_called_once_with("run-1", 5)
 
+    def test_screening_only_covers_this_runs_candidate_articles(self):
+        """Screening must not re-evaluate the project's entire history on
+        every run - only the articles this run actually selected as
+        candidates (see _select_articles)."""
+        rows = _rows((1, 10, "survey.pdf"), (2, 10, "survey.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}):
+            pipeline.run_analysis_pipeline("run-screen-scope", project_id=5)
+
+        pipeline.screen_project_articles.assert_called_once_with(5, "run-screen-scope", article_ids=[1, 2])
+
     def test_articles_without_a_document_are_grouped_rather_than_dropped(self):
         """A JSONL import has no document behind it, but its articles still have
         to appear in the run's breakdown - a total that doesn't add up reads as
@@ -151,7 +162,10 @@ class RunAnalysisPipelineTests(unittest.TestCase):
              patch.object(pipeline, "reanalyze_article", return_value={"ok": True}):
             pipeline.run_analysis_pipeline("run-fallback", project_id=5)
 
-        select.assert_called_once_with(5, "pending", None)
+        # Called once to build this run's candidate set (for screening) and
+        # once more, post-screening, for the final analysis rows - fail-open
+        # means the second call's relevance filter is None (no filter).
+        self.assertEqual(select.call_args_list, [call(5, "pending"), call(5, "pending", None)])
         pipeline.capture_run_snapshot.assert_called_with("run-fallback", 5, article_ids=None)
         self.assertEqual(self._final()["status"], "success")
 
