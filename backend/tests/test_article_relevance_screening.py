@@ -6,11 +6,11 @@ from unittest.mock import patch
 from services.articles import relevance_screening as screening
 
 
-def _row(article_id, *, override=None, text="Body " * 60):
+def _row(article_id, *, override=None):
     return {
         "id": article_id,
         "title": f"Article {article_id}",
-        "text": text,
+        "text": "Body",
         "content_hash": f"content-{article_id}",
         "embedding_json": None,
         "embedding_model": None,
@@ -23,34 +23,9 @@ def _row(article_id, *, override=None, text="Body " * 60):
         "relevance_content_hash": None,
         "relevance_model": None,
         "relevance_rules_version": None,
-        "content_quality_decision": None,
-        "content_quality_reason": None,
         "manual_relevance_override": override,
         "manual_relevance_reason": "Reviewed by an editor" if override else None,
     }
-
-
-class ContentQualityGateTests(unittest.TestCase):
-    def test_body_under_the_floor_is_unusable(self):
-        decision, reason = screening._content_quality({"text": "Too short."})
-        self.assertEqual(decision, "unusable")
-        self.assertIn("characters", reason)
-
-    def test_boilerplate_body_is_unusable_even_when_long_enough(self):
-        row = {"text": "Please sign in to continue reading this article. " * 10}
-        decision, reason = screening._content_quality(row)
-        self.assertEqual(decision, "unusable")
-        self.assertIn("login/paywall", reason)
-
-    def test_substantive_body_mentioning_cookies_once_is_ok(self):
-        row = {"text": (
-            "The city council approved a new fuel subsidy plan on Tuesday, "
-            "with officials citing rising import costs and warning that "
-            "cookie-cutter policies from prior administrations had failed. " * 3
-        )}
-        decision, reason = screening._content_quality(row)
-        self.assertEqual(decision, "ok")
-        self.assertEqual(reason, "")
 
 
 class ArticleRelevanceScreeningTests(unittest.TestCase):
@@ -100,15 +75,6 @@ class ArticleRelevanceScreeningTests(unittest.TestCase):
         result = screening.screen_project_articles(9, "run-4", mode="observe")
         self.assertEqual(result["included_ids"], [])
         self.assertEqual(result["results"][0]["source"], "manual")
-
-    def test_unusable_content_is_excluded_before_any_embedding_call(self):
-        self.rows[:] = [_row(1, text="Sign in to continue reading. " * 10)]
-        with patch.object(screening, "_article_vectors") as mock_vectors:
-            result = screening.screen_project_articles(9, "run-5", mode="enforce")
-        mock_vectors.assert_not_called()
-        self.assertEqual(result["included_ids"], [])
-        self.assertEqual(result["results"][0]["source"], "content_quality")
-        self.assertEqual(result["results"][0]["content_quality_decision"], "unusable")
 
     def test_malformed_llm_payload_is_rejected(self):
         self.assertIsNone(screening._validate_llm_results({"results": [{"id": 1, "relevance": "relevant"}]}, {1, 2}))

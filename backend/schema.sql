@@ -271,7 +271,6 @@ create table if not exists public.pipeline_run_article_screenings (
     similarity_score      numeric,
     decision_source       text not null,
     explanation           text,
-    content_quality_decision text,
     scope_hash            text not null,
     content_hash          text not null,
     rules_version         text not null,
@@ -534,19 +533,18 @@ create index if not exists articles_reprocess_requested_idx
     on public.articles (reprocess_requested_at) where reprocess_requested_at is not null;
 
 -- Which projects an article belongs to. `similarity_score` is how well it
--- matched the project when it was linked. The relevance_*/content_quality_*/
--- manual_relevance_* columns are article-relevance screening's cached
--- per-project decision (see services/articles/relevance_screening.py) -
--- content_quality_decision flags unusable source text (login walls, cookie
--- notices) independently of whether it's on-topic, and relevance_decision is
--- the scope verdict (accepted/excluded/needs_review) an operator's manual
--- override always outranks.
+-- matched the project when it was linked. The relevance_*/manual_relevance_*
+-- columns are article-relevance screening's cached per-project decision (see
+-- services/articles/relevance_screening.py) - relevance_decision is the
+-- scope verdict (accepted/excluded/needs_review) an operator's manual
+-- override always outranks. Whether the source text itself is usable (a
+-- login wall, cookie notice, etc.) is a separate concern handled downstream,
+-- at evidence generation (services/evidence/workspace.py's own
+-- `_content_quality`), not cached here.
 create table if not exists public.article_projects (
     article_id                    bigint not null references public.articles(id) on delete cascade,
     project_id                    bigint not null references public.projects(id) on delete cascade,
     similarity_score              numeric,
-    content_quality_decision      text,
-    content_quality_reason        text,
     relevance_decision            text,
     relevance_explanation         text,
     relevance_source              text,
@@ -562,8 +560,6 @@ create table if not exists public.article_projects (
     manual_relevance_updated_at   timestamptz,
     created_at       timestamptz not null default now(),
     primary key (article_id, project_id),
-    constraint article_projects_content_quality_decision_check
-        check (content_quality_decision is null or content_quality_decision in ('ok','unusable')),
     constraint article_projects_relevance_decision_check
         check (relevance_decision is null or relevance_decision in ('accepted','excluded','needs_review')),
     constraint article_projects_manual_relevance_override_check

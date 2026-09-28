@@ -281,15 +281,6 @@ try:
     )
 except ValueError:
     ARTICLE_RELEVANCE_BATCH_SIZE = 50
-# Minimum meaningful body length (characters, after whitespace collapse) for
-# an article to even reach scope screening - anchors the content-quality gate
-# (services/articles/relevance_screening.py's _content_quality) that rejects
-# login walls, cookie notices and extraction failures before they can score
-# a high embedding similarity on topic words alone.
-try:
-    ARTICLE_MIN_QUALITY_CHARS = max(0, int(os.environ.get("ARTICLE_MIN_QUALITY_CHARS", "200") or 200))
-except ValueError:
-    ARTICLE_MIN_QUALITY_CHARS = 200
 
 EVIDENCE_RELEVANCE_MODE = os.environ.get("EVIDENCE_RELEVANCE_MODE", "llm").strip().lower()
 if EVIDENCE_RELEVANCE_MODE not in {"llm", "embedding"}:

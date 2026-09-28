@@ -3,26 +3,25 @@
 Runs in the pipeline's `prepare` stage, before the expensive per-article
 analysis (backend/analysis/orchestrator.py - one or more LLM calls plus
 three separate zero-shot classification passes) and before evidence
-generation. Two gates, cheapest first:
+generation. Local sentence-transformer embeddings (the same model
+backend/embeddings.py already loads for search/clustering/evidence, so this
+adds no new model or network dependency) handle the clear matches and clear
+misses; only the middle band reaches the configured chat LLM, batched, since
+that's the only step here with a real per-call cost.
 
-1. Content quality (``_content_quality``) - no model at all. Catches bodies
-   that are too short to say anything, or that are mostly a login wall /
-   cookie notice / access-denied page rather than the article the operator
-   thought they uploaded. These fail every later stage identically, so
-   there is no reason to spend an embedding, let alone an LLM call, on them.
-2. Scope relevance - local sentence-transformer embeddings (the same model
-   backend/embeddings.py already loads for search/clustering/evidence, so
-   this adds no new model or network dependency) handle the clear matches
-   and clear misses; only the middle band reaches the configured chat LLM,
-   batched, since that's the only step here with a real per-call cost.
+Whether the source *text itself* is usable (a login wall, cookie notice, or
+access-denied page saved in place of the real article) is a separate concern
+from scope relevance and is not this module's job - see
+services/evidence/workspace.py's own `_content_quality`, which already
+screens that at the evidence-generation stage.
 
-Both decisions are cached per (article, project) in article_projects, keyed
-by content hash + project scope hash + rules version, so a project's scope
-or an article's text changing is what invalidates the cache - not time.
-Missing models, malformed LLM responses, and any other failure fail open as
-``needs_review`` (content quality) or ``needs_review`` (scope) rather than
-silently discarding material a human never saw. A manual override always
-wins over any automatic decision, in either direction.
+The decision is cached per (article, project) in article_projects, keyed by
+content hash + project scope hash + rules version, so a project's scope or
+an article's text changing is what invalidates the cache - not time. Missing
+models, malformed LLM responses, and any other failure fail open as
+``needs_review`` rather than silently discarding material a human never saw.
+A manual override always wins over any automatic decision, in either
+direction.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 
 import config
 import db
@@ -41,45 +39,16 @@ from services.projects.projects_store import get_project, persist_project_embedd
 
 logger = logging.getLogger(__name__)
 
-RULES_VERSION = "article-relevance-v2"
+RULES_VERSION = "article-relevance-v3"
 DECISIONS = {"accepted", "excluded", "needs_review"}
 OVERRIDE_DECISIONS = {"include", "exclude"}
-QUALITY_DECISIONS = {"ok", "unusable"}
-
-# Phrases that show up in login walls, paywalls, cookie-consent interstitials
-# and access-denied pages saved in place of the actual article text - the
-# extraction-failure pages docs/evidence-screening-review-and-plan.md found
-# scoring high on topic similarity alone (a fuel-price article that was
-# really a login page still scored 0.86, because "fuel"/"price" appeared in
-# the surrounding chrome). Matched case-insensitively against the whole body,
-# so a genuine article that happens to mention a cookie policy in passing
-# only trips this when the body is also short - see _content_quality.
-_BOILERPLATE_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"enable (javascript|cookies)",
-        r"sign in to (continue|read|view)",
-        r"log ?in to (continue|read|view)",
-        r"subscribe to (continue|read|view)",
-        r"access denied",
-        r"403 forbidden",
-        r"you (do not|don't) have permission to access",
-        r"this (content|page|article) is (unavailable|no longer available)",
-        r"accept (all )?cookies",
-        r"we use cookies",
-        r"verify (you'?re|you are) (a )?human",
-        r"complete the security check",
-        r"unusual traffic from your (computer|network)",
-    )
-)
 
 
 def _rules_version() -> str:
     """Cache key includes tunable thresholds so calibration never goes stale."""
     return (
         f"{RULES_VERSION}:accept={config.ARTICLE_RELEVANCE_ACCEPT_THRESHOLD:.4f}:"
-        f"exclude={config.ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD:.4f}:"
-        f"minchars={config.ARTICLE_MIN_QUALITY_CHARS}"
+        f"exclude={config.ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD:.4f}"
     )
 
 
@@ -100,33 +69,6 @@ def _content_hash(row: dict) -> str:
 
 def _scope_hash(project: dict) -> str:
     return _hash_text(build_project_embedding_text(project))
-
-
-def _content_quality(row: dict) -> tuple[str, str]:
-    """No model, no embedding - just length and boilerplate phrase checks.
-    Returns (decision, reason); decision is "ok" or "unusable".
-
-    A body under the configured floor is unusable regardless of content -
-    that's too little text for any later stage (sentiment, extraction,
-    classification) to say anything meaningful about, extraction failure or
-    not. A body at or above the floor is only unusable when it also matches
-    a boilerplate phrase - a real article that mentions cookies in one
-    sentence must not be excluded for it.
-    """
-    body = " ".join(str(row.get("text") or "").split())
-    if len(body) < config.ARTICLE_MIN_QUALITY_CHARS:
-        return "unusable", (
-            f"Article body is only {len(body)} characters, under the "
-            f"{config.ARTICLE_MIN_QUALITY_CHARS}-character floor for a substantive article."
-        )
-    for pattern in _BOILERPLATE_PATTERNS:
-        match = pattern.search(body)
-        if match:
-            return "unusable", (
-                f"Article body reads as a login/paywall/cookie/access page (matched "
-                f"{match.group(0)!r}), not the article's own content."
-            )
-    return "ok", ""
 
 
 def _project_vector(project: dict) -> list[float]:
@@ -258,13 +200,11 @@ def _persist_screening(project_id: int, row: dict, result: dict) -> None:
         """update article_projects set similarity_score=%s,relevance_decision=%s,
                   relevance_explanation=%s,relevance_source=%s,relevance_scope_hash=%s,
                   relevance_content_hash=%s,relevance_model=%s,relevance_rules_version=%s,
-                  content_quality_decision=%s,content_quality_reason=%s,
                   relevance_screened_at=now()
              where project_id=%s and article_id=%s""",
         (result.get("similarity_score"), result["decision"], result.get("explanation"),
          result.get("source"), result["scope_hash"], result["content_hash"],
          config.EMBEDDING_MODEL, result["rules_version"],
-         result.get("content_quality_decision"), result.get("content_quality_reason"),
          int(project_id), int(row["id"])),
     )
 
@@ -276,19 +216,16 @@ def _record_run_screenings(run_id: str, project_id: int, results: list[dict]) ->
         cur.executemany(
             """insert into pipeline_run_article_screenings
                    (run_id,project_id,article_id,decision,included,similarity_score,
-                    decision_source,explanation,content_quality_decision,scope_hash,content_hash,
-                    rules_version,model)
-               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    decision_source,explanation,scope_hash,content_hash,rules_version,model)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                on conflict (run_id,article_id) do update set
                    decision=excluded.decision,included=excluded.included,
                    similarity_score=excluded.similarity_score,
-                   decision_source=excluded.decision_source,explanation=excluded.explanation,
-                   content_quality_decision=excluded.content_quality_decision""",
+                   decision_source=excluded.decision_source,explanation=excluded.explanation""",
             [
                 (run_id, int(project_id), item["article_id"], item["decision"], item["included"],
                  item.get("similarity_score"), item.get("source"), item.get("explanation"),
-                 item.get("content_quality_decision"), item["scope_hash"], item["content_hash"],
-                 item["rules_version"], config.EMBEDDING_MODEL)
+                 item["scope_hash"], item["content_hash"], item["rules_version"], config.EMBEDDING_MODEL)
                 for item in results
             ],
         )
@@ -303,7 +240,6 @@ def screen_project_articles(project_id: int, run_id: str, mode: str | None = Non
                   a.embedding_source,ap.similarity_score,ap.relevance_decision,
                   ap.relevance_explanation,ap.relevance_source,ap.relevance_scope_hash,
                   ap.relevance_content_hash,ap.relevance_model,ap.relevance_rules_version,
-                  ap.content_quality_decision,ap.content_quality_reason,
                   ap.manual_relevance_override,ap.manual_relevance_reason
              from articles a join article_projects ap on ap.article_id=a.id
             where ap.project_id=%s order by a.id""",
@@ -327,20 +263,11 @@ def screen_project_articles(project_id: int, run_id: str, mode: str | None = Non
         if override in OVERRIDE_DECISIONS:
             results.append({**common, "decision": "accepted" if override == "include" else "excluded",
                             "similarity_score": row.get("similarity_score"), "source": "manual",
-                            "explanation": row.get("manual_relevance_reason") or "Manual relevance override.",
-                            "content_quality_decision": row.get("content_quality_decision")})
+                            "explanation": row.get("manual_relevance_reason") or "Manual relevance override."})
             continue
         if mode == "off":
             results.append({**common, "decision": "accepted", "similarity_score": None,
-                            "source": "screening_off", "explanation": "Article relevance screening is disabled.",
-                            "content_quality_decision": None})
-            continue
-
-        quality_decision, quality_reason = _content_quality(row)
-        if quality_decision == "unusable":
-            results.append({**common, "decision": "excluded", "similarity_score": None,
-                            "source": "content_quality", "explanation": quality_reason,
-                            "content_quality_decision": quality_decision})
+                            "source": "screening_off", "explanation": "Article relevance screening is disabled."})
             continue
 
         cache_valid = (
@@ -353,15 +280,14 @@ def screen_project_articles(project_id: int, run_id: str, mode: str | None = Non
         if cache_valid:
             results.append({**common, "decision": row["relevance_decision"],
                             "similarity_score": row.get("similarity_score"), "source": "cache",
-                            "explanation": row.get("relevance_explanation") or "Cached screening decision.",
-                            "content_quality_decision": quality_decision})
+                            "explanation": row.get("relevance_explanation") or "Cached screening decision."})
             continue
         pending_row = dict(row)
         pending_row["_force_reembed"] = bool(
             row.get("relevance_content_hash")
             and row.get("relevance_content_hash") != content_digest
         )
-        pending.append((pending_row, {**common, "content_quality_decision": quality_decision}))
+        pending.append((pending_row, common))
 
     article_vectors = _article_vectors([row for row, _common in pending]) if pending and project_vector else {}
     for row, common in pending:
