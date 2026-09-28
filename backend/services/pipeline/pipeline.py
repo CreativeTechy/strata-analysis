@@ -39,6 +39,12 @@ import db
 from core.logging import reset_run_id, set_run_id
 from services.articles.idea_comparisons import generate_idea_comparisons
 from services.articles.reanalyze import mark_processing, reanalyze_article
+from services.articles.relevance_screening import (
+    ScreeningCancelled,
+    current_rules_version,
+    project_relevance_snapshot_ids,
+    screen_project_articles,
+)
 from services.pipeline.pipeline_runs import (
     create_pipeline_run,
     get_active_run_for_project,
@@ -184,17 +190,19 @@ def _project_has_pending_articles(project_id: int) -> bool:
     broke would silently reintroduce the stranded-work failure the mark
     mechanism exists to prevent."""
     try:
+        exclude_sql, exclude_params = _enforce_excluded_filter()
         row = db.fetch_one(
-            """
+            f"""
             select exists (
                 select 1
                 from article_projects ap
                 join articles a on a.id = ap.article_id
                 where ap.project_id = %s
                   and coalesce(a.analysis_status, 'pending') = any(%s)
+                  {exclude_sql}
             ) as has_pending
             """,
-            (int(project_id), list(PENDING_STATUSES)),
+            (int(project_id), list(PENDING_STATUSES), *exclude_params),
         )
         return bool((row or {}).get("has_pending"))
     except Exception:
@@ -227,18 +235,69 @@ def _maybe_start_followup(project_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Selecting the work
 # --------------------------------------------------------------------------- #
-def _select_articles(project_id, scope):
+def _enforce_excluded_filter() -> tuple[str, list]:
+    """SQL fragment (+ its params) dropping articles an `enforce`-mode run has
+    a *currently valid* cached 'excluded' decision for - one whose content
+    hash, embedding model and screening calibration still match. A stale
+    decision (the article's content changed, or the accept/exclude
+    thresholds were retuned, since it was cached) is deliberately NOT matched
+    here, so the article still gets picked up as a pending candidate and
+    properly re-screened - comparing only `relevance_decision` used to make a
+    stale exclusion permanent instead of ever letting screening's own
+    cache-validity check run against it again (PR #66 review F006).
+
+    Without this filter at all, an excluded article's analysis_status stays
+    'pending' forever (it's never handed to reanalyze_article, so nothing
+    ever moves it out of that status), and every later pending-scope query
+    would otherwise keep re-selecting it as a "candidate" only to have
+    screening's own cache immediately drop it again. Only meaningful in
+    `enforce` mode - `observe` and `off` never actually exclude anything, so
+    the article really is still pending there. Assumes `a` (articles) and
+    `ap` (article_projects) are already joined in the caller's query.
+
+    Scope hash (the project's own embedding-defining text) is deliberately
+    left out of the comparison: matching it would need a project lookup on
+    every candidate-selection query just to build a SQL filter, and a scope
+    change is corrected the next time the article is screened as a genuine
+    candidate anyway, same as any other cache signal screening validates."""
+    if config.ARTICLE_RELEVANCE_SCREENING_MODE != "enforce":
+        return "", []
+    return (
+        "and not (coalesce(ap.relevance_decision, '') = 'excluded'"
+        " and ap.relevance_content_hash = a.content_hash"
+        " and ap.relevance_model = %s"
+        " and ap.relevance_rules_version = %s)",
+        [config.EMBEDDING_MODEL, current_rules_version()],
+    )
+
+
+def _select_articles(project_id, scope, included_article_ids=None):
     """Every in-scope article for the project, with the document it came from.
 
     Left-joined through project_document_articles: an article that was imported
     rather than split out of a document simply has no document row, and lands
     under UNATTRIBUTED in the per-document breakdown.
+
+    `included_article_ids`, when not None, is the relevance gate's admitted
+    set (see screen_project_articles below) - an empty list here means the
+    gate admitted nothing, so this returns no rows rather than silently
+    falling back to "no filter".
     """
     status_filter = ""
+    exclude_screened_out = ""
+    relevance_filter = ""
     params = [int(project_id)]
     if scope != "all":
         status_filter = "and coalesce(a.analysis_status, 'pending') = any(%s)"
         params.append(list(PENDING_STATUSES))
+        exclude_screened_out, exclude_params = _enforce_excluded_filter()
+        params.extend(exclude_params)
+    if included_article_ids is not None:
+        included_article_ids = [int(article_id) for article_id in included_article_ids]
+        if not included_article_ids:
+            return []
+        relevance_filter = "and a.id = any(%s)"
+        params.append(included_article_ids)
 
     rows = db.fetch_all(
         f"""
@@ -253,6 +312,8 @@ def _select_articles(project_id, scope):
         left join project_documents pd on pd.id = pda.document_id
         where ap.project_id = %s
           {status_filter}
+          {exclude_screened_out}
+          {relevance_filter}
         order by a.id asc
         """,
         tuple(params),
@@ -368,8 +429,62 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
             prepare_started_at=started,
         )
 
-        rows = _select_articles(project_id, scope)
-        capture_run_snapshot(run_id, project_id)
+        # This run's own candidate set (respecting `scope`) - screening below
+        # only evaluates these, not every article the project has ever held,
+        # so a pending-only run doesn't pay to re-screen articles it already
+        # analyzed and isn't about to touch again.
+        candidate_rows = _select_articles(project_id, scope)
+        candidate_ids = [int(row["id"]) for row in candidate_rows]
+
+        update_pipeline_run(run_id, message="Screening articles for project relevance...")
+        try:
+            screening = screen_project_articles(
+                project_id, run_id, article_ids=candidate_ids,
+                should_cancel=lambda: _is_cancel_requested(run_id),
+            )
+        except ScreeningCancelled:
+            # A real stop request, not an infrastructure failure - must not
+            # be swallowed by the fail-open handling below.
+            raise PipelineCancelled()
+        except Exception:
+            # Relevance is an optimization and safety gate, not a reason to
+            # lose an analysis run. Any infrastructure or classifier failure
+            # falls back to the former behavior and keeps every article.
+            logger.exception("run %s: relevance screening failed; including all articles", run_id)
+            screening = {
+                "mode": "fallback",
+                "screened": 0,
+                "included": 0,
+                "excluded": 0,
+                "needs_review": 0,
+                "included_ids": None,
+            }
+        update_pipeline_run(
+            run_id,
+            articles_screened=screening["screened"],
+            articles_included=screening["included"],
+            articles_excluded=screening["excluded"],
+            articles_needs_review=screening["needs_review"],
+            screening_mode=screening["mode"],
+        )
+
+        rows = _select_articles(project_id, scope, screening["included_ids"])
+        # The evidence snapshot covers the *whole* project corpus, not just
+        # this run's candidates - screening["included_ids"] can't drive this:
+        # it's scoped to `candidate_ids` above, so a pending-only run would
+        # otherwise freeze only its own new articles and drop every earlier
+        # document's evidence from the default view (see PR #66 review F001).
+        # project_relevance_snapshot_ids reads the whole corpus's cached
+        # decisions and manual overrides instead - cheap, no re-screening.
+        try:
+            snapshot_ids = project_relevance_snapshot_ids(project_id, screening["mode"])
+        except Exception:
+            logger.exception(
+                "run %s: computing the evidence snapshot's admitted corpus failed; snapshotting everything",
+                run_id,
+            )
+            snapshot_ids = None
+        capture_run_snapshot(run_id, project_id, article_ids=snapshot_ids)
         document_stats = _initial_document_stats(rows)
         upsert_pipeline_run_document_stats(run_id, document_stats)
         update_pipeline_run(
@@ -385,7 +500,9 @@ def _run_analysis_pipeline(run_id: str, project_id: int | None, scope: str):
                 status="success",
                 stage="no_work",
                 message=(
-                    "No articles require analysis; existing analytical results remain unchanged."
+                    "No articles passed relevance screening."
+                    if screening["screened"] and not screening["included"]
+                    else "No articles require analysis; existing analytical results remain unchanged."
                     if scope != "all"
                     else "No articles are available to analyze."
                 ),

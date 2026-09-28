@@ -6,7 +6,7 @@ failed" from "the model host is unreachable and every article failed".
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, call, patch
 
 from services.pipeline import pipeline
 from services.pipeline import pipeline_runs
@@ -37,6 +37,23 @@ class RunAnalysisPipelineTests(unittest.TestCase):
             patch.object(pipeline, "record_run_completion",
                          side_effect=lambda pid, **kw: self.completions.append(kw)),
             patch.object(pipeline, "mark_processing"),
+            patch.object(
+                pipeline,
+                "screen_project_articles",
+                return_value={
+                    "mode": "enforce",
+                    "screened": 3,
+                    "included": 3,
+                    "excluded": 0,
+                    "needs_review": 0,
+                    "included_ids": [1, 2, 3],
+                },
+            ),
+            # Default: nothing this project has is manually overridden or
+            # enforce-excluded, so the snapshot admits everything (None = no
+            # filter) - see the dedicated tests below for the cases where it
+            # doesn't.
+            patch.object(pipeline, "project_relevance_snapshot_ids", return_value=None),
             patch.object(pipeline, "capture_run_snapshot", return_value=3),
             patch.object(pipeline, "generate_for_run", return_value={"claims": 2, "articles": 3}),
             patch.object(pipeline, "_queue_evidence_after_analysis"),
@@ -73,9 +90,70 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(self.documents["survey.pdf"]["analyzed"], 2)
         self.assertEqual(self.documents["interviews.docx"]["analyzed"], 1)
         self.assertEqual(self.completions[-1]["status"], "success")
-        pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5)
+        # None here (not [1, 2, 3]) because the snapshot is driven by
+        # project_relevance_snapshot_ids (mocked to None = "no filter" in
+        # setUp), not by screening's candidate-scoped included_ids - see the
+        # dedicated snapshot tests below for where those two actually differ.
+        pipeline.capture_run_snapshot.assert_called_once_with("run-1", 5, article_ids=None)
         pipeline.generate_for_run.assert_not_called()
         pipeline._queue_evidence_after_analysis.assert_called_once_with("run-1", 5)
+
+    def test_screening_only_covers_this_runs_candidate_articles(self):
+        """Screening must not re-evaluate the project's entire history on
+        every run - only the articles this run actually selected as
+        candidates (see _select_articles)."""
+        rows = _rows((1, 10, "survey.pdf"), (2, 10, "survey.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}):
+            pipeline.run_analysis_pipeline("run-screen-scope", project_id=5)
+
+        pipeline.screen_project_articles.assert_called_once_with(
+            5, "run-screen-scope", article_ids=[1, 2], should_cancel=ANY
+        )
+
+    def test_snapshot_covers_the_whole_admitted_corpus_not_just_candidates(self):
+        """F001: a pending-only run's screening is scoped to its own new
+        candidates, but the evidence snapshot must still cover the project's
+        whole admitted corpus - articles analyzed by an earlier run included -
+        or every earlier document's evidence silently drops out of the
+        default workspace view after each routine upload."""
+        rows = _rows((5, 10, "new.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}), \
+             patch.object(pipeline, "screen_project_articles", return_value={
+                 "mode": "observe", "screened": 1, "included": 1, "excluded": 0,
+                 "needs_review": 0, "included_ids": [5],
+             }), \
+             patch.object(pipeline, "project_relevance_snapshot_ids", return_value=[1, 2, 5]) as snapshot_ids:
+            pipeline.run_analysis_pipeline("run-snap", project_id=5)
+
+        snapshot_ids.assert_called_once_with(5, "observe")
+        pipeline.capture_run_snapshot.assert_called_once_with("run-snap", 5, article_ids=[1, 2, 5])
+
+    def test_snapshot_scope_failure_fails_open_to_no_filter(self):
+        rows = _rows((1, 10, "a.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}), \
+             patch.object(pipeline, "project_relevance_snapshot_ids", side_effect=RuntimeError("boom")):
+            pipeline.run_analysis_pipeline("run-snap-fail", project_id=5)
+
+        pipeline.capture_run_snapshot.assert_called_once_with("run-snap-fail", 5, article_ids=None)
+        self.assertEqual(self._final()["status"], "success")
+
+    def test_a_stop_during_screening_cancels_the_run(self):
+        """F005: screening can spend minutes on embedding/LLM batches before
+        this run ever reaches an article boundary - a stop must land there
+        too, not only between articles during analysis."""
+        rows = _rows((1, 10, "a.pdf"))
+        with patch.object(pipeline, "_select_articles", return_value=rows), \
+             patch.object(pipeline, "screen_project_articles", side_effect=pipeline.ScreeningCancelled()), \
+             patch.object(pipeline, "reanalyze_article") as analyze:
+            pipeline.run_analysis_pipeline("run-cancel-screen", project_id=5)
+
+        analyze.assert_not_called()
+        final = self._final()
+        self.assertEqual(final["status"], "cancelled")
+        self.assertTrue(final["cancelled_at"])
 
     def test_articles_without_a_document_are_grouped_rather_than_dropped(self):
         """A JSONL import has no document behind it, but its articles still have
@@ -131,6 +209,20 @@ class RunAnalysisPipelineTests(unittest.TestCase):
         self.assertIn("No articles require analysis", final["message"])
         pipeline.generate_for_run.assert_not_called()
         pipeline._queue_evidence_after_analysis.assert_not_called()
+
+    def test_screening_failure_fails_open_and_analyzes_the_full_scope(self):
+        rows = _rows((8, 10, "survey.pdf"))
+        with patch.object(pipeline, "screen_project_articles", side_effect=RuntimeError("screen unavailable")), \
+             patch.object(pipeline, "_select_articles", return_value=rows) as select, \
+             patch.object(pipeline, "reanalyze_article", return_value={"ok": True}):
+            pipeline.run_analysis_pipeline("run-fallback", project_id=5)
+
+        # Called once to build this run's candidate set (for screening) and
+        # once more, post-screening, for the final analysis rows - fail-open
+        # means the second call's relevance filter is None (no filter).
+        self.assertEqual(select.call_args_list, [call(5, "pending"), call(5, "pending", None)])
+        pipeline.capture_run_snapshot.assert_called_with("run-fallback", 5, article_ids=None)
+        self.assertEqual(self._final()["status"], "success")
 
     def test_evidence_failure_cannot_change_completed_analysis_status(self):
         with patch.object(pipeline, "generate_for_run", side_effect=RuntimeError("evidence failed")), \
@@ -367,6 +459,37 @@ class ProjectHasPendingArticlesTests(unittest.TestCase):
         with patch.object(pipeline.db, "fetch_one", side_effect=RuntimeError("boom")):
             self.assertTrue(pipeline._project_has_pending_articles(5))
 
+    def test_enforce_mode_excludes_screened_out_articles_from_the_pending_check(self):
+        """F004: an enforce-mode-excluded article's analysis_status stays
+        'pending' forever (it's never handed to reanalyze_article), so
+        without this filter the follow-up gate would always see it as
+        outstanding work and never stop starting wasted follow-up runs."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"), \
+             patch.object(pipeline.db, "fetch_one", return_value={"has_pending": False}) as fetch:
+            pipeline._project_has_pending_articles(5)
+        self.assertIn("relevance_decision", fetch.call_args[0][0])
+
+    def test_non_enforce_mode_does_not_filter_out_screened_articles(self):
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"), \
+             patch.object(pipeline.db, "fetch_one", return_value={"has_pending": False}) as fetch:
+            pipeline._project_has_pending_articles(5)
+        self.assertNotIn("relevance_decision", fetch.call_args[0][0])
+
+    def test_enforce_mode_filter_checks_staleness_not_just_the_decision(self):
+        """F006: comparing only `relevance_decision` made a stale cached
+        exclusion (content changed since it was screened) permanently drop
+        the article out of every pending check, even though it should be
+        re-screened. The filter must also pin the decision to the article's
+        current content hash, model and rules version."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"), \
+             patch.object(pipeline.db, "fetch_one", return_value={"has_pending": False}) as fetch:
+            pipeline._project_has_pending_articles(5)
+        query, params = fetch.call_args[0]
+        self.assertIn("relevance_content_hash", query)
+        self.assertIn("relevance_model", query)
+        self.assertIn("relevance_rules_version", query)
+        self.assertIn(pipeline.config.EMBEDDING_MODEL, params)
+
 
 class SelectArticlesTests(unittest.TestCase):
     """The prepare stage's SQL is built from `scope`; what matters is that
@@ -387,6 +510,52 @@ class SelectArticlesTests(unittest.TestCase):
         query, params = self._query_for("all")
         self.assertNotIn("analysis_status", query)
         self.assertEqual(params, (5,))
+
+    def test_relevance_filter_limits_the_analysis_corpus(self):
+        with patch.object(pipeline.db, "fetch_all", return_value=[]) as fetch:
+            pipeline._select_articles(5, "all", [3, 8])
+        query, params = fetch.call_args[0]
+        self.assertIn("a.id = any", query)
+        self.assertEqual(params, (5, [3, 8]))
+
+    def test_empty_relevance_filter_skips_the_database_query(self):
+        with patch.object(pipeline.db, "fetch_all") as fetch:
+            self.assertEqual(pipeline._select_articles(5, "all", []), [])
+        fetch.assert_not_called()
+
+    def test_enforce_mode_drops_previously_screened_out_articles_from_pending_scope(self):
+        """F004: otherwise every pending-scope run keeps re-selecting an
+        enforce-excluded article as a "candidate" just to have screening's
+        own cache immediately drop it again."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"):
+            query, _params = self._query_for("pending")
+        self.assertIn("relevance_decision", query)
+
+    def test_non_enforce_mode_never_filters_pending_scope_by_relevance_decision(self):
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"):
+            query, _params = self._query_for("pending")
+        self.assertNotIn("relevance_decision", query)
+
+    def test_all_scope_never_filters_by_relevance_decision_even_in_enforce_mode(self):
+        """scope="all" is an explicit "re-run everything" request - an
+        enforce-excluded article is still dropped there, but by screening's
+        own included_ids intersection, not by narrowing the candidate query."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"):
+            query, _params = self._query_for("all")
+        self.assertNotIn("relevance_decision", query)
+
+    def test_enforce_mode_pending_filter_checks_staleness_not_just_the_decision(self):
+        """F006: an enforce-mode exclusion cached against stale content (or a
+        since-retuned threshold) must not be treated as still excluded -
+        otherwise the article can never again be selected as a pending
+        candidate to be properly re-screened."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"):
+            query, params = self._query_for("pending")
+        self.assertIn("relevance_content_hash", query)
+        self.assertIn("a.content_hash", query)
+        self.assertIn("relevance_model", query)
+        self.assertIn("relevance_rules_version", query)
+        self.assertIn(pipeline.config.EMBEDDING_MODEL, params)
 
 
 class PipelineRunEligibilityTests(unittest.TestCase):

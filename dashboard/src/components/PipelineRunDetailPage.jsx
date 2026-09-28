@@ -14,8 +14,10 @@ import {
   ListChecks,
   ScanSearch,
   Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
-import { getPipelineRun } from '../api/pipelineRunsApi.js';
+import { getPipelineRun, setArticleRelevanceOverride } from '../api/pipelineRunsApi.js';
+import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime as formatLocaleDateTime, formatNumber } from '../lib/i18nFormat.js';
 
@@ -160,13 +162,19 @@ function SummaryField({ label, children }) {
 export default function PipelineRunDetailPage({ projects = [] }) {
   const { t, i18n } = useTranslation(['analysis', 'common']);
   const { t: tErrors } = useTranslation('errors');
+  const { hasPermission } = useAuth();
+  const canReview = hasPermission('projects.update');
   const locale = i18n.language;
   const { runId } = useParams();
   const [run, setRun] = useState(null);
   const [documents, setDocuments] = useState([]);
+  const [screenings, setScreenings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedDocuments, setExpandedDocuments] = useState(() => new Set());
+  const [overrideDraft, setOverrideDraft] = useState(null);
+  const [overrideSaving, setOverrideSaving] = useState(false);
+  const [overrideMessage, setOverrideMessage] = useState('');
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -190,6 +198,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           if (cancelled) return null;
           setRun(data?.run || null);
           setDocuments(Array.isArray(data?.documents) ? data.documents : []);
+          setScreenings(Array.isArray(data?.screenings) ? data.screenings : []);
           return data?.run || null;
         })
         .catch((err) => {
@@ -236,6 +245,24 @@ export default function PipelineRunDetailPage({ projects = [] }) {
 
   const total = run ? stageDuration(run.started_at, run.finished_at) : null;
   const projectName = projectNameForRun(run, projectsById, t);
+
+  const saveOverride = async () => {
+    if (!overrideDraft || !overrideDraft.reason.trim()) return;
+    setOverrideSaving(true);
+    setOverrideMessage('');
+    try {
+      await setArticleRelevanceOverride(run.project_id, overrideDraft.articleId, {
+        decision: overrideDraft.decision,
+        reason: overrideDraft.reason.trim(),
+      });
+      setOverrideMessage(overrideDraft.decision === 'include' ? t('runDetail.relevance.savedInclude') : t('runDetail.relevance.savedExclude'));
+      setOverrideDraft(null);
+    } catch (err) {
+      setOverrideMessage(err?.code ? translateApiError(tErrors, err) : (err?.message || t('runDetail.relevance.saveFailed')));
+    } finally {
+      setOverrideSaving(false);
+    }
+  };
 
   return (
     <div className="admin-page-shell">
@@ -355,6 +382,65 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             )}
           </div>
 
+          {run.articles_screened > 0 || screenings.length > 0 ? (
+            <div className="glass-card" style={{ marginBottom: 18 }}>
+              <div className="run-detail-relevance-header">
+                <div>
+                  <h3 className="run-detail-section-title">{t('runDetail.relevance.title')}</h3>
+                  <p className="run-detail-relevance-copy">
+                    {t('runDetail.relevance.description')}
+                    {run.screening_mode === 'observe' ? t('runDetail.relevance.observeNote') : ''}
+                  </p>
+                </div>
+                <span className="run-detail-mode-badge"><ShieldCheck size={14} /> {run.screening_mode || 'off'}</span>
+              </div>
+
+              <div className="run-detail-relevance-stats">
+                <SummaryField label={t('runDetail.relevance.screened')}>{formatNumber(run.articles_screened || 0, locale)}</SummaryField>
+                <SummaryField label={t('runDetail.relevance.included')}>{formatNumber(run.articles_included || 0, locale)}</SummaryField>
+                <SummaryField label={t('runDetail.relevance.excluded')}>{formatNumber(run.articles_excluded || 0, locale)}</SummaryField>
+                <SummaryField label={t('runDetail.relevance.needsReview')}>{formatNumber(run.articles_needs_review || 0, locale)}</SummaryField>
+              </div>
+
+              {overrideMessage ? <div className="run-detail-override-message" dir="auto">{overrideMessage}</div> : null}
+              {screenings.length ? (
+                <div className="table-scroll run-detail-screening-scroll">
+                  <table className="run-detail-source-table run-detail-screening-table">
+                    <thead>
+                      <tr>
+                        <th>{t('runDetail.relevance.columns.article')}</th>
+                        <th>{t('runDetail.relevance.columns.decision')}</th>
+                        <th>{t('runDetail.relevance.columns.similarity')}</th>
+                        <th>{t('runDetail.relevance.columns.method')}</th>
+                        <th>{t('runDetail.relevance.columns.reason')}</th>
+                        {canReview ? <th>{t('runDetail.relevance.columns.override')}</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {screenings.map((item) => (
+                        <tr key={item.article_id}>
+                          <td dir="auto"><strong>{item.title || t('shared.articleFallback', { id: item.article_id })}</strong><small>{item.source || ''}</small></td>
+                          <td><span className={`run-detail-decision run-detail-decision-${item.decision}`}>{t(`runDetail.relevance.decisions.${item.decision}`, item.decision.replace('_', ' '))}</span></td>
+                          <td>{item.similarity_score == null ? '—' : Number(item.similarity_score).toFixed(3)}</td>
+                          <td>{item.decision_source || '—'}</td>
+                          <td dir="auto">{item.explanation || '—'}</td>
+                          {canReview ? (
+                            <td>
+                              <div className="run-detail-override-actions">
+                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'include', reason: '' })}>{t('runDetail.relevance.include')}</button>
+                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'exclude', reason: '' })}>{t('runDetail.relevance.exclude')}</button>
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="run-detail-fallback">{t('runDetail.relevance.fallback')}</div>}
+            </div>
+          ) : null}
+
           <div className="glass-card">
             <h3 className="run-detail-section-title">{t('runDetail.documentBreakdownTitle')}</h3>
             {!run.has_detail ? (
@@ -454,6 +540,22 @@ export default function PipelineRunDetailPage({ projects = [] }) {
             )}
           </div>
 
+          {overrideDraft ? (
+            <div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => !overrideSaving && setOverrideDraft(null)}>
+              <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="relevance-override-title" onMouseDown={(event) => event.stopPropagation()}>
+                <h3 id="relevance-override-title">{overrideDraft.decision === 'include' ? t('runDetail.relevance.overrideTitleInclude') : t('runDetail.relevance.overrideTitleExclude')}</h3>
+                <p dir="auto">{overrideDraft.title || t('shared.articleFallback', { id: overrideDraft.articleId })}</p>
+                <label className="run-detail-override-label" htmlFor="relevance-override-reason">{t('runDetail.relevance.reasonLabel')}</label>
+                <textarea id="relevance-override-reason" rows={4} value={overrideDraft.reason} onChange={(event) => setOverrideDraft((draft) => ({ ...draft, reason: event.target.value }))} placeholder={t('runDetail.relevance.reasonPlaceholder')} dir="auto" />
+                <div className="confirm-modal-actions">
+                  <button type="button" className="btn-secondary" disabled={overrideSaving} onClick={() => setOverrideDraft(null)}>{t('runDetail.relevance.cancel')}</button>
+                  <button type="button" className="btn-primary" disabled={overrideSaving || !overrideDraft.reason.trim()} onClick={saveOverride}>
+                    {overrideSaving ? t('runDetail.relevance.saving') : t('runDetail.relevance.save')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </div>
