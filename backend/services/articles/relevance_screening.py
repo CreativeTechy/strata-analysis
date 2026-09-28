@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from typing import Callable
 
 import config
 import db
@@ -46,9 +47,28 @@ from services.projects.projects_store import get_project, persist_project_embedd
 
 logger = logging.getLogger(__name__)
 
-RULES_VERSION = "article-relevance-v3"
+# Bumped because what gets *persisted* as a cache-valid decision changed
+# (see _OUTAGE_SOURCES below) - forces every existing cached decision to be
+# re-evaluated once, rather than leaving pre-fix outage artifacts stuck as
+# "cache" hits forever.
+RULES_VERSION = "article-relevance-v4"
 DECISIONS = {"accepted", "excluded", "needs_review"}
 OVERRIDE_DECISIONS = {"include", "exclude"}
+
+# Sources produced by a failure fallback (the embedding model couldn't load,
+# or the borderline LLM call errored/timed out/returned malformed JSON) as
+# opposed to a genuine scored answer. These are never persisted as a cached
+# decision (see screen_project_articles's final loop) and never treated as a
+# real "uncertain" LLM answer - an outage must not permanently disable
+# screening for whatever it touched.
+_OUTAGE_SOURCES = {"fallback", "llm_unavailable"}
+
+
+class ScreeningCancelled(Exception):
+    """Raised when `should_cancel` reports the run was stopped mid-screening -
+    embedding and the borderline LLM batches are the only slow steps here, so
+    that's where this is checked (see _article_vectors and the borderline
+    loop in screen_project_articles)."""
 
 
 def _rules_version() -> str:
@@ -87,7 +107,7 @@ def _project_vector(project: dict) -> list[float]:
     return refreshed.get("embedding_json") or []
 
 
-def _article_vectors(rows: list[dict]) -> dict[int, list[float]]:
+def _article_vectors(rows: list[dict], should_cancel: Callable[[], bool] | None = None) -> dict[int, list[float]]:
     """Load cached vectors and embed all missing articles in batches."""
     vectors: dict[int, list[float]] = {}
     missing = []
@@ -102,6 +122,8 @@ def _article_vectors(rows: list[dict]) -> dict[int, list[float]]:
             missing.append(row)
 
     for start in range(0, len(missing), 128):
+        if should_cancel and should_cancel():
+            raise ScreeningCancelled()
         batch = missing[start:start + 128]
         embedded = get_embeddings([_article_text(row) for row in batch], role="passage")
         writes = []
@@ -189,6 +211,10 @@ def _classify_borderline(project: dict, rows: list[dict]) -> dict[int, dict]:
         int(row["id"]): {
             "relevance": "uncertain", "score": 0.0,
             "explanation": "The lightweight relevance check was unavailable; included for review.",
+            # Distinguishes "the call itself failed" from a genuine LLM answer
+            # of "uncertain" - screen_project_articles reads this to keep an
+            # outage from being cached as if it were a real decision.
+            "unavailable": True,
         }
         for row in rows
     }
@@ -240,13 +266,20 @@ def _record_run_screenings(run_id: str, project_id: int, results: list[dict]) ->
 
 def screen_project_articles(
     project_id: int, run_id: str, mode: str | None = None, article_ids: list[int] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict:
     """`article_ids`, when not None, restricts screening to that specific set
     (a run's own candidate articles) rather than everything article_projects
     links to this project. An empty list means "nothing to screen" - a run
     with no candidate articles skips the query entirely, the same way
     services/pipeline/pipeline.py's `_select_articles` treats an empty
-    relevance filter."""
+    relevance filter.
+
+    `should_cancel`, when given, is checked between the embedding batches and
+    between the borderline LLM batches - the only steps slow enough that a
+    stop request needs to land inside them rather than waiting for the whole
+    call to finish. Raises ScreeningCancelled rather than returning early, so
+    a stop can't be silently swallowed as "screening produced nothing"."""
     mode = str(mode or config.ARTICLE_RELEVANCE_SCREENING_MODE).strip().lower()
     if mode not in {"off", "observe", "enforce"}:
         mode = "observe"
@@ -312,7 +345,10 @@ def screen_project_articles(
         )
         pending.append((pending_row, common))
 
-    article_vectors = _article_vectors([row for row, _common in pending]) if pending and project_vector else {}
+    article_vectors = (
+        _article_vectors([row for row, _common in pending], should_cancel=should_cancel)
+        if pending and project_vector else {}
+    )
     for row, common in pending:
         article_vector = article_vectors.get(int(row["id"])) or []
         if not project_vector or not article_vector:
@@ -331,19 +367,32 @@ def screen_project_articles(
 
     batch_size = config.ARTICLE_RELEVANCE_BATCH_SIZE
     for start in range(0, len(borderline), batch_size):
+        if should_cancel and should_cancel():
+            raise ScreeningCancelled()
         batch = borderline[start:start + batch_size]
         classified = _classify_borderline(project, [item[0] for item in batch])
         for row, common, similarity in batch:
             answer = classified[int(row["id"])]
+            # An outage (LLMError, timeout, malformed JSON) falls back to
+            # "uncertain" the same way a genuine ambiguous answer would - tag
+            # it separately so it isn't cached as if the LLM had actually
+            # weighed in (see _OUTAGE_SOURCES below).
+            source = "llm_unavailable" if answer.get("unavailable") else "llm"
             results.append({**common, "decision": _decision_from_label(answer["relevance"]),
-                            "similarity_score": similarity, "source": "llm",
+                            "similarity_score": similarity, "source": source,
                             "explanation": answer.get("explanation") or "Borderline semantic match."})
 
     results.sort(key=lambda item: item["article_id"])
     rows_by_id = {int(row["id"]): row for row in rows}
     for item in results:
         row = rows_by_id[item["article_id"]]
-        if item.get("source") not in {"cache", "manual", "screening_off"}:
+        # Cache and manual/off decisions don't need rewriting, and an outage
+        # fallback (fallback/llm_unavailable) must never be written as a
+        # cache-valid decision - it isn't a real answer, and persisting it
+        # would permanently stop this article from being re-screened once
+        # the model or LLM is working again (cache_valid above doesn't look
+        # at source, only at decision/hash/model/rules_version).
+        if item.get("source") not in {"cache", "manual", "screening_off", *_OUTAGE_SOURCES}:
             _persist_screening(project_id, row, item)
         manual_exclude = item.get("source") == "manual" and item["decision"] == "excluded"
         item["included"] = not manual_exclude and (mode != "enforce" or item["decision"] != "excluded")
@@ -357,6 +406,70 @@ def screen_project_articles(
         "excluded": sum(1 for item in results if item["decision"] == "excluded"),
         "needs_review": sum(1 for item in results if item["decision"] == "needs_review"),
     }
+
+
+def project_relevance_snapshot_ids(project_id: int, mode: str | None = None) -> list[int] | None:
+    """The article ids evidence generation should see for this project right
+    now - the whole corpus, minus whatever is genuinely excluded, not just
+    this run's candidate set (screen_project_articles's `article_ids` only
+    scopes what gets freshly *scored*; this scopes what the evidence
+    *snapshot* admits, which has to cover articles this run never touched).
+
+    A manual override always applies, regardless of mode - the same rule
+    screen_project_articles enforces for a candidate. Absent an override, an
+    `enforce`-mode article whose cached decision is currently valid (matches
+    this project's scope hash and this article's own content hash) and
+    `excluded` drops out too; `off`/`observe` never exclude via the cached
+    decision, matching how they never exclude a candidate either.
+
+    Read-only - no embedding or LLM calls - so calling this for the entire
+    project on every run costs one query, not a re-screen. Returns None
+    ("no filter, include everything") whenever there is provably nothing to
+    exclude, so a caller can skip filtering rather than listing every id.
+    """
+    mode = str(mode or config.ARTICLE_RELEVANCE_SCREENING_MODE).strip().lower()
+    if mode not in {"off", "observe", "enforce"}:
+        mode = "observe"
+    rows = db.fetch_all(
+        """select ap.article_id,ap.relevance_decision,ap.relevance_scope_hash,
+                  ap.relevance_content_hash,ap.relevance_model,ap.relevance_rules_version,
+                  ap.manual_relevance_override,a.content_hash
+             from article_projects ap join articles a on a.id=ap.article_id
+            where ap.project_id=%s""",
+        (int(project_id),),
+    ) or []
+    if not rows:
+        return None
+    has_override = any(
+        str(row.get("manual_relevance_override") or "").strip().lower() in OVERRIDE_DECISIONS
+        for row in rows
+    )
+    if mode != "enforce" and not has_override:
+        return None
+
+    project = get_project(project_id) or {}
+    scope_digest = _scope_hash(project)
+    rules_version = _rules_version()
+    included_ids = []
+    for row in rows:
+        article_id = int(row["article_id"])
+        override = str(row.get("manual_relevance_override") or "").strip().lower()
+        if override == "exclude":
+            continue
+        if override == "include":
+            included_ids.append(article_id)
+            continue
+        if mode == "enforce":
+            cache_valid = (
+                row.get("relevance_scope_hash") == scope_digest
+                and row.get("relevance_content_hash") == str(row.get("content_hash") or "").strip()
+                and row.get("relevance_model") == config.EMBEDDING_MODEL
+                and row.get("relevance_rules_version") == rules_version
+            )
+            if cache_valid and row.get("relevance_decision") == "excluded":
+                continue
+        included_ids.append(article_id)
+    return included_ids
 
 
 def list_run_screenings(run_id: str, limit: int = 500) -> list[dict]:
