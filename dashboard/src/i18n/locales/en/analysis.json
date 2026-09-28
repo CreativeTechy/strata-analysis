@@ -177,8 +177,8 @@
       "cancel": "Cancel",
       "save": "Save for next run",
       "saving": "Saving…",
-      "savedInclude": "Saved. The article will be included on the next analysis run.",
-      "savedExclude": "Saved. The article will be excluded on the next analysis run.",
+      "savedInclude": "Saved. The article is included in dashboards and evidence now, and future analysis runs will reflect it too.",
+      "savedExclude": "Saved. The article is excluded from dashboards and evidence now, and future analysis runs will reflect it too.",
       "saveFailed": "Unable to save the relevance override."
     }
   }

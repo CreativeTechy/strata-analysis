@@ -24,6 +24,16 @@ class IntelligenceHelpersTests(unittest.TestCase):
             intelligence._fetch_pipeline_runs(3)
         self.assertIn("exists (select 1 from article_analyses", fetch.call_args.args[0])
 
+    def test_project_rows_exclude_a_manually_overridden_article(self):
+        """PR #66 review F002: a manual "exclude" override was only ever
+        applied to a run's evidence snapshot, never to the dashboard's own
+        totals for an article that was already analyzed before the override
+        was set - so the reviewer's decision had no visible effect here."""
+        with patch.object(intelligence, "_database_ready", return_value=True), \
+             patch("db.fetch_all", return_value=[]) as fetch:
+            intelligence._fetch_project_rows(3)
+        self.assertIn("manual_relevance_override", fetch.call_args.args[0])
+
     def test_net_sentiment_is_positive_percentage_minus_negative_percentage(self):
         self.assertEqual(net_sentiment(Counter(positive=58, negative=15, neutral=27), 100), 43)
         self.assertEqual(net_sentiment(Counter(), 0), 0)

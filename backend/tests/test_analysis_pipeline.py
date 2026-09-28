@@ -475,6 +475,21 @@ class ProjectHasPendingArticlesTests(unittest.TestCase):
             pipeline._project_has_pending_articles(5)
         self.assertNotIn("relevance_decision", fetch.call_args[0][0])
 
+    def test_enforce_mode_filter_checks_staleness_not_just_the_decision(self):
+        """F006: comparing only `relevance_decision` made a stale cached
+        exclusion (content changed since it was screened) permanently drop
+        the article out of every pending check, even though it should be
+        re-screened. The filter must also pin the decision to the article's
+        current content hash, model and rules version."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"), \
+             patch.object(pipeline.db, "fetch_one", return_value={"has_pending": False}) as fetch:
+            pipeline._project_has_pending_articles(5)
+        query, params = fetch.call_args[0]
+        self.assertIn("relevance_content_hash", query)
+        self.assertIn("relevance_model", query)
+        self.assertIn("relevance_rules_version", query)
+        self.assertIn(pipeline.config.EMBEDDING_MODEL, params)
+
 
 class SelectArticlesTests(unittest.TestCase):
     """The prepare stage's SQL is built from `scope`; what matters is that
@@ -528,6 +543,19 @@ class SelectArticlesTests(unittest.TestCase):
         with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"):
             query, _params = self._query_for("all")
         self.assertNotIn("relevance_decision", query)
+
+    def test_enforce_mode_pending_filter_checks_staleness_not_just_the_decision(self):
+        """F006: an enforce-mode exclusion cached against stale content (or a
+        since-retuned threshold) must not be treated as still excluded -
+        otherwise the article can never again be selected as a pending
+        candidate to be properly re-screened."""
+        with patch.object(pipeline.config, "ARTICLE_RELEVANCE_SCREENING_MODE", "enforce"):
+            query, params = self._query_for("pending")
+        self.assertIn("relevance_content_hash", query)
+        self.assertIn("a.content_hash", query)
+        self.assertIn("relevance_model", query)
+        self.assertIn("relevance_rules_version", query)
+        self.assertIn(pipeline.config.EMBEDDING_MODEL, params)
 
 
 class PipelineRunEligibilityTests(unittest.TestCase):

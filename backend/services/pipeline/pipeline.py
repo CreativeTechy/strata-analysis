@@ -41,6 +41,7 @@ from services.articles.idea_comparisons import generate_idea_comparisons
 from services.articles.reanalyze import mark_processing, reanalyze_article
 from services.articles.relevance_screening import (
     ScreeningCancelled,
+    current_rules_version,
     project_relevance_snapshot_ids,
     screen_project_articles,
 )
@@ -189,6 +190,7 @@ def _project_has_pending_articles(project_id: int) -> bool:
     broke would silently reintroduce the stranded-work failure the mark
     mechanism exists to prevent."""
     try:
+        exclude_sql, exclude_params = _enforce_excluded_filter()
         row = db.fetch_one(
             f"""
             select exists (
@@ -197,10 +199,10 @@ def _project_has_pending_articles(project_id: int) -> bool:
                 join articles a on a.id = ap.article_id
                 where ap.project_id = %s
                   and coalesce(a.analysis_status, 'pending') = any(%s)
-                  {_enforce_excluded_filter()}
+                  {exclude_sql}
             ) as has_pending
             """,
-            (int(project_id), list(PENDING_STATUSES)),
+            (int(project_id), list(PENDING_STATUSES), *exclude_params),
         )
         return bool((row or {}).get("has_pending"))
     except Exception:
@@ -233,19 +235,40 @@ def _maybe_start_followup(project_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Selecting the work
 # --------------------------------------------------------------------------- #
-def _enforce_excluded_filter() -> str:
-    """SQL fragment dropping articles an `enforce`-mode run already screened
-    out - without this, an excluded article's analysis_status stays 'pending'
-    forever (it's never handed to reanalyze_article, so nothing ever moves it
-    out of that status), and every later pending-scope query would otherwise
-    keep re-selecting it as a "candidate" only to have screening's own cache
-    immediately drop it again. Only meaningful in `enforce` mode - `observe`
-    and `off` never actually exclude anything, so the article really is still
-    pending there. Assumes `ap` (article_projects) is already joined in the
-    caller's query."""
-    if config.ARTICLE_RELEVANCE_SCREENING_MODE == "enforce":
-        return "and coalesce(ap.relevance_decision, '') != 'excluded'"
-    return ""
+def _enforce_excluded_filter() -> tuple[str, list]:
+    """SQL fragment (+ its params) dropping articles an `enforce`-mode run has
+    a *currently valid* cached 'excluded' decision for - one whose content
+    hash, embedding model and screening calibration still match. A stale
+    decision (the article's content changed, or the accept/exclude
+    thresholds were retuned, since it was cached) is deliberately NOT matched
+    here, so the article still gets picked up as a pending candidate and
+    properly re-screened - comparing only `relevance_decision` used to make a
+    stale exclusion permanent instead of ever letting screening's own
+    cache-validity check run against it again (PR #66 review F006).
+
+    Without this filter at all, an excluded article's analysis_status stays
+    'pending' forever (it's never handed to reanalyze_article, so nothing
+    ever moves it out of that status), and every later pending-scope query
+    would otherwise keep re-selecting it as a "candidate" only to have
+    screening's own cache immediately drop it again. Only meaningful in
+    `enforce` mode - `observe` and `off` never actually exclude anything, so
+    the article really is still pending there. Assumes `a` (articles) and
+    `ap` (article_projects) are already joined in the caller's query.
+
+    Scope hash (the project's own embedding-defining text) is deliberately
+    left out of the comparison: matching it would need a project lookup on
+    every candidate-selection query just to build a SQL filter, and a scope
+    change is corrected the next time the article is screened as a genuine
+    candidate anyway, same as any other cache signal screening validates."""
+    if config.ARTICLE_RELEVANCE_SCREENING_MODE != "enforce":
+        return "", []
+    return (
+        "and not (coalesce(ap.relevance_decision, '') = 'excluded'"
+        " and ap.relevance_content_hash = a.content_hash"
+        " and ap.relevance_model = %s"
+        " and ap.relevance_rules_version = %s)",
+        [config.EMBEDDING_MODEL, current_rules_version()],
+    )
 
 
 def _select_articles(project_id, scope, included_article_ids=None):
@@ -267,7 +290,8 @@ def _select_articles(project_id, scope, included_article_ids=None):
     if scope != "all":
         status_filter = "and coalesce(a.analysis_status, 'pending') = any(%s)"
         params.append(list(PENDING_STATUSES))
-        exclude_screened_out = _enforce_excluded_filter()
+        exclude_screened_out, exclude_params = _enforce_excluded_filter()
+        params.extend(exclude_params)
     if included_article_ids is not None:
         included_article_ids = [int(article_id) for article_id in included_article_ids]
         if not included_article_ids:

@@ -317,8 +317,14 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         # From article_analyses, not `articles`: the article row only ever holds
         # the *latest* analysis, so reading it here would show every run the
         # newest run's conclusions. See services/articles/article_analyses.py.
+        # A manually-excluded article is already left out of that snapshot -
+        # see relevance_screening.project_relevance_snapshot_ids.
         from services.articles.article_analyses import fetch_run_article_rows
         return fetch_run_article_rows(project_id, run_id)
+    # A manual "exclude" override must apply here too, not just to a run's
+    # evidence snapshot - otherwise a reviewer's decision never affects the
+    # main dashboard's totals for an article that was already analyzed
+    # before the override was set (PR #66 review F002).
     return db.fetch_all(
         """
         select a.id, a.url, a.source, a.source_url, a.source_provenance,
@@ -330,6 +336,7 @@ def _fetch_project_rows(project_id: int, run_id: str | None = None) -> list[dict
         from articles a
         join article_projects ap on ap.article_id = a.id
         where ap.project_id = %s
+          and coalesce(ap.manual_relevance_override, '') != 'exclude'
         order by a.created_at asc
         """,
         (int(project_id),),

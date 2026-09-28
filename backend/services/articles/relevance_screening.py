@@ -79,6 +79,14 @@ def _rules_version() -> str:
     )
 
 
+def current_rules_version() -> str:
+    """Public wrapper around _rules_version() for callers outside this module
+    (pipeline.py's enforce-mode candidate filter) that need to tell a still-
+    valid cached decision apart from one whose calibration has since changed,
+    without duplicating the threshold-hashing logic."""
+    return _rules_version()
+
+
 def _hash_text(value: str) -> str:
     normalized = " ".join(str(value or "").split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
