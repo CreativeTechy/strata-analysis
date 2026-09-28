@@ -13,7 +13,8 @@
       "cancelled": "Cancelled"
     },
     "projectFallback": "Project #{{id}}",
-    "projectUnassigned": "Unassigned"
+    "projectUnassigned": "Unassigned",
+    "articleFallback": "Article #{{id}}"
   },
   "performanceLogs": {
     "kicker": "Performance pipeline",
@@ -144,6 +145,41 @@
       "articlesSelected": "Articles selected",
       "articlesAnalyzed": "Articles analyzed",
       "articlesFailed": "Articles failed"
+    },
+    "relevance": {
+      "title": "Article relevance screening",
+      "description": "Embeddings admit clear matches, reject clear misses, and send borderline articles to a small batched check.",
+      "observeNote": " Observation mode records decisions while still analyzing every article.",
+      "screened": "Screened",
+      "included": "Included",
+      "excluded": "Marked unrelated",
+      "needsReview": "Needs review",
+      "fallback": "Screening details have not been recorded yet.",
+      "columns": {
+        "article": "Article",
+        "decision": "Decision",
+        "similarity": "Similarity",
+        "method": "Method",
+        "reason": "Reason",
+        "override": "Override next run"
+      },
+      "decisions": {
+        "accepted": "Accepted",
+        "excluded": "Excluded",
+        "needs_review": "Needs review"
+      },
+      "include": "Include",
+      "exclude": "Exclude",
+      "overrideTitleInclude": "Include this article next run?",
+      "overrideTitleExclude": "Exclude this article next run?",
+      "reasonLabel": "Reason",
+      "reasonPlaceholder": "Explain why this article belongs in or outside the project scope.",
+      "cancel": "Cancel",
+      "save": "Save for next run",
+      "saving": "Saving…",
+      "savedInclude": "Saved. The article will be included on the next analysis run.",
+      "savedExclude": "Saved. The article will be excluded on the next analysis run.",
+      "saveFailed": "Unable to save the relevance override."
     }
   }
 }

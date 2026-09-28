@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 RUN_COLUMNS = (
-    "id,pipeline,project_id,status,stage,message,articles_selected,articles_analyzed,"
+    "id,pipeline,project_id,status,stage,message,articles_selected,articles_screened,"
+    "articles_included,articles_excluded,articles_needs_review,screening_mode,articles_analyzed,"
     "articles_failed,error,started_at,finished_at,cancel_requested_at,cancelled_at,has_detail,"
     "prepare_started_at,prepare_finished_at,analysis_started_at,analysis_finished_at,created_at,updated_at"
 )
@@ -53,6 +54,11 @@ def _normalize(row):
         "stage": row.get("stage") or "queued",
         "message": row.get("message") or "",
         "articles_selected": row.get("articles_selected") or 0,
+        "articles_screened": row.get("articles_screened") or 0,
+        "articles_included": row.get("articles_included") or 0,
+        "articles_excluded": row.get("articles_excluded") or 0,
+        "articles_needs_review": row.get("articles_needs_review") or 0,
+        "screening_mode": row.get("screening_mode") or "off",
         "articles_analyzed": row.get("articles_analyzed") or 0,
         "articles_failed": row.get("articles_failed") or 0,
         "error": row.get("error") or "",
@@ -266,6 +272,11 @@ def update_pipeline_run(run_id, **fields):
         "stage",
         "message",
         "articles_selected",
+        "articles_screened",
+        "articles_included",
+        "articles_excluded",
+        "articles_needs_review",
+        "screening_mode",
         "articles_analyzed",
         "articles_failed",
         "error",
@@ -319,6 +330,20 @@ def get_pipeline_run_documents(run_id):
         )
         return [_normalize_document_stat(row) for row in rows]
     except Exception:
+        return []
+
+
+def get_pipeline_run_screenings(run_id, limit=500):
+    """Per-article relevance-screening audit trail for one run (see
+    services/articles/relevance_screening.py). Best-effort: a lookup failure
+    here must not break the run-detail view around it."""
+    if not config.DATABASE_URL or not run_id:
+        return []
+    try:
+        from services.articles.relevance_screening import list_run_screenings
+        return list_run_screenings(run_id, limit=limit)
+    except Exception:
+        logger.exception("Failed to load article screening details for run %s.", run_id)
         return []
 
 
