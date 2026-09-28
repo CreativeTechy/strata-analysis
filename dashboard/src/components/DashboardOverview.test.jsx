@@ -194,6 +194,24 @@ describe('DashboardOverview', () => {
     await screen.findByText(/No cross-source comparisons yet/);
   });
 
+  it('starts the next project on page 1 of Top concerns', async () => {
+    const concerns = ['A', 'B', 'C', 'D', 'E'].map((letter, index) => ({ idea: `Concern ${letter}`, type: 'complaint', frequency_estimate: 10 - index }));
+    const withConcerns = (projectId) => ({ ...INTELLIGENCE, project_id: projectId, insights: { ...INTELLIGENCE.insights, frequent_ideas: concerns, frequent_concerns: concerns } });
+    const props = {
+      projects: [PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }],
+      onProjectChange: vi.fn(), period: '30d', onPeriodChange: vi.fn(), loading: false, error: null,
+      pipelineHealth: { lastRun: { status: 'success' }, lastFinished: null }, runs: [], selectedRunId: null, onRunChange: vi.fn(),
+    };
+    const { rerender } = render(<MemoryRouter><DashboardOverview {...props} selectedProjectId={1} intelligence={withConcerns(1)} /></MemoryRouter>);
+    fireEvent.click(within(ideasCard()).getByRole('button', { name: /Next/ }));
+    expect(within(ideasCard()).getByText('Concern D')).toBeInTheDocument();
+
+    rerender(<MemoryRouter><DashboardOverview {...props} selectedProjectId={2} intelligence={withConcerns(2)} /></MemoryRouter>);
+    expect(within(ideasCard()).getByText('Concern A')).toBeInTheDocument();
+    expect(within(ideasCard()).queryByText('Concern D')).not.toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
   it('returns to Top concerns when the project changes', async () => {
     const { rerender } = renderDashboard({ projects: [PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }] });
     fireEvent.click(within(ideasCard()).getByRole('tab', { name: 'All ideas' }));

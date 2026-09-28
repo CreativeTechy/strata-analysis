@@ -343,12 +343,20 @@ export default function DashboardOverview({
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   const [platformListPage, setPlatformListPage] = useState(0);
-  // Keyed by project so switching project lands back on Top concerns - the
-  // first screen's point - rather than carrying over another project's tab.
-  const [ideaFilterState, setIdeaFilterState] = useState({ projectId: selectedProjectId, value: 'concerns' });
-  const ideaFilter = ideaFilterState.projectId === selectedProjectId ? ideaFilterState.value : 'concerns';
-  const setIdeaFilter = (value) => setIdeaFilterState({ projectId: selectedProjectId, value });
-  const [ideasPage, setIdeasPage] = useState(0);
+  // Tab and page are keyed by project, so switching project lands back on
+  // page 1 of Top concerns - the first screen's point - rather than carrying
+  // over another project's tab or page.
+  const [ideaView, setIdeaView] = useState({ projectId: selectedProjectId, filter: 'concerns', page: 0 });
+  const currentIdeaView = ideaView.projectId === selectedProjectId
+    ? ideaView
+    : { projectId: selectedProjectId, filter: 'concerns', page: 0 };
+  const ideaFilter = currentIdeaView.filter;
+  const ideasPage = currentIdeaView.page;
+  const setIdeaFilter = (filter) => setIdeaView({ projectId: selectedProjectId, filter, page: 0 });
+  const setIdeasPage = (next) => setIdeaView((prev) => {
+    const base = prev.projectId === selectedProjectId ? prev : { projectId: selectedProjectId, filter: 'concerns', page: 0 };
+    return { ...base, page: typeof next === 'function' ? next(base.page) : next };
+  });
   const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
     try {
       return window.localStorage.getItem(DETAILED_BREAKDOWNS_STORAGE_KEY) === 'open';
