@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
 import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
-import { prettyLabel } from '../lib/articleHelpers.jsx';
+import { prettyLabel, sentimentBadgeState } from '../lib/articleHelpers.jsx';
 import { formatDate, formatDateTime, formatPercent, formatLanguageName } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
@@ -15,6 +15,16 @@ const STATUS_LABEL_KEYS = {
   pending: 'common:status.pending',
   success: 'common:status.success',
   failed: 'common:status.failed',
+};
+
+const SENTIMENT_STATE_LABEL_KEYS = {
+  pending: 'sentiment.pending',
+  failed: 'sentiment.failed',
+  not_assessed: 'sentiment.notAssessed',
+  positive: 'sentiment.positive',
+  negative: 'sentiment.negative',
+  neutral: 'sentiment.neutral',
+  mixed: 'sentiment.mixed',
 };
 
 // articleHelpers.jsx's articleDate() is an ad hoc, locale-unaware
@@ -197,7 +207,10 @@ export default function ArticleDetailPage() {
           {data.summary ? <p className="article-summary" dir="auto">{data.summary}</p> : null}
 
           <div>
-            <strong>{t('detail.sentimentLabel')}</strong> {prettyLabel(data.sentiment)}
+            <strong>{t('detail.sentimentLabel')}</strong>{' '}
+            <span className={`badge ${sentimentBadgeState(data)}`}>
+              {t(SENTIMENT_STATE_LABEL_KEYS[sentimentBadgeState(data)] || 'sentiment.notAssessed')}
+            </span>
             {formatPercent(data.confidence?.sentiment, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {data.confidence?.sentiment_low_confidence
@@ -207,7 +220,10 @@ export default function ArticleDetailPage() {
             )}
           </div>
           <div>
-            <strong>{t('detail.categoryLabel')}</strong> {prettyLabel(data.article_category)}
+            <strong>{t('detail.categoryLabel')}</strong>{' '}
+            {data.classification_status === 'ran' || !Object.prototype.hasOwnProperty.call(data, 'classification_status')
+              ? prettyLabel(data.article_category)
+              : t('sentiment.notAssessed')}
             {formatPercent(data.confidence?.category, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {t('detail.confidence', { pct: formatPercent(data.confidence.category, locale) })}

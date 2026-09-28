@@ -151,6 +151,19 @@ a.intelligence-metric-link:hover strong { text-decoration: underline; text-decor
 .report-brief-section > header > span { display: grid; place-items: center; width: 32px; height: 28px; border-radius: 8px; color: #1d4ed8; background: #eff6ff; font-family: monospace; font-size: .78rem; font-weight: 800; }
 .report-brief-section > header h3 { font-size: 1.05rem; color: var(--text-dark); }
 .report-brief-summary { max-width: 950px; color: var(--text-light); font-size: 1rem; font-weight: 500; line-height: 1.65; }
+.ai-generated-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: rgba(124, 58, 237, .1); color: #6d28d9; font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+[dir="rtl"] .ai-generated-badge { letter-spacing: normal; text-transform: none; }
+.report-summary-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+@media (max-width: 700px) { .report-summary-toolbar { justify-content: flex-start; } }
+.report-brief-findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
+.report-finding { padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: 12px; background: rgba(255,255,255,.55); display: flex; flex-direction: column; gap: 5px; }
+.report-finding-kicker { display: flex; align-items: center; gap: 6px; color: var(--text-light); font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+[dir="rtl"] .report-finding-kicker { letter-spacing: normal; text-transform: none; }
+.report-finding-link { display: inline-flex; align-items: center; gap: 5px; color: #1d4ed8; font-weight: 600; font-size: .88rem; text-decoration: none; }
+.report-finding-link:hover, .report-finding-link:focus-visible { text-decoration: underline; }
+.report-finding-empty { color: var(--text-light); font-size: .86rem; font-style: italic; }
+.report-finding-hint { color: var(--text-light); font-size: .78rem; }
+.report-section-scope-note { margin: -4px 0 14px; color: var(--text-light); font-size: .8rem; }
 .report-trend-actions { margin-inline-start: auto; display: flex; align-items: center; gap: 8px; }
 .report-trend-refresh-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid #dbeafe; background: #fff; color: #1d4ed8; cursor: pointer; }
 .report-trend-refresh-btn:hover:not(:disabled) { background: #eff6ff; }
@@ -169,7 +182,13 @@ a.intelligence-metric-link:hover strong { text-decoration: underline; text-decor
 .report-brief-metrics > .report-brief-metric-link { display: grid; gap: 5px; padding: 17px; border: 1px solid #e0e7ff; border-radius: 13px; background: #fafcff; color: inherit; text-decoration: none; transition: border-color .15s ease, box-shadow .15s ease; }
 .report-brief-metrics > .report-brief-metric-link:hover, .report-brief-metrics > .report-brief-metric-link:focus-visible { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
 .report-sentiment-grid { display: grid; grid-template-columns: minmax(220px,.7fr) minmax(300px,1.3fr); align-items: center; gap: 25px; }
-.report-donut { height: 240px; }
+.report-donut { position: relative; height: 240px; }
+.report-donut-score { position: absolute; inset: 50% auto auto 50%; display: grid; gap: 2px; width: 112px; transform: translate(-50%, -50%); text-align: center; }
+.report-donut-score strong { font-family: var(--font-display); font-size: 1.8rem; line-height: 1; }
+.report-donut-score span { color: var(--text-light); font-size: .65rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.report-donut-score.positive strong { color: #15803d; }
+.report-donut-score.negative strong { color: #be123c; }
+.report-donut-score.neutral strong { color: #475569; }
 .report-sentiment-bars { display: grid; gap: 14px; }
 .report-sentiment-bars > div { display: grid; grid-template-columns: 110px minmax(70px,1fr) 36px; gap: 12px; align-items: center; }
 .report-sentiment-bars span { display: inline-flex; gap: 7px; align-items: center; color: var(--text-light); font-size: .85rem; text-transform: capitalize; }
@@ -253,3 +272,35 @@ a.demographic-pie-carousel-count-link:hover, a.demographic-pie-carousel-count-li
 @media (max-width: 700px) { .report-brief-section { padding: 20px; } .report-brief-metrics, .report-sentiment-grid, .report-feedback-grid { grid-template-columns: 1fr; } .report-donut { height: 210px; } }
 @media (max-width: 600px) { .intelligence-metric-grid { grid-template-columns: 1fr; } .intelligence-controls { align-items: flex-start; flex-direction: column; } .intelligence-controls .source-type-tabs { width: 100%; overflow-x: auto; flex-wrap: nowrap; } .intelligence-sentiment-layout { grid-template-columns: 1fr; } .intelligence-legend { grid-template-columns: repeat(2, minmax(0,1fr)); } .intelligence-card { padding: 18px; } .intelligence-detailed-breakdowns-toggle { flex-wrap: wrap; } .intelligence-detailed-breakdowns-text { flex-basis: calc(100% - 47px); } .intelligence-detailed-breakdowns-action { margin-inline-start: 47px; } .report-sentiment-bars > div { grid-template-columns: 90px minmax(55px,1fr) 30px; gap: 8px; } }
 @media (max-width: 600px) { .report-sentiment-bars > .report-sentiment-link { grid-template-columns: 90px minmax(55px,1fr) 30px; gap: 8px; } }
+
+/* Loading skeletons + empty states (Dashboard and Reports). The shared
+   .skeleton-shimmer in index.css is a white-on-glass sweep that vanishes on
+   these near-white cards, so these use a slate tint instead. */
+@keyframes intelligence-skeleton-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.intelligence-skeleton { display: grid; gap: 16px; }
+.intelligence-skeleton-card { display: flex; flex-direction: column; gap: 14px; }
+.intelligence-skeleton-bar, .intelligence-skeleton-donut, .intelligence-skeleton-chart { display: block; border-radius: 999px; background: linear-gradient(90deg, #eef2f7 0%, #e2e8f0 40%, #eef2f7 80%); background-size: 200% 100%; animation: intelligence-skeleton-sweep 1.4s ease-in-out infinite; }
+.intelligence-skeleton-donut { width: 150px; height: 150px; margin: 6px auto; border-radius: 50%; -webkit-mask: radial-gradient(circle, transparent 42%, #000 43%); mask: radial-gradient(circle, transparent 42%, #000 43%); }
+.intelligence-skeleton-donut.small { width: 96px; height: 96px; margin: 0; flex: 0 0 auto; }
+.intelligence-skeleton-chart { height: 210px; border-radius: 12px; }
+.intelligence-skeleton-row { display: flex; align-items: center; gap: 18px; }
+.intelligence-skeleton-lines { display: grid; gap: 10px; flex: 1; min-width: 0; }
+.intelligence-skeleton-metric { width: 64px; height: 20px; margin: 2px 0; }
+.report-brief.intelligence-skeleton .report-brief-section { display: grid; gap: 12px; }
+.report-brief.intelligence-skeleton .report-brief-section > header { margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { .intelligence-skeleton-bar, .intelligence-skeleton-donut, .intelligence-skeleton-chart { animation: none; } }
+
+.intelligence-state { padding: 40px 20px; }
+.intelligence-state .subtitle { margin: 0; line-height: 1.55; }
+.intelligence-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
+.intelligence-state-action { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; font-size: .86rem; text-decoration: none; }
+.admin-empty-state .intelligence-state-action.btn-secondary { margin-top: 0; }
+.intelligence-state-hint { margin: 4px 0 0; font-size: .8rem; color: var(--text-light); }
+.intelligence-state-error { margin: 4px 0 0; font-size: .8rem; color: #be123c; }
+.intelligence-state-tone-error .admin-empty-state-icon { background: rgba(255, 71, 87, 0.14); color: #e11d48; }
+
+.intelligence-pending-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border: 1px solid #fde68a; border-radius: 12px; background: #fffbeb; color: #92400e; font-size: .84rem; }
+.intelligence-pending-notice > span { flex: 1 1 240px; min-width: 0; }
+.intelligence-pending-notice a, .intelligence-pending-notice button { flex: 0 0 auto; padding: 5px 11px; border: 1px solid #fcd34d; border-radius: 8px; background: #fff; color: #92400e; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+.intelligence-pending-notice button:disabled { opacity: .6; cursor: default; }
+.intelligence-pending-notice .intelligence-state-error { flex-basis: 100%; }

@@ -89,7 +89,8 @@
   },
   "sentimentBreakdown": {
     "title": "Sentiment breakdown",
-    "netSentimentCaption": "net sentiment"
+    "netSentimentCaption": "net sentiment",
+    "denominator": "Sentiment from {{assessed}} of {{total}} articles · {{notAssessed}} not assessed"
   },
   "sentimentTrend": {
     "title": "Sentiment trend"
@@ -173,6 +174,126 @@
     "next": "Next",
     "viewDetailsTitle": "View comparison details"
   },
+  "ideaComparisonDetail": {
+    "kicker": "Idea comparison",
+    "statusDiverges": "Evidence differs",
+    "statusAgrees": "Evidence aligns",
+    "regenerateSummary": "Regenerate summary",
+    "backToDashboard": "Back to dashboard",
+    "loading": "Loading comparison…",
+    "notFound": "Idea comparison not found.",
+    "loadFailed": "Failed to load this comparison.",
+    "regenerateSuccess": "Executive summary regenerated with the latest evidence.",
+    "regenerateFailedDefault": "Summary regeneration failed.",
+    "regenerateFailedRetryHint": "Your fact changes were saved; retry when the model is available.",
+    "deleteFactConfirm": "Delete this user-provided fact? The current summary will be marked outdated.",
+    "factDeleted": "Fact deleted. Regenerate the summary to apply the change.",
+    "deleteFactFailed": "Failed to delete the fact.",
+    "saveFactFailed": "Failed to save the fact.",
+    "summary": {
+      "title": "Executive summary",
+      "subtitle": "Generated from document claims and user-provided facts",
+      "needsRegeneration": "Needs regeneration",
+      "empty": "No summary has been generated yet."
+    },
+    "evidence": {
+      "title": "Document evidence",
+      "sourceCount_one": "{{count}} source",
+      "sourceCount_other": "{{count}} sources",
+      "untitledSource": "Untitled source",
+      "statedFigure": "Stated figure",
+      "notStated": "Not stated",
+      "openSourceAria": "Open {{label}}"
+    },
+    "facts": {
+      "title": "User-provided facts",
+      "subtitle": "Additional context supplied by your team",
+      "addFact": "Add fact",
+      "empty": "No user-provided facts yet.",
+      "userProvidedFactLabel": "User-provided fact",
+      "addedBy": "Added by {{name}}",
+      "openReference": "Open reference",
+      "editFactAria": "Edit fact",
+      "deleteFactAria": "Delete fact"
+    },
+    "form": {
+      "factLabel": "Fact",
+      "factPlaceholder": "State the fact and enough context to compare it with the claims.",
+      "referenceLabelLabel": "Reference label",
+      "referenceLabelPlaceholder": "Internal research, annual report…",
+      "referenceUrlLabel": "Reference URL",
+      "dateLabel": "Date",
+      "includeNumbers": "Include numbers",
+      "includeNumbersHint": "Add structured values when this fact contains a measurable figure.",
+      "metricLabel": "Metric",
+      "metricPlaceholder": "Oil production",
+      "valueLabel": "Value",
+      "valuePlaceholder": "1.10",
+      "unitLabel": "Unit",
+      "unitPlaceholder": "million bpd",
+      "periodLabel": "Period",
+      "periodPlaceholder": "2026 Q4",
+      "typeLabel": "Type",
+      "typeUnspecified": "Unspecified",
+      "typeActual": "Actual",
+      "typeEstimate": "Estimate",
+      "typeForecast": "Forecast",
+      "typeTarget": "Target",
+      "removeNumberAria": "Remove number",
+      "addAnotherNumber": "Add another number",
+      "cancel": "Cancel",
+      "saveAndRegenerate": "Save and regenerate"
+    },
+    "numericEvidence": {
+      "title": "Numbers at a glance",
+      "subtitle": "Shown only for comparable figures found in this idea",
+      "lowest": "Lowest",
+      "highest": "Highest",
+      "average": "Average",
+      "range": "Range",
+      "trendChartAria": "{{metric}} trend chart",
+      "tooltipValue": "Value",
+      "directionLine": "Direction",
+      "directionActual": "Actual",
+      "directionEstimate": "Estimate",
+      "directionForecast": "Forecast / target",
+      "periodNotSpecified": "Period not specified",
+      "previousValue": "previous value"
+    },
+    "benchmarkChart": {
+      "yourFactBaseline": "Your fact · comparison baseline",
+      "evidenceAverageBaseline": "Evidence average · comparison baseline",
+      "evidenceAverage": "Evidence average",
+      "userFactSuffix": "{{label}} (user fact)",
+      "valuesComparedWithAria": "Values compared with {{label}}",
+      "lower": "Lower",
+      "higher": "Higher",
+      "yourFactShort": "Your fact",
+      "averageShort": "Average",
+      "yourComparisonBaseline": "Your comparison baseline",
+      "yourFactMatchesSource": "Your fact matches this source",
+      "matchesAverage": "Matches the average",
+      "yourFactIsPrefix": "Your fact is",
+      "thisSourceIsPrefix": "This source is",
+      "directionHigher": "higher",
+      "directionLower": "lower",
+      "directionAbove": "above",
+      "directionBelow": "below",
+      "theAverage": "the average",
+      "matchesLabel": "Matches {{label}}"
+    },
+    "pagination": {
+      "documentEvidenceLabel": "document evidence",
+      "userProvidedFactsLabel": "user-provided facts",
+      "showingRange": "Showing {{first}}–{{last}} of {{total}}",
+      "prev": "Prev",
+      "next": "Next",
+      "prevPageAria": "Previous {{label}} page",
+      "nextPageAria": "Next {{label}} page",
+      "pageStatus": "Page {{page}} of {{count}}",
+      "ariaLabel": "{{label}} pagination"
+    }
+  },
   "trending": {
     "title": "Trending keywords & hashtags",
     "linkTitle": "See articles mentioning {{term}}",
@@ -212,11 +333,24 @@
     "generating": "Generating AI trend summary…",
     "generateError": "Couldn't generate an AI trend summary right now — showing a quick overview instead.",
     "trendSummaryErrorFallback": "Failed to generate the trend summary",
+    "aiGeneratedLabel": "AI-generated",
     "sentimentNote": "Sentiment is calculated from the analyzed article content already stored for this project.",
+    "sentimentScoreAria": "Net sentiment score: {{score}} out of 100",
+    "sentimentScoreHelp": "Net sentiment ranges from -100 (all negative) to +100 (all positive).",
+    "findings": {
+      "keyFinding": "Key finding",
+      "mainConcern": "Main concern",
+      "changeSincePrevious": "Change since previous run",
+      "viewChanges": "View evidence",
+      "noneYet": "Nothing surfaced yet",
+      "changeAvailable": "See how this run compares with the one before it",
+      "changeNeedsRun": "Select an analysis run to see what changed"
+    },
     "keyword": {
       "noKeywordsTitle": "No keywords configured",
       "noKeywordsBody": "Add keywords to {{scope}} to track how often they show up in analyzed articles over time.",
       "manageLink": "Manage project keywords",
+      "sectionScopeNote": "The document and keyword filters below apply to this Keyword existence section only - they don't change the rest of the report.",
       "documentLabel": "Document",
       "documentPlaceholder": "Search documents…",
       "allDocuments": "All documents",
@@ -260,6 +394,60 @@
     "publishedResults": "Published survey results",
     "populationFallback": "Survey population",
     "note": "These percentages are published survey observations. They are separate from sentiment inferred from analyzed records."
+  },
+  "states": {
+    "noDocuments": {
+      "title": "No documents uploaded yet",
+      "body": "This project has nothing to analyze yet. Upload the documents or JSONL exports it should track — analysis starts automatically once they're split into articles.",
+      "noArticlesTitle": "No articles extracted yet",
+      "noArticlesBody_one": "{{formattedCount}} document was uploaded, but no articles came out of it. Check its status or upload another file.",
+      "noArticlesBody_other": "{{formattedCount}} documents were uploaded, but no articles came out of them. Check their status or upload another file.",
+      "upload": "Upload documents",
+      "reviewDocuments": "View documents",
+      "noPermission": "Ask a project manager to upload documents for this project."
+    },
+    "analysisPending": {
+      "extractingTitle": "Documents are still processing",
+      "extractingBody_one": "{{formattedCount}} document is being extracted and split into articles. Analysis starts automatically once it's ready.",
+      "extractingBody_other": "{{formattedCount}} documents are being extracted and split into articles. Analysis starts automatically once they're ready.",
+      "runningTitle": "Analysis in progress",
+      "runningBody": "An analysis run is working through this project's articles. Results appear here as soon as it finishes.",
+      "queuedTitle": "Analysis pending",
+      "queuedBody_one": "{{formattedCount}} article is waiting to be analyzed. Start an analysis run to populate this view.",
+      "queuedBody_other": "{{formattedCount}} articles are waiting to be analyzed. Start an analysis run to populate this view.",
+      "failedTitle": "Analysis didn't complete",
+      "failedBody_one": "Analysis failed for {{formattedCount}} article. Check that the model server is reachable, then retry.",
+      "failedBody_other": "Analysis failed for {{formattedCount}} articles. Check that the model server is reachable, then retry.",
+      "viewRun": "View run progress",
+      "start": "Start analysis",
+      "starting": "Starting…",
+      "retry": "Retry analysis",
+      "viewLogs": "View performance logs",
+      "goToRuns": "Go to Analysis Runs",
+      "startFailed": "Couldn't start the analysis run.",
+      "noPermission": "Ask someone with permission to run analyses to start one."
+    },
+    "noResults": {
+      "periodTitle": "No results in this range",
+      "periodBody_one": "This project has {{formattedCount}} analyzed article, but none fall within the selected range ({{range}}).",
+      "periodBody_other": "This project has {{formattedCount}} analyzed articles, but none fall within the selected range ({{range}}).",
+      "runTitle": "No results for this run",
+      "runBody": "The selected analysis run didn't produce any results for this project.",
+      "showAllTime": "Show all time"
+    },
+    "pendingNotice": {
+      "articles_one": "{{formattedCount}} article is still waiting for analysis — figures below will update once it's done.",
+      "articles_other": "{{formattedCount}} articles are still waiting for analysis — figures below will update once they're done.",
+      "documents_one": "{{formattedCount}} document is still being split into articles — figures below will update once it's done.",
+      "documents_other": "{{formattedCount}} documents are still being split into articles — figures below will update once they're done.",
+      "viewRun": "View progress"
+    },
+    "noProjects": {
+      "title": "No projects yet",
+      "body": "Create a project and upload its documents to start tracking intelligence.",
+      "create": "Create project",
+      "noPermission": "Ask an administrator to create a project or give you access to one."
+    }
   },
   "sourceTrust": {
     "title": "Source trust",

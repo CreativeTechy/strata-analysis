@@ -14,8 +14,10 @@ from services.reports.pdf_renderer import (
     _comparison_html,
     _executive_summary_html,
     _idea_comparisons_html,
+    _processing_location_label,
     _top_articles_html,
     _trust_tag_html,
+    render_competitor_report_pdf,
     render_summary_pdf,
 )
 
@@ -217,6 +219,83 @@ class IdeaComparisonsHtmlTests(unittest.TestCase):
         self.assertIn("Idea Comparisons", text)
         self.assertIn("$98", text)
         self.assertIn("Trusted", text)
+
+
+MINIMAL_FINDING = {
+    "id": 7, "project_id": 1, "competitor_id": 3,
+    "competitor_name": "Acme Foods", "headline": "Launched a new delivery tier",
+    "whats_up": "They rolled out same-day delivery in three cities.",
+    "impact": "Our own delivery SLA now looks slow by comparison.",
+    "impact_level": "high", "actions": [], "signals": [], "evidence": [],
+    "confidence": 0.8, "confidence_reason": "Multiple independent stories.",
+    "article_count": 3, "story_count": 2, "validation_status": "pending",
+    "analysis_model": "llama3.1:8b", "period_start": None, "period_end": None,
+    "generated_at": "2026-03-05T12:00:00+00:00",
+}
+
+
+class RenderCompetitorReportPdfTests(unittest.TestCase):
+    def test_renders_valid_pdf_bytes_for_a_finding_with_no_evidence(self):
+        pdf_bytes = render_competitor_report_pdf(MINIMAL_FINDING, [])
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_missing_optional_keys_do_not_crash(self):
+        pdf_bytes = render_competitor_report_pdf({}, [])
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_evidence_appendix_groups_by_document_and_includes_excerpts(self):
+        finding = {
+            **MINIMAL_FINDING,
+            "evidence": [
+                {"article_id": 1, "url": "document://competitor-document/9/article/1",
+                 "title": "Q3 memo", "source": "q3-memo.pdf", "published_at": "2026-02-01T00:00:00+00:00",
+                 "excerpt": "Same-day delivery launched in Riyadh, Jeddah, and Dammam."},
+                {"article_id": 2, "url": "document://competitor-document/9/article/2",
+                 "title": "Q3 memo follow-up", "source": "q3-memo.pdf", "published_at": None,
+                 "excerpt": "Pricing unchanged."},
+            ],
+        }
+        rejected = [{"id": 5, "url": "https://example.com/a", "title": "Unrelated story",
+                     "source": "example.com", "rejected_reason": "not_about_competitor", "dated": "2026-01-01"}]
+        pdf_bytes = render_competitor_report_pdf(finding, rejected)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        self.assertIn("Evidence Appendix", text)
+        self.assertIn("q3-memo.pdf", text)
+        self.assertIn("Same-day delivery launched", text)
+        self.assertIn("Unrelated story", text)
+        self.assertIn("not about competitor", text)
+
+    def test_document_derived_content_is_escaped_not_interpreted(self):
+        finding = {
+            **MINIMAL_FINDING,
+            "whats_up": "<script>alert(1)</script>",
+            "evidence": [{"article_id": 1, "url": "u", "title": "<b>bold</b>", "source": "doc.pdf",
+                          "published_at": None, "excerpt": "e"}],
+        }
+        pdf_bytes = render_competitor_report_pdf(finding, [])
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        self.assertIn("alert(1)", text)
+        self.assertIn("bold", text)
+
+
+class ProcessingLocationLabelTests(unittest.TestCase):
+    def test_defaults_to_local_ollama(self):
+        # Test suite sets OPENAI_API_KEY but config still defaults LLM_PROVIDER
+        # to "ollama" unless the environment overrides it.
+        label = _processing_location_label()
+        self.assertIn("This machine", label)
 
 
 if __name__ == "__main__":

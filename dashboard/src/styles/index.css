@@ -98,19 +98,43 @@ body::after {
 .language-switcher {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border-soft);
+}
+
+.language-switcher-icon {
+  margin-inline: 6px 2px;
   color: var(--text-light);
 }
 
-.language-switcher-select {
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 8px;
-  padding: 6px 10px;
+.language-switcher-option {
+  border: 0;
+  background: transparent;
+  color: var(--text-light);
   font-family: var(--font-sans);
-  font-size: 0.85rem;
-  color: var(--text-dark);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
   cursor: pointer;
+}
+
+.language-switcher-option[lang='ar'] {
+  font-family: 'Noto Sans Arabic', 'Inter', sans-serif;
+}
+
+.language-switcher-option.is-active {
+  background: white;
+  color: var(--text-dark);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.language-switcher-option:focus-visible {
+  outline: 2px solid var(--secondary-color);
+  outline-offset: 2px;
 }
 
 .login-language-switcher {
@@ -670,6 +694,9 @@ h1, h2, h3 {
 .badge.positive { background: rgba(46, 213, 115, 0.15); color: #2ed573; }
 .badge.negative { background: rgba(255, 71, 87, 0.15); color: #ff4757; }
 .badge.neutral { background: rgba(164, 176, 190, 0.15); color: #747d8c; }
+.badge.pending { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
+.badge.failed { background: rgba(255, 71, 87, 0.15); color: #d92d20; }
+.badge.not_assessed { background: rgba(107, 114, 128, 0.12); color: #4b5563; border: 1px dashed rgba(107, 114, 128, 0.4); }
 .badge.mixed { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
 .badge.category { background: rgba(46, 134, 222, 0.1); color: var(--secondary-color); }
 .badge.score { background: rgba(255, 159, 67, 0.1); color: #e67e22; }
@@ -923,11 +950,46 @@ h1, h2, h3 {
   color: #b91c1c;
 }
 
+/* One consolidated scope bar: project selector + a prominent exact
+   range/run label, so the project no longer has to repeat across a
+   separate title, selector, and chip row (see reports feedback). */
+.report-scope-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.report-scope-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-dark);
+  padding-bottom: 8px;
+}
+
+.report-scope-range strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+}
+
+.report-scope-range svg {
+  color: var(--secondary-color);
+}
+
 .report-filter-row {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-filter-row-note {
+  font-size: 0.76rem;
+  color: var(--text-light);
+  margin: 0;
 }
 
 .report-compare-toggle {
@@ -966,64 +1028,50 @@ h1, h2, h3 {
   outline-offset: 2px;
 }
 
-.report-summary-chips {
+/* Secondary line: article count + last-updated status, in plain text
+   rather than a chip row - the header's job is now just scope (project +
+   range), this is supporting detail underneath it. */
+.report-scope-secondary {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  list-style: none;
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-light);
 }
 
-.report-chip {
+.report-scope-stat {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid var(--border-soft);
-  font-size: 0.82rem;
-  color: var(--text-dark);
-  max-width: 100%;
+  gap: 6px;
 }
 
-.report-chip strong {
+.report-scope-stat strong {
   font-weight: 800;
   font-family: var(--font-display);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-dark);
 }
 
-.report-chip-label {
-  color: var(--text-light);
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
+.report-scope-divider {
+  color: var(--border-soft);
 }
 
 /* See IntelligenceDashboard.css: tracking breaks Arabic letter joins. */
-[dir="rtl"] :is(.report-kicker, .report-project-control-label, .report-chip-label) {
+[dir="rtl"] :is(.report-kicker, .report-project-control-label) {
   letter-spacing: normal;
   text-transform: none;
 }
 
-.report-sync-chip.report-sync-loading {
-  background: rgba(255, 159, 67, 0.14);
-  border-color: rgba(255, 159, 67, 0.24);
+.report-scope-stat.report-sync-loading {
   color: #d46b08;
 }
 
-.report-sync-chip.report-sync-success {
-  background: rgba(46, 213, 115, 0.14);
-  border-color: rgba(46, 213, 115, 0.22);
+.report-scope-stat.report-sync-success {
   color: #1a7f4e;
 }
 
-.report-sync-chip.report-sync-error {
-  background: rgba(255, 71, 87, 0.14);
-  border-color: rgba(255, 71, 87, 0.26);
+.report-scope-stat.report-sync-error {
   color: #b42318;
 }
 
@@ -2141,6 +2189,14 @@ h1, h2, h3 {
   flex-wrap: wrap;
 }
 
+.report-export-preview { margin-bottom: 18px; }
+.report-export-preview-facts { display: grid; gap: 10px; margin: 0 0 16px; padding: 14px; border-radius: 14px; background: rgba(37, 99, 235, .06); }
+.report-export-preview-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.report-export-preview-facts dt { display: inline-flex; align-items: center; gap: 5px; color: var(--text-light); font-size: .8rem; font-weight: 700; }
+.report-export-preview-facts dd { margin: 0; text-align: end; color: var(--text-dark); font-weight: 700; font-size: .86rem; max-width: 60%; }
+.report-export-preview-includes-title { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: .84rem; font-weight: 700; color: var(--text-dark); }
+.report-export-preview-includes { margin: 0; padding-inline-start: 20px; color: var(--text-light); font-size: .86rem; line-height: 1.7; }
+
 .confirm-modal-close {
   width: 38px;
   height: 38px;
@@ -2156,6 +2212,135 @@ h1, h2, h3 {
 
 .confirm-modal-close:hover {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* Destructive confirm button: solid dark red so white text clears 4.5:1,
+   unlike the light-orange .btn-primary gradient. */
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 12px;
+  background: #b42318;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #912018;
+}
+
+.btn-danger:disabled {
+  background: #e8c3bf;
+  color: #7a271a;
+  cursor: not-allowed;
+}
+
+.btn-danger:focus-visible,
+.remove-articles-confirm input:focus-visible {
+  outline: 2px solid #0e7490;
+  outline-offset: 2px;
+}
+
+.remove-articles-dialog {
+  width: min(100%, 540px);
+}
+
+.remove-articles-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.remove-articles-counts > div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.remove-articles-counts dt {
+  font-size: 0.78rem;
+  color: var(--text-light);
+}
+
+.remove-articles-counts dd {
+  margin: 2px 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.remove-articles-status {
+  color: var(--text-light);
+  margin-bottom: 14px;
+}
+
+.remove-articles-error {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: #fdecea;
+  color: #912018;
+}
+
+.remove-articles-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.remove-articles-confirm label {
+  font-weight: 600;
+}
+
+.remove-articles-expected {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  color: var(--text-dark);
+  overflow-wrap: anywhere;
+}
+
+.remove-articles-confirm input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  background: #fff;
+  font: inherit;
+}
+
+@media (max-width: 560px) {
+  .remove-articles-counts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.danger-zone {
+  border: 1px solid rgba(180, 35, 24, 0.25);
+}
+
+.danger-zone-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.danger-zone-row p {
+  margin: 4px 0 0;
+  color: var(--text-light);
+  max-width: 60ch;
 }
 
 .spin {
@@ -2901,13 +3086,18 @@ h1, h2, h3 {
     align-items: stretch;
   }
 
-  .report-summary-chips {
+  .report-scope-bar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .report-chip {
-    justify-content: space-between;
+  .report-scope-secondary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .report-scope-divider {
+    display: none;
   }
 
   .articles-toolbar {

@@ -105,7 +105,8 @@
   },
   "sentimentBreakdown": {
     "title": "توزيع المشاعر",
-    "netSentimentCaption": "صافي المشاعر"
+    "netSentimentCaption": "صافي المشاعر",
+    "denominator": "المشاعر من {{assessed}} من أصل {{total}} مقالة · {{notAssessed}} لم تُقيَّم"
   },
   "sentimentTrend": {
     "title": "اتجاه المشاعر"
@@ -189,6 +190,126 @@
     "next": "التالي",
     "viewDetailsTitle": "عرض تفاصيل المقارنة"
   },
+  "ideaComparisonDetail": {
+    "kicker": "مقارنة الأفكار",
+    "statusDiverges": "الأدلة مختلفة",
+    "statusAgrees": "الأدلة متفقة",
+    "regenerateSummary": "إعادة إنشاء الملخص",
+    "backToDashboard": "العودة إلى لوحة المعلومات",
+    "loading": "جارٍ تحميل المقارنة…",
+    "notFound": "مقارنة الأفكار غير موجودة.",
+    "loadFailed": "تعذّر تحميل هذه المقارنة.",
+    "regenerateSuccess": "تمت إعادة إنشاء الملخص التنفيذي بأحدث الأدلة.",
+    "regenerateFailedDefault": "فشلت إعادة إنشاء الملخص.",
+    "regenerateFailedRetryHint": "تم حفظ تعديلاتك على الحقائق؛ أعد المحاولة عند توفر النموذج.",
+    "deleteFactConfirm": "هل تريد حذف هذه الحقيقة المقدَّمة من المستخدم؟ سيُعتبر الملخص الحالي قديمًا.",
+    "factDeleted": "تم حذف الحقيقة. أعد إنشاء الملخص لتطبيق التغيير.",
+    "deleteFactFailed": "تعذّر حذف الحقيقة.",
+    "saveFactFailed": "تعذّر حفظ الحقيقة.",
+    "summary": {
+      "title": "الملخص التنفيذي",
+      "subtitle": "مُولَّد من ادعاءات المستندات والحقائق المقدَّمة من المستخدمين",
+      "needsRegeneration": "بحاجة إلى إعادة إنشاء",
+      "empty": "لم يتم إنشاء ملخص بعد."
+    },
+    "evidence": {
+      "title": "أدلة المستندات",
+      "sourceCount_one": "مصدر واحد ({{count}})",
+      "sourceCount_other": "{{count}} مصادر",
+      "untitledSource": "مصدر بلا عنوان",
+      "statedFigure": "الرقم المذكور",
+      "notStated": "غير مذكور",
+      "openSourceAria": "فتح {{label}}"
+    },
+    "facts": {
+      "title": "الحقائق المقدَّمة من المستخدمين",
+      "subtitle": "سياق إضافي قدَّمه فريقك",
+      "addFact": "إضافة حقيقة",
+      "empty": "لا توجد حقائق مقدَّمة من المستخدمين بعد.",
+      "userProvidedFactLabel": "حقيقة مقدَّمة من المستخدم",
+      "addedBy": "أضافها {{name}}",
+      "openReference": "فتح المرجع",
+      "editFactAria": "تعديل الحقيقة",
+      "deleteFactAria": "حذف الحقيقة"
+    },
+    "form": {
+      "factLabel": "الحقيقة",
+      "factPlaceholder": "اذكر الحقيقة والسياق الكافي لمقارنتها بالادعاءات.",
+      "referenceLabelLabel": "تسمية المرجع",
+      "referenceLabelPlaceholder": "بحث داخلي، تقرير سنوي…",
+      "referenceUrlLabel": "رابط المرجع",
+      "dateLabel": "التاريخ",
+      "includeNumbers": "تضمين الأرقام",
+      "includeNumbersHint": "أضف قيمًا منظَّمة عندما تحتوي هذه الحقيقة على رقم قابل للقياس.",
+      "metricLabel": "المقياس",
+      "metricPlaceholder": "إنتاج النفط",
+      "valueLabel": "القيمة",
+      "valuePlaceholder": "1.10",
+      "unitLabel": "الوحدة",
+      "unitPlaceholder": "مليون برميل يوميًا",
+      "periodLabel": "الفترة",
+      "periodPlaceholder": "الربع الرابع 2026",
+      "typeLabel": "النوع",
+      "typeUnspecified": "غير محدد",
+      "typeActual": "فعلي",
+      "typeEstimate": "تقديري",
+      "typeForecast": "توقّع",
+      "typeTarget": "هدف",
+      "removeNumberAria": "إزالة الرقم",
+      "addAnotherNumber": "إضافة رقم آخر",
+      "cancel": "إلغاء",
+      "saveAndRegenerate": "حفظ وإعادة الإنشاء"
+    },
+    "numericEvidence": {
+      "title": "الأرقام في لمحة",
+      "subtitle": "تُعرض فقط للأرقام القابلة للمقارنة الموجودة في هذه الفكرة",
+      "lowest": "الأدنى",
+      "highest": "الأعلى",
+      "average": "المتوسط",
+      "range": "النطاق",
+      "trendChartAria": "مخطط اتجاه {{metric}}",
+      "tooltipValue": "القيمة",
+      "directionLine": "الاتجاه",
+      "directionActual": "فعلي",
+      "directionEstimate": "تقديري",
+      "directionForecast": "توقّع / هدف",
+      "periodNotSpecified": "الفترة غير محددة",
+      "previousValue": "القيمة السابقة"
+    },
+    "benchmarkChart": {
+      "yourFactBaseline": "حقيقتك · خط الأساس للمقارنة",
+      "evidenceAverageBaseline": "متوسط الأدلة · خط الأساس للمقارنة",
+      "evidenceAverage": "متوسط الأدلة",
+      "userFactSuffix": "{{label}} (حقيقة من المستخدم)",
+      "valuesComparedWithAria": "القيم مقارنةً بـ {{label}}",
+      "lower": "أدنى",
+      "higher": "أعلى",
+      "yourFactShort": "حقيقتك",
+      "averageShort": "المتوسط",
+      "yourComparisonBaseline": "خط أساس مقارنتك",
+      "yourFactMatchesSource": "حقيقتك تطابق هذا المصدر",
+      "matchesAverage": "يطابق المتوسط",
+      "yourFactIsPrefix": "حقيقتك",
+      "thisSourceIsPrefix": "هذا المصدر",
+      "directionHigher": "أعلى",
+      "directionLower": "أدنى",
+      "directionAbove": "أعلى من",
+      "directionBelow": "أدنى من",
+      "theAverage": "المتوسط",
+      "matchesLabel": "يطابق {{label}}"
+    },
+    "pagination": {
+      "documentEvidenceLabel": "أدلة المستندات",
+      "userProvidedFactsLabel": "الحقائق المقدَّمة من المستخدمين",
+      "showingRange": "عرض {{first}}–{{last}} من {{total}}",
+      "prev": "السابق",
+      "next": "التالي",
+      "prevPageAria": "الصفحة السابقة لـ {{label}}",
+      "nextPageAria": "الصفحة التالية لـ {{label}}",
+      "pageStatus": "صفحة {{page}} من {{count}}",
+      "ariaLabel": "تنقّل {{label}}"
+    }
+  },
   "trending": {
     "title": "الكلمات المفتاحية والوسوم الرائجة",
     "linkTitle": "عرض المقالات التي تذكر {{term}}",
@@ -228,11 +349,24 @@
     "generating": "جارٍ إنشاء ملخص الاتجاهات بالذكاء الاصطناعي…",
     "generateError": "تعذّر إنشاء ملخص اتجاهات بالذكاء الاصطناعي الآن — يُعرض بدلًا منه ملخص سريع.",
     "trendSummaryErrorFallback": "تعذّر إنشاء ملخص الاتجاهات",
+    "aiGeneratedLabel": "مُنشأ بالذكاء الاصطناعي",
     "sentimentNote": "تُحسب المشاعر من محتوى المقالات المحلَّلة المخزَّنة بالفعل لهذا المشروع.",
+    "sentimentScoreAria": "درجة صافي المشاعر: {{score}} من 100",
+    "sentimentScoreHelp": "يتراوح صافي المشاعر من -100 (سلبي بالكامل) إلى +100 (إيجابي بالكامل).",
+    "findings": {
+      "keyFinding": "أهم استنتاج",
+      "mainConcern": "أبرز مصدر قلق",
+      "changeSincePrevious": "التغيّر منذ عملية التحليل السابقة",
+      "viewChanges": "عرض الدليل",
+      "noneYet": "لم يظهر شيء بعد",
+      "changeAvailable": "طالع مقارنة هذه العملية بالعملية التي سبقتها",
+      "changeNeedsRun": "اختر عملية تحليل لمعرفة ما تغيّر"
+    },
     "keyword": {
       "noKeywordsTitle": "لم يتم تهيئة كلمات مفتاحية",
       "noKeywordsBody": "أضف كلمات مفتاحية إلى {{scope}} لتتبّع مدى تكرار ظهورها في المقالات المحلَّلة عبر الزمن.",
       "manageLink": "إدارة الكلمات المفتاحية للمشروع",
+      "sectionScopeNote": "تنطبق مرشِّحات المستند والكلمة المفتاحية أدناه على قسم وجود الكلمات المفتاحية هذا فقط - ولا تغيّر بقية التقرير.",
       "documentLabel": "المستند",
       "documentPlaceholder": "البحث في المستندات…",
       "allDocuments": "كل المستندات",
@@ -276,6 +410,53 @@
     "publishedResults": "نتائج استطلاع منشورة",
     "populationFallback": "عيّنة الاستطلاع",
     "note": "هذه النسب هي ملاحظات استطلاع منشورة. وهي منفصلة عن المشاعر المُستنتَجة من السجلات المحلَّلة."
+  },
+  "states": {
+    "noDocuments": {
+      "title": "لم يتم رفع أي مستندات بعد",
+      "body": "لا يوجد في هذا المشروع ما يمكن تحليله بعد. ارفع المستندات أو ملفات JSONL التي يجب أن يتتبعها — يبدأ التحليل تلقائيًا بمجرد تقسيمها إلى مقالات.",
+      "noArticlesTitle": "لم تُستخرج أي مقالات بعد",
+      "noArticlesBody": "عدد المستندات المرفوعة: {{formattedCount}}، لكن لم تُستخرج منها أي مقالات. تحقّق من حالتها أو ارفع ملفًا آخر.",
+      "upload": "رفع المستندات",
+      "reviewDocuments": "عرض المستندات",
+      "noPermission": "اطلب من مدير المشروع رفع المستندات لهذا المشروع."
+    },
+    "analysisPending": {
+      "extractingTitle": "لا تزال المستندات قيد المعالجة",
+      "extractingBody": "مستندات قيد الاستخراج والتقسيم إلى مقالات: {{formattedCount}}. يبدأ التحليل تلقائيًا عند جاهزيتها.",
+      "runningTitle": "التحليل قيد التنفيذ",
+      "runningBody": "تعمل عملية تحليل على مقالات هذا المشروع. تظهر النتائج هنا فور انتهائها.",
+      "queuedTitle": "التحليل معلّق",
+      "queuedBody": "مقالات بانتظار التحليل: {{formattedCount}}. ابدأ عملية تحليل لملء هذا العرض.",
+      "failedTitle": "لم يكتمل التحليل",
+      "failedBody": "فشل التحليل لعدد {{formattedCount}} من المقالات. تأكّد من إمكانية الوصول إلى خادم النموذج، ثم أعد المحاولة.",
+      "viewRun": "عرض تقدّم العملية",
+      "start": "بدء التحليل",
+      "starting": "جارٍ البدء…",
+      "retry": "إعادة التحليل",
+      "viewLogs": "عرض سجلات الأداء",
+      "goToRuns": "الانتقال إلى عمليات التحليل",
+      "startFailed": "تعذّر بدء عملية التحليل.",
+      "noPermission": "اطلب من شخص لديه صلاحية تشغيل التحليلات أن يبدأ عملية."
+    },
+    "noResults": {
+      "periodTitle": "لا توجد نتائج في هذا النطاق",
+      "periodBody": "يحتوي هذا المشروع على {{formattedCount}} من المقالات المحلَّلة، لكن لا يقع أي منها ضمن النطاق المحدد ({{range}}).",
+      "runTitle": "لا توجد نتائج لهذه العملية",
+      "runBody": "لم تُنتج عملية التحليل المحددة أي نتائج لهذا المشروع.",
+      "showAllTime": "عرض كل الفترات"
+    },
+    "pendingNotice": {
+      "articles": "مقالات لا تزال بانتظار التحليل: {{formattedCount}} — ستتحدّث الأرقام أدناه عند اكتمالها.",
+      "documents": "مستندات لا تزال قيد التقسيم إلى مقالات: {{formattedCount}} — ستتحدّث الأرقام أدناه عند اكتمالها.",
+      "viewRun": "عرض التقدّم"
+    },
+    "noProjects": {
+      "title": "لا توجد مشاريع بعد",
+      "body": "أنشئ مشروعًا وارفع مستنداته لبدء تتبع الذكاء.",
+      "create": "إنشاء مشروع",
+      "noPermission": "اطلب من المسؤول إنشاء مشروع أو منحك صلاحية الوصول إلى مشروع."
+    }
   },
   "sourceTrust": {
     "title": "موثوقية المصادر",

@@ -20,7 +20,7 @@ function scopeLabel(t, locale, sequence, isoDate, fallback) {
     : t('reports:variation.scopeLabelNoNumber', { date });
 }
 
-export default function VariationFromLastRun({ projectId, runId, number = '02' }) {
+export default function VariationFromLastRun({ projectId, runId, number = '02', id }) {
   const { t, i18n } = useTranslation('reports');
   const locale = i18n.language;
   const scopeKey = `${projectId ?? ''}:${runId ?? ''}`;
@@ -80,7 +80,7 @@ export default function VariationFromLastRun({ projectId, runId, number = '02' }
     : t('reports:variation.reasons.fallback');
 
   return (
-    <section className="report-brief-section report-variation-section">
+    <section id={id} className="report-brief-section report-variation-section">
       <header>
         <span>{number}</span>
         <h3>{t('reports:variation.title')}</h3>

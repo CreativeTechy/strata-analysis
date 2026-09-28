@@ -4,16 +4,19 @@ import { MemoryRouter } from 'react-router-dom';
 import DashboardOverview from './DashboardOverview.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import i18n from '../i18n/index.js';
+import { useAuth } from '../auth/useAuth.js';
 
 vi.mock('../api/projectsApi.js', () => ({ getIdeaComparisons: vi.fn() }));
 vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => null }));
 // Charts need real layout to draw anything, so they're stubbed out - these
 // tests are about the text around them.
 vi.mock('./ResponsiveChartContainer.jsx', () => ({ default: () => null }));
+vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
 
 const PROJECT = { id: 1, name: 'Acme Study', mode: 'opinion' };
 
 const INTELLIGENCE = {
+  project_id: 1,
   total: 10, positive: 5, negative: 3, neutral: 2, mixed: 0, net_sentiment: 20, document_count: 2,
   sentiment_over_time: [{ date: '2026-09-01', total: 10, positive: 5, negative: 3, neutral: 2 }],
   source_trust: {
@@ -78,6 +81,7 @@ describe('DashboardOverview', () => {
     }
     getIdeaComparisons.mockReset();
     getIdeaComparisons.mockResolvedValue({ ok: true, data: { comparisons: [] } });
+    useAuth.mockReturnValue({ hasPermission: () => true });
   });
 
   it('shows the sentiment trend and top concerns on the first screen', async () => {
@@ -99,6 +103,30 @@ describe('DashboardOverview', () => {
     expect(within(card).getByRole('heading', { name: 'Most talked-about ideas' })).toBeInTheDocument();
     expect(within(card).getByText('Great customer support')).toBeInTheDocument();
     expect(within(card).getByText('Add a dark mode')).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('paginates ideas 3 at a time and resets to page 1 when the filter changes', async () => {
+    renderDashboard();
+    const card = ideasCard();
+
+    fireEvent.click(within(card).getByRole('tab', { name: 'All ideas' }));
+    expect(within(card).getByText('Great customer support')).toBeInTheDocument();
+    expect(within(card).getByText('Checkout keeps failing')).toBeInTheDocument();
+    expect(within(card).getByText('Add a dark mode')).toBeInTheDocument();
+    expect(within(card).queryByText('Prices went up')).not.toBeInTheDocument();
+    expect(within(card).getByText('Page 1 of 2')).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Next' }));
+    expect(within(card).getByText('Prices went up')).toBeInTheDocument();
+    expect(within(card).queryByText('Great customer support')).not.toBeInTheDocument();
+    expect(within(card).getByText('Page 2 of 2')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    fireEvent.click(within(card).getByRole('tab', { name: 'Concerns' }));
+    expect(within(card).getByText('Checkout keeps failing')).toBeInTheDocument();
+    expect(within(card).getByText('Prices went up')).toBeInTheDocument();
+    expect(within(card).queryByText(/^Page \d+ of \d+$/)).not.toBeInTheDocument();
     await screen.findByText(/No cross-source comparisons yet/);
   });
 
@@ -179,7 +207,7 @@ describe('DashboardOverview', () => {
           onProjectChange={vi.fn()}
           period="30d"
           onPeriodChange={vi.fn()}
-          intelligence={INTELLIGENCE}
+          intelligence={{ ...INTELLIGENCE, project_id: 2 }}
           loading={false}
           error={null}
           pipelineHealth={{ lastRun: { status: 'success' }, lastFinished: null }}

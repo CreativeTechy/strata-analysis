@@ -56,6 +56,7 @@ SNAPSHOT_COLUMNS = (
     "sentiment_score",
     "sentiment_low_confidence",
     "sentiment_model",
+    "sentiment_status",
     "relevance_score",
     "category",
     "article_category",
@@ -65,6 +66,10 @@ SNAPSHOT_COLUMNS = (
     "article_tone",
     "article_tone_confidence",
     "classification_model",
+    "classification_status",
+    "category_status",
+    "writer_tone_status",
+    "article_tone_status",
     "insight_json",
     "organizations",
     "entities",
@@ -238,6 +243,7 @@ def fetch_run_article_rows(project_id: int, run_id: str) -> list[dict]:
                    a.title, a.text, a.verified,
                    a.published, a.created_at, a.pipeline_run_id,
                    an.summary, an.sentiment, an.writer_tone, an.article_tone,
+                   an.sentiment_status, an.classification_status,
                    an.region, an.gender, an.age_range, an.segment,
                    an.insight_json, an.source_language, an.source_domain,
                    an.relevance_score, an.analysis_status, an.topics, an.key_points,
@@ -268,6 +274,7 @@ def sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
             from article_analyses an
             join article_projects ap on ap.article_id = an.article_id
             where ap.project_id = %s and an.run_id = any(%s)
+              and an.sentiment_status = 'ran'
             group by an.run_id, an.sentiment
             """,
             (int(project_id), ids),
@@ -402,6 +409,7 @@ def fetch_state_as_of(project_id: int, cutoff: datetime) -> list[dict]:
                    a.published, a.created_at, a.pipeline_run_id,
                    an.run_id, an.created_at as snapshot_at,
                    an.summary, an.sentiment, an.relevance_score, an.writer_tone, an.article_tone,
+                   an.sentiment_status, an.classification_status,
                    an.region, an.gender, an.age_range, an.segment,
                    an.insight_json, an.topics, an.key_points, an.source_language, an.source_domain,
                    an.analysis_status

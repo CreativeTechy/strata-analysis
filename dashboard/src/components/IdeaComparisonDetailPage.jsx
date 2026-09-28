@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Lightbulb, Loader2,
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
@@ -26,20 +27,21 @@ const clampPage = (page, total, size) => Math.min(Math.max(0, page), pageCountFo
 const pageSlice = (items, page, size) => items.slice(page * size, (page + 1) * size);
 
 function ListPagination({ label, page, total, pageSize, onChange }) {
+  const { t } = useTranslation('dashboard');
   const pageCount = pageCountFor(total, pageSize);
   if (pageCount <= 1) return null;
   const first = page * pageSize + 1;
   const last = Math.min(total, (page + 1) * pageSize);
   return (
-    <nav className="comparison-pagination" aria-label={`${label} pagination`}>
-      <span className="comparison-pagination-range">Showing {first}–{last} of {total}</span>
+    <nav className="comparison-pagination" aria-label={t('ideaComparisonDetail.pagination.ariaLabel', { label })}>
+      <span className="comparison-pagination-range">{t('ideaComparisonDetail.pagination.showingRange', { first, last, total })}</span>
       <div>
-        <button type="button" className="btn-secondary" onClick={() => onChange(page - 1)} disabled={page === 0} aria-label={`Previous ${label} page`}>
-          <ChevronLeft size={14} className="rtl-mirror" /> Prev
+        <button type="button" className="btn-secondary" onClick={() => onChange(page - 1)} disabled={page === 0} aria-label={t('ideaComparisonDetail.pagination.prevPageAria', { label })}>
+          <ChevronLeft size={14} className="rtl-mirror" /> {t('ideaComparisonDetail.pagination.prev')}
         </button>
-        <span className="comparison-pagination-status">Page {page + 1} of {pageCount}</span>
-        <button type="button" className="btn-secondary" onClick={() => onChange(page + 1)} disabled={page >= pageCount - 1} aria-label={`Next ${label} page`}>
-          Next <ChevronRight size={14} className="rtl-mirror" />
+        <span className="comparison-pagination-status">{t('ideaComparisonDetail.pagination.pageStatus', { page: page + 1, count: pageCount })}</span>
+        <button type="button" className="btn-secondary" onClick={() => onChange(page + 1)} disabled={page >= pageCount - 1} aria-label={t('ideaComparisonDetail.pagination.nextPageAria', { label })}>
+          {t('ideaComparisonDetail.pagination.next')} <ChevronRight size={14} className="rtl-mirror" />
         </button>
       </div>
     </nav>
@@ -85,19 +87,25 @@ const changeDetails = (value, reference) => {
 };
 
 function ChangeIndicator({ change, unit, referenceLabel }) {
+  const { t } = useTranslation('dashboard');
   const Icon = change.direction === 'up' ? TrendingUp : change.direction === 'down' ? TrendingDown : Minus;
   const symbol = change.direction === 'up' ? '↑' : change.direction === 'down' ? '↓' : '→';
-  const relation = change.direction === 'up' ? 'above' : change.direction === 'down' ? 'below' : 'matches';
+  const relation = change.direction === 'up'
+    ? t('ideaComparisonDetail.benchmarkChart.directionAbove')
+    : t('ideaComparisonDetail.benchmarkChart.directionBelow');
   return (
     <span className={`comparison-value-change ${change.direction}`}>
       <Icon size={13} /> <b>{symbol}</b>
-      {change.direction === 'flat' ? `Matches ${referenceLabel}` : `${formatNumericValue(Math.abs(change.difference), unit)} ${relation} ${referenceLabel}`}
+      {change.direction === 'flat'
+        ? t('ideaComparisonDetail.benchmarkChart.matchesLabel', { label: referenceLabel })
+        : `${formatNumericValue(Math.abs(change.difference), unit)} ${relation} ${referenceLabel}`}
       {change.direction !== 'flat' && change.percentage != null ? ` (${Math.abs(change.percentage).toFixed(1)}%)` : ''}
     </span>
   );
 }
 
 function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benchmarkLabel, unit, onReveal }) {
+  const { t } = useTranslation('dashboard');
   const values = observations.map((item) => item.numeric_value);
   const rawMinimum = Math.min(...values, benchmark);
   const rawMaximum = Math.max(...values, benchmark);
@@ -112,13 +120,13 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
     <div className="comparison-benchmark-view">
       <div className="comparison-user-benchmark">
         <div className="comparison-user-benchmark-icon"><UserRound size={17} /></div>
-        <div><span>{benchmarkItem ? 'Your fact · comparison baseline' : 'Evidence average · comparison baseline'}</span><strong>{formatNumericValue(benchmark, unit)}</strong><small>{benchmarkLabel}</small></div>
+        <div><span>{benchmarkItem ? t('ideaComparisonDetail.benchmarkChart.yourFactBaseline') : t('ideaComparisonDetail.benchmarkChart.evidenceAverageBaseline')}</span><strong>{formatNumericValue(benchmark, unit)}</strong><small>{benchmarkLabel}</small></div>
       </div>
-      <div className="comparison-benchmark-chart" role="img" aria-label={`Values compared with ${benchmarkLabel}`}>
+      <div className="comparison-benchmark-chart" role="img" aria-label={t('ideaComparisonDetail.benchmarkChart.valuesComparedWithAria', { label: benchmarkLabel })}>
         <div className="comparison-benchmark-heading">
           <i aria-hidden="true" />
           <div className="comparison-benchmark-axis-heading">
-            <span>Lower</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? 'Your fact' : 'Average'}</strong><span>Higher</span>
+            <span>{t('ideaComparisonDetail.benchmarkChart.lower')}</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? t('ideaComparisonDetail.benchmarkChart.yourFactShort') : t('ideaComparisonDetail.benchmarkChart.averageShort')}</strong><span>{t('ideaComparisonDetail.benchmarkChart.higher')}</span>
           </div>
           <i aria-hidden="true" />
         </div>
@@ -139,16 +147,16 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
                 <i className={`comparison-value-point ${item.origin} ${isBenchmark ? 'benchmark' : ''}`} style={{ left: `${itemPosition}%` }} />
               </div>
               <div className={`comparison-benchmark-difference ${comparisonChange.direction}`}>
-                {isBenchmark ? <><b>→</b><span>Your comparison baseline</span></> : <>
+                {isBenchmark ? <><b>→</b><span>{t('ideaComparisonDetail.benchmarkChart.yourComparisonBaseline')}</span></> : <>
                   <b>{comparisonChange.direction === 'up' ? '↑' : comparisonChange.direction === 'down' ? '↓' : '→'}</b>
                   {benchmarkItem ? (
                     comparisonChange.direction === 'flat'
-                      ? <span>Your fact matches this source</span>
-                      : <span>Your fact is <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'higher' : 'lower'}</span>
+                      ? <span>{t('ideaComparisonDetail.benchmarkChart.yourFactMatchesSource')}</span>
+                      : <span>{t('ideaComparisonDetail.benchmarkChart.yourFactIsPrefix')} <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? t('ideaComparisonDetail.benchmarkChart.directionHigher') : t('ideaComparisonDetail.benchmarkChart.directionLower')}</span>
                   ) : (
                     comparisonChange.direction === 'flat'
-                      ? <span>Matches the average</span>
-                      : <span>This source is <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? 'above' : 'below'} the average</span>
+                      ? <span>{t('ideaComparisonDetail.benchmarkChart.matchesAverage')}</span>
+                      : <span>{t('ideaComparisonDetail.benchmarkChart.thisSourceIsPrefix')} <strong>{formatDifferenceValue(Math.abs(comparisonChange.difference), unit)}</strong> {comparisonChange.direction === 'up' ? t('ideaComparisonDetail.benchmarkChart.directionAbove') : t('ideaComparisonDetail.benchmarkChart.directionBelow')} {t('ideaComparisonDetail.benchmarkChart.theAverage')}</span>
                   )}
                 </>}
               </div>
@@ -166,18 +174,21 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
 }
 
 function NumericEvidence({ evidence, onReveal }) {
+  const { t } = useTranslation('dashboard');
   if (!evidence?.groups?.length) return null;
   return (
     <section className="glass-card comparison-numeric-card">
       <div className="comparison-section-heading">
-        <div><span>Numbers at a glance</span><small>Shown only for comparable figures found in this idea</small></div>
+        <div><span>{t('ideaComparisonDetail.numericEvidence.title')}</span><small>{t('ideaComparisonDetail.numericEvidence.subtitle')}</small></div>
       </div>
       <div className="comparison-numeric-groups">
         {evidence.groups.map((group) => {
           const userBenchmark = [...group.observations].reverse().find((item) => item.origin === 'user');
           const average = group.observations.reduce((sum, item) => sum + item.numeric_value, 0) / group.observations.length;
           const benchmark = userBenchmark?.numeric_value ?? average;
-          const benchmarkLabel = userBenchmark ? `${userBenchmark.source_label} (user fact)` : 'Evidence average';
+          const benchmarkLabel = userBenchmark
+            ? t('ideaComparisonDetail.benchmarkChart.userFactSuffix', { label: userBenchmark.source_label })
+            : t('ideaComparisonDetail.benchmarkChart.evidenceAverage');
           const chartData = group.observations.map((item, index) => {
             const reference = group.display_type === 'trend' && index > 0
               ? group.observations[index - 1].numeric_value
@@ -207,10 +218,10 @@ function NumericEvidence({ evidence, onReveal }) {
               </div>
               {group.observations.length > 1 ? (
                 <div className="comparison-stat-strip">
-                  <div><span>Lowest</span><strong>{formatNumericValue(group.minimum, group.unit)}</strong></div>
-                  <div><span>Highest</span><strong>{formatNumericValue(group.maximum, group.unit)}</strong></div>
-                  <div><span>Average</span><strong>{formatNumericValue(average, group.unit)}</strong></div>
-                  <div><span>Range</span><strong>{formatDifferenceValue(group.spread, group.unit)}</strong></div>
+                  <div><span>{t('ideaComparisonDetail.numericEvidence.lowest')}</span><strong>{formatNumericValue(group.minimum, group.unit)}</strong></div>
+                  <div><span>{t('ideaComparisonDetail.numericEvidence.highest')}</span><strong>{formatNumericValue(group.maximum, group.unit)}</strong></div>
+                  <div><span>{t('ideaComparisonDetail.numericEvidence.average')}</span><strong>{formatNumericValue(average, group.unit)}</strong></div>
+                  <div><span>{t('ideaComparisonDetail.numericEvidence.range')}</span><strong>{formatDifferenceValue(group.spread, group.unit)}</strong></div>
                 </div>
               ) : null}
               {group.display_type === 'single' ? (
@@ -220,18 +231,18 @@ function NumericEvidence({ evidence, onReveal }) {
                 </a>
               ) : (
                 group.display_type === 'trend' ? (
-                  <div className="comparison-chart" role="img" aria-label={`${group.metric} trend chart`}>
+                  <div className="comparison-chart" role="img" aria-label={t('ideaComparisonDetail.numericEvidence.trendChartAria', { metric: group.metric })}>
                     <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 48)}>
                       <LineChart data={chartData} margin={{ top: 12, right: 18, bottom: 8, left: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} width={58} />
-                        <Tooltip formatter={(value) => [formatNumericValue(value, group.unit), 'Value']} />
+                        <Tooltip formatter={(value) => [formatNumericValue(value, group.unit), t('ideaComparisonDetail.numericEvidence.tooltipValue')]} />
                         <Legend />
-                        <Line type="monotone" dataKey="numeric_value" name="Direction" stroke="#94a3b8" strokeWidth={2} dot={false} />
-                        <Line type="monotone" dataKey="actual" name="Actual" stroke="#2563eb" strokeWidth={3} connectNulls />
-                        <Line type="monotone" dataKey="estimate" name="Estimate" stroke="#7c3aed" strokeWidth={3} strokeDasharray="5 4" connectNulls />
-                        <Line type="monotone" dataKey="forecast" name="Forecast / target" stroke="#f97316" strokeWidth={3} strokeDasharray="5 4" connectNulls />
+                        <Line type="monotone" dataKey="numeric_value" name={t('ideaComparisonDetail.numericEvidence.directionLine')} stroke="#94a3b8" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="actual" name={t('ideaComparisonDetail.numericEvidence.directionActual')} stroke="#2563eb" strokeWidth={3} connectNulls />
+                        <Line type="monotone" dataKey="estimate" name={t('ideaComparisonDetail.numericEvidence.directionEstimate')} stroke="#7c3aed" strokeWidth={3} strokeDasharray="5 4" connectNulls />
+                        <Line type="monotone" dataKey="forecast" name={t('ideaComparisonDetail.numericEvidence.directionForecast')} stroke="#f97316" strokeWidth={3} strokeDasharray="5 4" connectNulls />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -243,8 +254,8 @@ function NumericEvidence({ evidence, onReveal }) {
                     <a href={`#${item.evidence_id}`} onClick={(event) => onReveal(event, item.evidence_id)} key={item.id}>
                       <span><i className={`comparison-origin-dot ${item.origin}`} />{item.source_label}</span>
                       <strong>{item.display_value}</strong>
-                      <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || 'Period not specified'}</small>
-                      {group.display_type === 'trend' ? <ChangeIndicator change={item.change} unit={group.unit} referenceLabel={index > 0 ? 'previous value' : benchmarkLabel} /> : null}
+                      <small>{[item.period_label, item.value_kind !== 'unknown' && item.value_kind].filter(Boolean).join(' · ') || t('ideaComparisonDetail.numericEvidence.periodNotSpecified')}</small>
+                      {group.display_type === 'trend' ? <ChangeIndicator change={item.change} unit={group.unit} referenceLabel={index > 0 ? t('ideaComparisonDetail.numericEvidence.previousValue') : benchmarkLabel} /> : null}
                     </a>
                   ))}
                 </div>
@@ -258,6 +269,7 @@ function NumericEvidence({ evidence, onReveal }) {
 }
 
 export default function IdeaComparisonDetailPage() {
+  const { t } = useTranslation('dashboard');
   const { projectId, clusterId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get('run_id') || undefined;
@@ -286,11 +298,11 @@ export default function IdeaComparisonDetailPage() {
       const data = await getIdeaComparison(projectId, clusterId, { run_id: runId }, signal);
       setComparison(data?.comparison || null);
     } catch (err) {
-      if (err?.name !== 'AbortError') setError(err?.message || 'Failed to load this comparison.');
+      if (err?.name !== 'AbortError') setError(err?.message || t('ideaComparisonDetail.loadFailed'));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [projectId, clusterId, runId]);
+  }, [projectId, clusterId, runId, t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -379,10 +391,10 @@ export default function IdeaComparisonDetailPage() {
     try {
       const data = await regenerateIdeaComparison(projectId, clusterId, { run_id: runId });
       setComparison(data?.comparison || null);
-      setMessage('Executive summary regenerated with the latest evidence.');
+      setMessage(t('ideaComparisonDetail.regenerateSuccess'));
       return true;
     } catch (err) {
-      setMessage(`${err?.message || 'Summary regeneration failed.'} Your fact changes were saved; retry when the model is available.`);
+      setMessage(`${err?.message || t('ideaComparisonDetail.regenerateFailedDefault')} ${t('ideaComparisonDetail.regenerateFailedRetryHint')}`);
       await load();
       return false;
     } finally {
@@ -406,29 +418,29 @@ export default function IdeaComparisonDetailPage() {
       closeForm();
       await regenerate();
     } catch (err) {
-      setMessage(err?.message || 'Failed to save the fact.');
+      setMessage(err?.message || t('ideaComparisonDetail.saveFactFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   const removeFact = async (fact) => {
-    if (!window.confirm('Delete this user-provided fact? The current summary will be marked outdated.')) return;
+    if (!window.confirm(t('ideaComparisonDetail.deleteFactConfirm'))) return;
     setMessage('');
     try {
       await deleteIdeaComparisonFact(projectId, clusterId, fact.id);
       await load();
-      setMessage('Fact deleted. Regenerate the summary to apply the change.');
+      setMessage(t('ideaComparisonDetail.factDeleted'));
     } catch (err) {
-      setMessage(err?.message || 'Failed to delete the fact.');
+      setMessage(err?.message || t('ideaComparisonDetail.deleteFactFailed'));
     }
   };
 
-  if (loading) return <div className="admin-page-shell comparison-detail-state"><Loader2 className="spin" /> Loading comparison…</div>;
+  if (loading) return <div className="admin-page-shell comparison-detail-state"><Loader2 className="spin" /> {t('ideaComparisonDetail.loading')}</div>;
   if (error || !comparison) return (
     <div className="admin-page-shell comparison-detail-state">
-      <p>{error || 'Idea comparison not found.'}</p>
-      <Link className="btn-secondary" to={backTo}><ArrowLeft size={15} /> Back to dashboard</Link>
+      <p>{error || t('ideaComparisonDetail.notFound')}</p>
+      <Link className="btn-secondary" to={backTo}><ArrowLeft size={15} /> {t('ideaComparisonDetail.backToDashboard')}</Link>
     </div>
   );
 
@@ -438,19 +450,19 @@ export default function IdeaComparisonDetailPage() {
 
   return (
     <div className="admin-page-shell comparison-detail-page">
-      <Link className="comparison-detail-back" to={backTo}><ArrowLeft size={15} /> Back to dashboard</Link>
+      <Link className="comparison-detail-back" to={backTo}><ArrowLeft size={15} /> {t('ideaComparisonDetail.backToDashboard')}</Link>
       <header className="comparison-detail-header">
         <div>
-          <span className="admin-page-kicker"><Lightbulb size={14} /> Idea comparison</span>
+          <span className="admin-page-kicker"><Lightbulb size={14} /> {t('ideaComparisonDetail.kicker')}</span>
           <h1 className="admin-page-title">{comparison.idea}</h1>
           <div className={`comparison-detail-status ${comparison.diverges ? 'diverges' : 'agrees'}`}>
             {comparison.diverges ? <Scale size={14} /> : <CheckCircle2 size={14} />}
-            {comparison.diverges ? 'Evidence differs' : 'Evidence aligns'}
+            {comparison.diverges ? t('ideaComparisonDetail.statusDiverges') : t('ideaComparisonDetail.statusAgrees')}
           </div>
         </div>
         {canManage ? (
           <button type="button" className="btn-secondary" onClick={regenerate} disabled={regenerating}>
-            {regenerating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Regenerate summary
+            {regenerating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} {t('ideaComparisonDetail.regenerateSummary')}
           </button>
         ) : null}
       </header>
@@ -459,10 +471,10 @@ export default function IdeaComparisonDetailPage() {
 
       <section className="glass-card comparison-summary-card">
         <div className="comparison-section-heading">
-          <div><span>Executive summary</span><small>Generated from document claims and user-provided facts</small></div>
-          {comparison.summary_stale ? <strong>Needs regeneration</strong> : null}
+          <div><span>{t('ideaComparisonDetail.summary.title')}</span><small>{t('ideaComparisonDetail.summary.subtitle')}</small></div>
+          {comparison.summary_stale ? <strong>{t('ideaComparisonDetail.summary.needsRegeneration')}</strong> : null}
         </div>
-        <p>{comparison.summary || 'No summary has been generated yet.'}</p>
+        <p>{comparison.summary || t('ideaComparisonDetail.summary.empty')}</p>
       </section>
 
       <NumericEvidence evidence={comparison.numeric_evidence} onReveal={revealEvidence} />
@@ -470,7 +482,7 @@ export default function IdeaComparisonDetailPage() {
       <section className="comparison-evidence-grid">
         <article className="glass-card comparison-evidence-card">
           <div className="comparison-section-heading">
-            <div><span>Document evidence</span><small>{comparison.sources.length} source{comparison.sources.length === 1 ? '' : 's'}</small></div>
+            <div><span>{t('ideaComparisonDetail.evidence.title')}</span><small>{t('ideaComparisonDetail.evidence.sourceCount', { count: comparison.sources.length })}</small></div>
           </div>
           <div className="comparison-evidence-list">
             {pageSlice(comparison.sources, safeEvidencePage, EVIDENCE_PAGE_SIZE).map((source, pageIndex) => {
@@ -481,57 +493,57 @@ export default function IdeaComparisonDetailPage() {
                 <div className="comparison-evidence-number">{index + 1}</div>
                 <div className="comparison-evidence-content">
                   <div><FileText size={14} /><strong>{source.source_label}</strong></div>
-                  <h3>{source.title || 'Untitled source'}</h3>
+                  <h3>{source.title || t('ideaComparisonDetail.evidence.untitledSource')}</h3>
                   {source.excerpt ? <p>{source.excerpt}</p> : null}
-                  <dl><dt>Stated figure</dt><dd>{source.value || 'Not stated'}</dd></dl>
+                  <dl><dt>{t('ideaComparisonDetail.evidence.statedFigure')}</dt><dd>{source.value || t('ideaComparisonDetail.evidence.notStated')}</dd></dl>
                 </div>
-                {source.url ? <a href={source.url} target="_blank" rel="noreferrer" aria-label={`Open ${source.source_label}`}><ExternalLink size={16} /></a> : null}
+                {source.url ? <a href={source.url} target="_blank" rel="noreferrer" aria-label={t('ideaComparisonDetail.evidence.openSourceAria', { label: source.source_label })}><ExternalLink size={16} /></a> : null}
               </div>
               );
             })}
           </div>
-          <ListPagination label="document evidence" page={safeEvidencePage} total={comparison.sources.length} pageSize={EVIDENCE_PAGE_SIZE} onChange={changeEvidencePage} />
+          <ListPagination label={t('ideaComparisonDetail.pagination.documentEvidenceLabel')} page={safeEvidencePage} total={comparison.sources.length} pageSize={EVIDENCE_PAGE_SIZE} onChange={changeEvidencePage} />
         </article>
 
         <article className="glass-card comparison-evidence-card">
           <div className="comparison-section-heading">
-            <div><span>User-provided facts</span><small>Additional context supplied by your team</small></div>
-            {canManage ? <button type="button" className="btn-secondary" onClick={() => { closeForm(); setFormOpen(true); }}><Plus size={14} /> Add fact</button> : null}
+            <div><span>{t('ideaComparisonDetail.facts.title')}</span><small>{t('ideaComparisonDetail.facts.subtitle')}</small></div>
+            {canManage ? <button type="button" className="btn-secondary" onClick={() => { closeForm(); setFormOpen(true); }}><Plus size={14} /> {t('ideaComparisonDetail.facts.addFact')}</button> : null}
           </div>
           {formOpen ? (
             <form className="comparison-fact-form" onSubmit={saveAndRegenerate}>
-              <label className="comparison-fact-wide">Fact <textarea required maxLength={4000} rows={4} value={form.fact_text} onChange={(e) => setForm({ ...form, fact_text: e.target.value })} placeholder="State the fact and enough context to compare it with the claims." /></label>
-              <label>Reference label <input value={form.reference_label} onChange={(e) => setForm({ ...form, reference_label: e.target.value })} placeholder="Internal research, annual report…" /></label>
-              <label>Reference URL <input type="url" value={form.reference_url} onChange={(e) => setForm({ ...form, reference_url: e.target.value })} placeholder="https://…" /></label>
-              <label>Date <input type="date" value={form.observed_at} onChange={(e) => setForm({ ...form, observed_at: e.target.value })} /></label>
+              <label className="comparison-fact-wide">{t('ideaComparisonDetail.form.factLabel')} <textarea required maxLength={4000} rows={4} value={form.fact_text} onChange={(e) => setForm({ ...form, fact_text: e.target.value })} placeholder={t('ideaComparisonDetail.form.factPlaceholder')} /></label>
+              <label>{t('ideaComparisonDetail.form.referenceLabelLabel')} <input value={form.reference_label} onChange={(e) => setForm({ ...form, reference_label: e.target.value })} placeholder={t('ideaComparisonDetail.form.referenceLabelPlaceholder')} /></label>
+              <label>{t('ideaComparisonDetail.form.referenceUrlLabel')} <input type="url" value={form.reference_url} onChange={(e) => setForm({ ...form, reference_url: e.target.value })} placeholder="https://…" /></label>
+              <label>{t('ideaComparisonDetail.form.dateLabel')} <input type="date" value={form.observed_at} onChange={(e) => setForm({ ...form, observed_at: e.target.value })} /></label>
               <label className="comparison-number-toggle">
                 <input type="checkbox" checked={includeNumbers} onChange={(e) => {
                   const checked = e.target.checked;
                   setIncludeNumbers(checked);
                   if (checked && !form.observations.length) setForm({ ...form, observations: [emptyObservation(comparison.idea)] });
                 }} />
-                <span><strong>Include numbers</strong><small>Add structured values when this fact contains a measurable figure.</small></span>
+                <span><strong>{t('ideaComparisonDetail.form.includeNumbers')}</strong><small>{t('ideaComparisonDetail.form.includeNumbersHint')}</small></span>
               </label>
               {includeNumbers ? (
                 <div className="comparison-observations">
                   {form.observations.map((observation, index) => (
                     <div className="comparison-observation-row" key={index}>
-                      <label>Metric <input required value={observation.metric} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, metric: e.target.value } : item) })} placeholder="Oil production" /></label>
-                      <label>Value <input required inputMode="decimal" value={observation.numeric_value} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, numeric_value: e.target.value } : item) })} placeholder="1.10" /></label>
-                      <label>Unit <input required value={observation.unit} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, unit: e.target.value } : item) })} placeholder="million bpd" /></label>
-                      <label>Period <input value={observation.period_label} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, period_label: e.target.value } : item) })} placeholder="2026 Q4" /></label>
-                      <label>Type <select value={observation.value_kind} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, value_kind: e.target.value } : item) })}><option value="unknown">Unspecified</option><option value="actual">Actual</option><option value="estimate">Estimate</option><option value="forecast">Forecast</option><option value="target">Target</option></select></label>
-                      <button type="button" onClick={() => setForm({ ...form, observations: form.observations.filter((_, itemIndex) => itemIndex !== index) })} aria-label="Remove number"><X size={15} /></button>
+                      <label>{t('ideaComparisonDetail.form.metricLabel')} <input required value={observation.metric} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, metric: e.target.value } : item) })} placeholder={t('ideaComparisonDetail.form.metricPlaceholder')} /></label>
+                      <label>{t('ideaComparisonDetail.form.valueLabel')} <input required inputMode="decimal" value={observation.numeric_value} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, numeric_value: e.target.value } : item) })} placeholder={t('ideaComparisonDetail.form.valuePlaceholder')} /></label>
+                      <label>{t('ideaComparisonDetail.form.unitLabel')} <input required value={observation.unit} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, unit: e.target.value } : item) })} placeholder={t('ideaComparisonDetail.form.unitPlaceholder')} /></label>
+                      <label>{t('ideaComparisonDetail.form.periodLabel')} <input value={observation.period_label} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, period_label: e.target.value } : item) })} placeholder={t('ideaComparisonDetail.form.periodPlaceholder')} /></label>
+                      <label>{t('ideaComparisonDetail.form.typeLabel')} <select value={observation.value_kind} onChange={(e) => setForm({ ...form, observations: form.observations.map((item, itemIndex) => itemIndex === index ? { ...item, value_kind: e.target.value } : item) })}><option value="unknown">{t('ideaComparisonDetail.form.typeUnspecified')}</option><option value="actual">{t('ideaComparisonDetail.form.typeActual')}</option><option value="estimate">{t('ideaComparisonDetail.form.typeEstimate')}</option><option value="forecast">{t('ideaComparisonDetail.form.typeForecast')}</option><option value="target">{t('ideaComparisonDetail.form.typeTarget')}</option></select></label>
+                      <button type="button" onClick={() => setForm({ ...form, observations: form.observations.filter((_, itemIndex) => itemIndex !== index) })} aria-label={t('ideaComparisonDetail.form.removeNumberAria')}><X size={15} /></button>
                     </div>
                   ))}
-                  <button type="button" className="comparison-add-observation" onClick={() => setForm({ ...form, observations: [...form.observations, emptyObservation(comparison.idea)] })}><Plus size={14} /> Add another number</button>
+                  <button type="button" className="comparison-add-observation" onClick={() => setForm({ ...form, observations: [...form.observations, emptyObservation(comparison.idea)] })}><Plus size={14} /> {t('ideaComparisonDetail.form.addAnotherNumber')}</button>
                 </div>
               ) : null}
               <div className="comparison-fact-actions">
-                <button type="button" className="btn-secondary" onClick={closeForm} disabled={saving}>Cancel</button>
+                <button type="button" className="btn-secondary" onClick={closeForm} disabled={saving}>{t('ideaComparisonDetail.form.cancel')}</button>
                 <button type="submit" className="btn-primary" disabled={saving || regenerating || !form.fact_text.trim()}>
                   {saving || regenerating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
-                  Save and regenerate
+                  {t('ideaComparisonDetail.form.saveAndRegenerate')}
                 </button>
               </div>
             </form>
@@ -542,18 +554,18 @@ export default function IdeaComparisonDetailPage() {
                 <div className={`comparison-fact ${targetId === `user-fact-${fact.id}` ? 'is-targeted' : ''}`} id={`user-fact-${fact.id}`} key={fact.id}>
                   <div className="comparison-fact-icon"><UserRound size={16} /></div>
                   <div>
-                    <span>User-provided fact{fact.reference_label ? ` · ${fact.reference_label}` : ''}</span>
+                    <span>{t('ideaComparisonDetail.facts.userProvidedFactLabel')}{fact.reference_label ? ` · ${fact.reference_label}` : ''}</span>
                     <p>{fact.fact_text}</p>
                     {fact.observations?.length ? <div className="comparison-fact-values">{fact.observations.map((item) => <span key={item.id}>{item.display_value}{item.period_label ? ` · ${item.period_label}` : ''}</span>)}</div> : null}
-                    <small>{[fact.stated_value, fact.observed_at, fact.created_by_name && `Added by ${fact.created_by_name}`].filter(Boolean).join(' · ')}</small>
-                    {fact.reference_url ? <a href={fact.reference_url} target="_blank" rel="noreferrer">Open reference <ExternalLink size={12} /></a> : null}
+                    <small>{[fact.stated_value, fact.observed_at, fact.created_by_name && t('ideaComparisonDetail.facts.addedBy', { name: fact.created_by_name })].filter(Boolean).join(' · ')}</small>
+                    {fact.reference_url ? <a href={fact.reference_url} target="_blank" rel="noreferrer">{t('ideaComparisonDetail.facts.openReference')} <ExternalLink size={12} /></a> : null}
                   </div>
-                  {canManage ? <div className="comparison-fact-row-actions"><button type="button" onClick={() => openEdit(fact)} aria-label="Edit fact"><Pencil size={14} /></button><button type="button" onClick={() => removeFact(fact)} aria-label="Delete fact"><Trash2 size={14} /></button></div> : null}
+                  {canManage ? <div className="comparison-fact-row-actions"><button type="button" onClick={() => openEdit(fact)} aria-label={t('ideaComparisonDetail.facts.editFactAria')}><Pencil size={14} /></button><button type="button" onClick={() => removeFact(fact)} aria-label={t('ideaComparisonDetail.facts.deleteFactAria')}><Trash2 size={14} /></button></div> : null}
                 </div>
               ))}
             </div>
-          ) : <p className="comparison-empty-facts">No user-provided facts yet.</p>}
-          <ListPagination label="user-provided facts" page={safeFactsPage} total={comparison.facts.length} pageSize={FACTS_PAGE_SIZE} onChange={changeFactsPage} />
+          ) : <p className="comparison-empty-facts">{t('ideaComparisonDetail.facts.empty')}</p>}
+          <ListPagination label={t('ideaComparisonDetail.pagination.userProvidedFactsLabel')} page={safeFactsPage} total={comparison.facts.length} pageSize={FACTS_PAGE_SIZE} onChange={changeFactsPage} />
         </article>
       </section>
     </div>

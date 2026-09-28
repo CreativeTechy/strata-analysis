@@ -11,13 +11,16 @@ import {
 } from 'recharts';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
+import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
+import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PLATFORM_LIST_PAGE_SIZE = 5;
+const IDEAS_PAGE_SIZE = 3;
 const PERIODS = [
   { key: '7d', labelKey: 'dashboard:periods.last7d' },
   { key: '30d', labelKey: 'dashboard:periods.last30d' },
@@ -278,12 +281,15 @@ function pipelineRunShortLabel(run, index, t) {
 export default function DashboardOverview({
   projects, selectedProjectId, onProjectChange, period, onPeriodChange, intelligence,
   loading, error, pipelineHealth, runs = [], selectedRunId, onRunChange,
+  isLoadingProjects = false, onRefresh,
 }) {
   const { t, i18n } = useTranslation(['dashboard', 'common']);
   const locale = i18n.language;
   const location = useLocation();
   const data = intelligence || {};
   const total = Number(data.total || 0);
+  const populationTotal = Number(data.articles_total ?? total);
+  const notAssessedTotal = Number(data.sentiment_not_assessed ?? Math.max(0, populationTotal - total));
   const sentimentData = SENTIMENT_KEYS.map((name) => ({ name, value: Number(data[name] || 0) }));
   const latestRun = data.pipeline_discovery?.[data.pipeline_discovery.length - 1];
   const platformData = data.platforms || [];
@@ -303,6 +309,11 @@ export default function DashboardOverview({
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
+  const isStale = isIntelligenceStale(intelligence, selectedProjectId);
+  const showLoading = !error && (loading || isStale);
+  const scopeState = resolveIntelligenceState(intelligence);
+  const isReady = !showLoading && scopeState.kind === 'ready';
+  const periodLabel = t(PERIODS.find((item) => item.key === period)?.labelKey || '');
   const navigate = useNavigate();
   // Every selection opens the Articles page on exactly what it counted, in
   // the same project and scope (period, or the selected run) - see
@@ -337,6 +348,7 @@ export default function DashboardOverview({
   const [ideaFilterState, setIdeaFilterState] = useState({ projectId: selectedProjectId, value: 'concerns' });
   const ideaFilter = ideaFilterState.projectId === selectedProjectId ? ideaFilterState.value : 'concerns';
   const setIdeaFilter = (value) => setIdeaFilterState({ projectId: selectedProjectId, value });
+  const [ideasPage, setIdeasPage] = useState(0);
   const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
     try {
       return window.localStorage.getItem(DETAILED_BREAKDOWNS_STORAGE_KEY) === 'open';
@@ -426,8 +438,11 @@ export default function DashboardOverview({
   // more-repeated praise/suggestion ideas.
   const concernIdeas = data.insights?.frequent_concerns
     || frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
-  const visibleIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
-  const maxIdeaFrequency = Math.max(1, ...visibleIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
+  const filteredIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
+  const ideasTotalPages = Math.max(1, Math.ceil(filteredIdeas.length / IDEAS_PAGE_SIZE));
+  const safeIdeasPage = Math.min(ideasPage, ideasTotalPages - 1);
+  const visibleIdeas = filteredIdeas.slice(safeIdeasPage * IDEAS_PAGE_SIZE, (safeIdeasPage + 1) * IDEAS_PAGE_SIZE);
+  const maxIdeaFrequency = Math.max(1, ...filteredIdeas.map((idea) => Number(idea.frequency_estimate || 0)));
 
   const platformListTotalPages = Math.max(1, Math.ceil(sortedPlatformData.length / PLATFORM_LIST_PAGE_SIZE));
   const safePlatformListPage = Math.min(platformListPage, platformListTotalPages - 1);
@@ -478,18 +493,28 @@ export default function DashboardOverview({
       <CompetitorPulseCard studyId={selectedProject.id} backTo="/dashboard" backLabel={t('dashboard:overview.competitorBackLabel')} />
     ) : null}
 
-    {!selectedProject ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.noProjectTitle')}</strong><p className="subtitle">{t('dashboard:overview.noProjectBody')}</p></div> : null}
-    {error ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.loadErrorTitle')}</strong><p className="subtitle" dir="auto">{error}</p></div> : null}
+    {/* App auto-selects the first project once the list lands, so "projects
+        but none selected" is a transient state, not an empty one. */}
+    {!selectedProject && (isLoadingProjects || projects.length > 0) ? <DashboardSkeleton /> : null}
+    {!selectedProject && !isLoadingProjects && !projects.length ? <NoProjectsState /> : null}
+    {selectedProject && error ? <div className="glass-card admin-empty-state report-error-state" role="alert"><strong>{t('dashboard:overview.loadErrorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRefresh ? <button type="button" className="btn-secondary" onClick={onRefresh}>{t('dashboard:report.tryAgain')}</button> : null}</div> : null}
 
     {selectedProject && !error ? (<>
-      <section className="intelligence-metric-grid" aria-busy={loading}>
-        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={loading ? '—' : formatNumber(total, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : t(PERIODS.find((item) => item.key === period)?.labelKey || '')} tone="blue" to={!loading && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
-        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={loading ? '—' : formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })} detail={t('dashboard:metrics.netSentiment.detail')} tone={Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} to={!loading && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
-        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={loading ? '—' : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" to="/sources" linkTitle={t('dashboard:evidence.openSources')} />
+      <section className="intelligence-metric-grid" aria-busy={showLoading}>
+        <MetricCard icon={<Network size={18} />} label={t('dashboard:metrics.analyzedArticles.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(isReady ? total : 0, locale)} detail={selectedRun ? pipelineRunTitle(selectedRun, selectedRunIndex, locale, t) : periodLabel} tone="blue" to={isReady && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
+        <MetricCard icon={<Gauge size={18} />} label={t('dashboard:metrics.netSentiment.label')} value={showLoading ? <MetricValueSkeleton /> : isReady ? formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 }) : '—'} detail={t('dashboard:metrics.netSentiment.detail')} tone={!isReady || Number(data.net_sentiment || 0) >= 0 ? 'positive' : 'negative'} to={isReady && total > 0 ? evidencePath() : undefined} linkTitle={t('dashboard:evidence.openScope')} />
+        <MetricCard icon={<FileText size={18} />} label={t('dashboard:metrics.documents.label')} value={showLoading ? <MetricValueSkeleton /> : formatNumber(data.document_count || 0, locale)} detail={t('dashboard:metrics.documents.detail')} tone="blue" to="/sources" linkTitle={t('dashboard:evidence.openSources')} />
         <MetricCard icon={<Activity size={18} />} label={t('dashboard:metrics.analysisHealth.label')} value={pipelineHealth?.lastRun?.status ? runStatusLabel(t, pipelineHealth.lastRun.status) : t('dashboard:metrics.analysisHealth.noRuns')} detail={pipelineHealth?.lastFinished ? t('dashboard:metrics.analysisHealth.lastCompleted', { date: formatDate(pipelineHealth.lastFinished.finished_at, locale) }) : t('dashboard:metrics.analysisHealth.noCompletedRuns')} tone="blue" to={pipelineHealth?.lastRun?.id ? `/pipeline-runs/${pipelineHealth.lastRun.id}` : '/pipeline-runs'} linkTitle={t('dashboard:evidence.openRuns')} />
       </section>
 
-      {loading ? <div className="glass-card intelligence-loading">{t('dashboard:overview.loadingIntelligence')}</div> : total === 0 ? <div className="glass-card admin-empty-state"><strong>{t('dashboard:overview.emptyTitle')}</strong><p className="subtitle">{t('dashboard:overview.emptyBody')}</p></div> : <>
+      {showLoading ? <DashboardSkeleton /> : !isReady ? <IntelligenceEmptyState
+        state={scopeState}
+        project={selectedProject}
+        rangeLabel={periodLabel}
+        onShowAllTime={selectedRunId || period !== 'all' ? () => onPeriodChange('all') : undefined}
+        onAnalysisStarted={onRefresh}
+      /> : <>
+        <PendingAnalysisNotice state={scopeState} project={selectedProject} onAnalysisStarted={onRefresh} />
         <section className="intelligence-priority-grid">
           <article className="glass-card intelligence-card intelligence-line-card"><div className="intelligence-card-heading"><h3>{t('dashboard:sentimentTrend.title')}</h3><span>{t('dashboard:volumeOverTime.title')}</span></div><ResponsiveContainer width="100%" height={260}><LineChart data={data.sentiment_over_time || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('date', state?.activeLabel)}><CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" /><XAxis dataKey="date" tickFormatter={(value) => formatDate(value, locale)} minTickGap={24} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(value, locale)} /><Legend /><Line type="monotone" dataKey="total" name={t('dashboard:series.total')} stroke="#2563eb" strokeWidth={2.5} dot={false} /><Line type="monotone" dataKey="positive" name={t('dashboard:series.positive')} stroke={SENTIMENT_COLORS.positive} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="negative" name={t('dashboard:series.negative')} stroke={SENTIMENT_COLORS.negative} strokeWidth={2} dot={false} /><Line type="monotone" dataKey="neutral" name={t('dashboard:series.neutral')} stroke={SENTIMENT_COLORS.neutral} strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer><p className="intelligence-chart-hint">{t('dashboard:evidence.chartHint')}</p></article>
           <article className="glass-card intelligence-card intelligence-ideas-card">
@@ -499,17 +524,40 @@ export default function DashboardOverview({
                 <span>{ideaFilter === 'concerns' ? t('dashboard:topConcerns.subtitle') : t('dashboard:ideas.subtitle')}</span>
               </div>
               <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('dashboard:topConcerns.filterAria')}>
-                <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => setIdeaFilter('concerns')}>{t('dashboard:topConcerns.concernsTab')}</button>
-                <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => setIdeaFilter('all')}>{t('dashboard:topConcerns.allTab')}</button>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => { setIdeaFilter('concerns'); setIdeasPage(0); }}>{t('dashboard:topConcerns.concernsTab')}</button>
+                <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => { setIdeaFilter('all'); setIdeasPage(0); }}>{t('dashboard:topConcerns.allTab')}</button>
               </div>
             </div>
             {visibleIdeas.map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={maxIdeaFrequency} projectId={selectedProjectId} />)}
             {!visibleIdeas.length && <p className="intelligence-empty">{ideaFilter === 'concerns' ? t('dashboard:topConcerns.empty') : t('dashboard:ideas.empty')}</p>}
+            {ideasTotalPages > 1 ? (
+              <div className="intelligence-idea-comparison-pagination">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIdeasPage((current) => Math.max(0, current - 1))}
+                  disabled={safeIdeasPage === 0}
+                >
+                  <ChevronLeft size={14} className="rtl-mirror" /> {t('common:actions.previous')}
+                </button>
+                <span className="intelligence-idea-comparison-pagination-status">
+                  {t('common:pagination.pageOfTotal', { page: safeIdeasPage + 1, totalPages: ideasTotalPages })}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIdeasPage((current) => Math.min(ideasTotalPages - 1, current + 1))}
+                  disabled={safeIdeasPage >= ideasTotalPages - 1}
+                >
+                  {t('common:actions.next')} <ChevronRight size={14} className="rtl-mirror" />
+                </button>
+              </div>
+            ) : null}
           </article>
         </section>
 
         <section className="intelligence-top-grid">
-          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
+          <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><p className="subtitle">{t('dashboard:sentimentBreakdown.denominator', { assessed: formatNumber(total, locale), total: formatNumber(populationTotal, locale), notAssessed: formatNumber(notAssessedTotal, locale) })}</p><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
           <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
           <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)} dir="auto">{item.platform}</Link> : <span dir="auto">{item.platform}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${item.platform}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
         </section>

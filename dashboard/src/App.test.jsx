@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Outlet } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Outlet, useLocation } from 'react-router-dom'
 import App from './App'
 import { useAuth } from './auth/useAuth.js'
 
@@ -13,7 +13,14 @@ vi.mock('./components/AppShell', () => ({
   default: () => <div data-testid="app-shell"><Outlet /></div>,
 }))
 vi.mock('./components/StatsOverview', () => ({ default: () => null }))
-vi.mock('./components/DashboardOverview', () => ({ default: () => <div data-testid="dashboard-overview" /> }))
+vi.mock('./components/DashboardOverview', () => ({
+  default: ({ period, selectedRunId, onPeriodChange, onRunChange }) => (
+    <div data-testid="dashboard-overview" data-period={period} data-run-id={selectedRunId || ''}>
+      <button type="button" onClick={() => onPeriodChange('all')}>Select all time</button>
+      <button type="button" onClick={() => onRunChange('run-42')}>Select run 42</button>
+    </div>
+  ),
+}))
 vi.mock('./components/ProjectsPage', () => ({ default: () => null }))
 vi.mock('./components/ProjectDetailPage', () => ({ default: () => null }))
 vi.mock('./components/TopicDetailPage', () => ({ default: () => null }))
@@ -39,10 +46,16 @@ vi.mock('./components/ProjectLinkageListPage', () => ({ default: () => null }))
 vi.mock('./components/ProjectLinkageDetailPage', () => ({ default: () => null }))
 vi.mock('./components/ProjectLinkageEditPage', () => ({ default: () => null }))
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output aria-label="Current location">{`${location.pathname}${location.search}`}</output>
+}
+
 function renderAppAt(path) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <App />
+      <LocationProbe />
     </MemoryRouter>
   )
 }
@@ -67,6 +80,62 @@ describe('App routing', () => {
     renderAppAt('/dashboard')
     await waitFor(() => expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument())
     expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+  })
+
+  it('hydrates dashboard scope from a bookmarked URL and writes selection changes back to it', async () => {
+    useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
+    renderAppAt('/dashboard?period=7d')
+
+    const dashboard = await screen.findByTestId('dashboard-overview')
+    expect(dashboard).toHaveAttribute('data-period', '7d')
+    expect(dashboard).toHaveAttribute('data-run-id', '')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select run 42' }))
+    await waitFor(() => expect(screen.getByLabelText('Current location')).toHaveTextContent('/dashboard?run_id=run-42'))
+    expect(dashboard).toHaveAttribute('data-run-id', 'run-42')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select all time' }))
+    await waitFor(() => expect(screen.getByLabelText('Current location')).toHaveTextContent('/dashboard?period=all'))
+    expect(dashboard).toHaveAttribute('data-period', 'all')
+    expect(dashboard).toHaveAttribute('data-run-id', '')
+  })
+
+  it('clears a bookmarked run scope when auto-selecting the only available project', async () => {
+    useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
+    fetch.mockImplementation((url) => {
+      if (String(url).startsWith('/api/projects')) {
+        return Promise.resolve(emptyJsonResponse({ projects: [{ id: 1, name: 'Acme Study', status: 'active' }] }))
+      }
+      return Promise.resolve(emptyJsonResponse({}))
+    })
+    // No project selected yet (fresh localStorage), but the URL carries a run
+    // scope that belongs to some other, already-forgotten project - the auto-
+    // pick-a-default-project path must not carry that stale run_id forward.
+    renderAppAt('/dashboard?run_id=stale-run')
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Current location')).not.toHaveTextContent('run_id=stale-run'))
+    expect(screen.getByTestId('dashboard-overview')).toHaveAttribute('data-run-id', '')
+  })
+
+  it('clears a stale run scope when the currently selected project disappears from the list', async () => {
+    useAuth.mockReturnValue({ user: { id: 1, permissions: [] }, loading: false, hasPermission: () => true })
+    window.localStorage.setItem('strata.selectedProjectId', '1')
+    fetch.mockImplementation((url) => {
+      // Project 1 (the one selected via localStorage) is gone - e.g. deleted -
+      // only project 2 remains.
+      if (String(url).startsWith('/api/projects')) {
+        return Promise.resolve(emptyJsonResponse({ projects: [{ id: 2, name: 'Other Study', status: 'active' }] }))
+      }
+      return Promise.resolve(emptyJsonResponse({}))
+    })
+    renderAppAt('/dashboard?run_id=run-belonging-to-project-1')
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Current location')).not.toHaveTextContent('run_id=run-belonging-to-project-1'))
+    expect(screen.getByTestId('dashboard-overview')).toHaveAttribute('data-run-id', '')
+
+    window.localStorage.removeItem('strata.selectedProjectId')
   })
 
   it('renders the reports view with a project scope selector and sync status at /reports', async () => {

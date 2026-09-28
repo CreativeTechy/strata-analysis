@@ -25,6 +25,7 @@
     "noAnalysisDataTitle": "No analysis data yet",
     "noAnalysisDataHint": "Run the pipeline to see processing status here.",
     "statusPartial": "partial",
+    "statusNotAssessed": "Not assessed",
     "percentOfTotal": "{{percent}} of {{total}}",
     "failedAnalysisHeading": "Failed analysis",
     "loadingErrors": "Loading...",

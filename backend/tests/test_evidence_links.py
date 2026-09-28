@@ -58,6 +58,7 @@ class ResolveEvidenceTests(unittest.TestCase):
         with patch.object(intelligence, "_fetch_project_rows", return_value=[dict(row) for row in ROWS]), \
              patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
              patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch.object(intelligence, "_fetch_coverage", return_value={}), \
              patch("services.articles.articles_query.resolve_source_trust", side_effect=_trust_for), \
              patch("services.articles.articles_query.config.DATABASE_URL", "postgres://test"):
             return get_project_intelligence({"id": 7, "hashtags": [], "keywords": []}, period=period)
@@ -98,6 +99,23 @@ class ResolveEvidenceTests(unittest.TestCase):
 
     def test_no_period_means_no_date_window(self):
         self.assertEqual(sorted(self._resolve(period=None).article_ids), [1, 2, 3, 4, 5])
+
+    def test_articles_whose_sentiment_was_not_assessed_are_left_out_like_the_dashboard(self):
+        rows = [dict(row) for row in ROWS]
+        rows[0]["sentiment_status"] = "fallback"   # placeholder, never counted
+        rows[1]["sentiment_status"] = "ran"
+        rows[2]["analysis_status"] = "pending"     # pre-status row, not analyzed yet
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch.object(intelligence, "_fetch_coverage", return_value={}), \
+             patch("services.articles.articles_query.resolve_source_trust", return_value={}):
+            data = get_project_intelligence({"id": 7, "hashtags": [], "keywords": []}, period="all")
+            match = evidence_links.resolve_evidence(7, period="all", filters={})
+            negative = evidence_links.resolve_evidence(7, period="all", filters={"sentiment": "negative"})
+        self.assertEqual(sorted(match.article_ids), [2, 4, 5])
+        self.assertEqual(len(match.article_ids), data["total"])
+        self.assertEqual(len(negative.article_ids), data["negative"])
 
     def test_unknown_buckets_match_missing_values(self):
         self.assertEqual(self._resolve(gender="unknown").article_ids, [2])

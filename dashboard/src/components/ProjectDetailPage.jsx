@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import ConfirmModal from './ConfirmModal';
+import RemoveProjectArticlesDialog from './articles/RemoveProjectArticlesDialog.jsx';
 import DemographicSentimentChart from './DemographicSentimentChart';
 import SurveyObservationsChart from './SurveyObservationsChart';
 import { useAuth } from '../auth/useAuth.js';
@@ -98,7 +99,14 @@ export default function ProjectDetailPage({
   const canEdit = hasPermission('projects.update') || hasPermission('projects.delete');
   const canLinkUsers = hasPermission('projects.link_users');
   const canRunAnalysis = hasPermission('pipeline.run');
+  const canRemoveArticles = hasPermission('articles.delete');
+  const { t: tArticles } = useTranslation('articles');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [removeArticlesOpen, setRemoveArticlesOpen] = useState(false);
+  const [removeArticlesNotice, setRemoveArticlesNotice] = useState('');
+  // Bumped after this project's articles are removed so the article-derived
+  // panels (stats, idea clusters) reload instead of showing the old numbers.
+  const [articlesReloadKey, setArticlesReloadKey] = useState(0);
   const [documents, setDocuments] = useState([]);
   const [documentsPage, setDocumentsPage] = useState(1);
   const [analysisStarting, setAnalysisStarting] = useState(false);
@@ -127,6 +135,7 @@ export default function ProjectDetailPage({
     setIdeaOffset(0);
     setOpeningClusterId(null);
     setClusterOpenErrors({});
+    setRemoveArticlesNotice('');
   }, [project?.id]);
 
   useEffect(() => {
@@ -148,7 +157,7 @@ export default function ProjectDetailPage({
     }
     loadArticleStats();
     return () => controller.abort();
-  }, [project?.id]);
+  }, [project?.id, articlesReloadKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -178,7 +187,7 @@ export default function ProjectDetailPage({
     }
     loadIdeaClusters();
     return () => controller.abort();
-  }, [project?.id, ideaOffset, t, tErrors]);
+  }, [project?.id, ideaOffset, t, tErrors, articlesReloadKey]);
 
   // A cluster's persisted frequency can span far more articles than fit in
   // this page's list - fetch a large-but-bounded page of its representative
@@ -773,6 +782,43 @@ export default function ProjectDetailPage({
           </div>
         ) : null}
       </motion.div>
+
+      {canRemoveArticles ? (
+        <section className="glass-card danger-zone" aria-labelledby="project-danger-zone-title" style={{ marginTop: 24 }}>
+          <h2 id="project-danger-zone-title" style={{ fontSize: '1rem', margin: 0 }}>
+            {tArticles('removeProject.dangerZoneTitle')}
+          </h2>
+          {removeArticlesNotice ? (
+            <p role="status" style={{ margin: '10px 0 0', color: '#14532d' }} dir="auto">{removeArticlesNotice}</p>
+          ) : null}
+          <div className="danger-zone-row" style={{ marginTop: 10 }}>
+            <div>
+              <strong>{tArticles('removeProject.dangerZoneAction')}</strong>
+              <p>{tArticles('removeProject.dangerZoneBody')}</p>
+            </div>
+            <button type="button" className="btn-secondary" onClick={() => setRemoveArticlesOpen(true)}>
+              <Trash2 size={16} aria-hidden="true" /> {tArticles('removeProject.openButton')}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {removeArticlesOpen ? (
+      <RemoveProjectArticlesDialog
+        key={project.id}
+        open
+        project={project}
+        onClose={() => setRemoveArticlesOpen(false)}
+        onRemoved={(result, projectName) => {
+          setRemoveArticlesOpen(false);
+          setRemoveArticlesNotice(tArticles('removeProject.success', {
+            name: projectName,
+            removed: formatNumber(Number(result?.articles_removed) || 0, locale),
+          }));
+          setArticlesReloadKey((value) => value + 1);
+        }}
+      />
+      ) : null}
 
       <ConfirmModal
         open={deleteOpen}

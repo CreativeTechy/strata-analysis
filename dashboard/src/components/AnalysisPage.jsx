@@ -8,13 +8,14 @@ import { getAnalysisStatus, listAnalysisErrors, reprocessArticle, analyzeArticle
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime, formatNumber, formatPercent } from '../lib/i18nFormat.js';
 
-const STATUS_ORDER = ['success', 'failed', 'processing', 'pending', 'partial'];
+const STATUS_ORDER = ['success', 'not_assessed', 'failed', 'processing', 'pending', 'partial'];
 const STATUS_COLORS = {
   success: '#2ed573',
   failed: '#ff4757',
   processing: '#ffb13b',
   pending: '#9aa0aa',
   partial: '#f59e0b',
+  not_assessed: '#6b7280',
 };
 
 // success/failed/processing/pending are stored analysis_status enum values -
@@ -25,6 +26,7 @@ const STATUS_COMMON_KEYS = { success: 'success', failed: 'failed', processing: '
 function statusLabel(t, key) {
   if (STATUS_COMMON_KEYS[key]) return t(`common:status.${STATUS_COMMON_KEYS[key]}`);
   if (key === 'partial') return t('performanceLogs.statusPartial');
+  if (key === 'not_assessed') return t('performanceLogs.statusNotAssessed');
   return key;
 }
 
@@ -79,7 +81,7 @@ export default function AnalysisPage({ projects = [] }) {
       } catch (err) {
         if (err?.name !== 'AbortError') {
           setStatusCounts(null);
-          setStatusError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('statusLoadFailed')));
+          setStatusError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('performanceLogs.statusLoadFailed')));
         }
       } finally {
         setStatusLoading(false);
@@ -108,7 +110,7 @@ export default function AnalysisPage({ projects = [] }) {
       } catch (err) {
         if (err?.name !== 'AbortError') {
           setErrorsPage({ errors: [], total: 0, limit: PAGE_SIZE, offset: 0 });
-          setErrorsError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('errorsLoadFailed')));
+          setErrorsError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('performanceLogs.errorsLoadFailed')));
         }
       } finally {
         setErrorsLoading(false);
@@ -134,7 +136,7 @@ export default function AnalysisPage({ projects = [] }) {
     try {
       await reprocessArticle(articleId);
     } catch (err) {
-      setActionError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('reprocessArticleFailed')));
+      setActionError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('performanceLogs.reprocessArticleFailed')));
     } finally {
       setReprocessingIds((current) => current.filter((id) => id !== articleId));
       setSelectedIds((current) => current.filter((id) => id !== articleId));
@@ -150,7 +152,7 @@ export default function AnalysisPage({ projects = [] }) {
     try {
       await analyzeArticles({ article_ids: targetIds, force: true });
     } catch (err) {
-      setActionError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('reprocessSelectedFailed')));
+      setActionError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('performanceLogs.reprocessSelectedFailed')));
     } finally {
       setReprocessingIds((current) => current.filter((id) => !targetIds.includes(id)));
       setSelectedIds([]);

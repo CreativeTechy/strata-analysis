@@ -149,6 +149,24 @@ export const getFinding = (findingId) => request(`/findings/${findingId}`);
 export const validateFinding = (findingId, status, notes = '') =>
   request(`/findings/${findingId}/validate`, { method: 'POST', body: { status, notes } });
 
+/** Competitor Report page's "Export report (PDF)" button. Like
+ *  exportReportSummaryPdf() in projectsApi.js, this streams a Blob (the PDF
+ *  itself) rather than a parsed JSON body on success - a non-ok response is
+ *  still plain JSON, so that branch mirrors this module's request(). */
+export async function exportFindingReportPdf(findingId) {
+  const response = await fetch(`${BASE}/findings/${findingId}/report.pdf`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data?.detail || data?.error || `Failed to export the report (${response.status})`);
+    error.detail = data?.detail || data?.error || null;
+    throw error;
+  }
+  return response.blob();
+}
+
 // --- shared presentation helpers ------------------------------------------
 export const SIZE_TIER_LABELS = {
   enterprise: 'Enterprise',

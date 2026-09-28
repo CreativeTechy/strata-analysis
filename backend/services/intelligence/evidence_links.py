@@ -39,6 +39,7 @@ SNAPSHOT_FIELDS = (
     "summary", "sentiment", "writer_tone", "article_tone",
     "region", "gender", "age_range", "segment",
     "insight_json", "source_language", "relevance_score", "topics", "key_points",
+    "sentiment_status", "classification_status",
 )
 
 
@@ -104,6 +105,10 @@ def resolve_evidence(project_id: int, period: str | None = None, run_id: str | N
         rows = intelligence._fetch_project_rows(project_id)
         if period:
             rows = filter_rows_for_period(rows, normalize_period(period))
+    # Same population the dashboard aggregates over: articles still carrying
+    # the not-yet-assessed placeholder are listed on the Articles page's own
+    # status filter, not behind a chart bucket that never counted them.
+    rows = [row for row in rows if intelligence.is_sentiment_assessed(row)]
 
     # Each check binds its wanted value as a default argument - a plain
     # closure over one reused local would compare every check against the

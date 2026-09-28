@@ -6,12 +6,13 @@ import { Calendar, Search, ChevronLeft, ChevronRight, SlidersHorizontal, Trash2,
 import ConfirmModal from './ConfirmModal';
 import DocumentImportBanner from './articles/DocumentImportBanner.jsx';
 import ImportOptionsModal from './articles/ImportOptionsModal.jsx';
+import RemoveProjectArticlesDialog from './articles/RemoveProjectArticlesDialog.jsx';
 import SkeletonArticleCard from './articles/SkeletonArticleCard.jsx';
 import ArticleCard from './articles/ArticleCard.jsx';
 import ArticleRow from './articles/ArticleRow.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import {
-  SENTIMENTS, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
+  SENTIMENTS, ARTICLE_STATUSES, SORT_OPTIONS, PAGE_SIZES, DOCUMENT_NAME_RE,
   FULL_IMPORT_ACCEPT, getPageNumbers,
 } from '../lib/articleHelpers.jsx';
 import {
@@ -23,7 +24,7 @@ import {
   listDocuments,
 } from '../api/projectDocumentsApi.js';
 import {
-  listArticles, deleteAllArticles,
+  listArticles,
   exportArticles,
 } from '../api/articlesApi.js';
 import { listProjectSources } from '../api/projectsApi.js';
@@ -59,6 +60,13 @@ const SENTIMENT_LABEL_KEYS = {
   mixed: 'sentiment.mixed',
 };
 
+const STATUS_LABEL_KEYS = {
+  assessed: 'status.assessed',
+  pending: 'status.pending',
+  failed: 'status.failed',
+  not_assessed: 'status.notAssessed',
+};
+
 export default function ArticlesPage({ project = null, projectId = null, projects = [] }) {
   const { t, i18n } = useTranslation(['articles', 'common']);
   const locale = i18n.language;
@@ -81,6 +89,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [sentiment, setSentiment] = useState(() => searchParams.get('sentiment') || 'all');
+  const [status, setStatus] = useState(() => searchParams.get('status') || 'all');
   const [projectFilter, setProjectFilter] = useState(() => (
     searchParams.get('project_id') || (normalizedProjectId != null ? String(normalizedProjectId) : 'all')
   ));
@@ -112,12 +121,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [deletingAll, setDeletingAll] = useState(false);
+  const [notice, setNotice] = useState('');
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [documentImportStatus, setDocumentImportStatus] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [viewMode, setViewMode] = useState(() => {
@@ -134,7 +143,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const importFolderInputRef = useRef(null);
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
-  const canDeleteAll = hasPermission('articles.delete');
+  const canRemoveProjectArticles = hasPermission('articles.delete');
   const canImport = hasPermission('articles.import');
 
   useEffect(() => {
@@ -153,12 +162,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -177,6 +186,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (sourceFilter !== 'all') next.set('source', sourceFilter);
     if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
+    if (status !== 'all') next.set('status', status);
     Object.entries(evidence).forEach(([key, value]) => next.set(key, value));
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
@@ -184,7 +194,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, evidence, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, status, evidence, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -282,6 +292,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         const data = await listArticles({
           search: search || undefined,
           sentiment: sentiment !== 'all' ? sentiment : undefined,
+          status: status !== 'all' ? status : undefined,
           project_id: projectFilter !== 'all' ? projectFilter : undefined,
           source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
           source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
@@ -314,7 +325,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -360,28 +371,17 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const pageNumbers = useMemo(() => getPageNumbers(currentPage, totalPages), [currentPage, totalPages]);
   const goToPage = (page) => setOffset((page - 1) * limit);
 
-  const handleDeleteAll = async () => {
-    if (deletingAll) return;
-    setDeletingAll(true);
+  // Removal is always one project's articles (never "all projects" - SM-101),
+  // so the list stays on that project and only the page resets.
+  const handleProjectArticlesRemoved = (result, projectName) => {
+    setShowRemoveModal(false);
     setError('');
-    try {
-      await deleteAllArticles();
-      setSearchInput('');
-      setSearch('');
-      setSentiment('all');
-      setProjectFilter(normalizedProjectId != null ? String(normalizedProjectId) : 'all');
-      setSourceFilter('all');
-      setSourceHostFilter('all');
-      setEvidence({});
-      setAddedFrom('');
-      setAddedTo('');
-      setOffset(0);
-      setReloadToken((value) => value + 1);
-    } catch (err) {
-      setError(err?.message || t('errors.deleteAllFailed'));
-    } finally {
-      setDeletingAll(false);
-    }
+    setNotice(t('removeProject.success', {
+      name: projectName,
+      removed: formatNumber(Number(result?.articles_removed) || 0, locale),
+    }));
+    setOffset(0);
+    setReloadToken((value) => value + 1);
   };
 
   const handleExportJsonl = async () => {
@@ -392,6 +392,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
       const blob = await exportArticles({
         search: search || undefined,
         sentiment: sentiment !== 'all' ? sentiment : undefined,
+        status: status !== 'all' ? status : undefined,
         project_id: projectFilter !== 'all' ? projectFilter : undefined,
         source_url: sourceFilter !== 'all' ? sourceFilter : undefined,
         source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
@@ -560,7 +561,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   id="articles-project-select"
                   className="filter-select report-project-select"
                   value={projectFilter}
-                  onChange={(e) => changeProjectFilter(e.target.value)}
+                  onChange={(e) => {
+                    changeProjectFilter(e.target.value);
+                    // A "removed articles from X" notice belongs to the project it was about.
+                    setNotice('');
+                  }}
                   aria-label={t('list.projectScopeAriaLabel')}
                 >
                   <option value="all">{t('list.allProjectsOption')}</option>
@@ -572,15 +577,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 </select>
               </div>
             </div>
-            {canDeleteAll && (
+            {canRemoveProjectArticles && activeProject && (
               <button
+                type="button"
                 className="btn-secondary"
-                onClick={() => setShowDeleteAllModal(true)}
-                disabled={loading || deletingAll}
-                style={{ color: '#b42318', borderColor: 'rgba(180,35,24,0.18)' }}
+                onClick={() => setShowRemoveModal(true)}
+                disabled={loading}
               >
-                <Trash2 size={16} />
-                {deletingAll ? t('list.deletingButton') : t('list.deleteAllButton')}
+                <Trash2 size={16} aria-hidden="true" />
+                {t('removeProject.openButton')}
               </button>
             )}
             <Link to="/dashboard" className="btn-secondary" style={{ textDecoration: 'none' }}>
@@ -589,25 +594,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
           </div>
         </div>
 
-        <ConfirmModal
-          open={showDeleteAllModal}
-          title={t('list.deleteAllModal.title')}
-          message={t('list.deleteAllModal.message')}
-          confirmLabel={deletingAll ? t('list.deleteAllModal.confirmLabelBusy') : t('list.deleteAllModal.confirmLabel')}
-          cancelLabel={t('list.deleteAllModal.cancelLabel')}
-          confirmButtonStyle={{
-            background: 'linear-gradient(135deg, #ff4757, #e03131)',
-            boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
-          }}
-          onClose={() => {
-            if (!deletingAll) setShowDeleteAllModal(false);
-          }}
-          onConfirm={async () => {
-            if (deletingAll) return;
-            setShowDeleteAllModal(false);
-            await handleDeleteAll();
-          }}
-        />
+        {showRemoveModal && activeProject ? (
+          <RemoveProjectArticlesDialog
+            key={activeProject.id}
+            open
+            project={activeProject}
+            onClose={() => setShowRemoveModal(false)}
+            onRemoved={handleProjectArticlesRemoved}
+          />
+        ) : null}
 
         <ConfirmModal
           open={showExportModal}
@@ -748,6 +743,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
               ))}
             </select>
 
+            <select className="filter-select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('filters.statusAriaLabel')}>
+              {ARTICLE_STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {value === 'all' ? t('filters.allStatuses') : t(STATUS_LABEL_KEYS[value])}
+                </option>
+              ))}
+            </select>
+
             <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value)}>
               {SORT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -826,7 +829,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 </option>
               ))}
             </select>
-            <button className="btn-secondary" onClick={() => setShowExportModal(true)} disabled={loading || exporting || deletingAll}>
+            <button className="btn-secondary" onClick={() => setShowExportModal(true)} disabled={loading || exporting}>
               <Upload size={16} />
               {exporting ? t('list.exportModal.confirmLabelBusy') : t('common:actions.export')}
             </button>
@@ -852,7 +855,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                 <button
                   className="btn-secondary"
                   onClick={() => setShowImportModal(true)}
-                  disabled={loading || importing || deletingAll}
+                  disabled={loading || importing}
                 >
                   <Download size={16} />
                   {importing ? t('import.importingButton') : t('common:actions.import')}
@@ -866,6 +869,15 @@ export default function ArticlesPage({ project = null, projectId = null, project
           <div className="glass-card articles-error-banner">
             <AlertTriangle size={18} />
             <span dir="auto">{error}</span>
+          </div>
+        ) : null}
+
+        {notice ? (
+          <div className="glass-card articles-notice-banner" role="status">
+            <span dir="auto">{notice}</span>
+            <button type="button" className="confirm-modal-close" onClick={() => setNotice('')} aria-label={t('removeProject.dismiss')}>
+              <X size={16} />
+            </button>
           </div>
         ) : null}
 
