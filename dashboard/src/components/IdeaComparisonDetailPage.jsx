@@ -287,6 +287,7 @@ export default function IdeaComparisonDetailPage() {
   const [includeNumbers, setIncludeNumbers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [regeneratingElapsedSeconds, setRegeneratingElapsedSeconds] = useState(0);
   const [evidencePage, setEvidencePage] = useState(0);
   const [factsPage, setFactsPage] = useState(0);
   const [targetId, setTargetId] = useState('');
@@ -387,17 +388,23 @@ export default function IdeaComparisonDetailPage() {
 
   const regenerate = async () => {
     setRegenerating(true);
+    setRegeneratingElapsedSeconds(0);
     setMessage('');
+    const elapsedTimer = setInterval(() => setRegeneratingElapsedSeconds((s) => s + 1), 1000);
     try {
       const data = await regenerateIdeaComparison(projectId, clusterId, { run_id: runId });
       setComparison(data?.comparison || null);
       setMessage(t('ideaComparisonDetail.regenerateSuccess'));
       return true;
     } catch (err) {
-      setMessage(`${err?.message || t('ideaComparisonDetail.regenerateFailedDefault')} ${t('ideaComparisonDetail.regenerateFailedRetryHint')}`);
+      const failure = err?.name === 'TimeoutError'
+        ? t('ideaComparisonDetail.regenerateTimedOut')
+        : (err?.message || t('ideaComparisonDetail.regenerateFailedDefault'));
+      setMessage(`${failure} ${t('ideaComparisonDetail.regenerateFailedRetryHint')}`);
       await load();
       return false;
     } finally {
+      clearInterval(elapsedTimer);
       setRegenerating(false);
     }
   };
@@ -462,7 +469,10 @@ export default function IdeaComparisonDetailPage() {
         </div>
         {canManage ? (
           <button type="button" className="btn-secondary" onClick={regenerate} disabled={regenerating}>
-            {regenerating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} {t('ideaComparisonDetail.regenerateSummary')}
+            {regenerating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
+            {regenerating
+              ? t('ideaComparisonDetail.regeneratingElapsed', { seconds: regeneratingElapsedSeconds })
+              : t('ideaComparisonDetail.regenerateSummary')}
           </button>
         ) : null}
       </header>

@@ -77,7 +77,7 @@ from services.projects.projects_store import (
 from services.intelligence.intelligence import PERIOD_DAYS, get_project_intelligence, get_project_keyword_existence, normalize_period
 from services.intelligence import evidence_links
 from services.articles.idea_comparisons import (
-    create_comparison_fact, delete_comparison_fact, generate_idea_comparisons,
+    create_comparison_fact, delete_comparison_fact, generate_idea_comparisons_detailed,
     get_idea_comparison, has_run_generation_attempt, list_idea_comparisons,
     regenerate_idea_comparison, update_comparison_fact,
 )
@@ -1085,7 +1085,14 @@ def get_project_idea_comparisons_view(
     rather than "nothing cached yet", since a run whose articles genuinely
     have fewer than two cross-source ideas caches as zero rows too, and would
     otherwise regenerate (and, during a provider outage, re-fail) on every
-    single view instead of just the first."""
+    single view instead of just the first.
+
+    `regeneration_timed_out` on the happy-path response means
+    generate_idea_comparisons_detailed() hit IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS
+    and stopped before every qualifying cluster was (re)synthesized - the
+    clusters it did reach are saved and returned, this just tells the caller
+    it's a partial pass so it can offer "regenerate again" rather than reading
+    the result as final."""
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
@@ -1093,13 +1100,25 @@ def get_project_idea_comparisons_view(
     cached = list_idea_comparisons(project_id, run_id=run_id)
     if regenerate or (run_id and not has_run_generation_attempt(project_id, run_id)):
         try:
-            generate_idea_comparisons(project_id, run_id=run_id)
+            status = generate_idea_comparisons_detailed(project_id, run_id=run_id)
             cached = list_idea_comparisons(project_id, run_id=run_id)
+            return {
+                "comparisons": cached,
+                "regeneration_timed_out": status["truncated"],
+                "regenerated_count": status["written"],
+                "regeneration_total": status["total"],
+            }
         except LLMError as e:
             logger.warning("Idea comparison generation failed (%s): %s", e.code, e.detail or e)
+            # Whatever was already synthesized before the failure is committed
+            # per-cluster (see generate_idea_comparisons_detailed), so
+            # re-fetching here shows that partial progress instead of the
+            # stale pre-attempt list fetched above.
+            cached = list_idea_comparisons(project_id, run_id=run_id)
             return {"comparisons": cached, "error": e.user_message, "error_code": e.code}
         except Exception:
             logger.exception("Idea comparison generation failed unexpectedly")
+            cached = list_idea_comparisons(project_id, run_id=run_id)
             return {
                 "comparisons": cached,
                 "error": "Something went wrong while regenerating idea comparisons. Please try again.",

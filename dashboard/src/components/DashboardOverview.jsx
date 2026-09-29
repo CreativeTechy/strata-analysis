@@ -340,6 +340,8 @@ export default function DashboardOverview({
   const [ideaComparisonsLoading, setIdeaComparisonsLoading] = useState(false);
   const [ideaComparisonsError, setIdeaComparisonsError] = useState('');
   const [ideaComparisonsRegenerating, setIdeaComparisonsRegenerating] = useState(false);
+  const [ideaComparisonsElapsedSeconds, setIdeaComparisonsElapsedSeconds] = useState(0);
+  const [ideaComparisonsTruncated, setIdeaComparisonsTruncated] = useState(null);
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
   const [platformListPage, setPlatformListPage] = useState(0);
@@ -394,8 +396,20 @@ export default function DashboardOverview({
       }
       const forceRegenerate = forceIdeaComparisonsRegenerateRef.current;
       forceIdeaComparisonsRegenerateRef.current = false;
-      if (forceRegenerate) setIdeaComparisonsRegenerating(true);
-      else setIdeaComparisonsLoading(true);
+      setIdeaComparisonsTruncated(null);
+      let elapsedTimer;
+      if (forceRegenerate) {
+        setIdeaComparisonsRegenerating(true);
+        setIdeaComparisonsElapsedSeconds(0);
+        // A whole-project regenerate can spend one LLM call per qualifying
+        // idea cluster (see idea_comparisons.generate_idea_comparisons), so
+        // this can legitimately run for tens of seconds - an elapsed-time
+        // counter tells the user it's still working rather than leaving a
+        // bare spinner up with no sense of progress.
+        elapsedTimer = setInterval(() => setIdeaComparisonsElapsedSeconds((s) => s + 1), 1000);
+      } else {
+        setIdeaComparisonsLoading(true);
+      }
       setIdeaComparisonsError('');
       try {
         const { ok, data } = await getIdeaComparisons(
@@ -406,13 +420,21 @@ export default function DashboardOverview({
         if (cancelled) return;
         setIdeaComparisons(Array.isArray(data?.comparisons) ? data.comparisons : []);
         setIdeaComparisonsPage(0);
-        if (!ok) setIdeaComparisonsError(data?.error || t('dashboard:ideaComparisons.loadError'));
-      } catch (err) {
-        if (!cancelled && err?.name !== 'AbortError') {
-          setIdeaComparisons([]);
-          setIdeaComparisonsError(err?.message || t('dashboard:ideaComparisons.loadError'));
+        if (!ok) {
+          setIdeaComparisonsError(data?.error || t('dashboard:ideaComparisons.loadError'));
+        } else if (data?.regeneration_timed_out) {
+          setIdeaComparisonsTruncated({ written: data.regenerated_count ?? 0, total: data.regeneration_total ?? 0 });
         }
+      } catch (err) {
+        if (cancelled || err?.name === 'AbortError') return; // component unmounted / project switched mid-request
+        setIdeaComparisons([]);
+        setIdeaComparisonsError(
+          err?.name === 'TimeoutError'
+            ? t('dashboard:ideaComparisons.timeoutError')
+            : (err?.message || t('dashboard:ideaComparisons.loadError')),
+        );
       } finally {
+        clearInterval(elapsedTimer);
         if (!cancelled) {
           setIdeaComparisonsLoading(false);
           setIdeaComparisonsRegenerating(false);
@@ -616,13 +638,22 @@ export default function DashboardOverview({
                 style={{ padding: '6px 10px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
               >
                 {ideaComparisonsRegenerating ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                {t('common:actions.regenerate')}
+                {ideaComparisonsRegenerating
+                  ? t('dashboard:ideaComparisons.regeneratingElapsed', { seconds: ideaComparisonsElapsedSeconds })
+                  : t('common:actions.regenerate')}
               </button>
             </div>
+            {ideaComparisonsTruncated ? (
+              <p className="intelligence-empty" dir="auto">
+                {t('dashboard:ideaComparisons.timedOutPartial', ideaComparisonsTruncated)}
+              </p>
+            ) : null}
             {ideaComparisonsError ? (
               <p className="intelligence-empty" dir="auto">{ideaComparisonsError}</p>
             ) : ideaComparisonsLoading ? (
               <p className="intelligence-empty"><Loader2 size={14} className="spin" /> {t('dashboard:ideaComparisons.loading')}</p>
+            ) : ideaComparisonsRegenerating && ideaComparisons.length === 0 ? (
+              <p className="intelligence-empty"><Loader2 size={14} className="spin" /> {t('dashboard:ideaComparisons.regenerating')}</p>
             ) : ideaComparisons.length === 0 ? (
               <div className="intelligence-idea-comparison-empty">
                 <Lightbulb size={20} />

@@ -526,6 +526,18 @@ SEGMENT_SIMILARITY_THRESHOLD = float(os.environ.get("SEGMENT_SIMILARITY_THRESHOL
 # a local model.
 IDEA_COMPARISON_MAX_CLUSTERS = int(os.environ.get("IDEA_COMPARISON_MAX_CLUSTERS", "20") or 20)
 
+# services/articles/idea_comparisons.py's generate_idea_comparisons(): a wall
+# clock budget for the whole regenerate-all-clusters loop, not any single LLM
+# call (chat_completion already times out per-call via
+# LLM_REQUEST_TIMEOUT_SECONDS). Without this, IDEA_COMPARISON_MAX_CLUSTERS
+# clusters each taking up to LLM_REQUEST_TIMEOUT_SECONDS can turn one
+# "Regenerate" click into several minutes with no ceiling. Hitting the budget
+# stops before the next cluster rather than mid-call, so it always returns a
+# clean partial result (already-written clusters saved, nothing half-done).
+IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS = float(
+    os.environ.get("IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS", "180") or 180
+)
+
 # services/competitors/competitor_analysis.py's run_analysis_job(): one LLM
 # call per competitor, run through a small thread pool for the same reason
 # ANALYSIS_CONCURRENCY above is kept low - the ceiling is the provider's, and
