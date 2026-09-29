@@ -200,6 +200,8 @@
     "sourceLanguageLabel": "لغة المصدر:",
     "confidence": "(الثقة {{pct}})",
     "confidenceLowConfidence": "(الثقة {{pct}}، ثقة منخفضة)",
+    "llmFallbackTag": "LLM",
+    "llmFallbackHint": "لم يتوفر نموذج تصنيف مخصص أو لم تكن نتيجته موثوقة، لذا تم استخدام إجابة النموذج اللغوي الكبير بدلاً من ذلك.",
     "modelsLine": "النماذج - المشاعر: {{sentiment}}، التصنيف: {{classification}}، الاستخراج: {{extraction}}",
     "notApplicable": "غير متاح",
     "attemptsLine": "المحاولات: {{count}} - آخر تشغيل: {{lastRun}}",

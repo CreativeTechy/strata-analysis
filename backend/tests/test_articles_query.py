@@ -390,13 +390,19 @@ class WherePartsSourceHostTests(unittest.TestCase):
     def test_sentiment_filter_only_matches_assessed_values(self):
         where_sql, params = articles_query._where_parts(sentiment="neutral")
         self.assertIn("sentiment = %s", where_sql)
-        self.assertIn("sentiment_status = 'ran'", where_sql)
+        # A usable label exists whether the dedicated classifier produced it
+        # ('ran') or the LLM fallback did ('ran_via_llm') - both count.
+        self.assertIn("sentiment_status in ('ran', 'ran_via_llm')", where_sql)
         self.assertIn("neutral", params)
 
     def test_not_assessed_status_excludes_pending_and_failed_rows(self):
         where_sql, _ = articles_query._where_parts(status="not_assessed")
         self.assertIn("analysis_status = 'success'", where_sql)
         self.assertIn("skipped_model_unavailable", where_sql)
+
+    def test_assessed_status_counts_llm_fallback_rows_too(self):
+        where_sql, _ = articles_query._where_parts(status="assessed")
+        self.assertIn("sentiment_status in ('ran', 'ran_via_llm')", where_sql)
 
     def test_no_precomputed_ids_falls_back_to_resolving_from_source_host(self):
         with patch("services.articles.articles_query.list_article_ids_for_project", return_value=[5, 9]), \
@@ -560,6 +566,36 @@ class GetArticleAnalysisTests(unittest.TestCase):
         self.assertEqual(result["confidence"]["category"], 0.9)
         self.assertIsNone(result["confidence"]["writer_tone"])
         self.assertEqual(result["confidence"]["article_tone"], 0.85)
+
+    def test_ran_via_llm_substage_has_a_real_label_but_no_confidence(self):
+        # An LLM-derived label is a real answer (unlike a skipped stage), but
+        # its score is a placeholder 0.0, not a meaningful confidence - it
+        # must read the same as "no confidence value" as a skipped stage,
+        # even though the label itself should still be shown.
+        row = {
+            "id": 1, "url": "u", "title": "t", "source": "s", "published": None,
+            "sentiment": "negative", "article_category": "news",
+            "writer_tone": "neutral", "article_tone": "neutral",
+            "insight_json": {}, "analyzed_at": None, "analysis_model": None, "analysis_prompt_version": None,
+            "analysis_status": "success", "analysis_error": None,
+            "sentiment_status": "ran_via_llm", "sentiment_score": 0.0, "sentiment_low_confidence": False,
+            "classification_status": "ran_via_llm",
+            "category_status": "ran_via_llm", "writer_tone_status": "ran_via_llm", "article_tone_status": "ran_via_llm",
+            "category_confidence": 0.0, "writer_tone_confidence": 0.0, "article_tone_confidence": 0.0,
+        }
+        with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):
+            with patch("services.articles.articles_query.db.fetch_all", return_value=[{"column_name": k} for k in row]):
+                with patch("services.articles.articles_query.db.fetch_one", return_value=row):
+                    result = articles_query.get_article_analysis(1)
+        self.assertEqual(result["sentiment"], "negative")
+        self.assertEqual(result["sentiment_status"], "ran_via_llm")
+        self.assertEqual(result["category_status"], "ran_via_llm")
+        self.assertEqual(result["writer_tone_status"], "ran_via_llm")
+        self.assertEqual(result["article_tone_status"], "ran_via_llm")
+        self.assertIsNone(result["confidence"]["sentiment"])
+        self.assertIsNone(result["confidence"]["category"])
+        self.assertIsNone(result["confidence"]["writer_tone"])
+        self.assertIsNone(result["confidence"]["article_tone"])
 
     def test_query_error_returns_none(self):
         with patch("services.articles.articles_query.config.DATABASE_URL", "postgresql://x"):

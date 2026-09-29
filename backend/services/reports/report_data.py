@@ -353,7 +353,7 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
     analyzed_rows = [row for row in in_scope_rows if str(row.get("analysis_status") or "").lower() in ANALYZED_STATUSES]
     sentiment_rows = [
         row for row in analyzed_rows
-        if row.get("sentiment_status") == "ran" or "sentiment_status" not in row
+        if row.get("sentiment_status") in ("ran", "ran_via_llm") or "sentiment_status" not in row
     ]
 
     analysis_date_label, run_label = _scope_label(scope_type, period, run, tz)

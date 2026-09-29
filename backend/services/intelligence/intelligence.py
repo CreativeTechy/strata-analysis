@@ -468,7 +468,7 @@ def is_sentiment_assessed(row: dict) -> bool:
     from before per-stage statuses existed fall back to analysis_status.
     Shared with evidence_links.resolve_evidence() so the articles a chart
     selection opens are exactly the ones it counted."""
-    return row.get("sentiment_status") == "ran" or (
+    return row.get("sentiment_status") in ("ran", "ran_via_llm") or (
         "sentiment_status" not in row and row.get("analysis_status") in (None, "success")
     )
 

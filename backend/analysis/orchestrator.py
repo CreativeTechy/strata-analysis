@@ -80,6 +80,13 @@ def _describe_extraction_model() -> str:
     return f"{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}"
 
 
+def _llm_model_id() -> str:
+    """Model-id stamp for a stage whose value came from the LLM fallback
+    path ('ran_via_llm'), not the dedicated HF/local classifier - lets
+    anyone querying by model tell an HF-labeled row from an LLM-labeled one."""
+    return f"llm:{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}"
+
+
 def _stage_outcome(result: dict, configured_model: str | None) -> str:
     """Translate a classifier result into the persisted stage contract.
 
@@ -89,7 +96,7 @@ def _stage_outcome(result: dict, configured_model: str | None) -> str:
     the UI may truthfully show that confidence.
     """
     explicit = result.get("outcome")
-    if explicit in {"ran", "skipped_model_unavailable", "failed"}:
+    if explicit in {"ran", "ran_via_llm", "skipped_model_unavailable", "failed"}:
         return explicit
     if not (configured_model or "").strip():
         return "skipped_model_unavailable"
@@ -104,7 +111,32 @@ def _combined_stage_outcome(results: tuple[dict, ...], configured_model: str | N
         return "failed"
     if "ran" in outcomes:
         return "ran"
+    if "ran_via_llm" in outcomes:
+        return "ran_via_llm"
     return "skipped_model_unavailable"
+
+
+def _apply_llm_fallback(stage_result: dict, llm_value, configured_model: str | None) -> dict:
+    """If the dedicated HF/local classifier for this stage didn't actually
+    run (no model configured, or it fell back to its own default/neutral
+    label) and the same structured-extraction call gave a valid label for
+    this stage, use the LLM's label instead of the neutral/default fallback.
+
+    score is deliberately 0.0, not a fabricated confidence - an LLM's
+    categorical answer in JSON mode has no calibrated probability.
+    low_confidence stays False: this is a real answer, not a fallback
+    default: 'outcome' is what tells the reader there's no numeric
+    confidence here, not low_confidence.
+    """
+    if _stage_outcome(stage_result, configured_model) == "ran" or llm_value is None:
+        return stage_result
+    return {
+        "label": llm_value,
+        "score": 0.0,
+        "low_confidence": False,
+        "raw_label": llm_value,
+        "outcome": "ran_via_llm",
+    }
 
 
 def analyze_article(article: dict, *, project_context: str = "") -> dict:
@@ -135,6 +167,25 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
     writer_tone_result = classification.classify_writer_tone(model_text)
     article_tone_result = classification.classify_article_tone(model_text)
     language_result = language.detect_language(model_text)
+
+    # Same structured-extraction call optionally produced its own
+    # sentiment/category/writer_tone/article_tone (see structured_extraction.py's
+    # optional schema fields) - used only when the dedicated HF/local stage
+    # above didn't actually run, so 'ran' always means the dedicated model
+    # produced the value and 'ran_via_llm' always means it didn't and the
+    # LLM's own answer was used instead.
+    sentiment_result = _apply_llm_fallback(
+        sentiment_result, extracted.get("sentiment"), config.SENTIMENT_CLASSIFIER_MODEL
+    )
+    category_result = _apply_llm_fallback(
+        category_result, extracted.get("category"), config.CLASSIFICATION_MODEL
+    )
+    writer_tone_result = _apply_llm_fallback(
+        writer_tone_result, extracted.get("writer_tone"), config.CLASSIFICATION_MODEL
+    )
+    article_tone_result = _apply_llm_fallback(
+        article_tone_result, extracted.get("article_tone"), config.CLASSIFICATION_MODEL
+    )
 
     for stage_name, stage_result in (
         ("sentiment", sentiment_result),
@@ -222,12 +273,29 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
         # --- per-stage metadata for the persistence layer ---
         "sentiment_score": float(sentiment_result.get("score", 0.0)),
         "sentiment_low_confidence": bool(sentiment_result.get("low_confidence")),
-        "sentiment_model": config.SENTIMENT_CLASSIFIER_MODEL or None,
+        "sentiment_model": (
+            _llm_model_id() if _stage_outcome(sentiment_result, config.SENTIMENT_CLASSIFIER_MODEL) == "ran_via_llm"
+            else (config.SENTIMENT_CLASSIFIER_MODEL or None)
+        ),
         "sentiment_status": _stage_outcome(sentiment_result, config.SENTIMENT_CLASSIFIER_MODEL),
         "category_confidence": float(category_result.get("score", 0.0)),
         "writer_tone_confidence": float(writer_tone_result.get("score", 0.0)),
         "article_tone_confidence": float(article_tone_result.get("score", 0.0)),
-        "classification_model": config.CLASSIFICATION_MODEL or None,
+        # classification_model covers all three classify_* stages (see this
+        # module's docstring) - only stamped "llm:..." when ALL THREE came
+        # from the LLM fallback, since the column is documented as a single
+        # combined field and a mixed HF/LLM provenance across the three
+        # sub-stages can't be represented by one value. A mixed case is still
+        # fully recoverable per-stage from category_status/writer_tone_status/
+        # article_tone_status below.
+        "classification_model": (
+            _llm_model_id()
+            if all(
+                _stage_outcome(r, config.CLASSIFICATION_MODEL) == "ran_via_llm"
+                for r in (category_result, writer_tone_result, article_tone_result)
+            )
+            else (config.CLASSIFICATION_MODEL or None)
+        ),
         "classification_status": _combined_stage_outcome(
             (category_result, writer_tone_result, article_tone_result),
             config.CLASSIFICATION_MODEL,

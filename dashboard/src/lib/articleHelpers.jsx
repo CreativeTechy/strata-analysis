@@ -14,10 +14,19 @@ export function sentimentBadgeState(article = {}) {
   if (!(Object.prototype.hasOwnProperty.call(article, 'sentiment_status')) && article.sentiment) {
     return String(article.sentiment).toLowerCase();
   }
-  if (stageStatus !== 'ran') {
+  if (stageStatus !== 'ran' && stageStatus !== 'ran_via_llm') {
     return 'not_assessed';
   }
   return String(article.sentiment || 'neutral').toLowerCase();
+}
+
+// Whether a stage's value came from the structured-extraction LLM's own
+// fallback answer rather than the dedicated HF/local classifier model (see
+// backend/analysis/orchestrator.py's 'ran_via_llm' outcome) - used to render
+// a distinct "LLM" tag next to the stage's regular value/badge so an
+// operator can tell the two provenances apart at a glance.
+export function isLlmFallbackStatus(status) {
+  return status === 'ran_via_llm';
 }
 export const SORT_OPTIONS = [
   { value: 'published.desc', label: 'Newest first' },

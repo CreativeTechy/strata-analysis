@@ -425,15 +425,15 @@ create table if not exists public.articles (
     constraint articles_analysis_status_check
         check (analysis_status in ('pending', 'processing', 'success', 'failed', 'partial')),
     constraint articles_sentiment_status_check
-        check (sentiment_status is null or sentiment_status in ('ran', 'skipped_model_unavailable', 'failed')),
+        check (sentiment_status is null or sentiment_status in ('ran', 'ran_via_llm', 'skipped_model_unavailable', 'failed')),
     constraint articles_classification_status_check
-        check (classification_status is null or classification_status in ('ran', 'skipped_model_unavailable', 'failed')),
+        check (classification_status is null or classification_status in ('ran', 'ran_via_llm', 'skipped_model_unavailable', 'failed')),
     constraint articles_category_status_check
-        check (category_status is null or category_status in ('ran', 'skipped_model_unavailable', 'failed')),
+        check (category_status is null or category_status in ('ran', 'ran_via_llm', 'skipped_model_unavailable', 'failed')),
     constraint articles_writer_tone_status_check
-        check (writer_tone_status is null or writer_tone_status in ('ran', 'skipped_model_unavailable', 'failed')),
+        check (writer_tone_status is null or writer_tone_status in ('ran', 'ran_via_llm', 'skipped_model_unavailable', 'failed')),
     constraint articles_article_tone_status_check
-        check (article_tone_status is null or article_tone_status in ('ran', 'skipped_model_unavailable', 'failed'))
+        check (article_tone_status is null or article_tone_status in ('ran', 'ran_via_llm', 'skipped_model_unavailable', 'failed'))
 );
 
 -- `create table if not exists` does not add columns to an existing table.
