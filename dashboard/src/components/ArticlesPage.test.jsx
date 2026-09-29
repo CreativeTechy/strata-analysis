@@ -269,6 +269,115 @@ describe('ArticlesPage', () => {
     expect(offsetsRequested.every((offset) => offset === '48')).toBe(true)
   })
 
+  // SM-107: a dashboard/report selection opens this page carrying its
+  // project, scope and chart bucket - they must reach the API and stay
+  // visible (and removable) as chips.
+  describe('evidence links', () => {
+    function renderAt(entry) {
+      return render(
+        <MemoryRouter initialEntries={[entry]}>
+          <ListLocationWatcher />
+          <Routes>
+            <Route path="/articles" element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} />} />
+          </Routes>
+        </MemoryRouter>
+      )
+    }
+
+    function articleRequests() {
+      return fetch.mock.calls.map(([url]) => String(url)).filter((href) => href.startsWith('/api/articles?'))
+    }
+
+    it('sends the dashboard scope and selection to the API and shows them as chips', async () => {
+      fetch.mockImplementation((url) => {
+        const href = String(url)
+        if (href.startsWith('/api/articles?')) return Promise.resolve(jsonResponse({ articles: [ARTICLES[0]], total: 1 }))
+        if (href.startsWith('/api/pipeline-runs/run-9')) return Promise.resolve(jsonResponse({ run: { id: 'run-9', sequence_number: 4 } }))
+        return Promise.resolve(jsonResponse({ documents: [], sources: [] }))
+      })
+      renderAt('/articles?project_id=5&run_id=run-9&sentiment=negative&platform=X')
+
+      await waitFor(() => expect(screen.getByText(/1 articles total/)).toBeInTheDocument())
+      const href = articleRequests().at(-1)
+      expect(href).toContain('project_id=5')
+      expect(href).toContain('run_id=run-9')
+      expect(href).toContain('sentiment=negative')
+      expect(href).toContain('platform=X')
+
+      const bar = screen.getByRole('region', { name: 'Evidence filters from a dashboard selection' })
+      await waitFor(() => expect(bar).toHaveTextContent('Analysis #4'))
+      expect(bar).toHaveTextContent('Negative')
+      expect(bar).toHaveTextContent('X')
+      expect(bar).toHaveTextContent('shown as Analysis #4 concluded them')
+    })
+
+    it('widens one step when a chip is removed, keeping the rest of the scope', async () => {
+      renderAt('/articles?project_id=5&period=7d&region=Gulf')
+      await waitFor(() => expect(articleRequests().at(-1)).toContain('region=Gulf'))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove filter: Gulf' }))
+      await waitFor(() => expect(articleRequests().at(-1)).not.toContain('region='))
+      expect(articleRequests().at(-1)).toContain('period=7d')
+      expect(articleRequests().at(-1)).toContain('project_id=5')
+      await waitFor(() => expect(screen.getByTestId('list-search').textContent).toBe('?project_id=5&period=7d'))
+    })
+
+    it('clears every evidence filter at once', async () => {
+      renderAt('/articles?project_id=5&period=30d&sentiment=negative&trust=untrusted')
+      await waitFor(() => expect(articleRequests().at(-1)).toContain('trust=untrusted'))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear evidence filters' }))
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Evidence filters from a dashboard selection' })).not.toBeInTheDocument())
+      const href = articleRequests().at(-1)
+      expect(href).not.toContain('period=')
+      expect(href).not.toContain('sentiment=')
+      expect(href).not.toContain('trust=')
+      expect(href).toContain('project_id=5')
+    })
+
+    it('keeps a deep link\'s filters under StrictMode\'s double mount-time effects', async () => {
+      render(
+        <StrictMode>
+          <MemoryRouter initialEntries={['/articles?project_id=5&period=all&sentiment=negative&source_host=example.com']}>
+            <ListLocationWatcher />
+            <Routes>
+              <Route path="/articles" element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }]} />} />
+            </Routes>
+          </MemoryRouter>
+        </StrictMode>
+      )
+      await waitFor(() => expect(screen.getByText(/2 articles total/)).toBeInTheDocument())
+      const href = articleRequests().at(-1)
+      expect(href).toContain('period=all')
+      expect(href).toContain('source_host=example.com')
+      expect(screen.getByRole('region', { name: 'Evidence filters from a dashboard selection' })).toHaveTextContent('All time')
+      expect(screen.getByTestId('list-search').textContent).toContain('period=all')
+    })
+
+    it('drops a run scope in the same update that switches project, never pairing it with the new project', async () => {
+      render(
+        <MemoryRouter initialEntries={['/articles?project_id=5&run_id=run-9&sentiment=negative']}>
+          <Routes>
+            <Route path="/articles" element={<ArticlesPage project={null} projectId={null} projects={[{ id: 5, name: 'Riverside', status: 'active' }, { id: 6, name: 'Harbor', status: 'active' }]} />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await waitFor(() => expect(articleRequests().at(-1)).toContain('run_id=run-9'))
+
+      fireEvent.change(screen.getByLabelText('Project scope for articles'), { target: { value: '6' } })
+      await waitFor(() => expect(articleRequests().at(-1)).toContain('project_id=6'))
+      const afterSwitch = articleRequests().filter((href) => href.includes('project_id=6'))
+      expect(afterSwitch.some((href) => href.includes('run_id='))).toBe(false)
+      expect(screen.queryByRole('region', { name: 'Evidence filters from a dashboard selection' })).not.toBeInTheDocument()
+    })
+
+    it('shows no evidence bar for an ordinary visit', async () => {
+      renderAt('/articles')
+      await waitFor(() => expect(screen.getByText(/2 articles total/)).toBeInTheDocument())
+      expect(screen.queryByRole('region', { name: 'Evidence filters from a dashboard selection' })).not.toBeInTheDocument()
+    })
+  })
+
   // SM-101: there is no "delete every project's articles" control on this
   // page any more - only removal scoped to the selected project.
   it('offers no article removal while showing all projects', async () => {

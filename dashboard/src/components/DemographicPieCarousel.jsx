@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Cell, Pie, PieChart, Tooltip } from 'recharts';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
@@ -57,8 +58,12 @@ function capBreakdown(entries, limit = 7) {
  * negative/mixed sentiment split - with left/right arrows to step through
  * the buckets instead of showing them all at once.
  */
-export default function DemographicPieCarousel({ data, emptyLabel }) {
+// `pathFor(bucketValue, sentiment?)` - optional evidence link for a bucket
+// (and one of its sentiment slices); null for a bucket that can't be opened
+// on its own, like the folded "other" slice.
+export default function DemographicPieCarousel({ data, emptyLabel, pathFor }) {
   const { t } = useTranslation('dashboard');
+  const navigate = useNavigate();
   const [index, setIndex] = useState(0);
   const buckets = capBreakdown((Array.isArray(data) ? data : []).filter((entry) => Number(entry?.total) > 0));
 
@@ -71,6 +76,12 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
   const slices = SENTIMENT_KEYS.map((key) => ({ key, value: Number(bucket[key] || 0) })).filter((slice) => slice.value > 0);
   const canNavigate = buckets.length > 1;
   const goTo = (nextIndex) => setIndex((nextIndex + buckets.length) % buckets.length);
+  const bucketPath = pathFor ? pathFor(bucket.value) : null;
+  const openSlice = (sector) => {
+    const sentiment = sector?.payload?.key ?? sector?.key;
+    const path = pathFor && sentiment ? pathFor(bucket.value, sentiment) : null;
+    if (path) navigate(path);
+  };
 
   return (
     <div className="demographic-pie-carousel">
@@ -98,14 +109,18 @@ export default function DemographicPieCarousel({ data, emptyLabel }) {
       <div className="intelligence-donut">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={slices} dataKey="value" nameKey="key" outerRadius="88%" paddingAngle={3} stroke="none">
+            <Pie data={slices} dataKey="value" nameKey="key" outerRadius="88%" paddingAngle={3} stroke="none" className={bucketPath ? 'intelligence-clickable-chart' : undefined} onClick={bucketPath ? openSlice : undefined}>
               {slices.map((slice) => <Cell key={slice.key} fill={COLORS[slice.key]} />)}
             </Pie>
             <Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} />
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <span className="demographic-pie-carousel-count">{t('dashboard:counts.articlesCount', { count: bucket.total })}</span>
+      {bucketPath ? (
+        <Link className="demographic-pie-carousel-count demographic-pie-carousel-count-link" to={bucketPath} title={t('dashboard:evidence.openArticles', { label: bucketLabel(t, bucket.value) })}>{t('dashboard:counts.articlesCount', { count: bucket.total })}</Link>
+      ) : (
+        <span className="demographic-pie-carousel-count">{t('dashboard:counts.articlesCount', { count: bucket.total })}</span>
+      )}
       {canNavigate && (
         <div className="demographic-pie-carousel-dots">
           {buckets.map((entry, entryIndex) => (

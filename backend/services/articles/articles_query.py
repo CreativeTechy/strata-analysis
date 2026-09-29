@@ -256,9 +256,19 @@ def list_article_ids_for_source_host(project_id, host):
     return matches
 
 
-def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None):
+def _where_parts(search=None, sentiment=None, category=None, project_id=None, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None, article_ids=None):
     clauses = []
     params = []
+
+    # An explicit id set (a dashboard evidence link - see
+    # services/intelligence/evidence_links.py) narrows everything else below; an
+    # empty set means "nothing matched", not "no restriction".
+    if article_ids is not None:
+        if not article_ids:
+            clauses.append("id = -1")
+        else:
+            clauses.append("id = any(%s)")
+            params.append(list(article_ids))
 
     term = _normalize_text(search)
     if term:
@@ -297,12 +307,12 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
         params.append(category_value)
 
     if project_id is not None:
-        article_ids = list_article_ids_for_project(project_id)
-        if not article_ids:
+        project_article_ids = list_article_ids_for_project(project_id)
+        if not project_article_ids:
             clauses.append("id = -1")
         else:
             clauses.append("id = any(%s)")
-            params.append(article_ids)
+            params.append(project_article_ids)
 
     source_url_value = _normalize_text(source_url)
     if source_url_value:
@@ -357,7 +367,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     return "", params
 
 
-def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None, max_limit=MAX_LIMIT):
+def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, category=None, project_id=None, order="published.desc", select=ARTICLES_SELECT, date_from=None, date_to=None, source_url=None, source_host=None, source_host_ids=None, added_from=None, added_to=None, status=None, max_limit=MAX_LIMIT, article_ids=None):
     if not config.DATABASE_URL:
         return [], 0
 
@@ -376,6 +386,7 @@ def _fetch_articles(limit=None, offset=None, search=None, sentiment=None, catego
         source_host_ids=source_host_ids,
         added_from=added_from,
         added_to=added_to,
+        article_ids=article_ids,
         status=status,
     )
 
@@ -644,6 +655,36 @@ def list_project_source_keys(project_id) -> dict[str, dict]:
     return keys
 
 
+def _resolve_group_tiers(groups: dict[str, dict], project_id=None) -> dict[str, str]:
+    """{source_key: tier} for already-built source groups, anything the
+    resolver doesn't know (or an unknown tier value) falling back to
+    'unknown'."""
+    if not groups:
+        return {}
+    # Same "no DB, nothing to resolve" short-circuit as list_project_sources()'s
+    # other DB-backed helpers - every group falls back to 'unknown' rather than
+    # attempting a connection, so an unconfigured/unreachable DATABASE_URL fails
+    # fast instead of blocking the whole intelligence response on a pool timeout.
+    trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id is not None else None) if config.DATABASE_URL else {}
+    resolved = {}
+    for key in groups:
+        tier = (trust_by_key.get(key) or {}).get("tier") or "unknown"
+        resolved[key] = tier if tier in TRUST_TIERS else "unknown"
+    return resolved
+
+
+def trust_tier_by_source_key(rows: list[dict], project_id=None) -> dict[str, str]:
+    """{source_key: tier} for every source group `rows` produce - the per-group
+    half of source_trust_summary_for_rows(), shared with the dashboard's
+    evidence links (services/intelligence/evidence_links.py) so "Trusted: 12
+    articles" and the 12 articles that link opens resolve tiers identically."""
+    groups: dict[str, dict] = {}
+    for row in rows or []:
+        key, source_type, label, _link = source_group_identity(row.get("url"), row.get("source"), row.get("source_url"))
+        groups.setdefault(key, {"key": key, "type": source_type, "label": label})
+    return _resolve_group_tiers(groups, project_id)
+
+
 def source_trust_summary_for_rows(rows: list[dict], project_id=None) -> dict:
     """Project-wide trust-tier breakdown, counted over `rows` (each needing
     at least `url`/`source`/`source_url` - the same shape
@@ -666,18 +707,11 @@ def source_trust_summary_for_rows(rows: list[dict], project_id=None) -> dict:
         group["article_count"] += 1
 
     tiers = {tier: {"sources": 0, "articles": 0} for tier in TRUST_TIERS}
-    if groups:
-        # Same "no DB, nothing to resolve" short-circuit as list_project_sources()'s
-        # other DB-backed helpers - every group falls back to 'unknown' rather than
-        # attempting a connection, so an unconfigured/unreachable DATABASE_URL fails
-        # fast instead of blocking the whole intelligence response on a pool timeout.
-        trust_by_key = resolve_source_trust(list(groups.values()), project_id=int(project_id) if project_id else None) if config.DATABASE_URL else {}
-        for group in groups.values():
-            tier = (trust_by_key.get(group["key"]) or {}).get("tier") or "unknown"
-            if tier not in tiers:
-                tier = "unknown"
-            tiers[tier]["sources"] += 1
-            tiers[tier]["articles"] += group["article_count"]
+    tier_by_key = _resolve_group_tiers(groups, project_id)
+    for group in groups.values():
+        tier = tier_by_key[group["key"]]
+        tiers[tier]["sources"] += 1
+        tiers[tier]["articles"] += group["article_count"]
 
     total_sources = len(groups)
     total_articles = sum(group["article_count"] for group in groups.values())

@@ -28,7 +28,10 @@ import {
   exportArticles,
 } from '../api/articlesApi.js';
 import { listProjectSources } from '../api/projectsApi.js';
+import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { formatNumber } from '../lib/i18nFormat.js';
+import { readEvidenceParams } from '../lib/evidenceLinks.js';
+import EvidenceFilterBar from './articles/EvidenceFilterBar.jsx';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
@@ -100,6 +103,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // mutually exclusive by construction (an article is either a document split
   // or has its own real url, never both), so picking one clears the other.
   const [sourceHostFilter, setSourceHostFilter] = useState(() => searchParams.get('source_host') || 'all');
+  // A dashboard/report evidence link's scope (period or run_id) and the
+  // chart bucket it was opened from (platform, region, ...) - see
+  // lib/evidenceLinks.js. Kept as one object: they arrive together, are
+  // shown together as removable chips, and only mean anything for the
+  // project they were counted in.
+  const [evidence, setEvidence] = useState(() => readEvidenceParams(searchParams));
   const [limit, setLimit] = useState(24);
   const [offset, setOffset] = useState(() => {
     const parsed = Number(searchParams.get('offset'));
@@ -153,12 +162,12 @@ export default function ArticlesPage({ project = null, projectId = null, project
   // reads as "changed" when a filter actually did.
   const filtersKeyRef = useRef(null);
   useEffect(() => {
-    const key = JSON.stringify([search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
+    const key = JSON.stringify([search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
     if (filtersKeyRef.current !== null && filtersKeyRef.current !== key) {
       setOffset(0);
     }
     filtersKeyRef.current = key;
-  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, sort, addedFrom, addedTo]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, sort, addedFrom, addedTo]);
 
   const activeProject = useMemo(() => {
     if (projectFilter === 'all') return null;
@@ -178,13 +187,14 @@ export default function ArticlesPage({ project = null, projectId = null, project
     if (sourceHostFilter !== 'all') next.set('source_host', sourceHostFilter);
     if (sentiment !== 'all') next.set('sentiment', sentiment);
     if (status !== 'all') next.set('status', status);
+    Object.entries(evidence).forEach(([key, value]) => next.set(key, value));
     if (addedFrom) next.set('added_from', addedFrom);
     if (addedTo) next.set('added_to', addedTo);
     if (sort !== 'published.desc') next.set('sort', sort);
     if (offset > 0) next.set('offset', String(offset));
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, status, addedFrom, addedTo, sort, offset]);
+  }, [search, projectFilter, sourceFilter, sourceHostFilter, sentiment, status, evidence, addedFrom, addedTo, sort, offset]);
 
   // Every article split out of a document shares that document's synthetic
   // source_url, so filtering by source_url is filtering by document.
@@ -243,18 +253,36 @@ export default function ArticlesPage({ project = null, projectId = null, project
     [realSources],
   );
 
-  // Skips the mount-time run so a `?source=`/`?source_host=` deep link (see
-  // sourceFilter/sourceHostFilter's initializers above) survives instead of
-  // being wiped by this effect firing once on the very render that set it.
-  const skipNextSourceReset = useRef(true);
-  useEffect(() => {
-    if (skipNextSourceReset.current) {
-      skipNextSourceReset.current = false;
-      return;
-    }
+  // Documents, real sources, a period/run scope and a chart bucket all
+  // belong to the project they were picked in, so switching project clears
+  // them in the same update. Done in the change handler rather than an
+  // effect watching projectFilter: an effect lands a render late, so one
+  // request would go out pairing the new project with the old project's
+  // filters (for a run scope the backend refuses that outright), and a
+  // skip-the-mount-run flag on such an effect is spent by StrictMode's
+  // double mount-time invocation, wiping `?source=`/evidence deep links.
+  const changeProjectFilter = (value) => {
+    setProjectFilter(value);
     setSourceFilter('all');
     setSourceHostFilter('all');
-  }, [projectFilter]);
+    setEvidence({});
+    setSentiment('all');
+  };
+
+  // "Analysis #N" for a run-scoped link's chip - the run id alone means
+  // nothing to a reader. Falls back to a generic label if it can't load.
+  // Keyed by run id so a stale answer for a previous link never labels this one.
+  const [loadedEvidenceRun, setLoadedEvidenceRun] = useState(null);
+  const evidenceRun = loadedEvidenceRun && loadedEvidenceRun.id === evidence.run_id ? loadedEvidenceRun.run : null;
+  useEffect(() => {
+    const runId = evidence.run_id;
+    if (!runId) return undefined;
+    let cancelled = false;
+    getPipelineRun(runId)
+      .then((data) => { if (!cancelled) setLoadedEvidenceRun({ id: runId, run: data?.run || null }); })
+      .catch(() => { if (!cancelled) setLoadedEvidenceRun({ id: runId, run: null }); });
+    return () => { cancelled = true; };
+  }, [evidence.run_id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -271,15 +299,20 @@ export default function ArticlesPage({ project = null, projectId = null, project
           source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
           added_from: addedFrom || undefined,
           added_to: addedTo || undefined,
+          ...evidence,
           limit,
           offset,
           sort,
         }, controller.signal);
 
+        // A superseded request can still settle after abort() (a fast error
+        // response is read before the abort lands) - only the current one
+        // may touch the list, the error, or the loading flag.
+        if (controller.signal.aborted) return;
         setArticles(Array.isArray(data?.articles) ? data.articles : []);
         setTotal(Number(data?.total) || 0);
       } catch (err) {
-        if (err?.name !== 'AbortError') {
+        if (err?.name !== 'AbortError' && !controller.signal.aborted) {
           setError(err?.message || t('errors.loadFailed'));
           if (!hasArticlesRef.current) {
             setArticles([]);
@@ -287,13 +320,13 @@ export default function ArticlesPage({ project = null, projectId = null, project
           }
         }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
     loadArticles();
     return () => controller.abort();
-  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
+  }, [search, sentiment, status, projectFilter, sourceFilter, sourceHostFilter, evidence, limit, offset, sort, addedFrom, addedTo, reloadToken, t]);
 
   useEffect(() => {
     hasArticlesRef.current = articles.length > 0;
@@ -366,6 +399,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
         source_host: sourceHostFilter !== 'all' ? sourceHostFilter : undefined,
         added_from: addedFrom || undefined,
         added_to: addedTo || undefined,
+        ...evidence,
         sort,
       });
       const objectUrl = URL.createObjectURL(blob);
@@ -529,7 +563,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
                   className="filter-select report-project-select"
                   value={projectFilter}
                   onChange={(e) => {
-                    setProjectFilter(e.target.value);
+                    changeProjectFilter(e.target.value);
                     // A "removed articles from X" notice belongs to the project it was about.
                     setNotice('');
                   }}
@@ -727,6 +761,22 @@ export default function ArticlesPage({ project = null, projectId = null, project
             </select>
           </div>
         </div>
+
+        <EvidenceFilterBar
+          evidence={evidence}
+          sentiment={sentiment}
+          run={evidenceRun}
+          onRemove={(key) => setEvidence((current) => {
+            const next = { ...current };
+            delete next[key];
+            return next;
+          })}
+          onRemoveSentiment={() => setSentiment('all')}
+          onClear={() => {
+            setEvidence({});
+            setSentiment('all');
+          }}
+        />
 
         <div className="admin-toolbar-row" style={{ justifyContent: 'space-between' }}>
           <div className="articles-toolbar-summary">

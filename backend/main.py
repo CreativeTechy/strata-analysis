@@ -74,7 +74,8 @@ from services.projects.projects_store import (
     set_project_users,
     update_project,
 )
-from services.intelligence.intelligence import get_project_intelligence, get_project_keyword_existence, normalize_period
+from services.intelligence.intelligence import PERIOD_DAYS, get_project_intelligence, get_project_keyword_existence, normalize_period
+from services.intelligence import evidence_links
 from services.articles.idea_comparisons import (
     create_comparison_fact, delete_comparison_fact, generate_idea_comparisons,
     get_idea_comparison, has_run_generation_attempt, list_idea_comparisons,
@@ -847,6 +848,40 @@ def delete_pipeline_run_endpoint(
     }
 
 
+def _resolve_article_evidence(user: dict, project_id: int | None, period: str | None, run_id: str | None, filters: dict):
+    """(project_id, EvidenceMatch | None) for an article listing/export.
+
+    A dashboard metric or chart selection opens the Articles page carrying
+    the dashboard's scope (`period`, or `run_id`) and the selected bucket
+    (`sentiment`, `platform`, `region`, ...). Those resolve through
+    evidence_links.resolve_evidence() - the same rows and bucketing the
+    dashboard counted - rather than through SQL column filters, so the page
+    lists exactly the articles behind the number. None when the request
+    carries no scope and no dimension beyond a plain `sentiment`, which stays
+    the ordinary column filter it always was.
+    """
+    dimensions = evidence_links.normalize_filters(filters)
+    period = (period or "").strip() or None
+    run_id = (run_id or "").strip() or None
+    if not (period or run_id or set(dimensions) - {"sentiment"}):
+        return project_id, None
+
+    if period and period not in PERIOD_DAYS:
+        raise HTTPException(status_code=400, detail=f"Unknown period '{period}'.")
+    if run_id:
+        run = get_pipeline_run(run_id)
+        if not run or run.get("project_id") is None:
+            raise HTTPException(status_code=404, detail="Analysis run not found.")
+        if project_id is not None and int(run["project_id"]) != int(project_id):
+            raise HTTPException(status_code=400, detail="That analysis run belongs to a different project.")
+        project_id = int(run["project_id"])
+    if project_id is None:
+        raise HTTPException(status_code=400, detail="A dashboard scope or chart filter needs a project_id.")
+
+    _ensure_project_visible(project_id, user)
+    return project_id, evidence_links.resolve_evidence(project_id, period=period, run_id=run_id, filters=dimensions)
+
+
 @app.get("/api/articles")
 def get_articles(
     search: str | None = None,
@@ -860,14 +895,32 @@ def get_articles(
     sort: str = "published.desc",
     added_from: str | None = None,
     added_to: str | None = None,
+    period: str | None = None,
+    run_id: str | None = None,
+    platform: str | None = None,
+    language: str | None = None,
+    region: str | None = None,
+    gender: str | None = None,
+    age_range: str | None = None,
+    segment: str | None = None,
+    trust: str | None = None,
+    emotion: str | None = None,
+    date: str | None = None,
     status: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     if project_id is not None:
         _ensure_project_visible(project_id, user)
-    return list_articles(
+    project_id, match = _resolve_article_evidence(user, project_id, period, run_id, {
+        "sentiment": sentiment, "platform": platform, "language": language, "region": region,
+        "gender": gender, "age_range": age_range, "segment": segment, "trust": trust,
+        "emotion": emotion, "date": date,
+    })
+    result = list_articles(
         search=search,
-        sentiment=sentiment,
+        # Inside an evidence scope the sentiment bucket was already applied
+        # by the resolver (against the run's snapshot, in run scope).
+        sentiment=None if match else sentiment,
         category=category,
         project_id=project_id,
         source_url=source_url,
@@ -877,8 +930,11 @@ def get_articles(
         sort=sort,
         added_from=added_from,
         added_to=added_to,
+        article_ids=match.article_ids if match else None,
         status=status,
     )
+    evidence_links.overlay_snapshots(result["articles"], match, (run_id or "").strip() or None)
+    return result
 
 
 @app.get("/api/articles/stats")
@@ -1193,10 +1249,30 @@ def export_articles_jsonl(
     sort: str = "published.desc",
     added_from: str | None = None,
     added_to: str | None = None,
+    period: str | None = None,
+    run_id: str | None = None,
+    platform: str | None = None,
+    language: str | None = None,
+    region: str | None = None,
+    gender: str | None = None,
+    age_range: str | None = None,
+    segment: str | None = None,
+    trust: str | None = None,
+    emotion: str | None = None,
+    date: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     if project_id is not None:
         _ensure_project_visible(project_id, user)
+    # Same evidence scope the listing applies, so exporting from an evidence
+    # link exports what the page shows. The export keeps each article's own
+    # stored analysis (no run-snapshot overlay): it is an article backup that
+    # must re-import losslessly, not a report of what one run concluded.
+    project_id, match = _resolve_article_evidence(user, project_id, period, run_id, {
+        "sentiment": sentiment, "platform": platform, "language": language, "region": region,
+        "gender": gender, "age_range": age_range, "segment": segment, "trust": trust,
+        "emotion": emotion, "date": date,
+    })
 
     def line_stream():
         # export_articles() is a generator, so rows are read a page at a time
@@ -1204,7 +1280,7 @@ def export_articles_jsonl(
         # carrying its full text and embedding) is ever held in memory at once.
         rows = export_articles(
             search=search,
-            sentiment=sentiment,
+            sentiment=None if match else sentiment,
             status=status,
             category=category,
             project_id=project_id,
@@ -1213,6 +1289,7 @@ def export_articles_jsonl(
             sort=sort,
             added_from=added_from,
             added_to=added_to,
+            article_ids=match.article_ids if match else None,
         )
         for row in rows:
             yield json.dumps(row, ensure_ascii=False, default=str) + "\n"

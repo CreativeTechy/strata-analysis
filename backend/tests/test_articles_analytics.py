@@ -87,5 +87,31 @@ class GetArticleStatsTests(unittest.TestCase):
         mock_search.assert_called()
 
 
+class FrequentConcernsTests(unittest.TestCase):
+    """The dashboard's "Top concerns" card reads frequent_concerns; it must
+    not be a filter over frequent_ideas' top-12 slice, or concerns ranked
+    below 12 more-repeated praise ideas vanish."""
+
+    def _row(self, article_id, ideas):
+        return {"id": article_id, "url": f"https://example.com/{article_id}", "title": f"A{article_id}",
+                "sentiment": "neutral", "insight_json": {"frequent_ideas": ideas}}
+
+    def test_concerns_ranked_below_the_top_twelve_ideas_are_kept(self):
+        rows = []
+        # 13 praise ideas, each repeated in 3 articles, outrank every concern.
+        for n in range(13):
+            for copy in range(3):
+                rows.append(self._row(n * 10 + copy, [{"idea": f"Praise {n}", "type": "praise"}]))
+        rows.append(self._row(900, [{"idea": "Checkout fails", "type": "complaint"}, {"idea": "Slow delivery", "type": "issue"}]))
+        rows.append(self._row(901, [{"idea": "Checkout fails", "type": "complaint"}, {"idea": "Add dark mode", "type": "suggestion"}]))
+
+        summary = articles_analytics._topic_summary(rows)
+
+        self.assertEqual(len(summary["frequent_ideas"]), 12)
+        self.assertFalse(any(idea["type"] in {"complaint", "issue"} for idea in summary["frequent_ideas"]))
+        self.assertEqual([idea["idea"] for idea in summary["frequent_concerns"]], ["Checkout fails", "Slow delivery"])
+        self.assertEqual(summary["frequent_concerns"][0]["frequency_estimate"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

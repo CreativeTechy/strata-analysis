@@ -157,6 +157,88 @@ describe('DashboardOverview', () => {
     await screen.findByText(/No cross-source comparisons yet/);
   });
 
+  it('remembers whether the detailed breakdowns were left open', async () => {
+    const { unmount } = renderDashboard();
+    fireEvent.click(screen.getByRole('button', { name: /Detailed breakdowns/ }));
+    expect(window.localStorage.getItem('dashboard-detailed-breakdowns-open')).toBe('open');
+    await screen.findByText(/No cross-source comparisons yet/);
+    unmount();
+
+    renderDashboard();
+    expect(screen.getByRole('button', { name: /Detailed breakdowns/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: 'Language distribution' })).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('points the breakdowns toggle at a panel that exists even while collapsed', async () => {
+    const { container } = renderDashboard();
+    const toggle = screen.getByRole('button', { name: /Detailed breakdowns/ });
+    const panel = container.querySelector(`#${toggle.getAttribute('aria-controls')}`);
+    expect(panel).not.toBeNull();
+    expect(panel).toHaveAttribute('hidden');
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('prefers the backend concern ranking over filtering the top-12 idea slice', async () => {
+    renderDashboard({
+      intelligence: {
+        ...INTELLIGENCE,
+        insights: {
+          ...INTELLIGENCE.insights,
+          frequent_ideas: [{ idea: 'Great customer support', type: 'praise', frequency_estimate: 5 }],
+          frequent_concerns: [{ idea: 'Refunds take weeks', type: 'complaint', frequency_estimate: 2 }],
+        },
+      },
+    });
+    expect(within(ideasCard()).getByText('Refunds take weeks')).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('starts the next project on page 1 of Top concerns', async () => {
+    const concerns = ['A', 'B', 'C', 'D', 'E'].map((letter, index) => ({ idea: `Concern ${letter}`, type: 'complaint', frequency_estimate: 10 - index }));
+    const withConcerns = (projectId) => ({ ...INTELLIGENCE, project_id: projectId, insights: { ...INTELLIGENCE.insights, frequent_ideas: concerns, frequent_concerns: concerns } });
+    const props = {
+      projects: [PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }],
+      onProjectChange: vi.fn(), period: '30d', onPeriodChange: vi.fn(), loading: false, error: null,
+      pipelineHealth: { lastRun: { status: 'success' }, lastFinished: null }, runs: [], selectedRunId: null, onRunChange: vi.fn(),
+    };
+    const { rerender } = render(<MemoryRouter><DashboardOverview {...props} selectedProjectId={1} intelligence={withConcerns(1)} /></MemoryRouter>);
+    fireEvent.click(within(ideasCard()).getByRole('button', { name: /Next/ }));
+    expect(within(ideasCard()).getByText('Concern D')).toBeInTheDocument();
+
+    rerender(<MemoryRouter><DashboardOverview {...props} selectedProjectId={2} intelligence={withConcerns(2)} /></MemoryRouter>);
+    expect(within(ideasCard()).getByText('Concern A')).toBeInTheDocument();
+    expect(within(ideasCard()).queryByText('Concern D')).not.toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
+  it('returns to Top concerns when the project changes', async () => {
+    const { rerender } = renderDashboard({ projects: [PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }] });
+    fireEvent.click(within(ideasCard()).getByRole('tab', { name: 'All ideas' }));
+    expect(within(ideasCard()).getByRole('heading', { name: 'Most talked-about ideas' })).toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <DashboardOverview
+          projects={[PROJECT, { id: 2, name: 'Beta', mode: 'opinion' }]}
+          selectedProjectId={2}
+          onProjectChange={vi.fn()}
+          period="30d"
+          onPeriodChange={vi.fn()}
+          intelligence={{ ...INTELLIGENCE, project_id: 2 }}
+          loading={false}
+          error={null}
+          pipelineHealth={{ lastRun: { status: 'success' }, lastFinished: null }}
+          runs={[]}
+          selectedRunId={null}
+          onRunChange={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(within(ideasCard()).getByRole('heading', { name: 'Top concerns' })).toBeInTheDocument();
+    await screen.findByText(/No cross-source comparisons yet/);
+  });
+
   it('labels the source trust card with the Sources tab tiers', async () => {
     renderDashboard();
     openDetailedBreakdowns();
@@ -197,5 +279,45 @@ describe('DashboardOverview', () => {
     openDetailedBreakdowns();
     expect(screen.getByText('لم يتم تقييم أي مصادر بعد.')).toBeInTheDocument();
     await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
+  });
+
+  // SM-107: every metric and chart selection is an evidence link that keeps
+  // the project and the dashboard's scope.
+  describe('evidence links', () => {
+    beforeEach(async () => { await i18n.changeLanguage('en'); });
+
+    function linkParams(link) {
+      return new URL(link.getAttribute('href'), 'http://x').searchParams;
+    }
+
+    it('opens a sentiment bucket in the same project and period', async () => {
+      renderDashboard({ intelligence: { ...INTELLIGENCE, insights: { ...INTELLIGENCE.insights, region_breakdown: [{ value: 'Gulf', total: 4 }] } } });
+      const params = linkParams(screen.getByTitle('Open the articles behind negative'));
+      expect(Object.fromEntries(params)).toEqual({ project_id: '1', period: '30d', sentiment: 'negative' });
+      // The distribution cards live in the collapsed "Detailed breakdowns".
+      openDetailedBreakdowns();
+      expect(Object.fromEntries(linkParams(screen.getByTitle('Open the articles behind Gulf')))).toEqual({ project_id: '1', period: '30d', region: 'Gulf' });
+      expect(Object.fromEntries(linkParams(screen.getByTitle('Open the articles behind Trusted')))).toEqual({ project_id: '1', period: '30d', trust: 'trusted' });
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
+
+    it('carries a selected run instead of the period', async () => {
+      renderDashboard({ selectedRunId: 'run-9', runs: [{ id: 'run-9', sequence_number: 4, finished_at: '2026-09-01T10:00:00Z' }] });
+      const params = linkParams(screen.getByTitle('Open the articles behind positive'));
+      expect(Object.fromEntries(params)).toEqual({ project_id: '1', run_id: 'run-9', sentiment: 'positive' });
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
+
+    it('links the headline metrics and leaves empty or folded buckets unlinked', async () => {
+      renderDashboard();
+      const analyzed = screen.getByRole('link', { name: /Analyzed articles: 10/ });
+      expect(Object.fromEntries(linkParams(analyzed))).toEqual({ project_id: '1', period: '30d' });
+      // mixed has 0 articles; the region fixture is the folded "other" slice.
+      openDetailedBreakdowns();
+      expect(screen.getByText('Other')).toBeInTheDocument();
+      expect(screen.queryByTitle('Open the articles behind mixed')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Open the articles behind Other')).not.toBeInTheDocument();
+      await screen.findByText(/No cross-source comparisons yet/);
+    });
   });
 });

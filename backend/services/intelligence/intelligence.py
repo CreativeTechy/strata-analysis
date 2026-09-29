@@ -462,6 +462,17 @@ def _fetch_coverage(project: dict, document_count: int) -> dict:
     }
 
 
+def is_sentiment_assessed(row: dict) -> bool:
+    """Whether a row counts toward the dashboard's aggregates: its sentiment
+    stage actually ran (not DEFAULT_ENRICHMENT's neutral placeholder). Rows
+    from before per-stage statuses existed fall back to analysis_status.
+    Shared with evidence_links.resolve_evidence() so the articles a chart
+    selection opens are exactly the ones it counted."""
+    return row.get("sentiment_status") == "ran" or (
+        "sentiment_status" not in row and row.get("analysis_status") in (None, "success")
+    )
+
+
 def get_project_intelligence(project: dict, period: str = "30d", run_id: str | None = None) -> dict:
     from services.articles.articles_analytics import _topic_summary
     from services.articles.articles_query import source_trust_summary_for_rows
@@ -470,11 +481,7 @@ def get_project_intelligence(project: dict, period: str = "30d", run_id: str | N
         all_rows = _fetch_project_rows(project["id"], run_id=run_id)
     else:
         all_rows = filter_rows_for_period(_fetch_project_rows(project["id"]), period)
-    rows = [
-        row for row in all_rows
-        if row.get("sentiment_status") == "ran"
-        or ("sentiment_status" not in row and row.get("analysis_status") in (None, "success"))
-    ]
+    rows = [row for row in all_rows if is_sentiment_assessed(row)]
     pipeline_runs = _fetch_pipeline_runs(project["id"])
     counts = Counter(str(row.get("sentiment") or "").lower() for row in rows)
     sentiment = {key: int(counts[key]) for key in ("positive", "negative", "neutral", "mixed")}
