@@ -181,6 +181,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedDocuments, setExpandedDocuments] = useState(() => new Set());
+  const [relevanceExpanded, setRelevanceExpanded] = useState(true);
   const [overrideDraft, setOverrideDraft] = useState(null);
   const [overrideSaving, setOverrideSaving] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState('');
@@ -454,60 +455,72 @@ export default function PipelineRunDetailPage({ projects = [] }) {
 
           {run.articles_screened > 0 || screenings.length > 0 ? (
             <div className="glass-card" style={{ marginBottom: 18 }}>
-              <div className="run-detail-relevance-header">
+              <button
+                type="button"
+                className="run-detail-relevance-header run-detail-collapsible-trigger"
+                onClick={() => setRelevanceExpanded((prev) => !prev)}
+                aria-expanded={relevanceExpanded}
+              >
                 <div>
-                  <h3 className="run-detail-section-title">{t('runDetail.relevance.title')}</h3>
+                  <h3 className="run-detail-section-title">
+                    {relevanceExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    {t('runDetail.relevance.title')}
+                  </h3>
                   <p className="run-detail-relevance-copy">
                     {t('runDetail.relevance.description')}
                     {run.screening_mode === 'observe' ? t('runDetail.relevance.observeNote') : ''}
                   </p>
                 </div>
                 <span className="run-detail-mode-badge"><ShieldCheck size={14} /> {run.screening_mode || 'off'}</span>
-              </div>
+              </button>
 
-              <div className="run-detail-relevance-stats">
-                <SummaryField label={t('runDetail.relevance.screened')}>{formatNumber(run.articles_screened || 0, locale)}</SummaryField>
-                <SummaryField label={t('runDetail.relevance.included')}>{formatNumber(run.articles_included || 0, locale)}</SummaryField>
-                <SummaryField label={t('runDetail.relevance.excluded')}>{formatNumber(run.articles_excluded || 0, locale)}</SummaryField>
-                <SummaryField label={t('runDetail.relevance.needsReview')}>{formatNumber(run.articles_needs_review || 0, locale)}</SummaryField>
-              </div>
+              {relevanceExpanded ? (
+                <>
+                  <div className="run-detail-relevance-stats">
+                    <SummaryField label={t('runDetail.relevance.screened')}>{formatNumber(run.articles_screened || 0, locale)}</SummaryField>
+                    <SummaryField label={t('runDetail.relevance.included')}>{formatNumber(run.articles_included || 0, locale)}</SummaryField>
+                    <SummaryField label={t('runDetail.relevance.excluded')}>{formatNumber(run.articles_excluded || 0, locale)}</SummaryField>
+                    <SummaryField label={t('runDetail.relevance.needsReview')}>{formatNumber(run.articles_needs_review || 0, locale)}</SummaryField>
+                  </div>
 
-              {overrideMessage ? <div className="run-detail-override-message" dir="auto">{overrideMessage}</div> : null}
-              {screenings.length ? (
-                <div className="table-scroll run-detail-screening-scroll">
-                  <table className="run-detail-source-table run-detail-screening-table">
-                    <thead>
-                      <tr>
-                        <th>{t('runDetail.relevance.columns.article')}</th>
-                        <th>{t('runDetail.relevance.columns.decision')}</th>
-                        <th>{t('runDetail.relevance.columns.similarity')}</th>
-                        <th>{t('runDetail.relevance.columns.method')}</th>
-                        <th>{t('runDetail.relevance.columns.reason')}</th>
-                        {canReview ? <th>{t('runDetail.relevance.columns.override')}</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {screenings.map((item) => (
-                        <tr key={item.article_id}>
-                          <td dir="auto"><strong>{item.title || t('shared.articleFallback', { id: item.article_id })}</strong><small>{item.source || ''}</small></td>
-                          <td><span className={`run-detail-decision run-detail-decision-${item.decision}`}>{t(`runDetail.relevance.decisions.${item.decision}`, item.decision.replace('_', ' '))}</span></td>
-                          <td>{item.similarity_score == null ? '—' : Number(item.similarity_score).toFixed(3)}</td>
-                          <td>{item.decision_source || '—'}</td>
-                          <td dir="auto">{item.explanation || '—'}</td>
-                          {canReview ? (
-                            <td>
-                              <div className="run-detail-override-actions">
-                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'include', reason: '' })}>{t('runDetail.relevance.include')}</button>
-                                <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'exclude', reason: '' })}>{t('runDetail.relevance.exclude')}</button>
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <div className="run-detail-fallback">{t('runDetail.relevance.fallback')}</div>}
+                  {overrideMessage ? <div className="run-detail-override-message" dir="auto">{overrideMessage}</div> : null}
+                  {screenings.length ? (
+                    <div className="table-scroll run-detail-screening-scroll">
+                      <table className="run-detail-source-table run-detail-screening-table">
+                        <thead>
+                          <tr>
+                            <th>{t('runDetail.relevance.columns.article')}</th>
+                            <th>{t('runDetail.relevance.columns.decision')}</th>
+                            <th>{t('runDetail.relevance.columns.similarity')}</th>
+                            <th>{t('runDetail.relevance.columns.method')}</th>
+                            <th>{t('runDetail.relevance.columns.reason')}</th>
+                            {canReview ? <th>{t('runDetail.relevance.columns.override')}</th> : null}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {screenings.map((item) => (
+                            <tr key={item.article_id}>
+                              <td dir="auto"><strong>{item.title || t('shared.articleFallback', { id: item.article_id })}</strong><small>{item.source || ''}</small></td>
+                              <td><span className={`run-detail-decision run-detail-decision-${item.decision}`}>{t(`runDetail.relevance.decisions.${item.decision}`, item.decision.replace('_', ' '))}</span></td>
+                              <td>{item.similarity_score == null ? '—' : Number(item.similarity_score).toFixed(3)}</td>
+                              <td>{item.decision_source || '—'}</td>
+                              <td dir="auto">{item.explanation || '—'}</td>
+                              {canReview ? (
+                                <td>
+                                  <div className="run-detail-override-actions">
+                                    <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'include', reason: '' })}>{t('runDetail.relevance.include')}</button>
+                                    <button type="button" className="btn-secondary" onClick={() => setOverrideDraft({ articleId: item.article_id, title: item.title, decision: 'exclude', reason: '' })}>{t('runDetail.relevance.exclude')}</button>
+                                  </div>
+                                </td>
+                              ) : null}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <div className="run-detail-fallback">{t('runDetail.relevance.fallback')}</div>}
+                </>
+              ) : null}
             </div>
           ) : null}
 
