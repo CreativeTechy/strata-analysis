@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Settings, RotateCcw, Languages, Brain, Radar, Smile, Tags, Cpu, Timer, Check,
-  Users, Box, HardDrive, Gauge, Building2, Filter, CheckCircle2, XCircle, Link,
+  Users, Box, HardDrive, Gauge, Building2, Filter, CheckCircle2, XCircle, Link, ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import { listRuntimeSettings, updateRuntimeSetting, resetRuntimeSetting } from '../api/adminApi.js';
@@ -59,6 +59,19 @@ const ICONS = {
   EVIDENCE_CLAIM_SIMILARITY_THRESHOLD: Link,
 };
 
+// Persisted the same way Sidebar.jsx remembers its own nav sections - open by
+// default, collapsed only once the operator has explicitly closed a section.
+const SECTION_STATE_KEY = 'strata.settingsSections';
+
+function loadSectionState() {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(SECTION_STATE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation(['admin', 'common']);
   const { hasPermission } = useAuth();
@@ -70,6 +83,19 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
   const [savingKey, setSavingKey] = useState(null);
   const [savedKey, setSavedKey] = useState(null);
+  const [openSections, setOpenSections] = useState(loadSectionState);
+
+  const isSectionOpen = (id) => openSections[id] !== false;
+
+  const toggleSection = (id) => {
+    setOpenSections((prev) => {
+      const next = { ...prev, [id]: !(prev[id] !== false) };
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  };
 
   const load = async () => {
     setLoading(true);
@@ -143,21 +169,34 @@ export default function SettingsPage() {
       )}
 
       <div className="settings-section">
-        <h2 className="settings-section-title">{t('settings.groups.preferences')}</h2>
-        <div className="glass-card settings-card">
-          <div className="settings-row">
-            <div className="settings-row-icon">
-              <Languages size={18} />
-            </div>
-            <div className="settings-row-body">
-              <div className="settings-row-title">{t('settings.language.label')}</div>
-              <p className="settings-row-description">{t('settings.language.description')}</p>
-            </div>
-            <div className="settings-row-control">
-              <LanguageSwitcher />
+        <button
+          type="button"
+          className="settings-section-toggle"
+          onClick={() => toggleSection('preferences')}
+          aria-expanded={isSectionOpen('preferences')}
+        >
+          <h2 className="settings-section-title">{t('settings.groups.preferences')}</h2>
+          <ChevronDown
+            size={16}
+            className={`settings-section-chevron${isSectionOpen('preferences') ? '' : ' settings-section-chevron-closed'}`}
+          />
+        </button>
+        {isSectionOpen('preferences') && (
+          <div className="glass-card settings-card">
+            <div className="settings-row">
+              <div className="settings-row-icon">
+                <Languages size={18} />
+              </div>
+              <div className="settings-row-body">
+                <div className="settings-row-title">{t('settings.language.label')}</div>
+                <p className="settings-row-description">{t('settings.language.description')}</p>
+              </div>
+              <div className="settings-row-control">
+                <LanguageSwitcher />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {loading && (
@@ -169,9 +208,19 @@ export default function SettingsPage() {
       {!loading && GROUPS.map((group) => {
         const rows = group.keys.filter((key) => settings[key]);
         if (rows.length === 0) return null;
+        const open = isSectionOpen(group.key);
         return (
           <div className="settings-section" key={group.key}>
-            <h2 className="settings-section-title">{t(`settings.groups.${group.key}`)}</h2>
+            <button
+              type="button"
+              className="settings-section-toggle"
+              onClick={() => toggleSection(group.key)}
+              aria-expanded={open}
+            >
+              <h2 className="settings-section-title">{t(`settings.groups.${group.key}`)}</h2>
+              <ChevronDown size={16} className={`settings-section-chevron${open ? '' : ' settings-section-chevron-closed'}`} />
+            </button>
+            {open && (
             <div className="glass-card settings-card">
               {rows.map((key) => {
                 const setting = settings[key];
@@ -274,6 +323,7 @@ export default function SettingsPage() {
                 );
               })}
             </div>
+            )}
           </div>
         );
       })}

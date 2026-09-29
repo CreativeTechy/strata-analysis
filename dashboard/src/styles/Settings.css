@@ -13,7 +13,39 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-light);
-  margin: 0 0 10px 4px;
+  margin: 0;
+}
+
+.settings-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.settings-section-toggle:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.settings-section-toggle:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.settings-section-chevron {
+  flex-shrink: 0;
+  color: var(--text-light);
+  transition: transform 0.2s ease;
+}
+
+.settings-section-chevron-closed {
+  transform: rotate(-90deg);
 }
 
 .settings-card {
