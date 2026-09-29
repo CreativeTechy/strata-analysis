@@ -45,35 +45,35 @@ services:
   # backend/.env's own localhost default (which would resolve to the backend
   # container itself). Point OLLAMA_CHAT_BASE_URL at a remote tunnel (e.g.
   # ngrok in front of Ollama on another machine) to use that instead.
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   volumes:
-  #     - ollama-data:/root/.ollama
-  #   expose:
-  #     - "11434"
-  #   healthcheck:
-  #     test: ["CMD", "ollama", "list"]
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 30
-  #   restart: unless-stopped
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
 
   # One-shot: pulls OLLAMA_CHAT_MODEL (backend/.env, default llama3.1) into
   # the `ollama-data` volume once the server is healthy, then exits. Re-run
   # via `docker compose up ollama-pull` after changing the model -
   # already-pulled models are a no-op.
-  # ollama-pull:
-  #   image: ollama/ollama:latest
-  #   env_file:
-  #     - ./backend/.env
-  #   environment:
-  #     - OLLAMA_HOST=http://ollama:11434
-  #   depends_on:
-  #     ollama:
-  #       condition: service_healthy
-  #   entrypoint: ["/bin/sh", "-c"]
-  #   command: ["ollama pull \"$${OLLAMA_CHAT_MODEL:-llama3.1}\""]
-  #   restart: "no"
+  ollama-pull:
+    image: ollama/ollama:latest
+    env_file:
+      - ./backend/.env
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$${OLLAMA_CHAT_MODEL:-llama3.1}\""]
+    restart: "no"
 
   frontend:
     build:

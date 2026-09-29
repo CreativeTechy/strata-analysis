@@ -18,6 +18,7 @@ from services.reports.pdf_renderer import (
     _top_articles_html,
     _trust_tag_html,
     render_competitor_report_pdf,
+    render_consolidated_competitor_report_pdf,
     render_summary_pdf,
 )
 
@@ -288,6 +289,82 @@ class RenderCompetitorReportPdfTests(unittest.TestCase):
             doc.close()
         self.assertIn("alert(1)", text)
         self.assertIn("bold", text)
+
+
+RUN = {"id": 11, "project_id": 1, "sequence_number": 2, "started_at": "2026-03-05T09:00:00+00:00",
+       "finished_at": "2026-03-05T12:00:00+00:00"}
+
+SECOND_FINDING = {
+    **MINIMAL_FINDING, "id": 8, "competitor_id": 4, "competitor_name": "Beta Bites",
+    "headline": "Cut prices across the board",
+}
+
+
+class RenderConsolidatedCompetitorReportPdfTests(unittest.TestCase):
+    def test_renders_valid_pdf_bytes_for_a_run_with_findings(self):
+        pdf_bytes = render_consolidated_competitor_report_pdf(
+            RUN, [MINIMAL_FINDING, SECOND_FINDING], {3: [], 4: []},
+        )
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_missing_optional_keys_do_not_crash(self):
+        pdf_bytes = render_consolidated_competitor_report_pdf({}, [], {})
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_cover_page_lists_every_competitor_and_each_gets_its_own_section(self):
+        pdf_bytes = render_consolidated_competitor_report_pdf(
+            RUN, [MINIMAL_FINDING, SECOND_FINDING], {3: [], 4: []},
+        )
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        self.assertIn("Analysis #2", text)
+        self.assertIn("Acme Foods", text)
+        self.assertIn("Beta Bites", text)
+        self.assertIn("Launched a new delivery tier", text)
+        self.assertIn("Cut prices across the board", text)
+
+    def test_rejected_evidence_is_scoped_to_its_own_competitor(self):
+        """A competitor with no rejected evidence must not show another
+        competitor's filtered-out articles - `rejected_by_competitor` is
+        keyed by competitor_id and must be looked up per finding, not
+        flattened across the whole run."""
+        rejected_by_competitor = {
+            3: [{"id": 1, "url": "https://example.com/a", "title": "Unrelated to Acme",
+                 "source": "example.com", "rejected_reason": "not_about_competitor", "dated": "2026-01-01"}],
+            4: [],
+        }
+        pdf_bytes = render_consolidated_competitor_report_pdf(
+            RUN, [MINIMAL_FINDING, SECOND_FINDING], rejected_by_competitor,
+        )
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            pages_text = [page.get_text() for page in doc]
+        finally:
+            doc.close()
+        full_text = "".join(pages_text)
+        self.assertIn("Unrelated to Acme", full_text)
+        # Beta Bites' own report section (its actual header, not the cover
+        # page's TOC mention of the name) must not carry Acme's
+        # rejected-evidence row.
+        beta_section = full_text[full_text.index("Competitor Report - Beta Bites"):]
+        self.assertNotIn("Unrelated to Acme", beta_section)
+
+    def test_document_derived_content_is_escaped_not_interpreted(self):
+        finding = {**MINIMAL_FINDING, "whats_up": "<script>alert(1)</script>"}
+        pdf_bytes = render_consolidated_competitor_report_pdf(RUN, [finding], {3: []})
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        self.assertIn("alert(1)", text)
 
 
 class ProcessingLocationLabelTests(unittest.TestCase):
