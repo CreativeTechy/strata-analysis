@@ -142,10 +142,6 @@ body::after {
   margin-bottom: 12px;
 }
 
-.sidebar-language-switcher {
-  margin-top: 4px;
-}
-
 .bg-pattern {
   position: fixed;
   inset: 0;

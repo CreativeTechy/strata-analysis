@@ -1,0 +1,199 @@
+/* Settings page - card/row layout for the small runtime-settings allowlist
+   (see components/SettingsPage.jsx). Shared admin-* primitives (page shell,
+   header, glass-card, panel-chip) live in styles/index.css; this file only
+   adds the row/segmented-control layout specific to this page. */
+
+.settings-section {
+  margin-bottom: 22px;
+}
+
+.settings-section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+  margin: 0;
+}
+
+.settings-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.settings-section-toggle:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.settings-section-toggle:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.settings-section-chevron {
+  flex-shrink: 0;
+  color: var(--text-light);
+  transition: transform 0.2s ease;
+}
+
+.settings-section-chevron-closed {
+  transform: rotate(-90deg);
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 14px;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.settings-row-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(46, 134, 222, 0.1);
+  color: var(--secondary-color);
+}
+
+.settings-row-body {
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+
+.settings-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.settings-row-description {
+  margin: 4px 0 0;
+  color: var(--text-light);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  max-width: 62ch;
+}
+
+.settings-row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.settings-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-row-actions .btn-primary,
+.settings-row-actions .btn-secondary {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.settings-number-input {
+  width: 90px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.8);
+  font-family: var(--font-sans);
+}
+
+.settings-text-input {
+  width: 220px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.8);
+  font-family: var(--font-sans);
+}
+
+/* Same pill-group visual language as .language-switcher, reused here for the
+   enum settings (provider pickers) so both read as the same kind of control. */
+.settings-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.settings-segmented-option {
+  border: 0;
+  background: transparent;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.settings-segmented-option:hover:not(:disabled) {
+  color: var(--text-dark);
+}
+
+.settings-segmented-option.is-active {
+  background: white;
+  color: var(--text-dark);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.settings-segmented-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.settings-saved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(46, 213, 115, 0.14);
+  color: #2ed573;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .settings-row {
+    flex-wrap: wrap;
+  }
+
+  .settings-row-control,
+  .settings-row-actions {
+    flex-basis: 100%;
+    margin-inline-start: 54px;
+  }
+}

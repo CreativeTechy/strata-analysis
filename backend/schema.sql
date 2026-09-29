@@ -1298,7 +1298,9 @@ insert into public.permissions (key, description) values
     ('roles.view', 'View roles and their permissions'),
     ('roles.create', 'Create new roles'),
     ('roles.update', 'Edit roles and their permission assignments'),
-    ('roles.delete', 'Delete roles')
+    ('roles.delete', 'Delete roles'),
+    ('settings.view', 'View runtime settings'),
+    ('settings.update', 'Change runtime settings')
 on conflict (key) do nothing;
 
 insert into public.roles (name, description, is_system, full_access) values

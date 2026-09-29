@@ -13,6 +13,7 @@ import {
   Users,
   ShieldCheck,
   Link2,
+  Settings,
   LogOut,
   ChevronsLeft,
   ChevronsRight,
@@ -21,7 +22,6 @@ import {
 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth.js';
-import LanguageSwitcher from './LanguageSwitcher.jsx';
 import { transferableIntelligenceScope } from '../lib/intelligenceScope.js';
 
 // The two experiences answer different questions and are kept visibly apart:
@@ -68,6 +68,7 @@ function buildNavSections(t) {
         { to: '/admin/users', label: t('items.users'), icon: Users, permission: 'users.view' },
         { to: '/admin/roles', label: t('items.roles'), icon: ShieldCheck, permission: 'roles.view' },
         { to: '/admin/project-linkage', label: t('items.projectAccess'), icon: Link2, permission: 'projects.link_users' },
+        { to: '/admin/settings', label: t('items.settings'), icon: Settings, permission: 'settings.view' },
       ],
     },
   ];
@@ -221,8 +222,6 @@ export default function Sidebar({
           );
         })}
       </nav>
-
-      {!showCollapsed && <LanguageSwitcher className="sidebar-language-switcher" />}
 
       {user && (
         <div className="sidebar-profile">
