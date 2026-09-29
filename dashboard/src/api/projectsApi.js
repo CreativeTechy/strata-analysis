@@ -45,7 +45,12 @@ async function request(path, { method = 'GET', body, signal } = {}) {
  *  "this genuinely took too long" (show a message) apart in their catch.
  *  Kept local to the two idea-comparison calls that use it below rather than
  *  folded into request() - those are the only calls here that can run an
- *  open-ended LLM batch server-side; the rest are ordinary CRUD. */
+ *  open-ended LLM batch server-side; the rest are ordinary CRUD.
+ *
+ *  Returns `{ signal, cancel }` rather than just the signal - the caller
+ *  MUST call `cancel()` once its request settles (success or failure), or
+ *  the timer keeps running for the full `ms` on every completed request
+ *  instead of just the ones that actually stall. */
 function withDeadline(signal, ms) {
   const controller = new AbortController();
   if (signal) {
@@ -56,8 +61,7 @@ function withDeadline(signal, ms) {
     () => controller.abort(new DOMException('The request took too long and was stopped.', 'TimeoutError')),
     ms,
   );
-  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
-  return controller.signal;
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
 }
 
 // Comfortably above the backend's own IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS
@@ -147,10 +151,16 @@ export const setSourceTrust = (projectId, { key, type, tier, reason }) => (
  *  (an LLM failure during `regenerate`) alongside whatever was already
  *  cached - returns { ok, data } so the caller can show both. */
 export async function getIdeaComparisons(projectId, { regenerate, run_id } = {}, signal) {
-  const deadline = regenerate ? withDeadline(signal, IDEA_COMPARISONS_REGENERATE_TIMEOUT_MS) : signal;
-  const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate, run_id })}`, { signal: deadline });
-  const data = await response.json().catch(() => ({}));
-  return { ok: response.ok && !data?.error, data };
+  const deadline = regenerate ? withDeadline(signal, IDEA_COMPARISONS_REGENERATE_TIMEOUT_MS) : null;
+  try {
+    const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate, run_id })}`, {
+      signal: deadline ? deadline.signal : signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok && !data?.error, data };
+  } finally {
+    deadline?.cancel();
+  }
 }
 
 export const getIdeaComparison = (projectId, clusterId, { run_id } = {}, signal) =>
@@ -161,10 +171,16 @@ export const updateIdeaComparisonFact = (projectId, clusterId, factId, body) =>
   request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'PUT', body });
 export const deleteIdeaComparisonFact = (projectId, clusterId, factId) =>
   request(`/${projectId}/idea-comparisons/${clusterId}/facts/${factId}`, { method: 'DELETE' });
-export const regenerateIdeaComparison = (projectId, clusterId, { run_id } = {}) =>
-  request(`/${projectId}/idea-comparisons/${clusterId}/regenerate${query({ run_id })}`, {
-    method: 'POST', signal: withDeadline(undefined, IDEA_COMPARISON_REGENERATE_TIMEOUT_MS),
-  });
+export async function regenerateIdeaComparison(projectId, clusterId, { run_id } = {}) {
+  const deadline = withDeadline(undefined, IDEA_COMPARISON_REGENERATE_TIMEOUT_MS);
+  try {
+    return await request(`/${projectId}/idea-comparisons/${clusterId}/regenerate${query({ run_id })}`, {
+      method: 'POST', signal: deadline.signal,
+    });
+  } finally {
+    deadline.cancel();
+  }
+}
 
 /** Unlike the rest of this module, a non-2xx here just means "couldn't reach
  *  the keyword-existence route at all" - the thrown message is a generic
