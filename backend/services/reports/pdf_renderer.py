@@ -132,6 +132,9 @@ table.bars td { border: none; padding: 3px 4px; }
 .comparison-idea { font-size: 11px; font-weight: bold; margin: 0 0 3px 0; }
 .divergence-tag { display: inline; padding: 1px 5px; border-radius: 3px;
                   font-size: 8.5px; color: #ffffff; }
+
+.consolidated-section { page-break-before: always; }
+.toc-item { font-size: 10px; margin: 3px 0; }
 """
 
 
@@ -699,4 +702,63 @@ def render_competitor_report_pdf(finding: dict, rejected_evidence: list[dict]) -
     hand-off from this page gets the same RTL/Arabic-safe layout as the
     Reports page's own export."""
     html_doc = _build_competitor_report_html(finding, rejected_evidence)
+    return _render_story_pdf(html_doc)
+
+
+def _consolidated_cover_html(run: dict, findings: list[dict]) -> str:
+    """Cover page for the consolidated PDF: which run this covers and a table
+    of contents naming every competitor whose report follows, so a reader
+    handed a 30-page combined PDF can find one competitor without scrolling."""
+    run = run or {}
+    sequence = run.get("sequence_number")
+    title = f"Analysis #{sequence}" if sequence is not None else "Competitor Analysis"
+    generated_at = _fmt_iso(run.get("finished_at") or run.get("started_at"))
+
+    toc_items = "".join(
+        f'<p class="toc-item" dir="auto">&bull; {_esc(item.get("competitor_name") or "Unknown competitor")} '
+        f'- {_esc(item.get("headline") or "")}</p>'
+        for item in findings
+    )
+    if not toc_items:
+        toc_items = '<p class="muted">No findings in this run.</p>'
+
+    return f"""
+<h1>Consolidated Competitor Report - {_esc(title)}</h1>
+<p class="subtitle">Run finished: {generated_at}</p>
+<p class="subtitle">Competitors covered: {_fmt_num(len(findings))}</p>
+<h2>Contents</h2>
+{toc_items}
+"""
+
+
+def _build_consolidated_competitor_report_html(
+    run: dict, findings: list[dict], rejected_by_competitor: dict[int, list[dict]],
+) -> str:
+    findings = findings or []
+    sections = [_consolidated_cover_html(run, findings)]
+    for finding in findings:
+        rejected = rejected_by_competitor.get(finding.get("competitor_id")) or []
+        sections.append(
+            '<div class="consolidated-section">'
+            + _competitor_header_html(finding)
+            + _competitor_body_html(finding)
+            + _competitor_appendix_html(finding, rejected)
+            + "</div>"
+        )
+    return f"<html><body>{''.join(sections)}</body></html>"
+
+
+def render_consolidated_competitor_report_pdf(
+    run: dict, findings: list[dict], rejected_by_competitor: dict[int, list[dict]],
+) -> bytes:
+    """Renders every competitor finding from one analysis run as a single
+    combined PDF - a cover page/table of contents followed by one full
+    competitor report per finding (each starting on its own page), reusing
+    the same per-competitor sections as render_competitor_report_pdf so the
+    consolidated PDF and the single-finding PDF never drift apart. `run` is
+    analysis_runs_store.get_run()'s dict, `findings` is
+    competitor_analysis.list_findings(..., analysis_run_id=run_id)'s list,
+    and `rejected_by_competitor` maps competitor_id -> that competitor's
+    competitor_analysis.rejected_evidence() list."""
+    html_doc = _build_consolidated_competitor_report_html(run, findings, rejected_by_competitor)
     return _render_story_pdf(html_doc)

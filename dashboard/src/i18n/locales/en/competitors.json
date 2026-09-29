@@ -228,7 +228,12 @@
     "emptyNoCompetitorsBody": "No competitors are tracked yet. Head to the Competitors page to re-read documents and find the companies they are about.",
     "goToCompetitors": "Go to competitors",
     "analysisRunLabel": "Analysis #{{number}}: {{date}}",
-    "analysisRunFallback": "Run"
+    "analysisRunFallback": "Run",
+    "exportRunReport": {
+      "title": "Export every competitor report from this analysis run as one PDF",
+      "button": "Export consolidated report (PDF)",
+      "preparing": "Preparing..."
+    }
   },
   "competitorsPage": {
     "titleSuffix": "Competitors",

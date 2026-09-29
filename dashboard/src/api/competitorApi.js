@@ -167,6 +167,23 @@ export async function exportFindingReportPdf(findingId) {
   return response.blob();
 }
 
+/** Competitor Workspace's "Export consolidated report (PDF)" button - every
+ *  finding from one analysis run combined into a single PDF. Same Blob
+ *  contract as exportFindingReportPdf() above. */
+export async function exportAnalysisRunReportPdf(studyId, runId) {
+  const response = await fetch(`${BASE}/studies/${studyId}/analysis-runs/${runId}/report.pdf`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data?.detail || data?.error || `Failed to export the consolidated report (${response.status})`);
+    error.detail = data?.detail || data?.error || null;
+    throw error;
+  }
+  return response.blob();
+}
+
 // --- shared presentation helpers ------------------------------------------
 export const SIZE_TIER_LABELS = {
   enterprise: 'Enterprise',

@@ -597,6 +597,45 @@ def export_finding_report_pdf(finding_id: int, user: dict = Depends(require_perm
     )
 
 
+@router.post("/studies/{project_id}/analysis-runs/{run_id}/report.pdf")
+def export_analysis_run_report_pdf(
+    project_id: int, run_id: int, user: dict = Depends(require_permission("competitors.view")),
+):
+    """Competitor Workspace's "Export consolidated report (PDF)" button - every
+    finding from one analysis run combined into a single PDF (cover/table of
+    contents plus one full competitor report per finding), reusing the same
+    local, no-network render path as the single-finding export."""
+    _project_or_404(project_id, user)
+    run = analysis_runs_store.get_run(run_id)
+    if not run or run["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Analysis run not found.")
+
+    findings = competitor_analysis.list_findings(project_id, analysis_run_id=run_id)
+    if not findings:
+        raise HTTPException(status_code=400, detail="This run has no findings to export yet.")
+
+    rejected_by_competitor = {
+        competitor_id: competitor_analysis.rejected_evidence(competitor_id)
+        for competitor_id in {f["competitor_id"] for f in findings}
+    }
+
+    from services.reports.pdf_renderer import render_consolidated_competitor_report_pdf
+
+    try:
+        pdf_bytes = render_consolidated_competitor_report_pdf(run, findings, rejected_by_competitor)
+    except Exception:
+        logger.exception("Failed to render consolidated competitor report PDF for run %s", run_id)
+        raise HTTPException(status_code=500, detail="Failed to generate the consolidated report PDF.")
+
+    filename = f"competitor-analysis-{run.get('sequence_number') or run_id}-consolidated.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/findings/{finding_id}/validate")
 def validate_finding(finding_id: int, payload: dict, user: dict = Depends(require_permission("competitors.manage"))):
     existing = competitor_analysis.get_finding(finding_id)
