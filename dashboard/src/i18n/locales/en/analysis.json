@@ -101,6 +101,7 @@
     "backLink": "Back to Analysis Runs",
     "loading": "Loading run details...",
     "loadFailed": "Failed to load run details.",
+    "stopRun": "Stop this run",
     "summary": {
       "project": "Project",
       "status": "Status",

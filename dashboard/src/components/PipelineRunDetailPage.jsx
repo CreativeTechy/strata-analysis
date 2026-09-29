@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
+  Ban,
   Database,
   Loader2,
   AlertTriangle,
@@ -16,7 +17,7 @@ import {
   Sparkles,
   ShieldCheck,
 } from 'lucide-react';
-import { getPipelineRun, setArticleRelevanceOverride } from '../api/pipelineRunsApi.js';
+import { getPipelineRun, setArticleRelevanceOverride, stopPipelineRun } from '../api/pipelineRunsApi.js';
 import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime as formatLocaleDateTime, formatNumber } from '../lib/i18nFormat.js';
@@ -30,12 +31,21 @@ function prettyStage(t, stage) {
   return stage;
 }
 
+const ACTIVE_STATUSES = ['queued', 'running'];
+
 function stageColor(status) {
   if (status === 'success') return '#2ed573';
   if (status === 'failed') return '#ff4757';
   if (status === 'running') return '#ffb13b';
   if (status === 'cancelled') return '#9aa0aa';
   return '#9aa0aa';
+}
+
+function statusIcon(status) {
+  if (status === 'success') return CircleCheck;
+  if (status === 'failed') return CircleAlert;
+  if (status === 'cancelled') return Ban;
+  return CircleAlert;
 }
 
 // queued/running/success/failed/cancelled are stored run-status enum values -
@@ -175,6 +185,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   const [overrideDraft, setOverrideDraft] = useState(null);
   const [overrideSaving, setOverrideSaving] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState('');
+  const [stopping, setStopping] = useState(false);
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -246,6 +257,23 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   const total = run ? stageDuration(run.started_at, run.finished_at) : null;
   const projectName = projectNameForRun(run, projectsById, t);
 
+  const handleStopRun = async () => {
+    if (!run) return;
+    setStopping(true);
+    setError('');
+    try {
+      await stopPipelineRun(run.id);
+      const data = await getPipelineRun(runId);
+      setRun(data?.run || null);
+      setDocuments(Array.isArray(data?.documents) ? data.documents : []);
+      setScreenings(Array.isArray(data?.screenings) ? data.screenings : []);
+    } catch (err) {
+      setError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('runsList.stopRunFailed')));
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const saveOverride = async () => {
     if (!overrideDraft || !overrideDraft.reason.trim()) return;
     setOverrideSaving(true);
@@ -303,6 +331,42 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                 </div>
               </div>
             ))}
+            {ACTIVE_STATUSES.includes(run.status) ? (
+              <div
+                className="admin-stat-card"
+                style={{ border: '1px solid rgba(255, 71, 87, 0.28)', background: 'rgba(255, 71, 87, 0.05)' }}
+              >
+                <div className="admin-stat-icon" style={{ background: 'rgba(255, 71, 87, 0.14)', color: '#ff4757' }}>
+                  <Ban size={18} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <span>{t('runDetail.stopRun')}</span>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    disabled={stopping}
+                    onClick={handleStopRun}
+                    style={{ width: '100%', padding: '7px 14px', fontSize: '0.8rem', marginTop: 2 }}
+                  >
+                    {stopping ? <Loader2 size={14} className="spin" /> : <Ban size={14} />}
+                    {stopping ? t('runsList.stopping') : t('runsList.stop')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="admin-stat-card">
+                <div className="admin-stat-icon" style={{ background: `${stageColor(run.status)}1f`, color: stageColor(run.status) }}>
+                  {(() => {
+                    const StatusIcon = statusIcon(run.status);
+                    return <StatusIcon size={18} />;
+                  })()}
+                </div>
+                <div>
+                  <span>{t('runDetail.summary.status')}</span>
+                  <strong style={{ fontSize: '1rem' }}>{runStatusLabel(t, run.status)}</strong>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="glass-card" style={{ marginBottom: 18 }}>
