@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
@@ -727,6 +728,20 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
     clusters, either across the whole project (run_id=None) or scoped to one
     analysis run's articles (run_id set). Returns how many were written.
 
+    Thin wrapper around generate_idea_comparisons_detailed() that keeps this
+    function's long-standing int return for its other callers
+    (pipeline._regenerate_idea_comparisons, competitor_analysis's mirror,
+    reports/report_data.py) - only main.py's regenerate endpoint needs the
+    richer status, so it calls the detailed version directly.
+    """
+    return generate_idea_comparisons_detailed(project_id, run_id=run_id)["written"]
+
+
+def generate_idea_comparisons_detailed(project_id: int, run_id: str | None = None) -> dict:
+    """Does the actual work for generate_idea_comparisons() above; returns
+    {"written", "total", "truncated"} so a caller (main.py's regenerate
+    endpoint) can report a clean partial result rather than just a count.
+
     An LLMError (bad key, provider unreachable, ...) is deliberately NOT
     caught here - it propagates to the caller exactly like
     competitor_analysis.generate_findings does, since it means the provider
@@ -734,18 +749,40 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
     to say". Whatever was already written to idea_comparisons in this call
     stays, since each cluster is saved as soon as it is synthesized. Note
     that the run-scoped "already attempted" marker below is only reached once
-    every cluster has synthesized successfully - a provider failure partway
-    through leaves it unmarked, so the next view retries rather than caching
-    a transient outage as "nothing to show".
+    every cluster has synthesized successfully (and the time budget wasn't
+    hit) - a provider failure or a truncation partway through leaves it
+    unmarked, so the next view retries rather than caching a transient outage
+    or an incomplete pass as "nothing to show".
+
+    "Truncated" is a wall-clock budget on the whole loop
+    (IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS), not a per-call timeout -
+    chat_completion already enforces its own per-call timeout. It's checked
+    between clusters, not mid-call, so a run that hits it still leaves every
+    already-written cluster in a consistent, fully-synthesized state.
     """
+    label = run_id or "<project-wide>"
     if not config.DATABASE_URL:
-        return 0
+        return {"written": 0, "total": 0, "truncated": False}
 
     rows = _cluster_candidates(project_id, config.IDEA_COMPARISON_MAX_CLUSTERS, run_id=run_id)
     clusters = _qualifying_clusters(_group_clusters(rows), config.IDEA_COMPARISON_MAX_CLUSTERS)
+    total = len(clusters)
+
+    logger.info("Idea comparison regeneration starting: project=%s run=%s clusters=%d", project_id, label, total)
+    started = time.monotonic()
+    deadline = started + config.IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS
 
     written = 0
+    truncated = False
     for cluster in clusters:
+        if time.monotonic() >= deadline:
+            truncated = True
+            logger.warning(
+                "Idea comparison regeneration hit its time budget: project=%s run=%s written=%d/%d",
+                project_id, label, written, total,
+            )
+            break
+        cluster_started = time.monotonic()
         facts = list_comparison_facts(project_id, cluster["idea_cluster_id"])
         revision = _current_facts_revision(project_id, cluster["idea_cluster_id"])
         summary_cluster = {**cluster, "sources": [*cluster["sources"], *[_fact_as_source(fact) for fact in facts]]}
@@ -754,10 +791,20 @@ def generate_idea_comparisons(project_id: int, run_id: str | None = None) -> int
             cluster = {**cluster, "diverges": synthesis["diverges"]}
         _save_comparison(project_id, cluster, synthesis["summary"], run_id, facts_revision=revision)
         written += 1
+        logger.info(
+            "Idea comparison regenerated: project=%s cluster=%s summary=%s duration_ms=%d",
+            project_id, cluster["idea_cluster_id"], "ok" if synthesis["summary"] else "unparsable",
+            int((time.monotonic() - cluster_started) * 1000),
+        )
 
-    if run_id:
+    if run_id and not truncated:
         _mark_run_generation_attempt(project_id, run_id)
-    return written
+
+    logger.info(
+        "Idea comparison regeneration finished: project=%s run=%s written=%d/%d truncated=%s duration_ms=%d",
+        project_id, label, written, total, truncated, int((time.monotonic() - started) * 1000),
+    )
+    return {"written": written, "total": total, "truncated": truncated}
 
 
 def list_idea_comparisons(project_id: int, run_id: str | None = None) -> list[dict]:
@@ -816,16 +863,23 @@ def get_idea_comparison(project_id: int, idea_cluster_id: int, run_id: str | Non
 
 
 def regenerate_idea_comparison(project_id: int, idea_cluster_id: int, run_id: str | None = None) -> dict | None:
+    started = time.monotonic()
     comparison = get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)
     if not comparison:
         return None
+    logger.info("Idea comparison single-card regeneration starting: project=%s cluster=%s run=%s",
+                project_id, idea_cluster_id, run_id or "<project-wide>")
     revision = comparison["facts_revision"]
     evidence = [*comparison["sources"], *[_fact_as_source(fact) for fact in comparison["facts"]]]
     synthesis = _synthesize_comparison({**comparison, "sources": evidence})
     summary = synthesis["summary"]
     if not summary:
+        logger.warning("Idea comparison single-card regeneration returned no usable summary: project=%s cluster=%s",
+                        project_id, idea_cluster_id)
         raise ValueError("The model did not return a usable summary. Please retry.")
     if _current_facts_revision(project_id, idea_cluster_id) != revision:
+        logger.warning("Idea comparison single-card regeneration lost the facts-revision race: project=%s cluster=%s",
+                        project_id, idea_cluster_id)
         raise ValueError("Facts changed while the summary was being generated. Please retry.")
     values = {str(item.get("value") or "").strip().lower() for item in evidence if str(item.get("value") or "").strip()}
     diverges = synthesis["diverges"] if synthesis["diverges"] is not None else len(values) >= 2
@@ -838,4 +892,6 @@ def regenerate_idea_comparison(project_id: int, idea_cluster_id: int, run_id: st
         (summary, diverges, config.LLM_CHAT_MODEL or None, PROMPT_VERSION, revision,
          int(project_id), int(idea_cluster_id), str(run_id or "")),
     )
+    logger.info("Idea comparison single-card regeneration finished: project=%s cluster=%s duration_ms=%d",
+                project_id, idea_cluster_id, int((time.monotonic() - started) * 1000))
     return get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)

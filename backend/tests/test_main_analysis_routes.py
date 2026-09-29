@@ -206,7 +206,7 @@ class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
         cached = [{"idea_cluster_id": 1, "idea": "petrol price"}]
         with patch("main.get_project", return_value={"id": 1}), \
              patch("main.list_idea_comparisons", return_value=cached), \
-             patch("main.generate_idea_comparisons") as mock_generate:
+             patch("main.generate_idea_comparisons_detailed") as mock_generate:
             resp = self.client.get("/api/projects/1/idea-comparisons")
         self.assertEqual(resp.json(), {"comparisons": cached})
         mock_generate.assert_not_called()
@@ -214,16 +214,30 @@ class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
     def test_regenerate_flag_always_resynthesizes_project_wide(self):
         with patch("main.get_project", return_value={"id": 1}), \
              patch("main.list_idea_comparisons", return_value=[]), \
-             patch("main.generate_idea_comparisons") as mock_generate:
+             patch("main.generate_idea_comparisons_detailed",
+                   return_value={"written": 0, "total": 0, "truncated": False}) as mock_generate:
             resp = self.client.get("/api/projects/1/idea-comparisons?regenerate=true")
         self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["regeneration_timed_out"], False)
         mock_generate.assert_called_once_with(1, run_id=None)
+
+    def test_regenerate_flag_reports_a_timed_out_partial_pass(self):
+        with patch("main.get_project", return_value={"id": 1}), \
+             patch("main.list_idea_comparisons", return_value=[{"idea_cluster_id": 1}]), \
+             patch("main.generate_idea_comparisons_detailed",
+                   return_value={"written": 3, "total": 8, "truncated": True}):
+            resp = self.client.get("/api/projects/1/idea-comparisons?regenerate=true")
+        body = resp.json()
+        self.assertEqual(body["regeneration_timed_out"], True)
+        self.assertEqual(body["regenerated_count"], 3)
+        self.assertEqual(body["regeneration_total"], 8)
 
     def test_run_scoped_first_view_generates_when_never_attempted(self):
         with patch("main.get_project", return_value={"id": 1}), \
              patch("main.list_idea_comparisons", return_value=[]), \
              patch("main.has_run_generation_attempt", return_value=False), \
-             patch("main.generate_idea_comparisons") as mock_generate:
+             patch("main.generate_idea_comparisons_detailed",
+                   return_value={"written": 0, "total": 0, "truncated": False}) as mock_generate:
             resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
         self.assertEqual(resp.status_code, 200)
         mock_generate.assert_called_once_with(1, run_id="run-123")
@@ -237,7 +251,7 @@ class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
         with patch("main.get_project", return_value={"id": 1}), \
              patch("main.list_idea_comparisons", return_value=[]), \
              patch("main.has_run_generation_attempt", return_value=True), \
-             patch("main.generate_idea_comparisons") as mock_generate:
+             patch("main.generate_idea_comparisons_detailed") as mock_generate:
             resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
         self.assertEqual(resp.json(), {"comparisons": []})
         mock_generate.assert_not_called()
@@ -248,7 +262,7 @@ class ProjectIdeaComparisonsTests(AnalysisRoutesTestCase):
         with patch("main.get_project", return_value={"id": 1}), \
              patch("main.list_idea_comparisons", return_value=[]), \
              patch("main.has_run_generation_attempt", return_value=False), \
-             patch("main.generate_idea_comparisons", side_effect=LLMConnectionError("down")):
+             patch("main.generate_idea_comparisons_detailed", side_effect=LLMConnectionError("down")):
             resp = self.client.get("/api/projects/1/idea-comparisons?run_id=run-123")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()

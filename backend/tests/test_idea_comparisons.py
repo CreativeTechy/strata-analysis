@@ -170,6 +170,32 @@ class GenerateIdeaComparisonsTests(unittest.TestCase):
         self.assertEqual(written, 0)
         mock_execute.assert_not_called()
 
+    def test_detailed_stops_before_the_next_cluster_once_the_time_budget_is_spent(self):
+        """The timeout is checked between clusters, not mid-call - an
+        already-negative budget means the very first cluster is never
+        started, so this exercises the truncated path without needing to
+        mock exactly how many seconds each cluster took. The run stays
+        unmarked so the (fully skipped) cluster gets another attempt next
+        time - same as any other partial/failed pass."""
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons.config.IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS", -1.0), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows), \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "x"}'), \
+             patch("services.articles.idea_comparisons.db.execute") as mock_execute:
+            status = idea_comparisons.generate_idea_comparisons_detailed(project_id=1, run_id="run-123")
+        self.assertEqual(status, {"written": 0, "total": 1, "truncated": True})
+        mock_execute.assert_not_called()
+
+    def test_detailed_reports_written_and_total_when_not_truncated(self):
+        rows = GroupAndQualifyClustersTests()._rows()[:2]
+        with patch("services.articles.idea_comparisons.config.DATABASE_URL", "postgres://x"), \
+             patch("services.articles.idea_comparisons._cluster_candidates", return_value=rows), \
+             patch("services.articles.idea_comparisons.chat_completion", return_value='{"summary": "x"}'), \
+             patch("services.articles.idea_comparisons.db.execute"):
+            status = idea_comparisons.generate_idea_comparisons_detailed(project_id=1)
+        self.assertEqual(status, {"written": 1, "total": 1, "truncated": False})
+
 
 class HasRunGenerationAttemptTests(unittest.TestCase):
     def test_false_without_a_run_id(self):
