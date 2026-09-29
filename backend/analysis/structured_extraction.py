@@ -20,7 +20,7 @@ import logging
 
 import config
 import llm_client
-from analysis import normalize
+from analysis import labels, normalize
 from analysis.json_utils import JSONParseError, parse_json_response, validate_schema
 from prompt_loader import load_prompt
 
@@ -28,12 +28,25 @@ logger = logging.getLogger(__name__)
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
 
+# Optional LLM-derived fallback fields (see orchestrator.py's 'ran_via_llm'
+# outcome) - kept out of `required` so a bad/missing value here never fails
+# extraction the way a bad `summary` does. json_utils.validate_schema has no
+# "enum" support (it only checks type), so the allowed-value check for these
+# four happens in _normalize_llm_fallback_fields below - pulled from
+# analysis/labels.py (the single source of truth for the category/tone vocab)
+# so the allowed sets can never drift from it.
+SENTIMENT_ALLOWED_VALUES = ("positive", "negative", "neutral")
+
 EXTRACTION_SCHEMA = {
     "type": "object",
     "required": ["summary"],
     "properties": {
         "topic": {"type": "string"},
         "summary": {"type": "string"},
+        "sentiment": {"type": "string"},
+        "category": {"type": "string"},
+        "writer_tone": {"type": "string"},
+        "article_tone": {"type": "string"},
         "positive_feedback": _STRING_ARRAY,
         "negative_feedback": _STRING_ARRAY,
         "nice_to_have_features": _STRING_ARRAY,
@@ -143,6 +156,15 @@ def _parse_and_validate(raw: str):
     return payload, []
 
 
+def _normalize_llm_fallback_value(value, allowed_values) -> str | None:
+    """None means "the LLM gave nothing usable" - the caller (orchestrator.py)
+    must treat that identically to a missing field, never coerce it to a
+    default label, since only a genuinely valid value may produce the
+    'ran_via_llm' outcome."""
+    text = normalize.as_text(value).lower()
+    return text if text in allowed_values else None
+
+
 def _normalize_payload(payload: dict) -> dict:
     normalized = {
         "topic": normalize.as_text(payload.get("topic")),
@@ -150,6 +172,10 @@ def _normalize_payload(payload: dict) -> dict:
         "relevance_score": normalize.normalize_relevance_score(payload.get("relevance_score", 0)),
         "people_opinions": normalize.normalize_people_opinions(payload.get("people_opinions")),
         "frequent_ideas": normalize.normalize_frequent_ideas(payload.get("frequent_ideas")),
+        "sentiment": _normalize_llm_fallback_value(payload.get("sentiment"), SENTIMENT_ALLOWED_VALUES),
+        "category": _normalize_llm_fallback_value(payload.get("category"), labels.VALID_CATEGORIES),
+        "writer_tone": _normalize_llm_fallback_value(payload.get("writer_tone"), labels.VALID_TONES),
+        "article_tone": _normalize_llm_fallback_value(payload.get("article_tone"), labels.VALID_TONES),
     }
     for field in LIST_FIELDS:
         normalized[field] = normalize.normalize_feedback_list(payload.get(field))

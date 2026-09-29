@@ -274,7 +274,7 @@ def sentiment_counts_by_run(project_id: int, run_ids: list) -> dict:
             from article_analyses an
             join article_projects ap on ap.article_id = an.article_id
             where ap.project_id = %s and an.run_id = any(%s)
-              and an.sentiment_status = 'ran'
+              and an.sentiment_status in ('ran', 'ran_via_llm')
             group by an.run_id, an.sentiment
             """,
             (int(project_id), ids),

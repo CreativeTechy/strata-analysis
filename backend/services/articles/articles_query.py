@@ -286,7 +286,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
     if sentiment_value and sentiment_value != "all":
         clauses.append("sentiment = %s")
         params.append(sentiment_value)
-        clauses.append("sentiment_status = 'ran'")
+        clauses.append("sentiment_status in ('ran', 'ran_via_llm')")
 
     status_value = _normalize_text(status).lower()
     if status_value == "pending":
@@ -299,7 +299,7 @@ def _where_parts(search=None, sentiment=None, category=None, project_id=None, da
             "(sentiment_status is null or sentiment_status = 'skipped_model_unavailable')"
         )
     elif status_value in {"assessed", "success"}:
-        clauses.append("analysis_status = 'success' and sentiment_status = 'ran'")
+        clauses.append("analysis_status = 'success' and sentiment_status in ('ran', 'ran_via_llm')")
 
     category_value = _normalize_category(category)
     if category_value and category_value != "all":
@@ -740,7 +740,7 @@ def get_analysis_status_counts(project_id=None):
                 select case
                          when a.analysis_status in ('pending', 'processing') then a.analysis_status
                          when a.analysis_status in ('failed', 'partial') or a.sentiment_status = 'failed' then 'failed'
-                         when a.sentiment_status = 'ran' then 'success'
+                         when a.sentiment_status in ('ran', 'ran_via_llm') then 'success'
                          else 'not_assessed'
                        end as analysis_status, count(*)::int as total
                 from articles a
@@ -755,7 +755,7 @@ def get_analysis_status_counts(project_id=None):
                 """select case
                          when analysis_status in ('pending', 'processing') then analysis_status
                          when analysis_status in ('failed', 'partial') or sentiment_status = 'failed' then 'failed'
-                         when sentiment_status = 'ran' then 'success'
+                         when sentiment_status in ('ran', 'ran_via_llm') then 'success'
                          else 'not_assessed'
                        end as analysis_status, count(*)::int as total
                    from articles group by 1"""
@@ -876,6 +876,9 @@ def _shape_article_analysis(row: dict) -> dict:
         "sentiment": _normalize_sentiment(row.get("sentiment")) or "neutral",
         "sentiment_status": row.get("sentiment_status"),
         "classification_status": row.get("classification_status"),
+        "category_status": row.get("category_status"),
+        "writer_tone_status": row.get("writer_tone_status"),
+        "article_tone_status": row.get("article_tone_status"),
         "article_category": _normalize_article_category(row.get("article_category")),
         "writer_tone": writer_tone,
         "article_tone": article_tone,

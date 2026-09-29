@@ -146,6 +146,80 @@ class AnalyzeArticleTests(unittest.TestCase):
         self.assertEqual(result["writer_tone_status"], "skipped_model_unavailable")
         self.assertEqual(result["article_tone_status"], "ran")
 
+    def test_llm_fallback_used_when_hf_stage_unavailable_and_llm_value_valid(self):
+        # sentiment classifier unavailable (no result) but the same
+        # structured-extraction call gave a valid sentiment - the LLM value
+        # is used and recorded as 'ran_via_llm' with the llm: model id.
+        extracted_with_sentiment = dict(EXTRACTED_DATA, sentiment="negative")
+        with patch(
+            "analysis.orchestrator.structured_extraction.extract_structured_data",
+            return_value=ExtractionResult(data=extracted_with_sentiment, attempts=1),
+        ), patch(
+            "analysis.orchestrator.classify_article_sentiment",
+            return_value={"label": "neutral", "score": 0.0, "low_confidence": True, "raw_label": None},
+        ):
+            result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(result["sentiment"], "negative")
+        self.assertEqual(result["sentiment_status"], "ran_via_llm")
+        self.assertEqual(result["sentiment_model"], f"llm:{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}")
+
+    def test_llm_fallback_not_used_when_no_valid_llm_value(self):
+        # HF stage unavailable and the LLM gave nothing usable for sentiment
+        # either (field simply absent) - behavior is unchanged from before
+        # this feature existed.
+        with patch(
+            "analysis.orchestrator.classify_article_sentiment",
+            return_value={"label": "neutral", "score": 0.0, "low_confidence": True, "raw_label": None},
+        ):
+            result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(result["sentiment"], "neutral")
+        self.assertEqual(result["sentiment_status"], "skipped_model_unavailable")
+        self.assertEqual(result["sentiment_model"], "fixture/sentiment")
+
+    def test_llm_fallback_ignored_when_hf_stage_actually_ran(self):
+        # HF sentiment classifier ran successfully - an LLM-provided value
+        # must never override a real classifier result.
+        extracted_with_sentiment = dict(EXTRACTED_DATA, sentiment="negative")
+        with patch(
+            "analysis.orchestrator.structured_extraction.extract_structured_data",
+            return_value=ExtractionResult(data=extracted_with_sentiment, attempts=1),
+        ):
+            result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(result["sentiment"], "positive")
+        self.assertEqual(result["sentiment_status"], "ran")
+        self.assertEqual(result["sentiment_model"], "fixture/sentiment")
+
+    def test_classification_model_only_stamped_llm_when_all_three_substages_used_it(self):
+        extracted_with_tones = dict(
+            EXTRACTED_DATA, category="news", writer_tone="critical", article_tone="critical"
+        )
+        unavailable = {"label": "neutral", "score": 0.0, "low_confidence": True, "raw_label": None}
+        with patch(
+            "analysis.orchestrator.structured_extraction.extract_structured_data",
+            return_value=ExtractionResult(data=extracted_with_tones, attempts=1),
+        ), patch("analysis.orchestrator.classification.classify_category", return_value=unavailable), patch(
+            "analysis.orchestrator.classification.classify_writer_tone", return_value=unavailable
+        ), patch(
+            "analysis.orchestrator.classification.classify_article_tone", return_value=unavailable
+        ):
+            result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(result["category_status"], "ran_via_llm")
+        self.assertEqual(result["writer_tone_status"], "ran_via_llm")
+        self.assertEqual(result["article_tone_status"], "ran_via_llm")
+        self.assertEqual(result["classification_model"], f"llm:{config.LLM_PROVIDER}:{config.LLM_CHAT_MODEL}")
+
+        # Only writer_tone falls through to the LLM this time - the combined
+        # classification_model column must not be stamped "llm:..." for a
+        # mixed HF/LLM provenance across the three sub-stages.
+        with patch(
+            "analysis.orchestrator.structured_extraction.extract_structured_data",
+            return_value=ExtractionResult(data=extracted_with_tones, attempts=1),
+        ), patch("analysis.orchestrator.classification.classify_writer_tone", return_value=unavailable):
+            mixed_result = orchestrator.analyze_article(ARTICLE)
+        self.assertEqual(mixed_result["writer_tone_status"], "ran_via_llm")
+        self.assertEqual(mixed_result["category_status"], "ran")
+        self.assertEqual(mixed_result["classification_model"], "fixture/classification")
+
     def test_explicit_stage_failure_is_preserved(self):
         self.assertEqual(
             orchestrator._stage_outcome({"outcome": "failed"}, "classifier/model"),
@@ -154,6 +228,29 @@ class AnalyzeArticleTests(unittest.TestCase):
         self.assertEqual(
             orchestrator._combined_stage_outcome(
                 ({"outcome": "ran"}, {"outcome": "failed"}),
+                "classifier/model",
+            ),
+            "failed",
+        )
+
+    def test_combined_stage_outcome_precedence_includes_ran_via_llm(self):
+        self.assertEqual(
+            orchestrator._combined_stage_outcome(
+                ({"outcome": "ran_via_llm"}, {"outcome": "skipped_model_unavailable"}),
+                "classifier/model",
+            ),
+            "ran_via_llm",
+        )
+        self.assertEqual(
+            orchestrator._combined_stage_outcome(
+                ({"outcome": "ran"}, {"outcome": "ran_via_llm"}),
+                "classifier/model",
+            ),
+            "ran",
+        )
+        self.assertEqual(
+            orchestrator._combined_stage_outcome(
+                ({"outcome": "failed"}, {"outcome": "ran_via_llm"}),
                 "classifier/model",
             ),
             "failed",

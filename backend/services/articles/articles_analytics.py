@@ -510,7 +510,7 @@ def get_article_stats(search=None, category=None, project_id=None, date_from=Non
 
     assessed_rows = [
         row for row in rows
-        if row.get("sentiment_status") == "ran"
+        if row.get("sentiment_status") in ("ran", "ran_via_llm")
         or ("sentiment_status" not in row and row.get("analysis_status") in (None, "success"))
     ]
     insights = _topic_summary(assessed_rows)

@@ -176,6 +176,8 @@
     "sourceLanguageLabel": "Source language:",
     "confidence": "(confidence {{pct}})",
     "confidenceLowConfidence": "(confidence {{pct}}, low confidence)",
+    "llmFallbackTag": "LLM",
+    "llmFallbackHint": "No dedicated classifier model was available or confident, so the LLM's own answer was used instead.",
     "modelsLine": "Models - sentiment: {{sentiment}}, classification: {{classification}}, extraction: {{extraction}}",
     "notApplicable": "n/a",
     "attemptsLine": "Attempts: {{count}} - Last run: {{lastRun}}",

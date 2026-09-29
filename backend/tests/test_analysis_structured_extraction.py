@@ -103,6 +103,47 @@ class ExtractStructuredDataTests(unittest.TestCase):
         self.assertTrue(result.failed)
         self.assertEqual(result.reason, "empty_summary")
 
+    def test_optional_llm_fallback_fields_pass_through_when_valid(self):
+        payload = dict(
+            VALID_PAYLOAD,
+            sentiment="negative",
+            category="news",
+            writer_tone="critical",
+            article_tone="skeptical",
+        )
+        with patch("analysis.structured_extraction._run_generation", return_value=json.dumps(payload)):
+            result = se.extract_structured_data("title", "body")
+        self.assertFalse(result.failed)
+        self.assertEqual(result.data["sentiment"], "negative")
+        self.assertEqual(result.data["category"], "news")
+        self.assertEqual(result.data["writer_tone"], "critical")
+        self.assertEqual(result.data["article_tone"], "skeptical")
+
+    def test_optional_llm_fallback_fields_normalize_to_none_when_invalid(self):
+        payload = dict(
+            VALID_PAYLOAD,
+            sentiment="very happy",
+            category="not_a_real_category",
+            writer_tone="",
+        )
+        with patch("analysis.structured_extraction._run_generation", return_value=json.dumps(payload)):
+            result = se.extract_structured_data("title", "body")
+        self.assertFalse(result.failed)
+        self.assertIsNone(result.data["sentiment"])
+        self.assertIsNone(result.data["category"])
+        self.assertIsNone(result.data["writer_tone"])
+        # article_tone was never in the payload at all - same "nothing usable" outcome.
+        self.assertIsNone(result.data["article_tone"])
+
+    def test_missing_optional_llm_fallback_fields_does_not_fail_extraction(self):
+        with patch("analysis.structured_extraction._run_generation", return_value=json.dumps(VALID_PAYLOAD)):
+            result = se.extract_structured_data("title", "body")
+        self.assertFalse(result.failed)
+        self.assertIsNone(result.data["sentiment"])
+        self.assertIsNone(result.data["category"])
+        self.assertIsNone(result.data["writer_tone"])
+        self.assertIsNone(result.data["article_tone"])
+
     def test_retries_disabled_fails_after_one_attempt(self):
         config.STRUCTURED_EXTRACTION_MAX_RETRIES = 0
         with patch("analysis.structured_extraction._run_generation", return_value="garbage") as mock_run:

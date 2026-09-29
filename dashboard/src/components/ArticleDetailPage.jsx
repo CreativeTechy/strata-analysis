@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
 import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
-import { prettyLabel, sentimentBadgeState } from '../lib/articleHelpers.jsx';
+import { prettyLabel, sentimentBadgeState, isLlmFallbackStatus } from '../lib/articleHelpers.jsx';
 import { formatDate, formatDateTime, formatPercent, formatLanguageName } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
@@ -33,6 +33,18 @@ const SENTIMENT_STATE_LABEL_KEYS = {
 function displayDate(value, locale) {
   if (!value) return null;
   return formatDate(value, locale) || value;
+}
+
+// Tags a stage's value as coming from the structured-extraction LLM's own
+// fallback answer (backend's 'ran_via_llm' outcome) rather than the
+// dedicated HF/local classifier model, so it reads distinctly from a
+// regular model-produced value.
+function LlmFallbackTag({ t }) {
+  return (
+    <span className="badge neutral" style={{ marginLeft: 6, fontSize: '0.72rem' }} title={t('detail.llmFallbackHint')}>
+      {t('detail.llmFallbackTag')}
+    </span>
+  );
 }
 
 // Full-page version of what used to be the "Analysis details" modal opened
@@ -211,6 +223,7 @@ export default function ArticleDetailPage() {
             <span className={`badge ${sentimentBadgeState(data)}`}>
               {t(SENTIMENT_STATE_LABEL_KEYS[sentimentBadgeState(data)] || 'sentiment.notAssessed')}
             </span>
+            {isLlmFallbackStatus(data.sentiment_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.sentiment, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {data.confidence?.sentiment_low_confidence
@@ -221,9 +234,11 @@ export default function ArticleDetailPage() {
           </div>
           <div>
             <strong>{t('detail.categoryLabel')}</strong>{' '}
-            {data.classification_status === 'ran' || !Object.prototype.hasOwnProperty.call(data, 'classification_status')
+            {data.classification_status === 'ran' || data.classification_status === 'ran_via_llm'
+              || !Object.prototype.hasOwnProperty.call(data, 'classification_status')
               ? prettyLabel(data.article_category)
               : t('sentiment.notAssessed')}
+            {isLlmFallbackStatus(data.category_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.category, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {t('detail.confidence', { pct: formatPercent(data.confidence.category, locale) })}
@@ -232,6 +247,7 @@ export default function ArticleDetailPage() {
           </div>
           <div>
             <strong>{t('detail.writerToneLabel')}</strong> {prettyLabel(data.writer_tone)}
+            {isLlmFallbackStatus(data.writer_tone_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.writer_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {t('detail.confidence', { pct: formatPercent(data.confidence.writer_tone, locale) })}
@@ -240,6 +256,7 @@ export default function ArticleDetailPage() {
           </div>
           <div>
             <strong>{t('detail.articleToneLabel')}</strong> {prettyLabel(data.article_tone)}
+            {isLlmFallbackStatus(data.article_tone_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.article_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {t('detail.confidence', { pct: formatPercent(data.confidence.article_tone, locale) })}
