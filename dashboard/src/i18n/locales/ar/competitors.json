@@ -288,7 +288,12 @@
     "emptyNoCompetitorsBody": "لا يوجد منافسون متابَعون بعد. توجه إلى صفحة المنافسين لإعادة قراءة المستندات وإيجاد الشركات المعنية.",
     "goToCompetitors": "الذهاب إلى المنافسين",
     "analysisRunLabel": "التحليل رقم {{number}}: {{date}}",
-    "analysisRunFallback": "تشغيل"
+    "analysisRunFallback": "تشغيل",
+    "exportRunReport": {
+      "title": "تصدير كل تقارير المنافسين من هذا التحليل كملف PDF واحد",
+      "button": "تصدير التقرير الموحد (PDF)",
+      "preparing": "جارٍ التحضير..."
+    }
   },
   "competitorsPage": {
     "titleSuffix": "المنافسون",

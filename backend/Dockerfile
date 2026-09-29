@@ -16,8 +16,15 @@ WORKDIR /app/backend
 #
 # Acquire::Retries covers the flaky-CDN case: a dropped connection to a Debian
 # mirror mid-download otherwise fails the whole layer, and this layer is the
-# expensive one to redo.
-RUN apt-get -o Acquire::Retries=5 update && \
+# expensive one to redo. deb.debian.org's CDN was found genuinely desynced for
+# one specific package (pool object didn't match its own Packages index hash,
+# reproduced outside Docker too) - swapping to ftp.us.debian.org, a single
+# non-CDN mirror, avoids that desync.
+RUN sed -i \
+    -e 's#deb\.debian\.org/debian-security#security.debian.org/debian-security#' \
+    -e 's#deb\.debian\.org/debian$#ftp.us.debian.org/debian#' \
+    /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     build-essential \
     curl \

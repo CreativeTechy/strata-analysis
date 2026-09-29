@@ -19,11 +19,11 @@ import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight,
-  Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
+  Download, Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
   Sparkles, Target, TrendingUp, Upload, X,
 } from 'lucide-react';
 import {
-  IMPACT_LABELS, SIZE_TIER_LABELS, avatarGradient, getStudy,
+  IMPACT_LABELS, SIZE_TIER_LABELS, avatarGradient, exportAnalysisRunReportPdf, getStudy,
   initials, listCompetitors, listFindings,
 } from '../api/competitorApi.js';
 import { formatDate, formatRelativeTime, formatTime } from '../lib/i18nFormat.js';
@@ -208,6 +208,8 @@ export default function CompetitorWorkspace() {
   // everything already on file until the user asks to narrow it.
   const [findingsRunId, setFindingsRunId] = useState(null);
   const [findingsLoading, setFindingsLoading] = useState(false);
+  const [exportingRunReport, setExportingRunReport] = useState(false);
+  const [exportRunReportError, setExportRunReportError] = useState('');
   const [viewMode, setViewMode] = useState(() => {
     try {
       return window.localStorage.getItem('competitors-view-mode') === 'list' ? 'list' : 'card';
@@ -289,6 +291,27 @@ export default function CompetitorWorkspace() {
     setDateFrom('');
     setDateTo('');
     setFindingsRunId(null);
+  };
+
+  const handleExportRunReport = async () => {
+    if (!findingsRunId || exportingRunReport) return;
+    setExportingRunReport(true);
+    setExportRunReportError('');
+    try {
+      const blob = await exportAnalysisRunReportPdf(studyId, findingsRunId);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `competitor-analysis-${findingsRunId}-consolidated.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (caught) {
+      setExportRunReportError(caught.message);
+    } finally {
+      setExportingRunReport(false);
+    }
   };
 
   const changeViewMode = (mode) => {
@@ -382,6 +405,12 @@ export default function CompetitorWorkspace() {
       {error ? (
         <div className="cs-alert cs-alert-error">
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{error}</span>
+        </div>
+      ) : null}
+
+      {exportRunReportError ? (
+        <div className="cs-alert cs-alert-error">
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{exportRunReportError}</span>
         </div>
       ) : null}
 
@@ -487,6 +516,15 @@ export default function CompetitorWorkspace() {
                   onChange={(event) => setDateTo(event.target.value)} aria-label={t('workspace.toDateAria')} />
               </div>
             )}
+
+            {findingsRunId ? (
+              <button type="button" className="cs-btn cs-btn-sm" onClick={handleExportRunReport}
+                disabled={exportingRunReport} aria-busy={exportingRunReport}
+                title={t('workspace.exportRunReport.title')}>
+                <Download size={13} className={exportingRunReport ? 'spin' : ''} />
+                {exportingRunReport ? t('workspace.exportRunReport.preparing') : t('workspace.exportRunReport.button')}
+              </button>
+            ) : null}
 
             {hasFindingFilters ? (
               <button type="button" className="cs-btn cs-btn-sm" onClick={clearFindingFilters}>
