@@ -41,7 +41,7 @@ from prompt_loader import load_prompt
 from psycopg.types.json import Jsonb
 from services.articles.article_analyses import fetch_run_article_rows
 from services.intelligence.intelligence import VALID_SENTIMENTS, net_sentiment
-from services.pipeline.pipeline_runs import get_previous_analysis_run
+from services.pipeline.pipeline_runs import get_analysis_run_for_comparison, get_previous_analysis_run
 from services.reports.report_data import report_timezone
 
 logger = logging.getLogger(__name__)
@@ -279,13 +279,19 @@ def _generate_narrative(current_rows: list[dict], previous_rows: list[dict], met
     return "\n\n".join(sections), evidence
 
 
-def build_variation_from_last_run(project: dict, report_data: dict, run: dict | None = None, force: bool = False) -> dict:
-    """Compare the selected analysis run with its immediately preceding run.
+def build_variation_from_last_run(
+    project: dict, report_data: dict, run: dict | None = None, force: bool = False, previous_run_id: str | None = None,
+) -> dict:
+    """Compare the selected analysis run with another run.
 
-    The comparison is based solely on run order. Calendar distance between
-    the runs has no effect. Both sides use immutable `article_analyses`
-    snapshots, with the selected side reused from `report_data` so its totals
-    cannot disagree with the rest of the PDF.
+    By default that's the immediately preceding analytics-eligible run
+    (`previous_run_id` omitted). Passing `previous_run_id` lets the caller
+    compare against any other analytics-eligible run for the same project
+    instead - the ordering/calendar-distance-doesn't-matter reasoning below
+    still applies, it just no longer requires "immediately preceding". Both
+    sides use immutable `article_analyses` snapshots, with the selected side
+    reused from `report_data` so its totals cannot disagree with the rest of
+    the PDF.
     """
     project_id = report_data["project"]["id"]
     tz = report_timezone()
@@ -328,11 +334,23 @@ def build_variation_from_last_run(project: dict, report_data: dict, run: dict | 
         return base_result
 
     base_result["metrics"]["current"] = _sentiment_metrics(current_rows)
-    previous_run = get_previous_analysis_run(project_id, run["id"])
-    if not previous_run:
-        base_result["reason_code"] = "no_previous_run"
-        base_result["reason"] = "No previous analysis run with saved results exists for this project."
-        return base_result
+
+    if previous_run_id is not None:
+        if str(previous_run_id) == str(run["id"]):
+            base_result["reason_code"] = "invalid_previous_run"
+            base_result["reason"] = "The comparison run must be different from the selected run."
+            return base_result
+        previous_run = get_analysis_run_for_comparison(project_id, previous_run_id)
+        if not previous_run:
+            base_result["reason_code"] = "invalid_previous_run"
+            base_result["reason"] = "The selected comparison run is not available for this project."
+            return base_result
+    else:
+        previous_run = get_previous_analysis_run(project_id, run["id"])
+        if not previous_run:
+            base_result["reason_code"] = "no_previous_run"
+            base_result["reason"] = "No previous analysis run with saved results exists for this project."
+            return base_result
 
     previous_date = _run_date(previous_run, tz)
     previous_label = _run_label(previous_run, tz)
@@ -362,7 +380,7 @@ def build_variation_from_last_run(project: dict, report_data: dict, run: dict | 
         "coverage": _coverage(current_ids, previous_ids, sampled=False),
     }
     fingerprint = _data_fingerprint(current_rows, previous_rows)
-    scope_key = f"run:{run['id']}"
+    scope_key = f"run:{run['id']}:vs:{previous_run['id']}"
 
     if not force:
         cached = _load_cached(project_id, scope_key, current_date, previous_date)

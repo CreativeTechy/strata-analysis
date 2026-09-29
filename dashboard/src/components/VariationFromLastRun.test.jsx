@@ -77,6 +77,47 @@ describe('VariationFromLastRun', () => {
     expect(screen.getByText('Selected run articles')).toBeInTheDocument();
   });
 
+  it('lets the user pick a different comparison run and refetches with previous_run_id', async () => {
+    getReportVariation.mockResolvedValue(COMPARISON);
+    const projectRuns = [
+      { id: 'run-3', analytics_eligible: true, sequence_number: 3, finished_at: '2026-03-03T00:00:00Z' },
+      { id: 'run-2', analytics_eligible: true, sequence_number: 2, finished_at: '2026-01-10T00:00:00Z' },
+      { id: 'run-1', analytics_eligible: true, sequence_number: 1, finished_at: '2025-12-01T00:00:00Z' },
+    ];
+    render(<VariationFromLastRun projectId={1} runId="run-3" projectRuns={projectRuns} />);
+    await screen.findByText(/Delivery improved/);
+    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3' }, expect.any(AbortSignal));
+
+    const select = screen.getByRole('combobox', { name: 'Compare with' });
+    // The current run itself must not be offered as a comparison target.
+    expect(within(select).queryByText(/Analysis #3/)).not.toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'run-1' } });
+    await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
+      1, { run_id: 'run-3', previous_run_id: 'run-1' }, expect.any(AbortSignal),
+    ));
+  });
+
+  it('resets the comparison run picker to auto when the current run changes', async () => {
+    getReportVariation.mockResolvedValue(COMPARISON);
+    const projectRuns = [
+      { id: 'run-3', analytics_eligible: true, sequence_number: 3, finished_at: '2026-03-03T00:00:00Z' },
+      { id: 'run-2', analytics_eligible: true, sequence_number: 2, finished_at: '2026-01-10T00:00:00Z' },
+      { id: 'run-1', analytics_eligible: true, sequence_number: 1, finished_at: '2025-12-01T00:00:00Z' },
+    ];
+    const { rerender } = render(<VariationFromLastRun projectId={1} runId="run-3" projectRuns={projectRuns} />);
+    await screen.findByText(/Delivery improved/);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Compare with' }), { target: { value: 'run-1' } });
+    await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
+      1, { run_id: 'run-3', previous_run_id: 'run-1' }, expect.any(AbortSignal),
+    ));
+
+    rerender(<VariationFromLastRun projectId={1} runId="run-2" projectRuns={projectRuns} />);
+    await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
+      1, { run_id: 'run-2' }, expect.any(AbortSignal),
+    ));
+  });
+
   it('renders every label in Arabic', async () => {
     await i18n.changeLanguage('ar');
     getReportVariation.mockResolvedValue(COMPARISON);

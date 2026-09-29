@@ -162,6 +162,59 @@ class BuildVariationFromLastRunTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["previous"]["negative"], 1)
         fetch.assert_called_once_with(1, "run-8")
 
+    def test_explicit_previous_run_id_bypasses_the_immediately_preceding_lookup(self):
+        older = {"id": "run-3", "sequence_number": 3, "project_id": 1,
+                 "finished_at": datetime(2024, 6, 1, tzinfo=timezone.utc)}
+        current_rows = [_row(1, "positive")]
+        previous_rows = [dict(_row(2, "negative"), analysis_status="success")]
+        raw = '{"ideas":"a","sentiment":"b","opinions":"c","topics":"d","implications":"e","evidence":[]}'
+        with patch.object(yc, "get_previous_analysis_run") as auto_previous, \
+             patch.object(yc, "get_analysis_run_for_comparison", return_value=older) as explicit_previous, \
+             patch.object(yc, "fetch_run_article_rows", return_value=previous_rows), \
+             patch.object(yc, "chat_completion", return_value=raw), \
+             patch.object(yc.config, "DATABASE_URL", ""):
+            result = yc.build_variation_from_last_run(
+                {"id": 1}, self._report_data(current_rows), run=self.CURRENT, previous_run_id="run-3",
+            )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["previous_run_id"], "run-3")
+        self.assertEqual(result["previous_sequence_number"], 3)
+        auto_previous.assert_not_called()
+        explicit_previous.assert_called_once_with(1, "run-3")
+
+    def test_explicit_previous_run_id_same_as_current_is_rejected(self):
+        with patch.object(yc, "get_analysis_run_for_comparison") as explicit_previous:
+            result = yc.build_variation_from_last_run(
+                {"id": 1}, self._report_data([_row(1)]), run=self.CURRENT, previous_run_id="run-9",
+            )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason_code"], "invalid_previous_run")
+        explicit_previous.assert_not_called()
+
+    def test_explicit_previous_run_id_not_found_is_rejected(self):
+        with patch.object(yc, "get_analysis_run_for_comparison", return_value=None):
+            result = yc.build_variation_from_last_run(
+                {"id": 1}, self._report_data([_row(1)]), run=self.CURRENT, previous_run_id="run-404",
+            )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason_code"], "invalid_previous_run")
+
+    def test_different_comparison_targets_use_different_cache_keys(self):
+        current_rows = [_row(1, "positive")]
+        previous_rows = [dict(_row(2, "negative"), analysis_status="success")]
+        raw = '{"ideas":"a","sentiment":"b","opinions":"c","topics":"d","implications":"e","evidence":[]}'
+        with patch.object(yc, "get_previous_analysis_run", return_value=self.PREVIOUS), \
+             patch.object(yc, "fetch_run_article_rows", return_value=previous_rows), \
+             patch.object(yc, "chat_completion", return_value=raw), \
+             patch.object(yc.config, "DATABASE_URL", "postgres://fake"), \
+             patch.object(yc, "_load_cached", return_value=None) as load_cached, \
+             patch.object(yc, "_save_cached") as save_cached:
+            yc.build_variation_from_last_run({"id": 1}, self._report_data(current_rows), run=self.CURRENT)
+        load_cached.assert_called_once()
+        save_cached.assert_called_once()
+        self.assertEqual(load_cached.call_args[0][1], "run:run-9:vs:run-8")
+        self.assertEqual(save_cached.call_args[0][1], "run:run-9:vs:run-8")
+
     def test_llm_failure_keeps_both_runs_verified_metrics(self):
         previous_rows = [dict(_row(2, "negative"), analysis_status="success")]
         with patch.object(yc, "get_previous_analysis_run", return_value=self.PREVIOUS), \

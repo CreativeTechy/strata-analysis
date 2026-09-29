@@ -1033,14 +1033,16 @@ def get_project_trend_summary_view(
 def get_report_variation_from_last_run(
     project_id: int,
     run_id: str,
+    previous_run_id: str | None = None,
     regenerate: bool = False,
     user: dict = Depends(require_permission("articles.view")),
 ):
-    """The Reports page's selected-run versus previous-run comparison.
+    """The Reports page's selected-run versus another-run comparison.
 
     This uses the same frozen run snapshots, verified metrics, narrative, and
     cache as the PDF. `regenerate=true` bypasses the narrative cache without
-    changing which two runs are compared.
+    changing which two runs are compared. `previous_run_id`, if given, picks
+    the comparison run explicitly instead of the immediately preceding one.
     """
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
@@ -1051,6 +1053,11 @@ def get_report_variation_from_last_run(
     if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
         raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
 
+    if previous_run_id is not None:
+        previous_run = get_pipeline_run(previous_run_id)
+        if not previous_run or previous_run.get("project_id") is None or int(previous_run["project_id"]) != project_id:
+            raise HTTPException(status_code=400, detail="Comparison run does not belong to this project.")
+
     current_rows = [
         row for row in fetch_run_article_rows(project_id, run_id)
         if str(row.get("analysis_status") or "").lower() == "success"
@@ -1060,7 +1067,7 @@ def get_report_variation_from_last_run(
         "scope": {"type": "run", "run_id": run_id},
         "_analyzed_rows": current_rows,
     }
-    return build_variation_from_last_run(project, report_data, run=run, force=regenerate)
+    return build_variation_from_last_run(project, report_data, run=run, force=regenerate, previous_run_id=previous_run_id)
 
 
 @app.get("/api/projects/{project_id}/idea-comparisons")
