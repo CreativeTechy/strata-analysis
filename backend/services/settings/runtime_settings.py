@@ -34,15 +34,29 @@ The first call after a change pays that load cost.
 ARTICLE_RELEVANCE_ACCEPT_THRESHOLD/_EXCLUDE_THRESHOLD keep the same "exclude
 <= accept" invariant config.py enforces at import (see services/articles/
 relevance_screening.py) - _cross_validate() below re-checks it against
-whichever value is currently live (default or already-overridden) so the two
-can never end up inverted through two separate PATCH calls.
+whichever value is currently live (default or already-overridden), under
+_CROSS_VALIDATION_LOCK, so two concurrent PATCH calls (one per threshold)
+can never both read the pre-update values and leave the pair inverted.
 """
 from __future__ import annotations
+
+import threading
 
 import config
 import db
 
 _LLM_PROVIDER_CHOICES = tuple(config._LLM_PROVIDER_DEFAULTS.keys())
+
+# Held around _cross_validate()+_apply() for any key that _cross_validate()
+# checks against another key's live value, so a concurrent PATCH to the
+# paired key can't be applied in between this key's check and its own apply -
+# which would otherwise let two individually-valid requests leave the pair
+# inverted (see _cross_validate()).
+_CROSS_VALIDATION_LOCK = threading.Lock()
+_CROSS_VALIDATED_KEYS = frozenset({
+    "ARTICLE_RELEVANCE_ACCEPT_THRESHOLD",
+    "ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD",
+})
 
 SETTINGS_SCHEMA = {
     "LLM_PROVIDER": {
@@ -209,10 +223,40 @@ def _cross_validate(key: str, value) -> None:
         )
 
 
+def _competitor_provider_pinned() -> bool:
+    """True if COMPETITOR_ANALYSIS_LLM_PROVIDER has ever been explicitly set
+    - in .env at process start, or via its own Settings override - as
+    opposed to just inheriting LLM_PROVIDER. Checked against durable state
+    (the env flag, and a fresh query of its own runtime_settings row) rather
+    than an in-process flag, so it stays correct across load_overrides_on_
+    startup()'s iteration order and doesn't need updating from every call
+    site that might change it. Fails closed (pinned) on a DB error, so a
+    flaky database can't make an LLM_PROVIDER change silently redirect
+    competitor-study traffic to a provider nobody chose for it."""
+    if config.COMPETITOR_ANALYSIS_LLM_PROVIDER_EXPLICIT:
+        return True
+    try:
+        row = db.fetch_one(
+            "select 1 from runtime_settings where key = %s",
+            ("COMPETITOR_ANALYSIS_LLM_PROVIDER",),
+        )
+    except Exception:
+        return True
+    return row is not None
+
+
 def _apply(key: str, value) -> None:
     """Push a resolved value everywhere it's actually read from, live."""
     if key == "LLM_PROVIDER":
         config.apply_llm_provider_override("app", value)
+        # COMPETITOR_ANALYSIS_LLM_PROVIDER left unset inherits LLM_PROVIDER
+        # (see config.py) - keep that inheritance live across a runtime
+        # override too, unless the competitor scope has its own explicit
+        # value, so switching providers here doesn't silently leave
+        # competitor-study documents going to the provider that was active
+        # at process start.
+        if not _competitor_provider_pinned():
+            config.apply_llm_provider_override("competitor", value)
     elif key == "COMPETITOR_ANALYSIS_LLM_PROVIDER":
         config.apply_llm_provider_override("competitor", value)
     else:
@@ -248,10 +292,19 @@ def resolve_all() -> dict[str, dict]:
     result = {}
     for key, spec in SETTINGS_SCHEMA.items():
         override = overrides.get(key)
+        # COMPETITOR_ANALYSIS_LLM_PROVIDER's ".env default" isn't a fixed
+        # value when left unset - it tracks whatever LLM_PROVIDER currently
+        # resolves to (see _apply() above), so the frozen _ENV_DEFAULTS
+        # snapshot from import time would go stale the moment an operator
+        # changes LLM_PROVIDER without ever touching this key directly.
+        if key == "COMPETITOR_ANALYSIS_LLM_PROVIDER" and not config.COMPETITOR_ANALYSIS_LLM_PROVIDER_EXPLICIT:
+            live_default = config.LLM_PROVIDER
+        else:
+            live_default = _ENV_DEFAULTS[key]
         entry = {
             "type": spec["type"],
             "description": spec["description"],
-            "default": _ENV_DEFAULTS[key],
+            "default": live_default,
         }
         if spec["type"] in ("int", "float"):
             entry["min"] = spec["min"]
@@ -262,12 +315,12 @@ def resolve_all() -> dict[str, dict]:
             try:
                 entry["value"] = _validate(key, override.get("value"))
             except ValueError:
-                entry["value"] = _ENV_DEFAULTS[key]
+                entry["value"] = live_default
             entry["is_default"] = False
             entry["updated_at"] = override.get("updated_at")
             entry["set_by"] = override.get("set_by_name")
         else:
-            entry["value"] = _ENV_DEFAULTS[key]
+            entry["value"] = live_default
             entry["is_default"] = True
             entry["updated_at"] = None
             entry["set_by"] = None
@@ -278,6 +331,13 @@ def resolve_all() -> dict[str, dict]:
 def set_value(key: str, raw_value, user: dict) -> dict:
     if key not in SETTINGS_SCHEMA:
         raise ValueError(f"Unknown setting: {key!r}")
+    if key in _CROSS_VALIDATED_KEYS:
+        with _CROSS_VALIDATION_LOCK:
+            return _set_value_unlocked(key, raw_value, user)
+    return _set_value_unlocked(key, raw_value, user)
+
+
+def _set_value_unlocked(key: str, raw_value, user: dict) -> dict:
     value = _validate(key, raw_value)
     _cross_validate(key, value)
     stored_value = str(value)
@@ -313,7 +373,26 @@ def reset_value(key: str) -> dict:
     """Delete the override, reverting the key to its .env default."""
     if key not in SETTINGS_SCHEMA:
         raise ValueError(f"Unknown setting: {key!r}")
+    if key in _CROSS_VALIDATED_KEYS:
+        with _CROSS_VALIDATION_LOCK:
+            return _reset_value_unlocked(key)
+    return _reset_value_unlocked(key)
+
+
+def _reset_value_unlocked(key: str) -> dict:
+    # A reset re-check, same as set_value's: the .env default being reverted
+    # to could itself invert the invariant against whatever the *other*
+    # threshold is currently overridden to (e.g. the exclude threshold was
+    # raised past this key's default before this key is reset) - surface
+    # that instead of silently landing on an inverted pair.
+    if key in _CROSS_VALIDATED_KEYS:
+        _cross_validate(key, _ENV_DEFAULTS[key])
     with db.transaction() as cur:
         cur.execute("delete from runtime_settings where key = %s", (key,))
-    _apply(key, _ENV_DEFAULTS[key])
+    if key == "COMPETITOR_ANALYSIS_LLM_PROVIDER" and not config.COMPETITOR_ANALYSIS_LLM_PROVIDER_EXPLICIT:
+        # Un-pinning it should resume tracking the live LLM_PROVIDER, not
+        # whatever it happened to inherit at process start.
+        _apply(key, config.LLM_PROVIDER)
+    else:
+        _apply(key, _ENV_DEFAULTS[key])
     return resolve_all()[key]

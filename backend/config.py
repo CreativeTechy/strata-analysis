@@ -162,6 +162,13 @@ LLM_REASONING_EFFORT = _active_values["reasoning_effort"]
 # project metadata suggestions) - e.g. a larger local model for the long
 # reasoning that finding generation does, and a fast one for everything else. Left unset (the default), it just inherits
 # LLM_PROVIDER above - nothing changes unless this is explicitly set.
+#
+# COMPETITOR_ANALYSIS_LLM_PROVIDER_EXPLICIT records whether the env var was
+# actually set, as opposed to having fallen back to inheriting LLM_PROVIDER -
+# services/settings/runtime_settings.py reads this to decide whether a live
+# LLM_PROVIDER override should keep carrying the competitor scope along with
+# it (inherited case) or leave it alone (explicitly pinned case).
+COMPETITOR_ANALYSIS_LLM_PROVIDER_EXPLICIT = bool(os.environ.get("COMPETITOR_ANALYSIS_LLM_PROVIDER", "").strip())
 COMPETITOR_ANALYSIS_LLM_PROVIDER = os.environ.get("COMPETITOR_ANALYSIS_LLM_PROVIDER", "").strip().lower()
 if COMPETITOR_ANALYSIS_LLM_PROVIDER not in _LLM_PROVIDER_DEFAULTS:
     COMPETITOR_ANALYSIS_LLM_PROVIDER = LLM_PROVIDER
