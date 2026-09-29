@@ -4,6 +4,7 @@
   },
   "actions": {
     "save": "حفظ",
+    "saved": "تم الحفظ",
     "cancel": "إلغاء",
     "delete": "حذف",
     "edit": "تعديل",

@@ -31,6 +31,7 @@ import RoleEditPage from './components/RoleEditPage';
 import ProjectLinkageListPage from './components/ProjectLinkageListPage';
 import ProjectLinkageDetailPage from './components/ProjectLinkageDetailPage';
 import ProjectLinkageEditPage from './components/ProjectLinkageEditPage';
+import SettingsPage from './components/SettingsPage';
 import { useAuth } from './auth/useAuth.js';
 import { RequireAuth, RequirePermission } from './routes/RouteGuards.jsx';
 import { listPipelineRuns } from './api/pipelineRunsApi.js';
@@ -604,6 +605,14 @@ export default function App() {
             element={(
               <RequirePermission permissions={['roles.update']}>
                 <RoleEditPage />
+              </RequirePermission>
+            )}
+          />
+          <Route
+            path="/admin/settings"
+            element={(
+              <RequirePermission permissions={['settings.view']}>
+                <SettingsPage />
               </RequirePermission>
             )}
           />

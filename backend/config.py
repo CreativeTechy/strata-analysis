@@ -175,6 +175,46 @@ COMPETITOR_LLM_API_STYLE = _competitor_provider["api_style"]
 COMPETITOR_LLM_API_KEY_ENV_NAME = _competitor_provider["api_key_env"]
 COMPETITOR_LLM_REASONING_EFFORT = _competitor_values["reasoning_effort"]
 
+
+def apply_llm_provider_override(scope: str, provider: str) -> None:
+    """Recompute the provider-neutral attributes llm_client.py actually reads
+    (LLM_* for scope="app", COMPETITOR_LLM_* for scope="competitor") for a
+    runtime override - see services/settings/runtime_settings.py, the only
+    caller. Mirrors what this module already does once at import from
+    _LLM_PROVIDER_DEFAULTS/_LLM_PROVIDER_VALUES above; credentials still come
+    from whatever that provider's env var was set to at process start (e.g.
+    OPENAI_API_KEY) - switching *to* a hosted provider here does not invent a
+    key for it out of nowhere."""
+    global LLM_PROVIDER, LLM_API_KEY, LLM_CHAT_BASE_URL, LLM_CHAT_MODEL
+    global LLM_API_STYLE, LLM_API_KEY_ENV_NAME, LLM_REASONING_EFFORT
+    global COMPETITOR_ANALYSIS_LLM_PROVIDER, COMPETITOR_LLM_API_KEY, COMPETITOR_LLM_CHAT_BASE_URL
+    global COMPETITOR_LLM_CHAT_MODEL, COMPETITOR_LLM_API_STYLE, COMPETITOR_LLM_API_KEY_ENV_NAME
+    global COMPETITOR_LLM_REASONING_EFFORT
+
+    if provider not in _LLM_PROVIDER_DEFAULTS:
+        raise ValueError(f"Unknown LLM provider: {provider!r}")
+    provider_defaults = _LLM_PROVIDER_DEFAULTS[provider]
+    provider_values = _LLM_PROVIDER_VALUES[provider]
+
+    if scope == "app":
+        LLM_PROVIDER = provider
+        LLM_API_KEY = provider_values["api_key"]
+        LLM_CHAT_BASE_URL = provider_values["base_url"]
+        LLM_CHAT_MODEL = provider_values["model"]
+        LLM_API_STYLE = provider_defaults["api_style"]
+        LLM_API_KEY_ENV_NAME = provider_defaults["api_key_env"]
+        LLM_REASONING_EFFORT = provider_values["reasoning_effort"]
+    elif scope == "competitor":
+        COMPETITOR_ANALYSIS_LLM_PROVIDER = provider
+        COMPETITOR_LLM_API_KEY = provider_values["api_key"]
+        COMPETITOR_LLM_CHAT_BASE_URL = provider_values["base_url"]
+        COMPETITOR_LLM_CHAT_MODEL = provider_values["model"]
+        COMPETITOR_LLM_API_STYLE = provider_defaults["api_style"]
+        COMPETITOR_LLM_API_KEY_ENV_NAME = provider_defaults["api_key_env"]
+        COMPETITOR_LLM_REASONING_EFFORT = provider_values["reasoning_effort"]
+    else:
+        raise ValueError(f"Unknown provider override scope: {scope!r}")
+
 # How long a single chat_completion() HTTP call waits for a response before
 # giving up (see llm_client.py's own default). Raise this for a slow remote
 # backend (e.g. a Colab-hosted Ollama instance behind an ngrok tunnel) where

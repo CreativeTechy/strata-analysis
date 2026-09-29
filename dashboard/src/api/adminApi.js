@@ -51,3 +51,8 @@ export const listRoles = () => request('/roles');
 export const createRole = (body) => request('/roles', { method: 'POST', body });
 export const updateRole = (roleId, body) => request(`/roles/${roleId}`, { method: 'PATCH', body });
 export const deleteRole = (roleId) => request(`/roles/${roleId}`, { method: 'DELETE' });
+
+// --- runtime settings ------------------------------------------------------
+export const listRuntimeSettings = () => request('/settings');
+export const updateRuntimeSetting = (key, value) => request(`/settings/${key}`, { method: 'PATCH', body: { value } });
+export const resetRuntimeSetting = (key) => request(`/settings/${key}`, { method: 'DELETE' });

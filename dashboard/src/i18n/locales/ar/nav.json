@@ -20,7 +20,8 @@
     "performanceLogs": "سجلات الأداء",
     "users": "المستخدمون",
     "roles": "الأدوار",
-    "projectAccess": "الوصول إلى المشاريع"
+    "projectAccess": "الوصول إلى المشاريع",
+    "settings": "الإعدادات"
   },
   "toggle": {
     "closeNavigation": "إغلاق التنقل",

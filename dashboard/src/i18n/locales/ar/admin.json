@@ -2,7 +2,8 @@
   "kickers": {
     "userManagement": "إدارة المستخدمين",
     "accessControl": "التحكم في الوصول",
-    "projectLinkage": "ربط المشاريع"
+    "projectLinkage": "ربط المشاريع",
+    "settings": "إعدادات النظام"
   },
   "notFound": {
     "roleTitle": "الدور غير موجود",
@@ -228,5 +229,62 @@
       "saveLinkage": "حفظ الربط",
       "genericError": "فشل تحديث المستخدمين المرتبطين."
     }
+  },
+  "settings": {
+    "title": "الإعدادات",
+    "subtitle": "مجموعة محدودة من إعدادات الضبط التي كانت تُقرأ فقط من ملف .env الخاص بالخادم. مفاتيح API وبيانات اعتماد قاعدة البيانات غير متاحة هنا عمدًا - تبقى مقتصرة على .env وتتطلب إعادة تشغيل.",
+    "loading": "جارٍ تحميل الإعدادات...",
+    "groups": {
+      "preferences": "التفضيلات",
+      "ai": "مزوّدو الذكاء الاصطناعي",
+      "performance": "الأداء",
+      "relevanceScreening": "الصلة والأدلة"
+    },
+    "language": {
+      "label": "اللغة",
+      "description": "غيّر لغة عرض لوحة التحكم لهذا المتصفح."
+    },
+    "keys": {
+      "LLM_PROVIDER": "مزوّد نموذج اللغة",
+      "COMPETITOR_ANALYSIS_LLM_PROVIDER": "مزوّد نموذج تحليل المنافسين",
+      "SENTIMENT_CLASSIFIER_PROVIDER": "مزوّد تصنيف المشاعر",
+      "SENTIMENT_CLASSIFIER_MODEL": "نموذج تصنيف المشاعر",
+      "SENTIMENT_CLASSIFIER_DEVICE": "جهاز تصنيف المشاعر",
+      "SENTIMENT_CONFIDENCE_THRESHOLD": "حد ثقة تصنيف المشاعر",
+      "CLASSIFICATION_PROVIDER": "مزوّد التصنيف",
+      "ANALYSIS_CONCURRENCY": "تزامن التحليل",
+      "COMPETITOR_ANALYSIS_CONCURRENCY": "تزامن تحليل المنافسين",
+      "LLM_REQUEST_TIMEOUT_SECONDS": "مهلة طلب النموذج اللغوي (ثوانٍ)",
+      "BUSINESS_PROFILE_LLM_TIMEOUT_SECONDS": "مهلة الملف التعريفي للأعمال (ثوانٍ)",
+      "COMPETITOR_FINDING_TIMEOUT_SECONDS": "مهلة نتائج تحليل المنافسين (ثوانٍ)",
+      "ARTICLE_RELEVANCE_SCREENING_MODE": "وضع فحص الصلة",
+      "ARTICLE_RELEVANCE_ACCEPT_THRESHOLD": "حد قبول الصلة",
+      "ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD": "حد استبعاد الصلة",
+      "EVIDENCE_CLAIM_SIMILARITY_THRESHOLD": "حد تشابه أدلة الادعاءات"
+    },
+    "descriptions": {
+      "LLM_PROVIDER": "المزوّد الذي تتواصل معه كل ميزة ذكاء اصطناعي (تحليل المقالات، المساعد الذكي، تقسيم المستندات). التحويل إلى مزوّد مستضاف يرسل نص المستندات المرفوعة إليه، ولا يعمل إلا إذا كان مفتاح API الخاص بذلك المزوّد معدًا مسبقًا في ملف .env الخاص بالخادم.",
+      "COMPETITOR_ANALYSIS_LLM_PROVIDER": "يتجاوز المزوّد لتقسيم مستندات دراسة المنافسين وتسمية المنافسين وتوليد النتائج فقط. نفس تحذير الإرسال خارج الجهاز الوارد أعلاه لمزوّد النموذج اللغوي.",
+      "ANALYSIS_CONCURRENCY": "عدد المقالات التي تُحلَّل بالتوازي في عملية تحليل واحدة.",
+      "COMPETITOR_ANALYSIS_CONCURRENCY": "عدد المنافسين الذين يتم توليد نتائجهم بالتوازي في عملية تحليل منافسين واحدة.",
+      "SENTIMENT_CLASSIFIER_PROVIDER": "أين يعمل نموذج مرحلة تحليل المشاعر: داخل العملية نفسها، أم عبر واجهة الاستدلال المستضافة من Hugging Face.",
+      "SENTIMENT_CLASSIFIER_MODEL": "معرّف نموذج Hugging Face الذي تحمّله مرحلة تحليل المشاعر (يُستخدم فقط عندما يكون المزوّد أعلاه \"local\").",
+      "SENTIMENT_CLASSIFIER_DEVICE": "الجهاز الذي يعمل عليه نموذج تحليل المشاعر المحلي: \"cpu\"، أو \"cuda\"/\"cuda:0\"، إلخ.",
+      "SENTIMENT_CONFIDENCE_THRESHOLD": "الحد الأدنى لثقة المصنّف لاعتماد وسم مشاعر غير محايد؛ وما دون ذلك يعود المشاعر إلى الحياد.",
+      "CLASSIFICATION_PROVIDER": "أين يعمل نموذج مرحلة التصنيف: داخل العملية نفسها، أم عبر واجهة الاستدلال المستضافة من Hugging Face.",
+      "LLM_REQUEST_TIMEOUT_SECONDS": "المدة التي ينتظرها طلب واحد للنموذج اللغوي قبل التوقف، لأي طلب لا يحدد مهلته الخاصة الأطول. ارفع هذه القيمة قبل خفض التزامن إذا كان النموذج المحلي البطيء أو الذي يعمل على المعالج فقط بحاجة فعليًا إلى وقت أطول.",
+      "BUSINESS_PROFILE_LLM_TIMEOUT_SECONDS": "ميزانية مهلة النموذج اللغوي لاشتقاق الملف التعريفي لأعمال دراسة منافسين.",
+      "COMPETITOR_FINDING_TIMEOUT_SECONDS": "ميزانية مهلة النموذج اللغوي لتوليد نتائج تحليل المنافسين - أثقل استدعاء في تحليل المنافسين.",
+      "ARTICLE_RELEVANCE_SCREENING_MODE": "\"off\" يتخطى فحص الصلة تمامًا؛ \"observe\" يسجّل درجة دون استبعاد أي شيء؛ \"enforce\" يستبعد فعليًا المقالات التي تقل درجتها عن حد الاستبعاد.",
+      "ARTICLE_RELEVANCE_ACCEPT_THRESHOLD": "درجة تشابه جيب التمام التي عندها أو أعلاها تكون المقالة ضمن النطاق بثقة. ليست احتمالًا - اضبطها تجريبيًا. يجب أن تبقى أكبر من أو تساوي حد الاستبعاد أدناه.",
+      "ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD": "درجة تشابه جيب التمام التي عندها أو أدناها تُستبعد المقالة عندما يكون الوضع أعلاه \"enforce\". يجب أن تبقى أصغر من أو تساوي حد القبول أعلاه.",
+      "EVIDENCE_CLAIM_SIMILARITY_THRESHOLD": "إعداد توافق قديم: قواعد الأدلة الحالية لا تستخدم تشابه التضمين لدمج الادعاءات، لذا ليس لهذا أي أثر ما لم تقرأه مجموعة قواعد أقدم."
+    },
+    "status": {
+      "default": "افتراضي",
+      "overridden": "تم تجاوزه",
+      "overriddenByTitle": "تم تجاوزه بواسطة {{name}}"
+    },
+    "resetToDefault": "إعادة الضبط الافتراضي"
   }
 }

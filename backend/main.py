@@ -34,6 +34,7 @@ from services.auth.auth import clear_auth_cookies, get_current_user, require_any
 from services.auth.authz import ensure_project_visible as _ensure_project_visible
 from services.auth.authz import visible_project_ids_or_none as _visible_project_ids_or_none
 from services.projects.projects_ai import suggest_project_metadata
+from services.settings import runtime_settings
 from services.articles.articles_store import (
     compute_overall_tone,
     export_articles,
@@ -243,6 +244,16 @@ async def _bootstrap_admin():
     users_store.bootstrap_admin()
 
 
+@app.on_event("startup")
+async def _load_runtime_settings():
+    """Re-apply persisted Settings-page overrides on top of the .env defaults
+    config.py already loaded at import - runs after _apply_migrations so the
+    runtime_settings table is guaranteed to exist."""
+    if not config.DATABASE_URL:
+        return
+    runtime_settings.load_overrides_on_startup()
+
+
 @app.get("/")
 def root():
     return {"service": "Strata Analysis API", "ok": True, "see": "/api/health"}
@@ -442,6 +453,38 @@ def edit_role(role_id: int, payload: dict, user: dict = Depends(require_permissi
         raise HTTPException(status_code=409, detail=f"Unable to update role: {e}")
 
     return {"role": permissions_store.get_role_with_permissions(role_id)}
+
+
+@app.get("/api/settings")
+def get_runtime_settings(user: dict = Depends(require_permission("settings.view"))):
+    """Runtime Settings page: a small allowlist of tuning knobs that
+    otherwise only live in backend/.env (see services/settings/
+    runtime_settings.py for why the allowlist stops well short of every env
+    var - provider selection, API keys, and DB credentials stay .env-only)."""
+    return {"settings": runtime_settings.resolve_all()}
+
+
+@app.patch("/api/settings/{key}")
+def update_runtime_setting(
+    key: str, payload: dict,
+    user: dict = Depends(require_permission("settings.update")),
+):
+    value = (payload or {}).get("value")
+    try:
+        setting = runtime_settings.set_value(key, value, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"key": key, "setting": setting}
+
+
+@app.delete("/api/settings/{key}")
+def reset_runtime_setting(key: str, user: dict = Depends(require_permission("settings.update"))):
+    """Delete the operator override, reverting the key to its .env default."""
+    try:
+        setting = runtime_settings.reset_value(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"key": key, "setting": setting}
 
 
 @app.delete("/api/roles/{role_id}")

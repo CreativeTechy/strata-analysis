@@ -20,7 +20,8 @@
     "performanceLogs": "Performance Logs",
     "users": "Users",
     "roles": "Roles",
-    "projectAccess": "Project Access"
+    "projectAccess": "Project Access",
+    "settings": "Settings"
   },
   "toggle": {
     "closeNavigation": "Close navigation",
