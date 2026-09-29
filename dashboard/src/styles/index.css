@@ -2457,6 +2457,23 @@ h1, h2, h3 {
   margin-bottom: 14px;
 }
 
+.run-detail-collapsible-trigger {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.run-detail-collapsible-trigger .run-detail-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .run-detail-relevance-copy {
   margin: -4px 0 0;
   color: var(--text-light);
