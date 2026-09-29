@@ -9,6 +9,7 @@ import {
 } from '../api/pipelineRunsApi.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime } from '../lib/i18nFormat.js';
+import { ACTIVE_STATUSES } from '../lib/pipelineRunStatus.js';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -36,8 +37,6 @@ function runStatusLabel(t, status) {
   if (status === 'failed') return t('common:status.failed');
   return t(`shared.runStatusLabels.${status}`, status);
 }
-
-const ACTIVE_STATUSES = ['queued', 'running'];
 
 const STATUS_FILTER_OPTIONS = ['all', 'queued', 'running', 'success', 'failed', 'cancelled'];
 

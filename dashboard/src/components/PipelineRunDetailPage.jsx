@@ -21,6 +21,7 @@ import { getPipelineRun, setArticleRelevanceOverride, stopPipelineRun } from '..
 import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime as formatLocaleDateTime, formatNumber } from '../lib/i18nFormat.js';
+import { ACTIVE_STATUSES } from '../lib/pipelineRunStatus.js';
 
 function prettyStage(t, stage) {
   if (!stage) return t('shared.stage.queued');
@@ -30,8 +31,6 @@ function prettyStage(t, stage) {
   if (stage === 'no_work') return t('shared.stage.noAnalysisRequired');
   return stage;
 }
-
-const ACTIVE_STATUSES = ['queued', 'running'];
 
 function stageColor(status) {
   if (status === 'success') return '#2ed573';
@@ -186,6 +185,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   const [overrideSaving, setOverrideSaving] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState('');
   const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState('');
 
   const projectsById = useMemo(() => {
     const map = new Map();
@@ -260,7 +260,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
   const handleStopRun = async () => {
     if (!run) return;
     setStopping(true);
-    setError('');
+    setStopError('');
     try {
       await stopPipelineRun(run.id);
       const data = await getPipelineRun(runId);
@@ -268,7 +268,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
       setDocuments(Array.isArray(data?.documents) ? data.documents : []);
       setScreenings(Array.isArray(data?.screenings) ? data.screenings : []);
     } catch (err) {
-      setError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('runsList.stopRunFailed')));
+      setStopError(err?.code ? translateApiError(tErrors, err) : (err?.message || t('runsList.stopRunFailed')));
     } finally {
       setStopping(false);
     }
@@ -319,6 +319,12 @@ export default function PipelineRunDetailPage({ projects = [] }) {
         </div>
       ) : !run ? null : (
         <>
+          {stopError ? (
+            <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#b42318', borderLeft: '4px solid #ff4757', marginBottom: 18 }} dir="auto">
+              <AlertTriangle size={18} /> {stopError}
+            </div>
+          ) : null}
+
           <div className="admin-stats-grid">
             {buildTotalStats(t).map(({ key, label, Icon, tint, color }) => (
               <div className="admin-stat-card" key={key}>
