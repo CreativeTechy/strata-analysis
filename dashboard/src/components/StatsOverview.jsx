@@ -90,6 +90,12 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
   const { t } = useTranslation('dashboard');
   return <article className={`report-feedback-column ${tone}`}><h4>{icon}{title}</h4>{items.length ? <ul>{items.slice(0, 5).map((item) => {
     const label = item.text || item.idea;
+    // The evidence workspace matches topics against the original English
+    // text the analysis pipeline extracted, which a translated `label`
+    // can't match - source_text (see feedback_translation.py) carries that
+    // original text through for the evidence-link query, while `label`
+    // keeps rendering (and the page title) in the chosen locale.
+    const topicQuery = item.source_text || label;
     const count = item.count || item.frequency_estimate || 1;
     if (!projectId || !item.sources?.length) {
       return <li key={label} dir="auto">{label}<strong>{count}</strong></li>;
@@ -98,7 +104,7 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
       <Link
         className="feedback-topic-link"
         to={`/projects/${projectId}/topics`}
-        state={{ idea: label, type: item.type, category: item.category, frequencyEstimate: item.frequency_estimate || item.count, sources: mapTopicSources(item.sources), projectId, backTo: '/reports', backLabel: t('dashboard:report.backLabel') }}
+        state={{ idea: label, topicQuery, type: item.type, category: item.category, frequencyEstimate: item.frequency_estimate || item.count, sources: mapTopicSources(item.sources), projectId, backTo: '/reports', backLabel: t('dashboard:report.backLabel') }}
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, width: '100%', color: 'inherit', textDecoration: 'none' }}
         dir="auto"
       >

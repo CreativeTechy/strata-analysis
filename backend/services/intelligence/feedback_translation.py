@@ -164,8 +164,19 @@ def localize_categorized_feedback(intelligence: dict, *, project_id: int, locale
                 logger.exception("Feedback translation cache write failed for project_id=%s locale=%s", project_id, locale)
             translations.update(new_translations)
 
+    # source_text preserves the original English text alongside the
+    # translated `text` - the dashboard needs it to query the evidence
+    # workspace, which matches topics against the English text the analysis
+    # pipeline extracted and has no notion of a translated string.
     localized_lists = {
-        key: [{**item, "text": translations.get(str(item.get("text") or "").strip(), item.get("text"))} for item in items]
+        key: [
+            {
+                **item,
+                "text": translations.get(str(item.get("text") or "").strip(), item.get("text")),
+                "source_text": item.get("text"),
+            }
+            for item in items
+        ]
         for key, items in feedback_lists.items()
     }
     return {**intelligence, "insights": {**insights, **localized_lists}}

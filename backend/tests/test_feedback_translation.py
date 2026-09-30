@@ -63,6 +63,10 @@ class LocalizeCategorizedFeedbackTests(unittest.TestCase):
         self.assertEqual(result["insights"]["negative_feedback"][0]["text"], "كان الشحن بطيئاً")
         # Non-text fields are untouched.
         self.assertEqual(result["insights"]["positive_feedback"][0]["count"], 5)
+        # The original English text survives under source_text so the
+        # dashboard can still query the evidence workspace by it.
+        self.assertEqual(result["insights"]["positive_feedback"][0]["source_text"], "Battery lasts all day")
+        self.assertEqual(result["insights"]["negative_feedback"][0]["source_text"], "Shipping was slow")
         mock_chat.assert_not_called()
 
     def test_cache_miss_translates_only_the_missing_texts_in_one_call(self):
