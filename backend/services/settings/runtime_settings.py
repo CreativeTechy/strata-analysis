@@ -159,6 +159,14 @@ SETTINGS_SCHEMA = {
             "Must stay <= the accept threshold above."
         ),
     },
+    "REGION_DETECTION_LLM_FALLBACK": {
+        "type": "enum",
+        "choices": ("off", "on"),
+        "description": (
+            "\"on\" skips the rule-based region scan (analysis/region_detection.py) entirely and asks the "
+            "configured LLM provider directly instead, at the cost of one extra per-article round trip."
+        ),
+    },
     "EVIDENCE_CLAIM_SIMILARITY_THRESHOLD": {
         "type": "float",
         "min": -1.0,

@@ -1,8 +1,10 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
+import config
 from analysis import region_detection
 
 
@@ -115,6 +117,34 @@ class DetectRegionTests(unittest.TestCase):
         self.assertEqual(result["region"], "United States")
         self.assertGreater(result["region_confidence"], 0.0)
 
+    def test_capital_city_mention_votes_for_its_country(self):
+        """A story naming a capital ("Beirut") rather than the country
+        itself ("Lebanon") must still resolve to that country - see
+        CITY_ALIASES in services/competitors/countries.py."""
+        result = region_detection.detect_region(
+            title="Health forum opens in Beirut",
+            text="The event was held at a university in Beirut.",
+            people_opinions=[],
+            entities=[],
+            organizations=[],
+        )
+        self.assertEqual(result["region"], "Lebanon")
+        self.assertGreater(result["region_confidence"], 0.0)
+
+    def test_nationality_adjective_in_an_institution_name_is_not_a_region_vote(self):
+        """"American University of Beirut" is a Lebanese institution's proper
+        name - the leading "American" must not be counted as a United States
+        vote, or it would outweigh (or hide) a real "Beirut"/"Lebanon"
+        mention elsewhere in the same article."""
+        result = region_detection.detect_region(
+            title="Forum held at American University of Beirut",
+            text="Officials inaugurated the forum in Beirut, Lebanon.",
+            people_opinions=[],
+            entities=[],
+            organizations=["American University of Beirut"],
+        )
+        self.assertEqual(result["region"], "Lebanon")
+
     def test_organization_named_after_a_country_does_not_suppress_a_real_mention(self):
         """"Bank of America"/"University of Georgia"-style organization names
         are the documented normal shape of `organizations` (see
@@ -132,6 +162,49 @@ class DetectRegionTests(unittest.TestCase):
         )
         self.assertEqual(result["region"], "United States")
         self.assertGreaterEqual(result["region_confidence"], 0.9)
+
+
+class LlmOnlyRegionModeTests(unittest.TestCase):
+    """config.REGION_DETECTION_LLM_FALLBACK == "on" bypasses the rule-based
+    scan entirely - see region_detection.py's _llm_only_region()."""
+
+    def setUp(self):
+        patcher = patch.object(config, "REGION_DETECTION_LLM_FALLBACK", "on")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("analysis.region_detection.llm_client.chat_completion")
+    def test_llm_answer_is_used_even_when_rule_based_signals_would_disagree(self, mock_chat):
+        mock_chat.return_value = '{"country": "Lebanon"}'
+        result = region_detection.detect_region(
+            title="Forum held at American University of Beirut",
+            text="Officials in Beirut, Lebanon inaugurated the event.",
+            people_opinions=[{"opinion": "great event", "region": "Germany"}],
+            entities=[],
+            organizations=["American University of Beirut"],
+        )
+        self.assertEqual(result["region"], "Lebanon")
+        self.assertAlmostEqual(result["region_confidence"], 0.7)
+        self.assertFalse(result["region_low_confidence"])
+        mock_chat.assert_called_once()
+
+    @patch("analysis.region_detection.llm_client.chat_completion")
+    def test_rule_based_scan_never_runs_in_this_mode(self, mock_chat):
+        """A body that would trivially resolve via the rule-based scan alone
+        (a bare, unambiguous country mention) must still go through the LLM
+        call rather than being shortcut by the scan."""
+        mock_chat.return_value = '{"country": "unknown"}'
+        result = region_detection.detect_region(title="", text="A dealer in France commented on pricing.")
+        mock_chat.assert_called_once()
+        self.assertEqual(result["region"], "unknown")
+        self.assertEqual(result["region_confidence"], 0.0)
+
+    @patch("analysis.region_detection.llm_client.chat_completion", side_effect=RuntimeError("boom"))
+    def test_llm_failure_returns_unknown_rather_than_falling_back_to_the_scan(self, mock_chat):
+        result = region_detection.detect_region(title="", text="A dealer in France commented on pricing.")
+        self.assertEqual(result["region"], "unknown")
+        self.assertEqual(result["region_confidence"], 0.0)
+        self.assertTrue(result["region_low_confidence"])
 
 
 if __name__ == "__main__":
