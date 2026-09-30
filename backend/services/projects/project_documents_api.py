@@ -28,6 +28,7 @@ from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible
 from services.pipeline.pipeline import start_or_reuse_analysis_run
 from services.projects import project_document_articles, project_documents_store
+from services.projects.project_documents_store import sync_competitor_evidence_after_approval
 from services.projects.projects_store import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -166,14 +167,14 @@ def list_document_articles(project_id: int, user: dict = Depends(require_permiss
 def set_document_article_status(
     candidate_id: int,
     payload: dict,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Approving materializes the candidate into a real `articles` row (see
-    project_document_articles._materialize) and starts a tracked analysis run
-    (or joins whichever one is already active) so it shows up on the Analysis
-    Runs page; rejecting just marks it. Re-approving an already-approved
-    candidate is a no-op on the article itself - only a first approval starts
-    a run."""
+    project_document_articles._materialize); rejecting just marks it.
+    Analysis no longer starts automatically here - the user starts it
+    explicitly from the Analysis page. Re-approving an already-approved
+    candidate is a no-op on the article itself."""
     status = str((payload or {}).get("status") or "").strip().lower()
     existing = project_document_articles.get_candidate(candidate_id)
     if not existing:
@@ -185,37 +186,38 @@ def set_document_article_status(
     if not candidate:
         raise HTTPException(status_code=400, detail="status must be pending, approved, or rejected.")
 
-    run_id = None
     if status == "approved" and not had_article_id and candidate.get("article_id"):
-        run_id = start_or_reuse_analysis_run(existing["project_id"])["run_id"]
-    return {"article": candidate, "run_id": run_id}
+        sync_competitor_evidence_after_approval(existing["project_id"], background_tasks=background_tasks)
+    return {"article": candidate, "run_id": None}
 
 
 @router.post("/{project_id}/document-articles/approve-all")
 def approve_all_document_articles(
     project_id: int,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     _project_or_404(project_id, user)
     approved = project_document_articles.approve_all(project_id)
-    run_id = None
     if any(candidate.get("article_id") for candidate in approved):
-        run_id = start_or_reuse_analysis_run(project_id)["run_id"]
-    return {"articles": approved, "run_id": run_id}
+        sync_competitor_evidence_after_approval(project_id, background_tasks=background_tasks)
+    return {"articles": approved, "run_id": None}
 
 
 @router.post("/{project_id}/document-articles/approve-for-documents")
 def approve_document_articles_for_documents(
     project_id: int,
     payload: dict,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Same as approve-all, scoped to specific document ids - what the
     Articles page's import uses so approving what it just uploaded can't also
     sweep up a pending candidate from a wizard mid-review elsewhere in the
     project (see project_document_articles.approve_for_documents), and so an
-    import of many candidates is one approval call and one run-start instead
-    of one of each per candidate."""
+    import of many candidates is one approval call instead of one per
+    candidate. Analysis no longer starts automatically here - the user
+    starts it explicitly from the Analysis page."""
     _project_or_404(project_id, user)
     document_ids = (payload or {}).get("document_ids") or []
     try:
@@ -223,10 +225,9 @@ def approve_document_articles_for_documents(
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="document_ids must be a list of integers.")
     approved = project_document_articles.approve_for_documents(project_id, document_ids)
-    run_id = None
     if any(candidate.get("article_id") for candidate in approved):
-        run_id = start_or_reuse_analysis_run(project_id)["run_id"]
-    return {"articles": approved, "run_id": run_id}
+        sync_competitor_evidence_after_approval(project_id, background_tasks=background_tasks)
+    return {"articles": approved, "run_id": None}
 
 
 @router.post("/{project_id}/document-articles/reanalyze")

@@ -343,6 +343,21 @@ def delete_document(document_id: int) -> bool:
     document = get_document(document_id)
     if not document:
         return False
+    # A mirrored row (see project_document_bridge.py) has no real file of its
+    # own - deleting it is the user opting that project-document out of the
+    # competitor study's evidence, not discarding an upload. Recorded on the
+    # source project_documents row so the next sync doesn't just recreate the
+    # mirror it was just asked to remove.
+    row = db.fetch_one(
+        "select source_project_document_id from competitor_documents where id = %s",
+        (int(document_id),),
+    )
+    source_project_document_id = row.get("source_project_document_id") if row else None
     db.execute("delete from competitor_documents where id = %s", (int(document_id),))
+    if source_project_document_id:
+        db.execute(
+            "update project_documents set competitor_mirror_excluded = true where id = %s",
+            (int(source_project_document_id),),
+        )
     (STORAGE_DIR / document["storage_path"]).unlink(missing_ok=True)
     return True

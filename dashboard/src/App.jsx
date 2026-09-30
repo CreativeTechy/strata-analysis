@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useDocumentLocaleSync } from './i18n/useLocale.js';
 import AppShell from './components/AppShell';
 import DashboardOverview from './components/DashboardOverview';
@@ -44,6 +45,7 @@ import { clearIntelligenceScope, readIntelligenceScope, writeIntelligenceScope }
 
 export default function App() {
   useDocumentLocaleSync();
+  const { i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const pathname = location.pathname;
@@ -224,7 +226,7 @@ export default function App() {
       setIntelligenceError(null);
     }
     try {
-      const data = await getProjectIntelligence(scopedProjectId, { period, run_id: runId });
+      const data = await getProjectIntelligence(scopedProjectId, { period, run_id: runId, locale: i18n.language });
       if (requestId !== intelligenceRequestRef.current) return;
       setIntelligence(data);
       setIntelligenceError(null);
@@ -294,7 +296,7 @@ export default function App() {
     if (!intelligenceScope.explicit && !runDefaultedRef.current.has(selectedProjectId)) return;
 
     loadIntelligence(selectedProjectId, scopePeriod, scopeRunId);
-  }, [isAuthenticated, pathname, selectedProjectId, projects, scopePeriod, scopeRunId]);
+  }, [isAuthenticated, pathname, selectedProjectId, projects, scopePeriod, scopeRunId, i18n.language]);
 
   useEffect(() => {
     if (!isAuthenticated || !['/dashboard', '/reports'].includes(pathname) || selectedProjectId == null) return;

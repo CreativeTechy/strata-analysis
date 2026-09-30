@@ -52,7 +52,6 @@ import config
 import db
 from services.documents import extraction as document_extraction
 from services.documents import records as document_records
-from services.pipeline.pipeline import start_or_reuse_analysis_run
 from services.projects import project_document_articles
 
 logger = logging.getLogger(__name__)
@@ -330,6 +329,13 @@ def _try_approve_all_and_queue_analysis(project_id: int) -> None:
     an auto-approved candidate is indistinguishable from a manually-approved
     one downstream.
 
+    Despite the name, this no longer starts an analysis run automatically -
+    only approval/materialization happens on its own; analysis is something
+    the user now starts explicitly (the Analysis page's "Run analysis", or
+    the document review's own manual trigger). Kept as a no-op function name
+    rather than renamed outright since callers elsewhere still refer to "the
+    auto-approve step" by this name.
+
     Failures here are logged rather than raised: process_document's caller
     already recorded articles_status = 'ready' (splitting genuinely
     succeeded), and letting an approval hiccup bubble up would have the outer
@@ -342,7 +348,38 @@ def _try_approve_all_and_queue_analysis(project_id: int) -> None:
         logger.exception("auto-approving extracted candidates failed for project %s", project_id)
         return
     if any(candidate.get("article_id") for candidate in approved):
-        start_or_reuse_analysis_run(project_id)
+        sync_competitor_evidence_after_approval(project_id)
+
+
+def sync_competitor_evidence_after_approval(project_id: int, background_tasks=None) -> None:
+    """On a competitor-mode project, mirror newly-approved candidates into
+    competitor_documents/competitor_document_articles so they're usable
+    evidence for that project's competitor study too (see
+    services/competitors/project_document_bridge.py). A no-op for an
+    ordinary sentiment-mode project.
+
+    Deliberately does not start an analysis run - approval/materialization
+    (and this bridge, which is bookkeeping, not analysis) still happen
+    automatically, but the AI stage pipeline itself only ever runs when a
+    user explicitly starts it.
+
+    The mirror itself (DB-only) always runs inline - cheap. The competitor-
+    naming pass that follows it is one full-corpus LLM call
+    (COMPETITOR_NAMING_TIMEOUT_SECONDS-bounded, currently 120s), so a caller
+    with a FastAPI `background_tasks` (a real BackgroundTasks, or anything
+    duck-typing `.add_task`) gets it scheduled off the request instead of
+    blocking on it; a caller with none (e.g. process_document's own
+    background task, which isn't on a request thread to begin with) still
+    gets it run inline, same as before."""
+    from services.competitors.project_document_bridge import (
+        refresh_competitors_from_mirrored_evidence,
+        sync_project_documents_into_competitor_evidence,
+    )
+    sync_project_documents_into_competitor_evidence(project_id)
+    if background_tasks is not None:
+        background_tasks.add_task(refresh_competitors_from_mirrored_evidence, project_id)
+    else:
+        refresh_competitors_from_mirrored_evidence(project_id)
 
 
 def get_document_text(document_id: int) -> str | None:

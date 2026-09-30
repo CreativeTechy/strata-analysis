@@ -145,7 +145,12 @@ export const listFindings = (id, params = {}) => {
   ).toString();
   return request(`/studies/${id}/findings${query ? `?${query}` : ''}`);
 };
-export const getFinding = (findingId) => request(`/findings/${findingId}`);
+export const getFinding = (findingId, params = {}) => {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  ).toString();
+  return request(`/findings/${findingId}${query ? `?${query}` : ''}`);
+};
 export const validateFinding = (findingId, status, notes = '') =>
   request(`/findings/${findingId}/validate`, { method: 'POST', body: { status, notes } });
 

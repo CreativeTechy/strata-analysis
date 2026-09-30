@@ -62,6 +62,7 @@
         "analyzed": "مُحلَّلة",
         "analysisFailed": "فشل التحليل",
         "analyzing": "جارٍ التحليل...",
+        "notAnalyzed": "لم يتم تحليلها بعد",
         "approved": "معتمدة",
         "rejected": "مرفوضة"
       },
@@ -85,10 +86,12 @@
         "articlesApproved_many": "{{formattedCount}} مقالة معتمدة",
         "articlesApproved_other": "{{formattedCount}} مقالة معتمدة",
         "analyzedSuffix": " {{formattedCount}} مُحلَّلة.",
-        "failedSuffix": " فشل تحليل {{formattedCount}}."
+        "failedSuffix": " فشل تحليل {{formattedCount}}.",
+        "notAnalyzedSuffix": " {{formattedCount}} لم يتم تحليلها بعد."
       },
+      "runAnalysisButton": "تشغيل التحليل",
       "rerunButton": "إعادة تشغيل التحليل",
-      "rerunning": "جارٍ إعادة التشغيل..."
+      "running": "جارٍ التشغيل..."
     },
     "errors": {
       "removeDocumentFailed": "فشل حذف المستند.",

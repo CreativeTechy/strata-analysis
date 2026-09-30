@@ -177,6 +177,20 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
         .length,
     [articleCandidates]
   );
+  // Approval no longer starts an analysis run on its own - an approved
+  // candidate can sit here at 'pending'/'processing'-not-yet-reached (or with
+  // no article_analysis_status at all) until the user explicitly runs
+  // analysis. This is what decides whether to show the "Run analysis" button
+  // and the not-analyzed-yet chip, as distinct from a genuine in-progress run
+  // (article_analysis_status === 'processing').
+  const notYetAnalyzedCandidateCount = useMemo(
+    () =>
+      articleCandidates.filter(
+        (candidate) => candidate.status === 'approved' && candidate.article_analysis_status !== 'success'
+          && candidate.article_analysis_status !== 'failed' && candidate.article_analysis_status !== 'processing'
+      ).length,
+    [articleCandidates]
+  );
 
   useEffect(() => {
     if (isEditRoute) {
@@ -314,14 +328,6 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     setArticleCandidates(result.articles || []);
   };
 
-  // Watches approved-but-not-yet-analyzed candidates until sentiment analysis
-  // finishes for all of them - fire-and-forget, since neither review nor
-  // finish gates on analysis completing (matches CompetitorOnboarding's
-  // "Open workspace" being clickable regardless of analysis state).
-  const watchArticleAnalysis = (projectId) => {
-    pollProjectArticleAnalysis(projectId, setArticleCandidates).catch(() => {});
-  };
-
   const uploadPendingDocuments = async () => {
     if (!pendingFiles.length) return;
     setMetadataError('');
@@ -360,7 +366,6 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     try {
       const result = await setProjectDocumentArticleStatus(candidateId, status);
       setArticleCandidates((prev) => prev.map((candidate) => (candidate.id === candidateId ? result.article : candidate)));
-      if (status === 'approved' && offlineProjectId) watchArticleAnalysis(offlineProjectId);
     } catch (error) {
       setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.updateArticleFailed')));
     } finally {
@@ -375,7 +380,6 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     try {
       await approveAllProjectDocumentArticles(offlineProjectId);
       await refreshArticleCandidates(offlineProjectId);
-      watchArticleAnalysis(offlineProjectId);
     } catch (error) {
       setMetadataError(error?.code ? translateApiError(tErrors, error) : (error?.message || t('documents:wizard.errors.approveAllFailed')));
     } finally {
@@ -383,10 +387,15 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
     }
   };
 
-  // Starts a tracked analysis run, then keeps polling the candidates so the
-  // per-article status on this step updates as the run works through them -
-  // the run itself is watchable in full on the Analysis Runs page.
-  const rerunFailedAnalysis = async () => {
+  // Explicitly starts (or joins) a tracked analysis run for every approved
+  // candidate that hasn't succeeded yet - not-yet-analyzed and failed alike
+  // (reanalyzeDocumentArticles scopes to scope="pending" server-side, which
+  // covers both). Approving a candidate no longer starts this on its own, so
+  // this button is the only way analysis runs from the wizard; keeps polling
+  // the candidates afterwards so the per-article status on this step updates
+  // as the run works through them - the run itself is watchable in full on
+  // the Analysis Runs page.
+  const runAnalysis = async () => {
     if (!offlineProjectId) return;
     setMetadataError('');
     setReanalyzing(true);
@@ -1060,10 +1069,12 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
                                 <span className="panel-chip success">{t('documents:wizard.review.status.analyzed')}</span>
                               ) : candidate.article_analysis_status === 'failed' ? (
                                 <span className="panel-chip">{t('documents:wizard.review.status.analysisFailed')}</span>
-                              ) : (
+                              ) : candidate.article_analysis_status === 'processing' ? (
                                 <span className="panel-chip warning" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                   <RefreshCw size={11} className="spin" /> {t('documents:wizard.review.status.analyzing')}
                                 </span>
+                              ) : (
+                                <span className="panel-chip">{t('documents:wizard.review.status.notAnalyzed')}</span>
                               )}
                             </span>
                           )}
@@ -1175,6 +1186,7 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             {'.'}
             {analyzedCandidateCount > 0 ? t('documents:wizard.finish.summary.analyzedSuffix', { count: analyzedCandidateCount, formattedCount: formatNumber(analyzedCandidateCount, locale) }) : ''}
             {failedAnalysisCandidateCount > 0 ? t('documents:wizard.finish.summary.failedSuffix', { count: failedAnalysisCandidateCount, formattedCount: formatNumber(failedAnalysisCandidateCount, locale) }) : ''}
+            {notYetAnalyzedCandidateCount > 0 ? t('documents:wizard.finish.summary.notAnalyzedSuffix', { count: notYetAnalyzedCandidateCount, formattedCount: formatNumber(notYetAnalyzedCandidateCount, locale) }) : ''}
           </p>
 
           <ErrorBanner message={metadataError} />
@@ -1201,21 +1213,24 @@ export default function ProjectWizard({ projects = [], users = [], onCreateProje
             </div>
           )}
 
-          {failedAnalysisCandidateCount > 0 && (
+          {(failedAnalysisCandidateCount > 0 || notYetAnalyzedCandidateCount > 0) && (
             <button
               type="button"
               className="btn-secondary"
-              onClick={rerunFailedAnalysis}
+              onClick={runAnalysis}
               disabled={reanalyzing}
               style={{ marginBottom: 14 }}
             >
               {reanalyzing ? (
                 <>
-                  <RefreshCw size={16} className="spin" /> {t('documents:wizard.finish.rerunning')}
+                  <RefreshCw size={16} className="spin" /> {t('documents:wizard.finish.running')}
                 </>
               ) : (
                 <>
-                  <ScanText size={16} /> {t('documents:wizard.finish.rerunButton')}
+                  <ScanText size={16} />
+                  {failedAnalysisCandidateCount > 0 && notYetAnalyzedCandidateCount === 0
+                    ? t('documents:wizard.finish.rerunButton')
+                    : t('documents:wizard.finish.runAnalysisButton')}
                 </>
               )}
             </button>

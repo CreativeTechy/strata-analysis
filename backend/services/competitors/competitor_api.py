@@ -27,8 +27,11 @@ from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
+from services.competitors.finding_translation import localize_finding, localize_findings
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible, visible_project_ids_or_none
+from services.common.api_errors import api_error
+from services.i18n.locales import UnsupportedLocaleError, normalize_locale
 from services.projects.projects_store import delete_project, project_has_articles
 
 router = APIRouter(prefix="/api/competitor", tags=["competitor"])
@@ -533,35 +536,59 @@ def analyze_status(project_id: int, run_id: int, user: dict = Depends(require_pe
     return {"run": run}
 
 
+def _resolve_locale(locale: str | None) -> str:
+    try:
+        return normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
+
+
 @router.get("/studies/{project_id}/findings")
 def list_findings(project_id: int, impact: str | None = None, competitor_id: int | None = None,
                   history: bool = False, search: str | None = None,
                   date_from: str | None = None, date_to: str | None = None,
                   pipeline_run_id: str | None = None, analysis_run_id: int | None = None,
+                  locale: str | None = None,
                   user: dict = Depends(require_permission("competitors.view"))):
+    """`locale`, when given, renders each finding's LLM-generated output
+    fields (headline, whats_up, impact, confidence_reason, signals, actions)
+    into that locale - validated against config.SUPPORTED_LOCALES, same as
+    /articles/{id}/analysis. See services/competitors/finding_translation.py."""
     _project_or_404(project_id, user)
-    return {
-        "findings": competitor_analysis.list_findings(
-            project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
-            search=search, date_from=date_from, date_to=date_to, pipeline_run_id=pipeline_run_id,
-            analysis_run_id=analysis_run_id,
-        )
-    }
+    resolved_locale = _resolve_locale(locale)
+    findings = competitor_analysis.list_findings(
+        project_id, competitor_id=competitor_id, impact_level=impact, latest_only=not history,
+        search=search, date_from=date_from, date_to=date_to, pipeline_run_id=pipeline_run_id,
+        analysis_run_id=analysis_run_id,
+    )
+    if resolved_locale != config.DEFAULT_LOCALE:
+        findings = localize_findings(findings, locale=resolved_locale)
+    return {"findings": findings}
 
 
 @router.get("/findings/{finding_id}")
-def get_finding(finding_id: int, user: dict = Depends(require_permission("competitors.view"))):
-    """One finding as a full report, including the evidence it was filtered from."""
+def get_finding(finding_id: int, locale: str | None = None,
+                user: dict = Depends(require_permission("competitors.view"))):
+    """One finding as a full report, including the evidence it was filtered
+    from. `locale`, when given, renders the finding's (and its history
+    entries') output fields into that locale - rejected_evidence stays
+    canonical, since it's the source article's own text, not LLM-authored
+    output for this card."""
     finding = competitor_analysis.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
     ensure_project_visible(finding["project_id"], user)
+    resolved_locale = _resolve_locale(locale)
+    history = competitor_analysis.list_findings(
+        finding["project_id"], competitor_id=finding["competitor_id"], latest_only=False,
+    )
+    if resolved_locale != config.DEFAULT_LOCALE:
+        finding = localize_finding(finding, locale=resolved_locale)
+        history = localize_findings(history, locale=resolved_locale)
     return {
         "finding": finding,
         "rejected_evidence": competitor_analysis.rejected_evidence(finding["competitor_id"]),
-        "history": competitor_analysis.list_findings(
-            finding["project_id"], competitor_id=finding["competitor_id"], latest_only=False,
-        ),
+        "history": history,
     }
 
 
