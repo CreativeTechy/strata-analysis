@@ -191,7 +191,6 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
   const [error, setError] = useState('');
   const [decision, setDecision] = useState('supported');
   const [reason, setReason] = useState('');
-  const [confidence, setConfidence] = useState('high');
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [compareBase, setCompareBase] = useState('');
@@ -280,7 +279,6 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     try {
       const result = await getEvidenceClaim(projectId, id);
       setSelected(result.claim); setDecision(result.claim.reviews?.[0]?.decision || result.claim.assessment); setReason('');
-      setConfidence(result.claim.reviews?.[0]?.confidence || 'high');
       setRelevanceDecision(result.claim.effective_relevance === 'unclassified' ? 'uncertain' : (result.claim.effective_relevance || 'uncertain'));
       setRelevanceReason('');
     } catch (err) { setError(err?.message || t('sources:evidence.errors.openClaimFailed')); }
@@ -304,7 +302,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
     if (!selected || !reason.trim()) return;
     setSaving(true);
     try {
-      const result = await reviewEvidenceClaim(projectId, selected.id, { decision, reason, confidence });
+      const result = await reviewEvidenceClaim(projectId, selected.id, { decision, reason });
       setSelected(result.claim); setReason(''); await load();
     } catch (err) { setError(err?.message || t('sources:evidence.errors.saveReviewFailed')); }
     finally { setSaving(false); }
@@ -689,9 +687,9 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
                   {provenanceTarget?.id === item.id ? <div className="evidence-provenance-form"><label>{t('sources:evidence.provenanceForm.originDecision')}<select value={provenanceDecision} onChange={(event) => setProvenanceDecision(event.target.value)}><option value="verified">{t('sources:evidence.provenanceFilter.verified')}</option><option value="rejected">{t('sources:evidence.provenanceFilter.rejected')}</option><option value="unassessed">{t('sources:evidence.provenanceForm.returnToUnassessed')}</option></select></label><label>{t('sources:reasonLabel')}<textarea rows="2" value={provenanceReason} onChange={(event) => setProvenanceReason(event.target.value)} placeholder={t('sources:evidence.provenanceForm.reasonPlaceholder')} /></label><div><button className="btn-primary" onClick={saveProvenanceReview} disabled={!provenanceReason.trim()}>{t('sources:evidence.provenanceForm.saveOriginReview')}</button><button className="btn-secondary" onClick={() => setProvenanceTarget(null)}>{t('common:actions.cancel')}</button></div></div> : null}
                 </article>;
               })}</div>
-              {canReview && selectedGenerationPublished ? <div className="evidence-review"><h3>{t('sources:evidence.detail.analystReviewTitle')}</h3><select value={decision} onChange={(event) => setDecision(event.target.value)}>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><label>{t('sources:evidence.detail.confidenceLabel')}<select value={confidence} onChange={(event) => setConfidence(event.target.value)}>{Object.entries(t('sources:evidence.detail.confidenceLevels', { returnObjects: true })).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><textarea rows="3" value={reason} onChange={(event) => setReason(event.target.value)} placeholder={t('sources:evidence.detail.explainEvidencePlaceholder')}/><button className="btn-primary" onClick={saveReview} disabled={saving || !reason.trim()}>{saving ? t('common:status.saving') : t('sources:evidence.actions.saveReview')}</button></div> : null}
+              {canReview && selectedGenerationPublished ? <div className="evidence-review"><h3>{t('sources:evidence.detail.analystReviewTitle')}</h3><select value={decision} onChange={(event) => setDecision(event.target.value)}>{Object.entries(LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={reason} onChange={(event) => setReason(event.target.value)} placeholder={t('sources:evidence.detail.explainEvidencePlaceholder')}/><button className="btn-primary" onClick={saveReview} disabled={saving || !reason.trim()}>{saving ? t('common:status.saving') : t('sources:evidence.actions.saveReview')}</button></div> : null}
               {canReview && selectedGenerationPublished ? <div className="evidence-review"><h3>{t('sources:evidence.detail.relevanceOverrideTitle')}</h3><select value={relevanceDecision} onChange={(event) => setRelevanceDecision(event.target.value)}>{Object.entries(RELEVANCE_LABELS).filter(([key]) => key !== 'unclassified').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><textarea rows="3" value={relevanceReason} onChange={(event) => setRelevanceReason(event.target.value)} placeholder={t('sources:evidence.detail.explainRelevancePlaceholder')}/><button className="btn-primary" onClick={saveRelevanceReview} disabled={savingRelevance || !relevanceReason.trim()}>{savingRelevance ? t('common:status.saving') : t('sources:evidence.detail.saveRelevanceOverride')}</button></div> : null}
-              {selected.reviews?.length ? <div><h3>{t('sources:evidence.detail.reviewHistoryTitle')}</h3>{selected.reviews.map((review) => <div className="evidence-history" key={review.id}><strong>{LABELS[review.decision]}</strong>{review.confidence ? <span className={`evidence-confidence ${review.confidence}`}>{t('sources:evidence.detail.confidenceLevels', { returnObjects: true })[review.confidence] || review.confidence}</span> : null}<span>{review.reviewer_name || t('sources:evidence.detail.reviewerFallback')} · {formatDate(review.created_at)}</span><p dir="auto">{review.reason}</p></div>)}</div> : null}
+              {selected.reviews?.length ? <div><h3>{t('sources:evidence.detail.reviewHistoryTitle')}</h3>{selected.reviews.map((review) => <div className="evidence-history" key={review.id}><strong>{LABELS[review.decision]}</strong><span>{review.reviewer_name || t('sources:evidence.detail.reviewerFallback')} · {formatDate(review.created_at)}</span><p dir="auto">{review.reason}</p></div>)}</div> : null}
             </>}
           </div>
         </div>}</> : null}

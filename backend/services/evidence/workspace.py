@@ -1655,11 +1655,7 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
     elif review_status == "unreviewed":
         conditions.append("not exists (select 1 from evidence_reviews er where er.claim_id=ec.id)")
     elif review_status == "needs_attention":
-        conditions.append(
-            "(coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable')"
-            " or exists (select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))"
-            " or coalesce((select er.confidence from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'high') in ('low','medium'))"
-        )
+        conditions.append("(coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable') or exists (select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies)))")
     if provenance_status:
         conditions.append("exists (select 1 from evidence_items ei where ei.claim_id=ec.id and coalesce((select epr.status from evidence_provenance_reviews epr where epr.project_id=ec.project_id and epr.article_id=ei.article_id order by epr.created_at desc limit 1),ei.source_snapshot->'provenance'->>'verification_status','unassessed')=%s)")
         params.append(provenance_status)
@@ -1678,11 +1674,9 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
                      where err.project_id=ec.project_id and err.run_id=ec.run_id
                        and err.fingerprint=ec.fingerprint and err.created_at>=ec.created_at order by err.created_at desc limit 1) as relevance_override_reason,
                    coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1), '') as review_decision,
-                   (select er.confidence from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1) as review_confidence,
                    (select count(*)::int from evidence_reviews er where er.claim_id=ec.id) as review_count,
                    (coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable')
-                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))
-                    or coalesce((select er.confidence from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'high') in ('low','medium')) as needs_review
+                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))) as needs_review
               from evidence_claims ec left join articles a on a.id=ec.source_article_id
              where {filtered_where}
              order by needs_review desc, ec.topic, ec.created_at desc limit %s offset %s""", tuple(page_params),
@@ -1695,8 +1689,7 @@ def list_workspace(project_id: int, run_id: str | None = None, generation: int |
         f"""select ec.assessment, ec.supporting_count, ec.independent_origin_count, ec.citation_checked_count,
                    coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'') as review_decision,
                    (coalesce((select er.decision from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),ec.assessment) in ('mixed_evidence','assessment_unavailable')
-                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))
-                    or coalesce((select er.confidence from evidence_reviews er where er.claim_id=ec.id order by er.created_at desc limit 1),'high') in ('low','medium')) as needs_review
+                    or exists(select 1 from evidence_items ei where ei.claim_id=ec.id and (not ei.citation_valid or not ei.qualifies))) as needs_review
               from evidence_claims ec where {overview_where}""",
         tuple(base_params),
     ) or []
@@ -1944,28 +1937,16 @@ def get_claim(project_id: int, claim_id: int) -> dict | None:
     return claim
 
 
-REVIEW_CONFIDENCE_LEVELS = {"low", "medium", "high"}
-
-
-def review_claim(
-    project_id: int, claim_id: int, decision: str, reason: str, user: dict, confidence: str = "high",
-) -> dict | None:
+def review_claim(project_id: int, claim_id: int, decision: str, reason: str, user: dict) -> dict | None:
     if decision not in ASSESSMENTS or not reason.strip():
         raise ValueError("A valid decision and review reason are required.")
-    confidence = (confidence or "high").strip().lower()
-    if confidence not in REVIEW_CONFIDENCE_LEVELS:
-        raise ValueError("Confidence must be one of: low, medium, high.")
     claim = db.fetch_one(
         "select id from evidence_claims where id=%s and project_id=%s and active",
         (int(claim_id), int(project_id)),
     )
     if not claim: return None
-    db.execute(
-        "insert into evidence_reviews (claim_id, reviewer_id, reviewer_name, decision, reason, confidence) "
-        "values (%s,%s,%s,%s,%s,%s)",
-        (int(claim_id), user.get("id"), user.get("username") or user.get("email"), decision,
-         reason.strip()[:2000], confidence),
-    )
+    db.execute("insert into evidence_reviews (claim_id, reviewer_id, reviewer_name, decision, reason) values (%s,%s,%s,%s,%s)",
+               (int(claim_id), user.get("id"), user.get("username") or user.get("email"), decision, reason.strip()[:2000]))
     return get_claim(project_id, claim_id)
 
 

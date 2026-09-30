@@ -398,12 +398,6 @@
       "reviewOrigin": "Review origin",
       "analystReviewTitle": "Analyst review",
       "explainEvidencePlaceholder": "Explain the evidence and the limits of this decision…",
-      "confidenceLabel": "How sure are you?",
-      "confidenceLevels": {
-        "high": "High – I'm confident",
-        "medium": "Medium – reasonably sure",
-        "low": "Low – not fully sure"
-      },
       "relevanceOverrideTitle": "Project relevance override",
       "explainRelevancePlaceholder": "Explain why this claim belongs in or outside the project…",
       "saveRelevanceOverride": "Save relevance override",
