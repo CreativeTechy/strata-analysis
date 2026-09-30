@@ -120,6 +120,12 @@ body::after {
   padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+
+.language-switcher-option:hover:not(.is-active) {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-dark);
 }
 
 .language-switcher-option[lang='ar'] {

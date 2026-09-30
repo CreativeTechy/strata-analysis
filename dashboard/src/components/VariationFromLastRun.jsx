@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowLeftRight, Languages, RefreshCw } from 'lucide-react';
 import { getReportVariation } from '../api/projectsApi.js';
 import { formatDate, formatNumber } from '../lib/i18nFormat.js';
+import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, isRtlLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
 
 // current_date/previous_date are plain calendar dates (already resolved in the
 // report timezone server-side), so they're formatted in UTC - a local-time
@@ -23,9 +24,17 @@ function scopeLabel(t, locale, sequence, isoDate, fallback) {
 export default function VariationFromLastRun({ projectId, runId, projectRuns = [], number = '02', id }) {
   const { t, i18n } = useTranslation('reports');
   const locale = i18n.language;
+  const compareSelectId = useId();
   // null = auto (the immediately preceding eligible run - the backend's own default).
   const [previousRunId, setPreviousRunId] = useState(null);
-  const scopeKey = `${projectId ?? ''}:${runId ?? ''}:${previousRunId ?? ''}`;
+  // The narrative's own output-language choice - deliberately separate state
+  // from the interface locale (i18n.language above), same reasoning as
+  // StatsOverview's trendSummaryLocale. Defaults to whatever the interface
+  // locale is at mount, but doesn't silently follow it afterwards.
+  const [narrativeLocale, setNarrativeLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
+  const scopeKey = `${projectId ?? ''}:${runId ?? ''}:${previousRunId ?? ''}:${narrativeLocale}`;
   const [result, setResult] = useState({ scopeKey: null, comparison: null, error: null });
   const [regenerating, setRegenerating] = useState(false);
 
@@ -42,7 +51,11 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
     }
 
     const controller = new AbortController();
-    getReportVariation(projectId, { run_id: runId, previous_run_id: previousRunId || undefined }, controller.signal)
+    getReportVariation(
+      projectId,
+      { run_id: runId, previous_run_id: previousRunId || undefined, locale: narrativeLocale },
+      controller.signal,
+    )
       .then((data) => setResult({ scopeKey, comparison: data, error: null }))
       .catch((err) => {
         if (err?.name !== 'AbortError') {
@@ -51,7 +64,7 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
         }
       });
     return () => controller.abort();
-  }, [projectId, runId, previousRunId, scopeKey]);
+  }, [projectId, runId, previousRunId, narrativeLocale, scopeKey]);
 
   const scopeLoaded = result.scopeKey === scopeKey;
   const comparison = scopeLoaded ? result.comparison : null;
@@ -65,6 +78,7 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
       const data = await getReportVariation(projectId, {
         run_id: runId,
         previous_run_id: previousRunId || undefined,
+        locale: narrativeLocale,
         regenerate: 'true',
       });
       setResult({ scopeKey, comparison: data, error: null });
@@ -98,22 +112,6 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
         <span>{number}</span>
         <h3>{t('reports:variation.title')}</h3>
         <span className="report-trend-actions">
-          {runId && comparisonOptions.length > 0 ? (
-            <select
-              className="filter-select filter-run-select report-variation-compare-select"
-              value={previousRunId || 'auto'}
-              onChange={(event) => setPreviousRunId(event.target.value === 'auto' ? null : event.target.value)}
-              aria-label={t('reports:variation.compareWithLabel')}
-              title={t('reports:variation.compareWithLabel')}
-            >
-              <option value="auto">{t('reports:variation.compareWithAuto')}</option>
-              {comparisonOptions.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {scopeLabel(t, locale, run.sequence_number, (run.finished_at || run.created_at || '').slice(0, 10), null)}
-                </option>
-              ))}
-            </select>
-          ) : null}
           <button
             type="button"
             className="report-trend-refresh-btn"
@@ -127,6 +125,57 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
           </button>
         </span>
       </header>
+
+      {runId ? (
+        <div className="report-variation-toolbar">
+          {comparisonOptions.length > 0 ? (
+            <div className="report-variation-toolbar-group">
+              <ArrowLeftRight size={14} aria-hidden="true" className="report-variation-toolbar-icon" />
+              <label className="report-variation-toolbar-label" htmlFor={compareSelectId}>
+                {t('reports:variation.compareWithLabel')}
+              </label>
+              <select
+                id={compareSelectId}
+                className="filter-select filter-run-select report-variation-compare-select"
+                value={previousRunId || 'auto'}
+                onChange={(event) => setPreviousRunId(event.target.value === 'auto' ? null : event.target.value)}
+                title={t('reports:variation.compareWithLabel')}
+              >
+                <option value="auto">{t('reports:variation.compareWithAuto')}</option>
+                {comparisonOptions.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {scopeLabel(t, locale, run.sequence_number, (run.finished_at || run.created_at || '').slice(0, 10), null)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : <span />}
+
+          <div className="report-variation-toolbar-group">
+            <div
+              className="language-switcher"
+              role="group"
+              aria-label={t('reports:outputLanguage.label')}
+              title={t('reports:outputLanguage.hint')}
+            >
+              <Languages size={14} aria-hidden="true" className="language-switcher-icon" />
+              {SUPPORTED_LOCALES.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  lang={code}
+                  dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                  className={`language-switcher-option${code === narrativeLocale ? ' is-active' : ''}`}
+                  aria-pressed={code === narrativeLocale}
+                  onClick={() => setNarrativeLocale(code)}
+                >
+                  {LOCALE_NATIVE_NAMES[code]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {!runId ? (
         <p className="report-brief-summary report-variation-empty">
@@ -154,6 +203,9 @@ export default function VariationFromLastRun({ projectId, runId, projectRuns = [
             <div className="report-brief-summary report-variation-narrative" dir="auto">{comparison.narrative}</div>
           ) : !llmFailed ? (
             <p className="report-brief-summary report-variation-empty">{unavailableReason}</p>
+          ) : null}
+          {comparison?.locale_fallback ? (
+            <p className="report-trend-summary-status">{t('reports:variation.fallbackNotice')}</p>
           ) : null}
 
           {current || previous ? (

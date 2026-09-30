@@ -1079,6 +1079,7 @@ def get_report_variation_from_last_run(
     run_id: str,
     previous_run_id: str | None = None,
     regenerate: bool = False,
+    locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """The Reports page's selected-run versus another-run comparison.
@@ -1087,11 +1088,21 @@ def get_report_variation_from_last_run(
     cache as the PDF. `regenerate=true` bypasses the narrative cache without
     changing which two runs are compared. `previous_run_id`, if given, picks
     the comparison run explicitly instead of the immediately preceding one.
+
+    `locale`, when given, is an explicit request for the narrative's output
+    language - validated against config.SUPPORTED_LOCALES. A non-default
+    locale is rendered and cached separately from the canonical English
+    narrative (see build_variation_from_last_run/
+    services/reports/yesterday_comparison.py) and never overwrites it.
     """
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
 
     run = get_pipeline_run(run_id)
     if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
@@ -1111,7 +1122,9 @@ def get_report_variation_from_last_run(
         "scope": {"type": "run", "run_id": run_id},
         "_analyzed_rows": current_rows,
     }
-    return build_variation_from_last_run(project, report_data, run=run, force=regenerate, previous_run_id=previous_run_id)
+    return build_variation_from_last_run(
+        project, report_data, run=run, force=regenerate, previous_run_id=previous_run_id, locale=resolved_locale,
+    )
 
 
 @app.get("/api/projects/{project_id}/idea-comparisons")

@@ -86,6 +86,7 @@
     "coverageAdded": "{{count}} added",
     "coverageRemoved": "{{count}} removed",
     "llmFailed": "The narrative could not be generated; verified metrics are still shown.",
+    "fallbackNotice": "Showing the English narrative - it couldn't be translated right now.",
     "reasons": {
       "no_run_selected": "Select an analysis run to compare it with the previous run.",
       "no_current_articles": "No analyzed articles exist in the selected run.",
