@@ -466,6 +466,12 @@
       "reviewOrigin": "مراجعة المصدر الأصلي",
       "analystReviewTitle": "مراجعة المحلل",
       "explainEvidencePlaceholder": "اشرح الأدلة وحدود هذا القرار…",
+      "confidenceLabel": "ما مدى تأكدك؟",
+      "confidenceLevels": {
+        "high": "عالٍ - أنا واثق",
+        "medium": "متوسط - متأكد بشكل معقول",
+        "low": "منخفض - غير متأكد تمامًا"
+      },
       "relevanceOverrideTitle": "تجاوز صلة المشروع",
       "explainRelevancePlaceholder": "اشرح سبب انتماء هذا الادعاء إلى المشروع أو خروجه عنه…",
       "saveRelevanceOverride": "حفظ تجاوز الصلة",
