@@ -80,15 +80,20 @@ class JobRegistry:
             if run is not None:
                 run.update(fields, updated_at=_now_iso())
 
-    def append_log(self, run_id: str, message: str) -> None:
+    def append_log(self, run_id: str, message: str, code: str | None = None,
+                   params: dict | None = None) -> None:
+        entry = {"ts": _now_iso(), "message": message}
+        if code:
+            entry["code"] = code
+            entry["params"] = params or {}
         with self._lock:
             run = self._runs.get(run_id)
             if run is not None:
-                run.setdefault("logs", []).append({"ts": _now_iso(), "message": message})
+                run.setdefault("logs", []).append(entry)
                 run["updated_at"] = _now_iso()
 
     def logger(self, run_id: str):
         """A one-argument `log(message)` to hand to code that shouldn't have to
         know about run ids - the analysis functions take one so they can be
         called just as well from the CLI/seed path with no run at all."""
-        return lambda message: self.append_log(run_id, message)
+        return lambda message, code=None, params=None: self.append_log(run_id, message, code, params)

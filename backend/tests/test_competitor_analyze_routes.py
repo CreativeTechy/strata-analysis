@@ -51,11 +51,14 @@ class _FakeAnalysisRuns:
                 return dict(run)
         return None
 
-    def append_log(self, run_id, message):
-        self._runs[run_id]["logs"].append({"ts": "now", "message": message})
+    def append_log(self, run_id, message, code=None, params=None):
+        entry = {"ts": "now", "message": message}
+        if code:
+            entry["code"], entry["params"] = code, params or {}
+        self._runs[run_id]["logs"].append(entry)
 
     def logger(self, run_id):
-        return lambda message: self.append_log(run_id, message)
+        return lambda message, code=None, params=None: self.append_log(run_id, message, code, params)
 
     def mark_success(self, run_id, generated, skipped=None, validation=None):
         self._runs[run_id].update(

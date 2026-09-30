@@ -373,5 +373,58 @@
     "loadError": "Couldn’t load competitor data: {{error}}",
     "empty": "No findings generated yet — run analysis from this study to populate this.",
     "prev": "Prev"
+  },
+  "analysisLog": {
+    "listSeparator": ", ",
+    "window": {
+      "documents_one": "the selected document",
+      "documents_other": "the selected documents",
+      "pipelineRun": "the selected pipeline run",
+      "days_one": "the last {{count}} day",
+      "days_other": "the last {{count}} days",
+      "allTime": "all time"
+    },
+    "scope_documents_one": "Scope: {{count}} document.",
+    "scope_documents_other": "Scope: {{count}} documents.",
+    "scope_empty_selected": "No documents matched this selection.",
+    "scope_empty_pending": "Every document has already been analyzed by a previous run.",
+    "scope_empty": "No documents with approved articles to analyze.",
+    "extracting_ideas_one": "Extracting recurring ideas from {{count}} article...",
+    "extracting_ideas_other": "Extracting recurring ideas from {{count}} articles...",
+    "analyzing_competitors_one": "Analyzing {{count}} tracked competitor.",
+    "analyzing_competitors_other": "Analyzing {{count}} tracked competitors.",
+    "checking_articles_one": "Checking {{count}} article from {{window}} against each competitor...",
+    "checking_articles_other": "Checking {{count}} articles from {{window}} against each competitor...",
+    "kept_evidence_one": "Kept {{count}} article as evidence.",
+    "kept_evidence_other": "Kept {{count}} articles as evidence.",
+    "filtered_out": "Filtered out: {{reasons}}.",
+    "nothing_usable": "{{name}}: nothing usable found.",
+    "writing_report_one": "{{name}}: writing a report from {{count}} story...",
+    "writing_report_other": "{{name}}: writing a report from {{count}} stories...",
+    "competitor_failed": "{{name}}: failed - {{error}}",
+    "finding_generated": "{{name}}: {{impact}} - {{headline}}",
+    "competitor_skipped": "{{name}}: skipped - {{reason}}",
+    "done_one": "Done. Generated {{count}} report.",
+    "done_other": "Done. Generated {{count}} reports.",
+    "done_with_skipped_one": "Done. Generated {{count}} report, skipped {{skipped}}.",
+    "done_with_skipped_other": "Done. Generated {{count}} reports, skipped {{skipped}}.",
+    "analysis_failed": "Analysis failed: {{error}}",
+    "rejectionReasons": {
+      "blocked_page_one": "{{count}} blocked page",
+      "blocked_page_other": "{{count}} blocked pages",
+      "boilerplate_page_one": "{{count}} boilerplate page",
+      "boilerplate_page_other": "{{count}} boilerplate pages",
+      "body_too_short_one": "{{count}} article too short",
+      "body_too_short_other": "{{count}} articles too short",
+      "passing_mention_one": "{{count}} passing mention",
+      "passing_mention_other": "{{count}} passing mentions",
+      "duplicate_story_one": "{{count}} duplicate story",
+      "duplicate_story_other": "{{count}} duplicate stories"
+    },
+    "skipReasons": {
+      "generic_name": "Name is too generic to identify in article text. Add a website or a more specific name.",
+      "no_evidence": "No validated evidence in this period.",
+      "not_generated": "Analysis could not be generated."
+    }
   }
 }

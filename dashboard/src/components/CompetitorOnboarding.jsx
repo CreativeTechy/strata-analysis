@@ -35,6 +35,7 @@ import {
   uploadDocuments,
 } from '../api/competitorApi.js';
 import { getPageNumbers } from '../lib/articleHelpers.jsx';
+import { analysisLogText } from '../lib/competitorAnalysisLog.js';
 import '../styles/Competitors.css';
 
 // Article candidates are already fetched in full for the study, so review-step
@@ -50,7 +51,7 @@ const CANDIDATES_PAGE_SIZE = 10;
  *  Exported so CompetitorRunAnalysis.jsx can reuse it, the same way
  *  CompetitorEditPage.jsx reuses ListEditor from this file. */
 export function DiscoveryLog({ logs, active }) {
-  const { t } = useTranslation('competitors');
+  const { t, i18n } = useTranslation(['competitors', 'errors']);
   const boxRef = useRef(null);
   const [now, setNow] = useState(null);
 
@@ -85,8 +86,12 @@ export function DiscoveryLog({ logs, active }) {
               className={`cs-progress-row${isCurrent ? ' cs-progress-row-active' : ' cs-progress-row-done'}`}
             >
               {isCurrent ? <span className="cs-spinner" /> : <CheckCircle2 size={15} />}
-              <span dir="auto">
-                {entry.message}
+              {/* A coded line is rendered in the UI's language, so it takes the
+                  UI's direction - `auto` would pick LTR off a leading Latin
+                  competitor name ("Costa Coffee: ...") and misplace the
+                  Arabic punctuation. Uncoded lines are the backend's English. */}
+              <span dir={entry.code ? i18n.dir() : 'auto'}>
+                {analysisLogText(t, entry)}
                 {isCurrent && elapsed >= 4 ? t('onboarding.discoveryLog.stillWorking', { elapsed }) : ''}
               </span>
             </div>
