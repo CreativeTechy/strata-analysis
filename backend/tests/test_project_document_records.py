@@ -395,30 +395,30 @@ class AutoApproveAndQueueAnalysisTests(unittest.TestCase):
     gate - so this is the function that makes that happen. Excluding one from
     then on is a delete on the Articles page, not a pre-approval reject."""
 
-    def test_newly_materialized_candidates_start_an_analysis_run(self):
+    def test_newly_materialized_candidates_sync_competitor_evidence_but_do_not_start_a_run(self):
         with patch.object(project_document_articles, "approve_all",
                            return_value=[{"article_id": 42}]) as mock_approve, \
-             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+             patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
             project_documents_store._try_approve_all_and_queue_analysis(9)
         mock_approve.assert_called_once_with(9)
-        mock_start.assert_called_once_with(9)
+        mock_sync.assert_called_once_with(9)
 
-    def test_nothing_materialized_does_not_start_a_run(self):
+    def test_nothing_materialized_does_not_sync(self):
         """Every candidate was already approved (e.g. a re-run) - approve_all
-        reports them but materialized nothing new, so there's nothing to analyze."""
+        reports them but materialized nothing new, so there's nothing to sync."""
         with patch.object(project_document_articles, "approve_all", return_value=[]), \
-             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+             patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
             project_documents_store._try_approve_all_and_queue_analysis(9)
-        mock_start.assert_not_called()
+        mock_sync.assert_not_called()
 
     def test_approval_failure_is_logged_not_raised(self):
         """A failure here must not propagate: the caller already recorded
         articles_status = 'ready', and process_document's outer guard would
         otherwise overwrite that true state with 'failed'."""
         with patch.object(project_document_articles, "approve_all", side_effect=RuntimeError("boom")), \
-             patch.object(project_documents_store, "start_or_reuse_analysis_run") as mock_start:
+             patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
             project_documents_store._try_approve_all_and_queue_analysis(9)  # must not raise
-        mock_start.assert_not_called()
+        mock_sync.assert_not_called()
 
 
 class ApproveForDocumentsTests(unittest.TestCase):
@@ -463,37 +463,37 @@ class ApproveForDocumentsTests(unittest.TestCase):
 
 
 class ApproveForDocumentsRouteTests(unittest.TestCase):
-    """POST .../document-articles/approve-for-documents: one approval call and
-    one run-start for a whole import batch, scoped to the documents it
-    actually uploaded."""
+    """POST .../document-articles/approve-for-documents: one approval call
+    for a whole import batch, scoped to the documents it actually uploaded.
+    No analysis run starts automatically - the user starts it explicitly
+    from the Analysis page."""
 
-    def test_starts_a_run_only_when_something_was_materialized(self):
+    def test_syncs_competitor_evidence_only_when_something_was_materialized(self):
         from services.projects import project_documents_api
 
         with patch.object(project_documents_api, "_project_or_404"), \
              patch.object(project_document_articles, "approve_for_documents",
                            return_value=[{"article_id": 42}]) as mock_approve, \
-             patch.object(project_documents_api, "start_or_reuse_analysis_run",
-                           return_value={"run_id": "run-1"}) as mock_start:
+             patch.object(project_documents_api, "sync_competitor_evidence_after_approval") as mock_sync:
             result = project_documents_api.approve_document_articles_for_documents(
                 9, {"document_ids": [10, 11]}, user={"id": 1}
             )
 
         mock_approve.assert_called_once_with(9, [10, 11])
-        mock_start.assert_called_once_with(9)
-        self.assertEqual(result, {"articles": [{"article_id": 42}], "run_id": "run-1"})
+        mock_sync.assert_called_once_with(9)
+        self.assertEqual(result, {"articles": [{"article_id": 42}], "run_id": None})
 
-    def test_no_run_when_nothing_was_materialized(self):
+    def test_no_sync_when_nothing_was_materialized(self):
         from services.projects import project_documents_api
 
         with patch.object(project_documents_api, "_project_or_404"), \
              patch.object(project_document_articles, "approve_for_documents", return_value=[]), \
-             patch.object(project_documents_api, "start_or_reuse_analysis_run") as mock_start:
+             patch.object(project_documents_api, "sync_competitor_evidence_after_approval") as mock_sync:
             result = project_documents_api.approve_document_articles_for_documents(
                 9, {"document_ids": [10]}, user={"id": 1}
             )
 
-        mock_start.assert_not_called()
+        mock_sync.assert_not_called()
         self.assertIsNone(result["run_id"])
 
     def test_rejects_non_integer_document_ids(self):

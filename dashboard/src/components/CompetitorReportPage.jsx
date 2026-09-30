@@ -69,7 +69,7 @@ export default function CompetitorReportPage() {
     (async () => {
       setLoading(true);
       try {
-        const result = await getFinding(findingId);
+        const result = await getFinding(findingId, { locale });
         if (!cancelled) setData(result);
       } catch (caught) {
         if (!cancelled) setError(caught.message);
@@ -80,7 +80,7 @@ export default function CompetitorReportPage() {
     return () => {
       cancelled = true;
     };
-  }, [findingId]);
+  }, [findingId, locale]);
 
   const decide = async (status) => {
     setSaving(true);

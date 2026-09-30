@@ -269,6 +269,7 @@ export default function CompetitorWorkspace() {
           date_from: findingsRunId ? undefined : (dateFrom || undefined),
           date_to: findingsRunId ? undefined : (dateTo || undefined),
           analysis_run_id: findingsRunId || undefined,
+          locale,
         });
         if (!cancelled) setFindings(result.findings || []);
       } catch (caught) {
@@ -280,7 +281,7 @@ export default function CompetitorWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [studyId, impact, search, dateFrom, dateTo, findingsRunId]);
+  }, [studyId, impact, search, dateFrom, dateTo, findingsRunId, locale]);
 
   const hasFindingFilters = Boolean(impact || search || dateFrom || dateTo || findingsRunId);
 
