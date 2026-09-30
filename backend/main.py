@@ -602,6 +602,7 @@ def review_project_evidence_claim(
     try:
         claim = save_evidence_review(
             project_id, claim_id, str(payload.get("decision") or ""), str(payload.get("reason") or ""), user,
+            confidence=str(payload.get("confidence") or "high"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
