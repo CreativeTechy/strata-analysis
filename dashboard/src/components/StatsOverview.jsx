@@ -8,7 +8,7 @@ import DemographicPieCarousel from './DemographicPieCarousel';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import VariationFromLastRun from './VariationFromLastRun.jsx';
 import IntelligenceEmptyState, { PendingAnalysisNotice, ReportSkeleton } from './IntelligenceEmptyState.jsx';
-import { getKeywordExistence, getTrendSummary } from '../api/projectsApi.js';
+import { getKeywordExistence, getProjectIntelligence, getTrendSummary } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES, isSupportedLocale, isRtlLocale, DEFAULT_LOCALE } from '../i18n/locales.js';
 import { formatDate as formatLocaleDate, formatNumber, formatPercent } from '../lib/i18nFormat.js';
@@ -155,6 +155,16 @@ export default function StatsOverview({
   const [trendSummaryLocale, setTrendSummaryLocale] = useState(
     () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
   );
+  // The "Categorized feedback" section's own output-language choice - same
+  // "separate from the interface locale" reasoning as trendSummaryLocale
+  // above. Translated positive_feedback/negative_feedback/frequent_ideas
+  // text is fetched (and cached server-side by text, see
+  // services/intelligence/feedback_translation.py) only when it differs
+  // from the default locale the initial `intelligence` load already carries.
+  const [feedbackLocale, setFeedbackLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
+  const [feedbackInsights, setFeedbackInsights] = useState(null);
   // Set right before bumping trendSummaryNonce from the refresh button, and
   // read (then cleared) inside the effect it triggers - a plain nonce bump
   // from a dependency change (project/period/run switch) must NOT force a
@@ -255,6 +265,27 @@ export default function StatsOverview({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, period, runId, totalArticles, trendSummaryNonce, trendSummaryLocale]);
+
+  useEffect(() => {
+    // `intelligence` (this component's own prop) is already rendered in the
+    // interface locale (App.jsx fetches it with locale: i18n.language), so a
+    // feedbackLocale matching the interface locale needs no extra request -
+    // only a choice that diverges from it does.
+    if (projectId == null || totalArticles === 0 || feedbackLocale === i18n.language) {
+      setFeedbackInsights(null);
+      return undefined;
+    }
+    let cancelled = false;
+    getProjectIntelligence(projectId, { period, run_id: runId || undefined, locale: feedbackLocale })
+      .then((data) => { if (!cancelled) setFeedbackInsights(data?.insights || null); })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load translated feedback', err);
+          setFeedbackInsights(null);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [projectId, period, runId, totalArticles, feedbackLocale, i18n.language]);
 
   if (loading) return <ReportSkeleton />;
   if (error) return <section className="report-brief"><div className="glass-card admin-empty-state report-error-state" role="alert"><div className="admin-empty-state-icon"><AlertTriangle size={20} /></div><strong>{t('dashboard:report.errorTitle')}</strong><p className="subtitle" dir="auto">{error}</p>{onRetry && <button className="btn-secondary" type="button" onClick={onRetry}>{t('dashboard:report.tryAgain')}</button>}</div></section>;
@@ -462,8 +493,31 @@ export default function StatsOverview({
       <p className="intelligence-chart-hint">{t('dashboard:evidence.chartHint')}</p>
     </Section>
 
-    <Section id="report-section-feedback" number="06" title={t('dashboard:report.sections.categorizedFeedback')}>
-      <div className="report-feedback-grid"><FeedbackColumn title={t('dashboard:report.feedback.positiveDrivers')} icon={<ThumbsUp size={16} />} tone="positive" items={insights.positive_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.negativeDrivers')} icon={<ThumbsDown size={16} />} tone="negative" items={insights.negative_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.neutralMixed')} icon={<CircleMinus size={16} />} tone="neutral" items={(insights.frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} projectId={projectId} /></div>
+    <Section
+      id="report-section-feedback"
+      number="06"
+      title={t('dashboard:report.sections.categorizedFeedback')}
+    >
+      <div className="report-summary-toolbar">
+        <span />
+        <div className="language-switcher" role="group" aria-label={t('reports:outputLanguage.label')} title={t('reports:outputLanguage.hint')}>
+          <Languages size={14} aria-hidden="true" className="language-switcher-icon" />
+          {SUPPORTED_LOCALES.map((code) => (
+            <button
+              key={code}
+              type="button"
+              lang={code}
+              dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+              className={`language-switcher-option${code === feedbackLocale ? ' is-active' : ''}`}
+              aria-pressed={code === feedbackLocale}
+              onClick={() => setFeedbackLocale(code)}
+            >
+              {LOCALE_NATIVE_NAMES[code]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="report-feedback-grid"><FeedbackColumn title={t('dashboard:report.feedback.positiveDrivers')} icon={<ThumbsUp size={16} />} tone="positive" items={(feedbackInsights || insights).positive_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.negativeDrivers')} icon={<ThumbsDown size={16} />} tone="negative" items={(feedbackInsights || insights).negative_feedback || []} projectId={projectId} /><FeedbackColumn title={t('dashboard:report.feedback.neutralMixed')} icon={<CircleMinus size={16} />} tone="neutral" items={((feedbackInsights || insights).frequent_ideas || []).filter((item) => !['praise', 'complaint'].includes(item.type))} projectId={projectId} /></div>
     </Section>
 
     <Section id="report-section-demographics" number="07" title={t('dashboard:report.sections.sentimentByDemographics')}>

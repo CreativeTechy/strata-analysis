@@ -8,6 +8,7 @@ import { useAuth } from '../auth/useAuth.js';
 
 vi.mock('../api/projectsApi.js', () => ({
   getKeywordExistence: vi.fn(),
+  getProjectIntelligence: vi.fn(),
   getReportVariation: vi.fn(),
   getTrendSummary: vi.fn(),
 }));
