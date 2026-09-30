@@ -4,10 +4,12 @@ Mirrors test_article_translation.py's coverage: cache hit/miss keyed on the
 finding's own generated_at, the length guard that keeps translated
 signals/actions paired with the right originals, the locale_fallback path
 (plus its negative cache), and skipping the LLM call entirely for the
-default locale.
+default locale. LocalizeFindingsTests covers the batch entry point's own
+budget/concurrency behavior on top of that.
 """
 
 import os
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -141,6 +143,70 @@ class LocalizeFindingTests(unittest.TestCase):
         mock_load.assert_not_called()
         mock_translate.assert_called_once()
         self.assertFalse(result.get("locale_fallback"))
+
+
+class LocalizeFindingsTests(unittest.TestCase):
+    """localize_findings() - the batch entry point list_findings()/get_finding()
+    use so a whole findings list doesn't cost one serial LLM call per finding
+    (see config.FINDING_TRANSLATION_BUDGET_SECONDS)."""
+
+    def setUp(self):
+        finding_translation._failure_cache.clear()
+
+    def test_default_locale_returns_unchanged_without_scheduling_work(self):
+        findings = [dict(FINDING, id=1), dict(FINDING, id=2)]
+        with patch.object(finding_translation, "localize_finding") as mock_localize:
+            result = finding_translation.localize_findings(findings, locale=config.DEFAULT_LOCALE)
+        self.assertEqual(result, findings)
+        mock_localize.assert_not_called()
+
+    def test_empty_list_returns_as_is(self):
+        with patch.object(finding_translation, "localize_finding") as mock_localize:
+            result = finding_translation.localize_findings([], locale="ar")
+        self.assertEqual(result, [])
+        mock_localize.assert_not_called()
+
+    def test_translates_each_finding_and_preserves_order(self):
+        findings = [dict(FINDING, id=1), dict(FINDING, id=2), dict(FINDING, id=3)]
+
+        def fake_localize(finding, *, locale):
+            # finding 2 finishes slower than 1 and 3, to exercise the thread
+            # pool completing out of submission order.
+            if finding["id"] == 2:
+                time.sleep(0.05)
+            return {**finding, "locale": locale, "cached": False}
+
+        with patch.object(finding_translation, "localize_finding", side_effect=fake_localize):
+            result = finding_translation.localize_findings(findings, locale="ar")
+
+        self.assertEqual([f["id"] for f in result], [1, 2, 3])
+        self.assertTrue(all(f["locale"] == "ar" for f in result))
+        self.assertFalse(any(f.get("locale_fallback") for f in result))
+
+    def test_budget_already_exhausted_falls_back_every_finding(self):
+        """A budget that's already elapsed by the time the loop starts must
+        not submit any translation - every finding comes back as its
+        canonical version, tagged locale_fallback like an outright failure."""
+        findings = [dict(FINDING, id=1), dict(FINDING, id=2)]
+        with patch.object(config, "FINDING_TRANSLATION_BUDGET_SECONDS", -1.0), \
+             patch.object(finding_translation, "localize_finding") as mock_localize:
+            result = finding_translation.localize_findings(findings, locale="ar")
+
+        mock_localize.assert_not_called()
+        self.assertEqual([f["id"] for f in result], [1, 2])
+        self.assertTrue(all(f.get("locale_fallback") for f in result))
+        self.assertTrue(all(f["locale"] == config.DEFAULT_LOCALE for f in result))
+
+    def test_thread_pool_is_capped_by_competitor_analysis_concurrency(self):
+        findings = [dict(FINDING, id=i) for i in range(10)]
+        with patch.object(config, "COMPETITOR_ANALYSIS_CONCURRENCY", 3), \
+             patch.object(
+                 finding_translation, "ThreadPoolExecutor", wraps=finding_translation.ThreadPoolExecutor
+             ) as mock_pool, \
+             patch.object(finding_translation, "localize_finding", side_effect=lambda f, *, locale: {**f, "locale": locale}):
+            finding_translation.localize_findings(findings, locale="ar")
+
+        mock_pool.assert_called_once_with(max_workers=3)
 
 
 if __name__ == "__main__":

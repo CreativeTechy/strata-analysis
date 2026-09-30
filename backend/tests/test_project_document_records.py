@@ -421,6 +421,32 @@ class AutoApproveAndQueueAnalysisTests(unittest.TestCase):
         mock_sync.assert_not_called()
 
 
+class SyncCompetitorEvidenceAfterApprovalTests(unittest.TestCase):
+    """The competitor-naming pass this schedules (refresh_competitors_from_
+    mirrored_evidence) is one full-corpus LLM call - a caller that passes a
+    FastAPI background_tasks gets it run off the request; a caller that
+    doesn't (e.g. process_document's own background task, already off any
+    request) still gets it run inline, same as before this was split out."""
+
+    def test_schedules_the_naming_pass_in_the_background_when_given_one(self):
+        background_tasks = MagicMock()
+        with patch("services.competitors.project_document_bridge.sync_project_documents_into_competitor_evidence") as mock_sync_mirror, \
+             patch("services.competitors.project_document_bridge.refresh_competitors_from_mirrored_evidence") as mock_refresh:
+            project_documents_store.sync_competitor_evidence_after_approval(9, background_tasks=background_tasks)
+
+        mock_sync_mirror.assert_called_once_with(9)
+        mock_refresh.assert_not_called()
+        background_tasks.add_task.assert_called_once_with(mock_refresh, 9)
+
+    def test_runs_the_naming_pass_inline_without_background_tasks(self):
+        with patch("services.competitors.project_document_bridge.sync_project_documents_into_competitor_evidence") as mock_sync_mirror, \
+             patch("services.competitors.project_document_bridge.refresh_competitors_from_mirrored_evidence") as mock_refresh:
+            project_documents_store.sync_competitor_evidence_after_approval(9)
+
+        mock_sync_mirror.assert_called_once_with(9)
+        mock_refresh.assert_called_once_with(9)
+
+
 class ApproveForDocumentsTests(unittest.TestCase):
     """approve_for_documents() is approve_all()'s scoped counterpart - the
     Articles page's import uses it so approving what it just uploaded can't
@@ -469,42 +495,47 @@ class ApproveForDocumentsRouteTests(unittest.TestCase):
     from the Analysis page."""
 
     def test_syncs_competitor_evidence_only_when_something_was_materialized(self):
+        from fastapi import BackgroundTasks
+
         from services.projects import project_documents_api
 
+        background_tasks = BackgroundTasks()
         with patch.object(project_documents_api, "_project_or_404"), \
              patch.object(project_document_articles, "approve_for_documents",
                            return_value=[{"article_id": 42}]) as mock_approve, \
              patch.object(project_documents_api, "sync_competitor_evidence_after_approval") as mock_sync:
             result = project_documents_api.approve_document_articles_for_documents(
-                9, {"document_ids": [10, 11]}, user={"id": 1}
+                9, {"document_ids": [10, 11]}, background_tasks, user={"id": 1}
             )
 
         mock_approve.assert_called_once_with(9, [10, 11])
-        mock_sync.assert_called_once_with(9)
+        mock_sync.assert_called_once_with(9, background_tasks=background_tasks)
         self.assertEqual(result, {"articles": [{"article_id": 42}], "run_id": None})
 
     def test_no_sync_when_nothing_was_materialized(self):
+        from fastapi import BackgroundTasks
+
         from services.projects import project_documents_api
 
         with patch.object(project_documents_api, "_project_or_404"), \
              patch.object(project_document_articles, "approve_for_documents", return_value=[]), \
              patch.object(project_documents_api, "sync_competitor_evidence_after_approval") as mock_sync:
             result = project_documents_api.approve_document_articles_for_documents(
-                9, {"document_ids": [10]}, user={"id": 1}
+                9, {"document_ids": [10]}, BackgroundTasks(), user={"id": 1}
             )
 
         mock_sync.assert_not_called()
         self.assertIsNone(result["run_id"])
 
     def test_rejects_non_integer_document_ids(self):
-        from fastapi import HTTPException
+        from fastapi import BackgroundTasks, HTTPException
 
         from services.projects import project_documents_api
 
         with patch.object(project_documents_api, "_project_or_404"):
             with self.assertRaises(HTTPException) as ctx:
                 project_documents_api.approve_document_articles_for_documents(
-                    9, {"document_ids": ["not-a-number"]}, user={"id": 1}
+                    9, {"document_ids": ["not-a-number"]}, BackgroundTasks(), user={"id": 1}
                 )
 
         self.assertEqual(ctx.exception.status_code, 400)

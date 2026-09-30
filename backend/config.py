@@ -597,6 +597,22 @@ try:
 except ValueError:
     COMPETITOR_ANALYSIS_CONCURRENCY = 4
 
+# services/competitors/finding_translation.py's localize_findings(): same
+# per-request wall-clock budget as IDEA_COMPARISON_REGENERATE_TIMEOUT_SECONDS
+# above, but for GET /studies/{id}/findings and GET /findings/{id} translating
+# a whole findings list (plus its history) into a non-default locale. Without
+# it, a study with several uncached findings turns one dashboard/report load
+# into one serial LLM_REQUEST_TIMEOUT_SECONDS-bounded call per finding, which
+# a slow/local model can carry past nginx's own proxy_read_timeout. Any
+# finding still untranslated once the budget runs out is returned as its
+# canonical (English) version - the same locale_fallback shape a single
+# failed translation already returns - and its background call keeps running
+# to populate the cache for the next request rather than being abandoned.
+try:
+    FINDING_TRANSLATION_BUDGET_SECONDS = float(os.environ.get("FINDING_TRANSLATION_BUDGET_SECONDS", "20") or 20)
+except ValueError:
+    FINDING_TRANSLATION_BUDGET_SECONDS = 20.0
+
 
 # Apply pending schema migrations when the API starts. Set false to manage them
 # out of band (`python migrate.py`) — e.g. when several backend replicas share

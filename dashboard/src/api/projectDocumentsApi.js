@@ -163,11 +163,20 @@ export async function pollArticleCandidates(projectId, documentIds, onUpdate) {
   }
 }
 
-const ANALYSIS_ACTIVE_STATUSES = new Set(['pending', 'processing']);
+// 'pending' is deliberately excluded: approval no longer starts an analysis
+// run on its own (see project_documents_api.py), so a materialized article
+// can sit at 'pending' indefinitely until the user explicitly starts one via
+// reanalyzeDocumentArticles - it is not "about to be picked up" the way it
+// used to be. Only 'processing' means a run is actually working on it right
+// now, which is the only state this should keep polling for.
+const ANALYSIS_ACTIVE_STATUSES = new Set(['processing']);
 
 /** Polls the candidate list until no approved candidate's materialized
- *  article is still pending/processing analysis. `onUpdate` receives the full
- *  candidate list (each with `article_analysis_status`) on every poll. */
+ *  article is still actively being analyzed. `onUpdate` receives the full
+ *  candidate list (each with `article_analysis_status`) on every poll. Safe
+ *  to call any time - it resolves after a single list call when nothing is
+ *  actually in progress, so it's the right thing to call both right after
+ *  starting a run and when merely resuming/checking status on step entry. */
 export async function pollArticleAnalysis(projectId, onUpdate) {
   for (;;) {
     const { articles } = await listDocumentArticles(projectId);

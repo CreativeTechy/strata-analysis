@@ -27,7 +27,7 @@ from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
-from services.competitors.finding_translation import localize_finding
+from services.competitors.finding_translation import localize_finding, localize_findings
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible, visible_project_ids_or_none
 from services.common.api_errors import api_error
@@ -562,7 +562,7 @@ def list_findings(project_id: int, impact: str | None = None, competitor_id: int
         analysis_run_id=analysis_run_id,
     )
     if resolved_locale != config.DEFAULT_LOCALE:
-        findings = [localize_finding(f, locale=resolved_locale) for f in findings]
+        findings = localize_findings(findings, locale=resolved_locale)
     return {"findings": findings}
 
 
@@ -584,7 +584,7 @@ def get_finding(finding_id: int, locale: str | None = None,
     )
     if resolved_locale != config.DEFAULT_LOCALE:
         finding = localize_finding(finding, locale=resolved_locale)
-        history = [localize_finding(f, locale=resolved_locale) for f in history]
+        history = localize_findings(history, locale=resolved_locale)
     return {
         "finding": finding,
         "rejected_evidence": competitor_analysis.rejected_evidence(finding["competitor_id"]),

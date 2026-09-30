@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import config
 import db
@@ -215,3 +216,60 @@ def localize_finding(finding: dict, *, locale: str, force: bool = False) -> dict
     _clear_failure(finding_id, locale)
     _save_cached(finding_id, locale, translated_payload, source_generated_at)
     return {**_apply_translation(finding, translated_payload), "locale": locale, "cached": False}
+
+
+def localize_findings(findings: list[dict], *, locale: str) -> list[dict]:
+    """Batch counterpart to localize_finding() for a whole findings list
+    (list_findings()'s results, or get_finding()'s `history`).
+
+    Runs the uncached translations through a small thread pool
+    (config.COMPETITOR_ANALYSIS_CONCURRENCY workers) instead of one at a time,
+    and stops starting new ones once config.FINDING_TRANSLATION_BUDGET_SECONDS
+    has elapsed for this call - see that constant's own comment for why. A
+    finding that was already cached, or that finishes within the budget, comes
+    back translated exactly as localize_finding() would return it; a finding
+    that never got submitted (the budget ran out before its turn) or is still
+    running when the budget's `wait()` returns comes back as its canonical
+    version tagged `locale_fallback: True`, same as an outright translation
+    failure - a submitted-but-still-running call is left to finish on its own
+    thread rather than cancelled, so it still populates the cache
+    (localize_finding()'s own _save_cached) for whoever asks next."""
+    locale = locale or config.DEFAULT_LOCALE
+    if locale == config.DEFAULT_LOCALE or not findings:
+        return findings
+
+    deadline = time.monotonic() + config.FINDING_TRANSLATION_BUDGET_SECONDS
+    results = list(findings)
+    completed_indexes: set[int] = set()
+    future_index: dict = {}
+
+    max_workers = max(1, min(config.COMPETITOR_ANALYSIS_CONCURRENCY, len(findings)))
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        for index, finding in enumerate(findings):
+            if time.monotonic() >= deadline:
+                break
+            future_index[pool.submit(localize_finding, finding, locale=locale)] = index
+
+        if future_index:
+            done, _pending = wait(future_index, timeout=max(deadline - time.monotonic(), 0))
+            for future in done:
+                index = future_index[future]
+                results[index] = future.result()
+                completed_indexes.add(index)
+    finally:
+        # wait=False: an in-flight translation is left running on its own
+        # thread rather than blocked on here - blocking would defeat the
+        # whole point of the deadline above.
+        pool.shutdown(wait=False)
+
+    if len(completed_indexes) < len(findings):
+        logger.warning(
+            "Finding translation budget (%ss) exceeded for locale=%s: %d/%d findings translated",
+            config.FINDING_TRANSLATION_BUDGET_SECONDS, locale, len(completed_indexes), len(findings),
+        )
+    for index, finding in enumerate(findings):
+        if index not in completed_indexes:
+            results[index] = {**finding, "locale": config.DEFAULT_LOCALE, "locale_fallback": True}
+
+    return results

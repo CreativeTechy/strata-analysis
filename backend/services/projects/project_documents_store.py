@@ -351,7 +351,7 @@ def _try_approve_all_and_queue_analysis(project_id: int) -> None:
         sync_competitor_evidence_after_approval(project_id)
 
 
-def sync_competitor_evidence_after_approval(project_id: int) -> None:
+def sync_competitor_evidence_after_approval(project_id: int, background_tasks=None) -> None:
     """On a competitor-mode project, mirror newly-approved candidates into
     competitor_documents/competitor_document_articles so they're usable
     evidence for that project's competitor study too (see
@@ -361,9 +361,25 @@ def sync_competitor_evidence_after_approval(project_id: int) -> None:
     Deliberately does not start an analysis run - approval/materialization
     (and this bridge, which is bookkeeping, not analysis) still happen
     automatically, but the AI stage pipeline itself only ever runs when a
-    user explicitly starts it."""
-    from services.competitors.project_document_bridge import sync_project_documents_into_competitor_evidence
+    user explicitly starts it.
+
+    The mirror itself (DB-only) always runs inline - cheap. The competitor-
+    naming pass that follows it is one full-corpus LLM call
+    (COMPETITOR_NAMING_TIMEOUT_SECONDS-bounded, currently 120s), so a caller
+    with a FastAPI `background_tasks` (a real BackgroundTasks, or anything
+    duck-typing `.add_task`) gets it scheduled off the request instead of
+    blocking on it; a caller with none (e.g. process_document's own
+    background task, which isn't on a request thread to begin with) still
+    gets it run inline, same as before."""
+    from services.competitors.project_document_bridge import (
+        refresh_competitors_from_mirrored_evidence,
+        sync_project_documents_into_competitor_evidence,
+    )
     sync_project_documents_into_competitor_evidence(project_id)
+    if background_tasks is not None:
+        background_tasks.add_task(refresh_competitors_from_mirrored_evidence, project_id)
+    else:
+        refresh_competitors_from_mirrored_evidence(project_id)
 
 
 def get_document_text(document_id: int) -> str | None:

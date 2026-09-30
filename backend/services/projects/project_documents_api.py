@@ -167,6 +167,7 @@ def list_document_articles(project_id: int, user: dict = Depends(require_permiss
 def set_document_article_status(
     candidate_id: int,
     payload: dict,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Approving materializes the candidate into a real `articles` row (see
@@ -186,19 +187,20 @@ def set_document_article_status(
         raise HTTPException(status_code=400, detail="status must be pending, approved, or rejected.")
 
     if status == "approved" and not had_article_id and candidate.get("article_id"):
-        sync_competitor_evidence_after_approval(existing["project_id"])
+        sync_competitor_evidence_after_approval(existing["project_id"], background_tasks=background_tasks)
     return {"article": candidate, "run_id": None}
 
 
 @router.post("/{project_id}/document-articles/approve-all")
 def approve_all_document_articles(
     project_id: int,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     _project_or_404(project_id, user)
     approved = project_document_articles.approve_all(project_id)
     if any(candidate.get("article_id") for candidate in approved):
-        sync_competitor_evidence_after_approval(project_id)
+        sync_competitor_evidence_after_approval(project_id, background_tasks=background_tasks)
     return {"articles": approved, "run_id": None}
 
 
@@ -206,6 +208,7 @@ def approve_all_document_articles(
 def approve_document_articles_for_documents(
     project_id: int,
     payload: dict,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_permission("projects.update")),
 ):
     """Same as approve-all, scoped to specific document ids - what the
@@ -223,7 +226,7 @@ def approve_document_articles_for_documents(
         raise HTTPException(status_code=400, detail="document_ids must be a list of integers.")
     approved = project_document_articles.approve_for_documents(project_id, document_ids)
     if any(candidate.get("article_id") for candidate in approved):
-        sync_competitor_evidence_after_approval(project_id)
+        sync_competitor_evidence_after_approval(project_id, background_tasks=background_tasks)
     return {"articles": approved, "run_id": None}
 
 

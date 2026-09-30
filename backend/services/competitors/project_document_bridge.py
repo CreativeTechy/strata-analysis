@@ -25,6 +25,30 @@ sync_project_documents_into_competitor_evidence() re-upserts every currently
 the unique source_project_document_id/source_project_document_article_id
 columns - see migration 0045), so a later approval on either wizard is
 picked up the next time this runs without needing to track "what's new".
+
+Two things this sync deliberately does *not* do, because either would run
+over a decision made on the competitor side after the mirror was created:
+- Re-approve a mirrored candidate: the upsert only refreshes `article_id`,
+  never `status`, on conflict - a mirrored candidate the user rejected from
+  the competitor document review stays rejected even though its source
+  candidate is (and stays) approved.
+- Recreate a mirrored document the user deleted from the competitor document
+  list: `project_documents.competitor_mirror_excluded` (migration 0046) is
+  set by that delete and checked here, so a project-document opted out this
+  way is skipped by every later sync.
+
+What it does actively propagate: a source candidate that leaves 'approved'
+(rejected, or un-approved back to 'pending') downgrades its still-'approved'
+mirror to 'rejected' - see the second query below. That only touches a
+mirror still at 'approved' (i.e. one the competitor side hasn't already
+decided on its own), for the same reason as the conflict clause above.
+
+The competitor-naming pass (document_analysis.derive_competitors()) that used
+to run automatically at the end of every sync is now a separate function,
+refresh_competitors_from_mirrored_evidence() - see its own docstring for why.
+Call both from services.projects.project_documents_store.sync_competitor_evidence_after_approval(),
+which is every caller's entry point; don't call this module directly from an
+API route.
 """
 
 from __future__ import annotations
@@ -49,15 +73,19 @@ def sync_project_documents_into_competitor_evidence(project_id: int) -> None:
     """No-op unless `project_id` is a competitor-mode project. Otherwise,
     mirrors every one of its project_documents rows and their currently-
     approved project_document_articles candidates into
-    competitor_documents/competitor_document_articles, then re-runs
-    document_analysis.derive_competitors() so the mirrored evidence can also
-    surface new competitors, not just feed ones already tracked."""
+    competitor_documents/competitor_document_articles - plain DB upserts, no
+    LLM call, safe to run inline on a request. See
+    refresh_competitors_from_mirrored_evidence() for the naming pass that
+    used to run automatically right after this."""
     project = projects_store.get_project(project_id)
     if not project or project.get("mode") != "competitor":
         return
 
     documents = db.fetch_all(
-        "select id, original_filename from project_documents where project_id = %s",
+        """
+        select id, original_filename from project_documents
+        where project_id = %s and not competitor_mirror_excluded
+        """,
         (int(project_id),),
     )
     if not documents:
@@ -81,6 +109,11 @@ def sync_project_documents_into_competitor_evidence(project_id: int) -> None:
                 document["id"],
             ),
         )
+        # Only refreshes article_id on conflict - never status. A mirrored
+        # candidate the competitor side has already reviewed (approved or
+        # rejected) keeps that decision; only a first-time insert (a brand
+        # new mirror row) defaults to 'approved', matching the source
+        # candidate's own already-approved status.
         db.execute(
             """
             insert into competitor_document_articles
@@ -90,15 +123,47 @@ def sync_project_documents_into_competitor_evidence(project_id: int) -> None:
             from project_document_articles pda
             where pda.document_id = %s and pda.status = 'approved' and pda.article_id is not null
             on conflict (source_project_document_article_id) do update
-               set status = 'approved', article_id = excluded.article_id
+               set article_id = excluded.article_id
             """,
             (mirrored["id"], document["id"]),
         )
+        # Propagates a source candidate leaving 'approved' (rejected, or
+        # un-approved back to 'pending') onto its mirror - but only a mirror
+        # still at 'approved', i.e. one nobody has reviewed on the competitor
+        # side yet. A mirror the competitor side already rejected is left
+        # alone (it's already where this would have taken it); a mirror the
+        # competitor side re-approved on its own is likewise left alone, that
+        # being a decision made after this bridge created it.
+        db.execute(
+            """
+            update competitor_document_articles cda
+               set status = 'rejected'
+              from project_document_articles pda
+             where cda.source_project_document_article_id = pda.id
+               and pda.document_id = %s
+               and pda.status != 'approved'
+               and cda.status = 'approved'
+            """,
+            (document["id"],),
+        )
 
+
+def refresh_competitors_from_mirrored_evidence(project_id: int) -> None:
+    """Names the companies the project's approved articles (mirrored or not)
+    are actually about, over the *whole* current evidence set - the same
+    full-corpus LLM call document_analysis.derive_competitors() always makes,
+    not an incremental one scoped to what this particular sync just mirrored.
+
+    Kept separate from sync_project_documents_into_competitor_evidence() (the
+    cheap DB-only mirror) so a caller with a FastAPI BackgroundTasks object
+    can schedule this off the request instead of paying for it inline -
+    otherwise every approval or import in a competitor-mode project blocks on
+    a COMPETITOR_NAMING_TIMEOUT_SECONDS-bounded LLM call over every approved
+    article in the study, not just the ones this call just added."""
     try:
         document_analysis.derive_competitors(project_id)
     except Exception:
         # Best-effort, same reasoning as _try_approve_all_and_queue_analysis:
-        # the mirror rows above already landed, so evidence is available for
+        # the mirror rows already landed, so evidence is available for
         # "Run analysis" even if this particular naming pass fails.
         logger.exception("derive_competitors failed after syncing project-document evidence for project %s", project_id)

@@ -58,6 +58,7 @@
         "analyzed": "Analyzed",
         "analysisFailed": "Analysis failed",
         "analyzing": "Analyzing...",
+        "notAnalyzed": "Not analyzed yet",
         "approved": "Approved",
         "rejected": "Rejected"
       },
@@ -73,10 +74,12 @@
         "articlesApproved_one": "{{formattedCount}} article approved",
         "articlesApproved_other": "{{formattedCount}} articles approved",
         "analyzedSuffix": " {{formattedCount}} analyzed.",
-        "failedSuffix": " {{formattedCount}} failed to analyze."
+        "failedSuffix": " {{formattedCount}} failed to analyze.",
+        "notAnalyzedSuffix": " {{formattedCount}} not analyzed yet."
       },
+      "runAnalysisButton": "Run analysis",
       "rerunButton": "Re-run analysis",
-      "rerunning": "Re-running..."
+      "running": "Running..."
     },
     "errors": {
       "removeDocumentFailed": "Failed to remove the document.",
