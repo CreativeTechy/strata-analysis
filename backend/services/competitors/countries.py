@@ -98,7 +98,9 @@ COUNTRY_ALIASES: dict[str, str] = {
 # subset of those - not an attempt at exhaustive geoparsing - and a capital
 # that collides with a common English word/name or a contested status is left
 # out rather than guessed (e.g. no Washington/US: "Washington" alone is also
-# a US state; no Jerusalem: contested as Israel's vs. Palestine's capital).
+# a US state; no Jerusalem: contested as Israel's vs. Palestine's capital;
+# no Male/Maldives: "male" is an ordinary demographic-descriptor word this
+# product's own gender-tagged content mentions constantly).
 # Keys are lowercase.
 CITY_ALIASES: dict[str, str] = {
     "kabul": "AF", "tirana": "AL", "algiers": "DZ", "luanda": "AO",
@@ -120,7 +122,7 @@ CITY_ALIASES: dict[str, str] = {
     "kuwait city": "KW", "bishkek": "KG", "vientiane": "LA", "riga": "LV",
     "beirut": "LB", "maseru": "LS", "monrovia": "LR", "tripoli": "LY",
     "vilnius": "LT", "luxembourg city": "LU", "antananarivo": "MG",
-    "lilongwe": "MW", "kuala lumpur": "MY", "male": "MV", "bamako": "ML",
+    "lilongwe": "MW", "kuala lumpur": "MY", "bamako": "ML",
     "valletta": "MT", "nouakchott": "MR", "port louis": "MU", "mexico city": "MX",
     "chisinau": "MD", "ulaanbaatar": "MN", "podgorica": "ME", "rabat": "MA",
     "maputo": "MZ", "naypyidaw": "MM", "windhoek": "NA", "kathmandu": "NP",

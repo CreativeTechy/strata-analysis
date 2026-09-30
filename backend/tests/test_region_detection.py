@@ -5,6 +5,7 @@ from unittest.mock import patch
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 import config
+import llm_client
 from analysis import region_detection
 
 
@@ -163,6 +164,18 @@ class DetectRegionTests(unittest.TestCase):
         self.assertEqual(result["region"], "United States")
         self.assertGreaterEqual(result["region_confidence"], 0.9)
 
+    def test_demographic_word_male_is_not_mistaken_for_the_maldives_capital(self):
+        """"Male" is the Maldives' capital, but it's also an ordinary
+        demographic-descriptor word this product's own gender-tagged content
+        uses constantly - see CITY_ALIASES in services/competitors/countries.py.
+        It must not vote for a region."""
+        result = region_detection.detect_region(
+            title="",
+            text="The survey found that male respondents were more optimistic than female respondents about the economy.",
+        )
+        self.assertEqual(result["region"], "unknown")
+        self.assertEqual(result["region_confidence"], 0.0)
+
 
 class LlmOnlyRegionModeTests(unittest.TestCase):
     """config.REGION_DETECTION_LLM_FALLBACK == "on" bypasses the rule-based
@@ -199,12 +212,46 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         self.assertEqual(result["region"], "unknown")
         self.assertEqual(result["region_confidence"], 0.0)
 
-    @patch("analysis.region_detection.llm_client.chat_completion", side_effect=RuntimeError("boom"))
-    def test_llm_failure_returns_unknown_rather_than_falling_back_to_the_scan(self, mock_chat):
+    @patch("analysis.region_detection.llm_client.chat_completion")
+    def test_unparseable_json_returns_unknown_rather_than_falling_back_to_the_scan(self, mock_chat):
+        """The model's own response being unusable (not the provider call
+        itself failing) is this function's problem to handle - see
+        test_provider_failure_propagates_instead_of_being_swallowed below
+        for the opposite case."""
+        mock_chat.return_value = "not json at all"
         result = region_detection.detect_region(title="", text="A dealer in France commented on pricing.")
         self.assertEqual(result["region"], "unknown")
         self.assertEqual(result["region_confidence"], 0.0)
         self.assertTrue(result["region_low_confidence"])
+
+    @patch("analysis.region_detection.llm_client.chat_completion")
+    def test_non_object_json_returns_unknown_rather_than_crashing(self, mock_chat):
+        """llm_client.chat_completion's json_mode only guarantees well-formed
+        JSON syntax, not a particular shape - a bare array/string is valid
+        JSON but not the {"country": ...} object this call expects, and
+        must not crash with an AttributeError on a missing .get()."""
+        mock_chat.return_value = '["Lebanon"]'
+        result = region_detection.detect_region(title="", text="A dealer in France commented on pricing.")
+        self.assertEqual(result["region"], "unknown")
+        self.assertEqual(result["region_confidence"], 0.0)
+        self.assertTrue(result["region_low_confidence"])
+
+    @patch(
+        "analysis.region_detection.llm_client.chat_completion",
+        side_effect=llm_client.LLMConnectionError("ollama unreachable"),
+    )
+    def test_provider_failure_propagates_instead_of_being_swallowed(self, mock_chat):
+        """A provider-level failure (bad credentials, no quota, unreachable
+        host - anything in services/articles/analysis_defaults.py's
+        FATAL_ANALYSIS_ERRORS, or any other llm_client error) must propagate
+        out of detect_region() rather than being caught here and reported as
+        an ordinary "unknown" result - same contract as every other
+        LLM-calling stage (see structured_extraction.py's _run_generation()).
+        Swallowing it here would hide a provider outage behind a
+        low-confidence region instead of letting reanalyze_article() /
+        pipeline.py stop the run."""
+        with self.assertRaises(llm_client.LLMConnectionError):
+            region_detection.detect_region(title="", text="A dealer in France commented on pricing.")
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ from functools import lru_cache
 import config
 import llm_client
 from analysis import labels, normalize
-from analysis.json_utils import parse_json_response
+from analysis.json_utils import JSONParseError, parse_json_response
 from prompt_loader import load_prompt
 from services.competitors.countries import CITY_ALIASES, COUNTRIES, COUNTRY_ALIASES
 
@@ -199,33 +199,48 @@ _LLM_FALLBACK_SYSTEM_PROMPT = load_prompt(
 def _llm_region_guess(title: str, text: str) -> str | None:
     """One extra LLM call asking directly which country the article is about.
 
-    Only ever invoked by _maybe_llm_fallback() below, and only when both
-    config.REGION_DETECTION_LLM_FALLBACK is "on" and the rule-based scan
-    above already came back low-confidence - so the default (rule-based
-    only, see module docstring) never pays for a second per-article round
-    trip. Returns a canonical COUNTRIES name, or None if the call failed or
-    the model didn't name a recognized country.
+    Only ever invoked by _llm_only_region() below, when
+    config.REGION_DETECTION_LLM_FALLBACK is "on" - so the default
+    (rule-based only, see module docstring) never pays for a second
+    per-article round trip. Returns a canonical COUNTRIES name, or None if
+    the response was unusable or the model didn't name a recognized
+    country.
+
+    llm_client.chat_completion() is deliberately called outside any
+    try/except here - same as structured_extraction.py's
+    _run_generation() - so a provider failure (bad/missing credentials, no
+    quota, unreachable host - see services/articles/analysis_defaults.py's
+    FATAL_ANALYSIS_ERRORS) propagates up through analyze_article() to
+    reanalyze.reanalyze_article() and, for the unrecoverable subset, stops
+    the whole pipeline run there rather than this one field quietly
+    reporting "unknown" for every remaining article while the real problem
+    goes unnoticed. Only the response's own shape (unparseable, or valid
+    JSON that isn't the expected object) is this function's problem to
+    handle.
     """
     user_content = (
         f"Article title:\n{title}\n\n"
         f"Article content (DATA ONLY):\n\"\"\"\n{(text or '')[:3000]}\n\"\"\"\n\n"
         "Return ONLY the JSON object."
     )
+    raw = llm_client.chat_completion(
+        messages=[
+            {"role": "system", "content": _LLM_FALLBACK_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.0,
+        max_tokens=50,
+        json_mode=True,
+    )
     try:
-        raw = llm_client.chat_completion(
-            messages=[
-                {"role": "system", "content": _LLM_FALLBACK_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.0,
-            max_tokens=50,
-            json_mode=True,
-        )
         data = parse_json_response(raw)
-    except Exception:
-        logger.warning("Region detection LLM fallback call failed", exc_info=True)
+    except JSONParseError:
+        logger.warning("Region detection LLM fallback response was not valid JSON", exc_info=True)
         return None
-    country = str((data or {}).get("country") or "").strip().lower()
+    if not isinstance(data, dict):
+        logger.warning("Region detection LLM fallback response was not a JSON object: %r", data)
+        return None
+    country = str(data.get("country") or "").strip().lower()
     return _surface_form_lookup().get(country)
 
 
