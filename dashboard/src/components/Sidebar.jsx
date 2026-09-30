@@ -128,10 +128,7 @@ export default function Sidebar({
     ? user.username.trim().slice(0, 2).toUpperCase()
     : '?';
 
-  const navStyle = ({ isActive }) => ({
-    background: isActive ? 'white' : 'rgba(255,255,255,0.45)',
-    borderColor: isActive ? 'transparent' : 'rgba(0,0,0,0.08)',
-    boxShadow: isActive ? '0 6px 18px rgba(0,0,0,0.08)' : 'none',
+  const navStyle = () => ({
     textDecoration: 'none',
     width: '100%',
     justifyContent: showCollapsed ? 'center' : 'flex-start',
@@ -184,7 +181,7 @@ export default function Sidebar({
             <NavLink
               key={to}
               to={destination}
-              className="btn-secondary sidebar-nav-link"
+              className={({ isActive }) => `btn-secondary sidebar-nav-link${isActive ? ' sidebar-nav-link-active' : ''}`}
               style={navStyle}
               title={showCollapsed ? label : undefined}
               onClick={onCloseMobile}

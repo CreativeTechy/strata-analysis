@@ -70,6 +70,31 @@ class ReportVariationTests(ReportsRoutesTestCase):
             resp = self.client.get("/api/projects/1/reports/variation?run_id=run-2")
         self.assertEqual(resp.status_code, 400)
 
+    def test_passes_an_explicit_previous_run_id_through(self):
+        expected = {"status": "ok", "narrative": "Changed."}
+        other_run = {"id": "run-1", "project_id": 1}
+
+        def _fake_get_pipeline_run(run_id):
+            return self.RUN if run_id == "run-2" else other_run
+
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_pipeline_run", side_effect=_fake_get_pipeline_run), \
+             patch("main.fetch_run_article_rows", return_value=[]), \
+             patch("main.build_variation_from_last_run", return_value=expected) as build:
+            resp = self.client.get("/api/projects/1/reports/variation?run_id=run-2&previous_run_id=run-1")
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = build.call_args
+        self.assertEqual(kwargs["previous_run_id"], "run-1")
+
+    def test_rejects_an_explicit_previous_run_id_from_another_project(self):
+        def _fake_get_pipeline_run(run_id):
+            return self.RUN if run_id == "run-2" else {"id": "run-9", "project_id": 9}
+
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_pipeline_run", side_effect=_fake_get_pipeline_run):
+            resp = self.client.get("/api/projects/1/reports/variation?run_id=run-2&previous_run_id=run-9")
+        self.assertEqual(resp.status_code, 400)
+
 
 class ExportSummaryPdfTests(ReportsRoutesTestCase):
     PROJECT = {"id": 1, "name": "Acme"}

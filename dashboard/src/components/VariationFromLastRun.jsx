@@ -20,12 +20,21 @@ function scopeLabel(t, locale, sequence, isoDate, fallback) {
     : t('reports:variation.scopeLabelNoNumber', { date });
 }
 
-export default function VariationFromLastRun({ projectId, runId, number = '02', id }) {
+export default function VariationFromLastRun({ projectId, runId, projectRuns = [], number = '02', id }) {
   const { t, i18n } = useTranslation('reports');
   const locale = i18n.language;
-  const scopeKey = `${projectId ?? ''}:${runId ?? ''}`;
+  // null = auto (the immediately preceding eligible run - the backend's own default).
+  const [previousRunId, setPreviousRunId] = useState(null);
+  const scopeKey = `${projectId ?? ''}:${runId ?? ''}:${previousRunId ?? ''}`;
   const [result, setResult] = useState({ scopeKey: null, comparison: null, error: null });
   const [regenerating, setRegenerating] = useState(false);
+
+  const comparisonOptions = projectRuns.filter((run) => run.analytics_eligible && run.id !== runId);
+
+  useEffect(() => {
+    // A picked comparison run stops applying once a different run is selected as "current".
+    setPreviousRunId(null);
+  }, [runId]);
 
   useEffect(() => {
     if (projectId == null || !runId) {
@@ -33,7 +42,7 @@ export default function VariationFromLastRun({ projectId, runId, number = '02', 
     }
 
     const controller = new AbortController();
-    getReportVariation(projectId, { run_id: runId }, controller.signal)
+    getReportVariation(projectId, { run_id: runId, previous_run_id: previousRunId || undefined }, controller.signal)
       .then((data) => setResult({ scopeKey, comparison: data, error: null }))
       .catch((err) => {
         if (err?.name !== 'AbortError') {
@@ -42,7 +51,7 @@ export default function VariationFromLastRun({ projectId, runId, number = '02', 
         }
       });
     return () => controller.abort();
-  }, [projectId, runId, scopeKey]);
+  }, [projectId, runId, previousRunId, scopeKey]);
 
   const scopeLoaded = result.scopeKey === scopeKey;
   const comparison = scopeLoaded ? result.comparison : null;
@@ -53,7 +62,11 @@ export default function VariationFromLastRun({ projectId, runId, number = '02', 
     if (projectId == null || !runId || loading) return;
     setRegenerating(true);
     try {
-      const data = await getReportVariation(projectId, { run_id: runId, regenerate: 'true' });
+      const data = await getReportVariation(projectId, {
+        run_id: runId,
+        previous_run_id: previousRunId || undefined,
+        regenerate: 'true',
+      });
       setResult({ scopeKey, comparison: data, error: null });
     } catch (err) {
       console.error('Failed to regenerate the run comparison', err);
@@ -85,6 +98,22 @@ export default function VariationFromLastRun({ projectId, runId, number = '02', 
         <span>{number}</span>
         <h3>{t('reports:variation.title')}</h3>
         <span className="report-trend-actions">
+          {runId && comparisonOptions.length > 0 ? (
+            <select
+              className="filter-select filter-run-select report-variation-compare-select"
+              value={previousRunId || 'auto'}
+              onChange={(event) => setPreviousRunId(event.target.value === 'auto' ? null : event.target.value)}
+              aria-label={t('reports:variation.compareWithLabel')}
+              title={t('reports:variation.compareWithLabel')}
+            >
+              <option value="auto">{t('reports:variation.compareWithAuto')}</option>
+              {comparisonOptions.map((run) => (
+                <option key={run.id} value={run.id}>
+                  {scopeLabel(t, locale, run.sequence_number, (run.finished_at || run.created_at || '').slice(0, 10), null)}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <button
             type="button"
             className="report-trend-refresh-btn"

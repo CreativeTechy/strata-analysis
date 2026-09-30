@@ -165,6 +165,7 @@ a.intelligence-metric-link:hover strong { text-decoration: underline; text-decor
 .report-finding-hint { color: var(--text-light); font-size: .78rem; }
 .report-section-scope-note { margin: -4px 0 14px; color: var(--text-light); font-size: .8rem; }
 .report-trend-actions { margin-inline-start: auto; display: flex; align-items: center; gap: 8px; }
+.report-variation-compare-select { min-width: 0; max-width: 220px; }
 .report-trend-refresh-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid #dbeafe; background: #fff; color: #1d4ed8; cursor: pointer; }
 .report-trend-refresh-btn:hover:not(:disabled) { background: #eff6ff; }
 .report-trend-refresh-btn:disabled { opacity: .6; cursor: default; }

@@ -354,6 +354,7 @@ export default function ReportsView({
             project={selectedProject}
             period={reportPeriod}
             runId={reportRunId}
+            projectRuns={projectRuns}
             rangeLabel={t(`periods.${reportPeriod}`)}
             onShowAllTime={reportRunId || reportPeriod !== 'all' ? () => { onReportRunIdChange(null); onReportPeriodChange('all'); } : undefined}
             onAnalysisStarted={onRefresh}

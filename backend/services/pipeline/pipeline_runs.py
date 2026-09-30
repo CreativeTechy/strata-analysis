@@ -165,6 +165,40 @@ def get_previous_analysis_run(project_id, run_id):
         return None
 
 
+def get_analysis_run_for_comparison(project_id, run_id):
+    """Return an arbitrary analytics-eligible analysis run for this project.
+
+    Unlike get_previous_analysis_run, this places no ordering constraint on
+    run_id relative to any other run - it's for a user explicitly picking
+    which run to compare against, not for inferring "the previous one".
+    """
+    if not config.DATABASE_URL or project_id is None or not run_id:
+        return None
+    try:
+        row = db.fetch_one(
+            f"""
+            select {RUN_SELECT}, seq.sequence_number
+            from pipeline_runs pr
+            left join projects p on p.id = pr.project_id
+            left join (
+                select id, row_number() over (partition by project_id order by created_at asc, id asc) as sequence_number
+                from pipeline_runs
+                where pipeline = 'analysis'
+            ) seq on seq.id = pr.id
+            where pr.id = %s
+              and pr.project_id = %s
+              and pr.pipeline = 'analysis'
+              and exists (select 1 from article_analyses an where an.run_id = pr.id)
+            limit 1
+            """,
+            (str(run_id), int(project_id)),
+        )
+        return _normalize(row) if row else None
+    except Exception:
+        logger.exception("Failed to load comparison run %s.", run_id)
+        return None
+
+
 def get_active_run_for_project(project_id):
     """Return the in-flight run for this project, or None if it's free to start.
 

@@ -258,32 +258,6 @@ create table if not exists public.pipeline_run_documents (
 create index if not exists pipeline_run_documents_run_idx
     on public.pipeline_run_documents (run_id);
 
--- Immutable per-run audit record of every article-relevance screening
--- decision made during that run - unlike article_projects' cached decision
--- (which is overwritten as scope/content change), this is what a given run
--- actually saw and acted on.
-create table if not exists public.pipeline_run_article_screenings (
-    run_id                text not null references public.pipeline_runs(id) on delete cascade,
-    project_id            bigint not null references public.projects(id) on delete cascade,
-    article_id            bigint not null references public.articles(id) on delete cascade,
-    decision              text not null,
-    included              boolean not null,
-    similarity_score      numeric,
-    decision_source       text not null,
-    explanation           text,
-    scope_hash            text not null,
-    content_hash          text not null,
-    rules_version         text not null,
-    model                 text,
-    created_at            timestamptz not null default now(),
-    primary key (run_id, article_id),
-    constraint pipeline_run_article_screenings_decision_check
-        check (decision in ('accepted','excluded','needs_review'))
-);
-
-create index if not exists pipeline_run_article_screenings_run_idx
-    on public.pipeline_run_article_screenings (run_id, decision, included);
-
 drop trigger if exists set_pipeline_runs_updated_at on public.pipeline_runs;
 create trigger set_pipeline_runs_updated_at
 before update on public.pipeline_runs
@@ -531,6 +505,32 @@ create index if not exists articles_story_unassigned_idx
     on public.articles (id) where story_id is null;
 create index if not exists articles_reprocess_requested_idx
     on public.articles (reprocess_requested_at) where reprocess_requested_at is not null;
+
+-- Immutable per-run audit record of every article-relevance screening
+-- decision made during that run - unlike article_projects' cached decision
+-- (which is overwritten as scope/content change), this is what a given run
+-- actually saw and acted on.
+create table if not exists public.pipeline_run_article_screenings (
+    run_id                text not null references public.pipeline_runs(id) on delete cascade,
+    project_id            bigint not null references public.projects(id) on delete cascade,
+    article_id            bigint not null references public.articles(id) on delete cascade,
+    decision              text not null,
+    included              boolean not null,
+    similarity_score      numeric,
+    decision_source       text not null,
+    explanation           text,
+    scope_hash            text not null,
+    content_hash          text not null,
+    rules_version         text not null,
+    model                 text,
+    created_at            timestamptz not null default now(),
+    primary key (run_id, article_id),
+    constraint pipeline_run_article_screenings_decision_check
+        check (decision in ('accepted','excluded','needs_review'))
+);
+
+create index if not exists pipeline_run_article_screenings_run_idx
+    on public.pipeline_run_article_screenings (run_id, decision, included);
 
 -- Which projects an article belongs to. `similarity_score` is how well it
 -- matched the project when it was linked. The relevance_*/manual_relevance_*

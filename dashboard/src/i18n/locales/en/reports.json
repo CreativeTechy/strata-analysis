@@ -68,6 +68,8 @@
     "regenerateAria": "Regenerate variation from last run",
     "selectRunFirst": "Select an analysis run first",
     "selectRunPrompt": "Select an analysis run to compare it with the immediately preceding run.",
+    "compareWithLabel": "Compare with",
+    "compareWithAuto": "Immediately preceding run",
     "generating": "Generating run comparison…",
     "regenerating": "Regenerating run comparison…",
     "loadError": "Couldn't load the run comparison.",
@@ -89,6 +91,7 @@
       "no_current_articles": "No analyzed articles exist in the selected run.",
       "no_previous_run": "No previous analysis run with saved results exists for this project.",
       "no_previous_articles": "The previous analysis run has no successfully analyzed articles.",
+      "invalid_previous_run": "The selected comparison run is not available for this project.",
       "fallback": "No comparison is available for this run yet."
     }
   }

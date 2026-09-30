@@ -110,7 +110,7 @@ function FeedbackColumn({ title, icon, tone, items, projectId }) {
 
 export default function StatsOverview({
   intelligence = {}, scopeLabel, loading, error, onRetry, project = null, period = 'all', runId = null,
-  rangeLabel, onShowAllTime, onAnalysisStarted,
+  rangeLabel, onShowAllTime, onAnalysisStarted, projectRuns = [],
 }) {
   const { t, i18n } = useTranslation(['dashboard', 'reports']);
   const locale = i18n.language;
@@ -373,7 +373,7 @@ export default function StatsOverview({
       </div>
     </Section>
 
-    <VariationFromLastRun projectId={projectId} runId={runId} number="02" id="report-section-changes" />
+    <VariationFromLastRun projectId={projectId} runId={runId} projectRuns={projectRuns} number="02" id="report-section-changes" />
 
     <Section id="report-section-sentiment" number="03" title={t('dashboard:report.sections.sentimentAnalysis')}>
       <p className="subtitle">
