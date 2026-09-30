@@ -71,6 +71,10 @@
 .evidence-status.contradicted,.evidence-status.contradicting { background:#fee2e2; color:#991b1b; }
 .evidence-status.mixed_evidence { background:#fef3c7; color:#92400e; }
 .evidence-status.not_yet_verifiable { background:#dbeafe; color:#1e40af; }
+.evidence-confidence { display:inline-flex; align-items:center; width:max-content; border-radius:999px; padding:3px 8px; margin-inline-start:6px; font-size:.68rem; font-weight:600; background:#eef2f7; color:#475569; }
+.evidence-confidence.high { background:#dcfce7; color:#166534; }
+.evidence-confidence.medium { background:#fef3c7; color:#92400e; }
+.evidence-confidence.low { background:#fee2e2; color:#991b1b; }
 .evidence-items { display:grid; gap:12px; }
 .evidence-item { border:1px solid rgba(15,23,42,.1); border-inline-start:4px solid #94a3b8; border-radius:10px; padding:13px; display:grid; gap:10px; }
 .evidence-item.supporting { border-inline-start-color:#22c55e; }.evidence-item.contradicting { border-inline-start-color:#ef4444; }
