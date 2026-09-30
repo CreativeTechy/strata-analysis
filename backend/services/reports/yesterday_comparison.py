@@ -40,6 +40,7 @@ from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from psycopg.types.json import Jsonb
 from services.articles.article_analyses import fetch_run_article_rows
+from services.i18n.locales import language_instruction
 from services.intelligence.intelligence import VALID_SENTIMENTS, net_sentiment
 from services.pipeline.pipeline_runs import get_analysis_run_for_comparison, get_previous_analysis_run
 from services.reports.report_data import report_timezone
@@ -48,6 +49,21 @@ logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "report-variation/2"
 _SYSTEM_PROMPT = load_prompt("report_variation_system_prompt.txt")
+
+# One extra LLM call to render the already-generated canonical (English)
+# narrative into a non-default locale, rather than re-deriving it from the
+# raw evidence - the canonical narrative is what the PDF export keeps
+# reading, so a localized read is a rendering of that same text, not a
+# second, independently-generated comparison of the same runs. Same
+# reasoning as trend_summary.py's LOCALIZED_TREND_SUMMARY_SYSTEM_PROMPT.
+_LOCALIZED_NARRATIVE_SYSTEM_PROMPT = (
+    "You render an already-written analyst narrative into another language for "
+    "display purposes only. Preserve every fact, number, and the overall "
+    "structure exactly, including section headings - this is a translation, "
+    "not a new analysis. Keep proper names, organization names, and any "
+    "directly quoted material exactly as given rather than translating them. "
+    "Output only the rendered narrative text, with no preamble."
+)
 
 _SECTION_ORDER = (
     ("ideas", "Ideas & Themes"),
@@ -214,6 +230,55 @@ def _save_cached(project_id: int, scope_key: str, current_date: date, previous_d
     )
 
 
+def _load_cached_localized(project_id: int, scope_key: str, current_date: date, previous_date: date, locale: str) -> dict | None:
+    if not config.DATABASE_URL:
+        return None
+    return db.fetch_one(
+        """
+        select narrative, source_fingerprint, updated_at
+        from public.project_report_variation_summaries_localized
+        where project_id = %s and scope_key = %s and today_date = %s and yesterday_date = %s and locale = %s
+        """,
+        (project_id, scope_key, current_date, previous_date, locale),
+    )
+
+
+def _save_cached_localized(
+    project_id: int, scope_key: str, current_date: date, previous_date: date, locale: str,
+    narrative: str, source_fingerprint: str,
+) -> None:
+    if not config.DATABASE_URL:
+        return
+    db.execute(
+        """
+        insert into public.project_report_variation_summaries_localized
+            (project_id, scope_key, today_date, yesterday_date, locale, narrative, source_fingerprint, model)
+        values (%s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict (project_id, scope_key, today_date, yesterday_date, locale) do update
+           set narrative = excluded.narrative,
+               source_fingerprint = excluded.source_fingerprint,
+               model = excluded.model,
+               updated_at = now()
+        """,
+        (project_id, scope_key, current_date, previous_date, locale, narrative, source_fingerprint, config.LLM_CHAT_MODEL),
+    )
+
+
+def _render_localized_narrative(canonical_narrative: str, locale: str) -> str:
+    rendered = chat_completion(
+        messages=[
+            {
+                "role": "system",
+                "content": f"{_LOCALIZED_NARRATIVE_SYSTEM_PROMPT}\n\n{language_instruction(locale)}",
+            },
+            {"role": "user", "content": canonical_narrative},
+        ],
+        temperature=0.0,
+        max_tokens=2200,
+    )
+    return rendered.strip()
+
+
 def _generate_narrative(current_rows: list[dict], previous_rows: list[dict], metrics: dict, current_label: str, previous_label: str) -> tuple[str | None, list[dict]]:
     current_sample, current_sampled = _sample(current_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
     previous_sample, previous_sampled = _sample(previous_rows, config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE)
@@ -281,6 +346,7 @@ def _generate_narrative(current_rows: list[dict], previous_rows: list[dict], met
 
 def build_variation_from_last_run(
     project: dict, report_data: dict, run: dict | None = None, force: bool = False, previous_run_id: str | None = None,
+    locale: str | None = None,
 ) -> dict:
     """Compare the selected analysis run with another run.
 
@@ -292,7 +358,19 @@ def build_variation_from_last_run(
     sides use immutable `article_analyses` snapshots, with the selected side
     reused from `report_data` so its totals cannot disagree with the rest of
     the PDF.
+
+    `locale` defaults to config.DEFAULT_LOCALE ("en"), the canonical language
+    the narrative has always been generated and cached in - that path is
+    unchanged from before this parameter existed. A non-default locale is
+    rendered from the canonical narrative and cached separately (see
+    `project_report_variation_summaries_localized`), keyed by this call's own
+    `data_fingerprint` so a later canonical regeneration invalidates it - a
+    stale localized row is simply re-rendered on the next request. If
+    rendering fails, the canonical (English) narrative is returned instead of
+    an error, tagged `locale_fallback: True` - same fallback shape as
+    generate_trend_summary().
     """
+    locale = locale or config.DEFAULT_LOCALE
     project_id = report_data["project"]["id"]
     tz = report_timezone()
     current_rows = report_data.get("_analyzed_rows") or []
@@ -321,6 +399,7 @@ def build_variation_from_last_run(
         "narrative": None,
         "evidence": [],
         "cached": False,
+        "locale": config.DEFAULT_LOCALE,
     }
 
     if not run or report_data.get("scope", {}).get("type") != "run":
@@ -382,39 +461,58 @@ def build_variation_from_last_run(
     fingerprint = _data_fingerprint(current_rows, previous_rows)
     scope_key = f"run:{run['id']}:vs:{previous_run['id']}"
 
+    canonical_cached = False
     if not force:
         cached = _load_cached(project_id, scope_key, current_date, previous_date)
         if (cached and cached["_fingerprint"] == fingerprint
                 and cached.get("prompt_version") == PROMPT_VERSION):
-            return {**base_result, "status": cached["status"], "reason": cached["reason"],
-                    "metrics": cached["metrics"], "narrative": cached["narrative"],
-                    "evidence": cached["evidence"], "cached": True}
+            result = {**base_result, "status": cached["status"], "reason": cached["reason"],
+                      "metrics": cached["metrics"], "narrative": cached["narrative"],
+                      "evidence": cached["evidence"], "cached": True}
+            canonical_cached = True
 
-    result = {**base_result, "status": "ok", "metrics": metrics}
+    if not canonical_cached:
+        result = {**base_result, "status": "ok", "metrics": metrics}
+        try:
+            narrative, evidence = _generate_narrative(
+                current_rows, previous_rows, metrics, current_label, previous_label,
+            )
+            result["narrative"] = narrative
+            result["evidence"] = evidence
+            if (len(current_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE
+                    or len(previous_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE):
+                metrics["coverage"]["sampled"] = True
+        except LLMError as e:
+            logger.warning("Report variation narrative failed (%s): %s", e.code, e.detail or e)
+            result["status"] = "llm_failed"
+            result["reason"] = e.user_message
+        except JSONParseError as e:
+            logger.warning("Report variation narrative unparsable: %s", e)
+            result["status"] = "llm_failed"
+            result["reason"] = "The AI narrative could not be generated in a usable format."
+        except Exception:
+            logger.exception("Report variation narrative failed unexpectedly")
+            result["status"] = "llm_failed"
+            result["reason"] = "Something went wrong while generating the AI narrative."
+
+        _save_cached(project_id, scope_key, current_date, previous_date, config.REPORT_TIMEZONE, {**result, "_fingerprint": fingerprint})
+
+    if locale == config.DEFAULT_LOCALE or not result.get("narrative"):
+        return result
+
+    if not force:
+        localized = _load_cached_localized(project_id, scope_key, current_date, previous_date, locale)
+        if localized is not None and localized.get("source_fingerprint") == fingerprint:
+            return {**result, "narrative": localized["narrative"], "locale": locale, "cached": True}
+
     try:
-        narrative, evidence = _generate_narrative(
-            current_rows, previous_rows, metrics, current_label, previous_label,
-        )
-        result["narrative"] = narrative
-        result["evidence"] = evidence
-        if (len(current_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE
-                or len(previous_rows) > config.REPORT_COMPARISON_MAX_ARTICLES_PER_SIDE):
-            metrics["coverage"]["sampled"] = True
-    except LLMError as e:
-        logger.warning("Report variation narrative failed (%s): %s", e.code, e.detail or e)
-        result["status"] = "llm_failed"
-        result["reason"] = e.user_message
-    except JSONParseError as e:
-        logger.warning("Report variation narrative unparsable: %s", e)
-        result["status"] = "llm_failed"
-        result["reason"] = "The AI narrative could not be generated in a usable format."
+        rendered = _render_localized_narrative(result["narrative"], locale)
     except Exception:
-        logger.exception("Report variation narrative failed unexpectedly")
-        result["status"] = "llm_failed"
-        result["reason"] = "Something went wrong while generating the AI narrative."
+        logger.exception("Localized report variation narrative rendering failed for locale=%s", locale)
+        return {**result, "locale": config.DEFAULT_LOCALE, "locale_fallback": True}
 
-    _save_cached(project_id, scope_key, current_date, previous_date, config.REPORT_TIMEZONE, {**result, "_fingerprint": fingerprint})
-    return result
+    _save_cached_localized(project_id, scope_key, current_date, previous_date, locale, rendered, fingerprint)
+    return {**result, "narrative": rendered, "locale": locale, "cached": False}
 
 
 # Transitional alias for callers outside this repository that imported the

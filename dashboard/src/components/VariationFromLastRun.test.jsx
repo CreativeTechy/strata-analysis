@@ -35,7 +35,7 @@ describe('VariationFromLastRun', () => {
     expect(screen.getByText('6 articles in both runs · 4 added · 2 removed')).toBeInTheDocument();
     expect(screen.getByText('+40')).toBeInTheDocument();
     expect(screen.getByText('Selected run articles')).toBeInTheDocument();
-    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3' }, expect.any(AbortSignal));
+    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3', locale: 'en' }, expect.any(AbortSignal));
   });
 
   it('regenerates on demand', async () => {
@@ -45,7 +45,7 @@ describe('VariationFromLastRun', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate variation from last run' }));
     await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
-      1, { run_id: 'run-3', regenerate: 'true' },
+      1, { run_id: 'run-3', locale: 'en', regenerate: 'true' },
     ));
   });
 
@@ -86,7 +86,7 @@ describe('VariationFromLastRun', () => {
     ];
     render(<VariationFromLastRun projectId={1} runId="run-3" projectRuns={projectRuns} />);
     await screen.findByText(/Delivery improved/);
-    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3' }, expect.any(AbortSignal));
+    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3', locale: 'en' }, expect.any(AbortSignal));
 
     const select = screen.getByRole('combobox', { name: 'Compare with' });
     // The current run itself must not be offered as a comparison target.
@@ -94,8 +94,28 @@ describe('VariationFromLastRun', () => {
 
     fireEvent.change(select, { target: { value: 'run-1' } });
     await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
-      1, { run_id: 'run-3', previous_run_id: 'run-1' }, expect.any(AbortSignal),
+      1, { run_id: 'run-3', previous_run_id: 'run-1', locale: 'en' }, expect.any(AbortSignal),
     ));
+  });
+
+  it('lets the user pick a different narrative language independent of the interface language', async () => {
+    getReportVariation.mockResolvedValue(COMPARISON);
+    render(<VariationFromLastRun projectId={1} runId="run-3" />);
+    await screen.findByText(/Delivery improved/);
+    expect(getReportVariation).toHaveBeenCalledWith(1, { run_id: 'run-3', locale: 'en' }, expect.any(AbortSignal));
+
+    fireEvent.click(screen.getByRole('button', { name: 'العربية' }));
+    await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
+      1, { run_id: 'run-3', locale: 'ar' }, expect.any(AbortSignal),
+    ));
+    // Only the narrative's output language changed - the rest of the UI stays English.
+    expect(screen.getByText('Selected run articles')).toBeInTheDocument();
+  });
+
+  it('shows a fallback notice when the narrative could not be translated', async () => {
+    getReportVariation.mockResolvedValue({ ...COMPARISON, locale: 'en', locale_fallback: true });
+    render(<VariationFromLastRun projectId={1} runId="run-3" />);
+    expect(await screen.findByText(/couldn't be translated right now/)).toBeInTheDocument();
   });
 
   it('resets the comparison run picker to auto when the current run changes', async () => {
@@ -109,12 +129,12 @@ describe('VariationFromLastRun', () => {
     await screen.findByText(/Delivery improved/);
     fireEvent.change(screen.getByRole('combobox', { name: 'Compare with' }), { target: { value: 'run-1' } });
     await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
-      1, { run_id: 'run-3', previous_run_id: 'run-1' }, expect.any(AbortSignal),
+      1, { run_id: 'run-3', previous_run_id: 'run-1', locale: 'en' }, expect.any(AbortSignal),
     ));
 
     rerender(<VariationFromLastRun projectId={1} runId="run-2" projectRuns={projectRuns} />);
     await waitFor(() => expect(getReportVariation).toHaveBeenLastCalledWith(
-      1, { run_id: 'run-2' }, expect.any(AbortSignal),
+      1, { run_id: 'run-2', locale: 'en' }, expect.any(AbortSignal),
     ));
   });
 
