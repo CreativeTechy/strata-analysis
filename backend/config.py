@@ -488,6 +488,13 @@ ENTITY_EXTRACTION_CONFIDENCE_THRESHOLD = float(
 REGION_DETECTION_CONFIDENCE_THRESHOLD = float(
     os.environ.get("REGION_DETECTION_CONFIDENCE_THRESHOLD", "0.5") or 0.5
 )
+# "off" (default) or "on" - "on" bypasses the rule-based scan entirely and
+# answers region from a single direct LLM call instead (see
+# region_detection.py's _llm_only_region()), through the same configured
+# provider as the rest of the pipeline (config.LLM_PROVIDER). Off by default
+# for the same reason the stage is rule-based to begin with: a per-article
+# LLM round trip against a single local Ollama server isn't free.
+REGION_DETECTION_LLM_FALLBACK = os.environ.get("REGION_DETECTION_LLM_FALLBACK", "off").strip().lower()
 
 # Chunking for long article text: applied uniformly by article_prep.py before
 # handing text to any model with a limited context window.

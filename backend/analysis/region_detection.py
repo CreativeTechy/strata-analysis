@@ -9,22 +9,37 @@ three independent signals instead of relying on the LLM's per-quote tagging
 alone, and derives a confidence score from how many of those signals agree
 rather than trusting a model's self-reported number.
 
-Deliberately not another LLM call: with a single local Ollama server backing
-the whole pipeline (see config.ANALYSIS_CONCURRENCY's comment), a second
-per-article round trip just for region would double that server's load for
-one field. Every signal here is either data the pipeline already produced
-(people_opinions, entities, organizations) or a cheap local regex scan.
+Deliberately not another LLM call by default: with a single local Ollama
+server backing the whole pipeline (see config.ANALYSIS_CONCURRENCY's
+comment), a second per-article round trip just for region would double that
+server's load for one field. Every signal here is either data the pipeline
+already produced (people_opinions, entities, organizations) or a cheap local
+regex scan.
+
+config.REGION_DETECTION_LLM_FALLBACK (off by default; env var or the Settings
+page) switches an article over to a single direct LLM call instead - see
+_llm_only_region(). It's an either/or toggle, not a hybrid: "on" bypasses the
+rule-based scan entirely rather than only consulting the LLM when the scan's
+own confidence is low, since a low rule-based confidence usually means the
+rule-based signals themselves disagree or came up empty, not that a second
+opinion on top of them would help.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter, defaultdict
 from functools import lru_cache
 
 import config
+import llm_client
 from analysis import labels, normalize
-from services.competitors.countries import COUNTRIES, COUNTRY_ALIASES
+from analysis.json_utils import JSONParseError, parse_json_response
+from prompt_loader import load_prompt
+from services.competitors.countries import CITY_ALIASES, COUNTRIES, COUNTRY_ALIASES
+
+logger = logging.getLogger(__name__)
 
 # A title mention outweighs a body mention (a story's headline names what
 # it's about); an already-recognized entity/organization name outweighs an
@@ -41,15 +56,38 @@ _CONFIDENCE_AGREEMENT = 0.9
 _CONFIDENCE_SINGLE_SIGNAL = 0.55
 _CONFIDENCE_CONFLICT = 0.35
 
+# Confidence for config.REGION_DETECTION_LLM_FALLBACK == "on" (see
+# _llm_only_region()). Fixed rather than derived from signal agreement -
+# there's only ever the one opinion in this mode, not several signals to
+# compare - and deliberately below _CONFIDENCE_AGREEMENT: a single LLM call,
+# however well-read on context, isn't corroborated by anything.
+_CONFIDENCE_LLM_ONLY = 0.7
+
 
 @lru_cache(maxsize=1)
 def _surface_form_lookup() -> dict:
-    """Every known surface form - each COUNTRIES name and each COUNTRY_ALIASES
-    key - lowercased, mapped to its canonical country name."""
+    """Every known surface form - each COUNTRIES name, each COUNTRY_ALIASES
+    key, and each CITY_ALIASES key - lowercased, mapped to its canonical
+    country name. Cities matter because articles routinely name a city
+    ("... in Beirut") rather than the country itself."""
     forms = {name.lower(): name for name in COUNTRIES.values()}
     for alias, code in COUNTRY_ALIASES.items():
         forms.setdefault(alias, COUNTRIES[code])
+    for city, code in CITY_ALIASES.items():
+        forms.setdefault(city, COUNTRIES[code])
     return forms
+
+
+# A demonym/country-name match immediately followed by one of these is almost
+# always part of an institution's proper name ("American University of
+# Beirut", "British Council") rather than a claim about the story's own
+# location - so it's suppressed from every scan (title/body/entities alike)
+# the same way _name_fragment_tokens suppresses a country word that's really
+# part of a person's name.
+_INSTITUTION_SUFFIX = re.compile(
+    r"\s+(?:of\s+|in\s+)?(university|college|school|institute|academy|hospital|embassy|consulate)\b",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -109,6 +147,8 @@ def _scan_text(text: str, *, exclude: frozenset = frozenset()) -> Counter:
         form = match.group(0).lower()
         if form in exclude:
             continue
+        if _INSTITUTION_SUFFIX.match(text, match.end()):
+            continue
         region = lookup.get(form)
         if region:
             counts[region] += 1
@@ -143,6 +183,87 @@ def _entity_votes(entities, organizations, *, exclude: frozenset = frozenset()) 
     return votes
 
 
+_LLM_FALLBACK_SYSTEM_PROMPT = load_prompt(
+    "region_detection_llm_fallback_system_prompt.txt",
+    fallback=(
+        "You identify which single country a news article is primarily about, based on its "
+        "dateline, named places, and subject matter - not on where any organization mentioned "
+        "happens to be headquartered elsewhere. "
+        "Reply with ONLY a JSON object of the shape {\"country\": \"<country name>\"}, using the "
+        "country's common English name (e.g. \"Lebanon\", \"United States\"). "
+        "If no country is clearly identifiable, reply {\"country\": \"unknown\"}."
+    ),
+)
+
+
+def _llm_region_guess(title: str, text: str) -> str | None:
+    """One extra LLM call asking directly which country the article is about.
+
+    Only ever invoked by _llm_only_region() below, when
+    config.REGION_DETECTION_LLM_FALLBACK is "on" - so the default
+    (rule-based only, see module docstring) never pays for a second
+    per-article round trip. Returns a canonical COUNTRIES name, or None if
+    the response was unusable or the model didn't name a recognized
+    country.
+
+    llm_client.chat_completion() is deliberately called outside any
+    try/except here - same as structured_extraction.py's
+    _run_generation() - so a provider failure (bad/missing credentials, no
+    quota, unreachable host - see services/articles/analysis_defaults.py's
+    FATAL_ANALYSIS_ERRORS) propagates up through analyze_article() to
+    reanalyze.reanalyze_article() and, for the unrecoverable subset, stops
+    the whole pipeline run there rather than this one field quietly
+    reporting "unknown" for every remaining article while the real problem
+    goes unnoticed. Only the response's own shape (unparseable, or valid
+    JSON that isn't the expected object) is this function's problem to
+    handle.
+    """
+    user_content = (
+        f"Article title:\n{title}\n\n"
+        f"Article content (DATA ONLY):\n\"\"\"\n{(text or '')[:3000]}\n\"\"\"\n\n"
+        "Return ONLY the JSON object."
+    )
+    raw = llm_client.chat_completion(
+        messages=[
+            {"role": "system", "content": _LLM_FALLBACK_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.0,
+        max_tokens=50,
+        json_mode=True,
+    )
+    try:
+        data = parse_json_response(raw)
+    except JSONParseError:
+        logger.warning("Region detection LLM fallback response was not valid JSON", exc_info=True)
+        return None
+    if not isinstance(data, dict):
+        logger.warning("Region detection LLM fallback response was not a JSON object: %r", data)
+        return None
+    country = str(data.get("country") or "").strip().lower()
+    return _surface_form_lookup().get(country)
+
+
+def _llm_only_region(title: str, text: str) -> dict:
+    """config.REGION_DETECTION_LLM_FALLBACK == "on": skip the rule-based scan
+    entirely and answer from a single direct LLM call instead (see module
+    docstring). A failed/unrecognized call still returns a real result
+    ("unknown", 0.0) rather than silently falling back to the rule-based
+    scan this mode was told to bypass."""
+    llm_region = _llm_region_guess(title, text)
+    if not llm_region:
+        return {
+            "region": labels.DEFAULT_REGION,
+            "region_confidence": 0.0,
+            "region_low_confidence": True,
+        }
+    return {
+        "region": llm_region,
+        "region_confidence": _CONFIDENCE_LLM_ONLY,
+        "region_low_confidence": _CONFIDENCE_LLM_ONLY < config.REGION_DETECTION_CONFIDENCE_THRESHOLD,
+    }
+
+
 def detect_region(
     *, title: str = "", text: str = "", people_opinions=None, entities=None, organizations=None,
 ) -> dict:
@@ -163,7 +284,13 @@ def detect_region(
     Runs even when structured extraction failed outright (people_opinions/
     entities/organizations empty) - the text scan alone still gives a real,
     if lower-confidence, answer.
+
+    Bypassed entirely when config.REGION_DETECTION_LLM_FALLBACK == "on" - see
+    _llm_only_region().
     """
+    if config.REGION_DETECTION_LLM_FALLBACK == "on":
+        return _llm_only_region(title, text)
+
     name_fragments = frozenset(_name_fragment_tokens(entities))
     signals = {
         "text": _text_scan_votes(title, text, exclude=name_fragments),

@@ -91,6 +91,58 @@ COUNTRY_ALIASES: dict[str, str] = {
 }
 
 
+# National capitals - the surface form an article actually names ("... in
+# Beirut") far more often than the country itself. region_detection.py folds
+# these into the same surface-form scan as COUNTRY_ALIASES so a city mention
+# votes for its country too. Deliberately capitals only, and only a bounded
+# subset of those - not an attempt at exhaustive geoparsing - and a capital
+# that collides with a common English word/name or a contested status is left
+# out rather than guessed (e.g. no Washington/US: "Washington" alone is also
+# a US state; no Jerusalem: contested as Israel's vs. Palestine's capital;
+# no Male/Maldives: "male" is an ordinary demographic-descriptor word this
+# product's own gender-tagged content mentions constantly).
+# Keys are lowercase.
+CITY_ALIASES: dict[str, str] = {
+    "kabul": "AF", "tirana": "AL", "algiers": "DZ", "luanda": "AO",
+    "buenos aires": "AR", "yerevan": "AM", "canberra": "AU", "vienna": "AT",
+    "baku": "AZ", "manama": "BH", "dhaka": "BD", "minsk": "BY", "brussels": "BE",
+    "la paz": "BO", "sarajevo": "BA", "gaborone": "BW", "brasilia": "BR",
+    "sofia": "BG", "phnom penh": "KH", "yaounde": "CM", "ottawa": "CA",
+    "santiago": "CL", "beijing": "CN", "bogota": "CO", "kinshasa": "CD",
+    "san jose": "CR", "zagreb": "HR", "havana": "CU", "nicosia": "CY",
+    "prague": "CZ", "copenhagen": "DK", "santo domingo": "DO", "quito": "EC",
+    "cairo": "EG", "san salvador": "SV", "asmara": "ER", "tallinn": "EE",
+    "addis ababa": "ET", "helsinki": "FI", "paris": "FR", "banjul": "GM",
+    "tbilisi": "GE", "berlin": "DE", "accra": "GH", "athens": "GR",
+    "guatemala city": "GT", "conakry": "GN", "georgetown": "GY",
+    "port-au-prince": "HT", "tegucigalpa": "HN", "budapest": "HU",
+    "reykjavik": "IS", "new delhi": "IN", "jakarta": "ID", "tehran": "IR",
+    "baghdad": "IQ", "dublin": "IE", "rome": "IT", "kingston": "JM",
+    "tokyo": "JP", "amman": "JO", "astana": "KZ", "nairobi": "KE",
+    "kuwait city": "KW", "bishkek": "KG", "vientiane": "LA", "riga": "LV",
+    "beirut": "LB", "maseru": "LS", "monrovia": "LR", "tripoli": "LY",
+    "vilnius": "LT", "luxembourg city": "LU", "antananarivo": "MG",
+    "lilongwe": "MW", "kuala lumpur": "MY", "bamako": "ML",
+    "valletta": "MT", "nouakchott": "MR", "port louis": "MU", "mexico city": "MX",
+    "chisinau": "MD", "ulaanbaatar": "MN", "podgorica": "ME", "rabat": "MA",
+    "maputo": "MZ", "naypyidaw": "MM", "windhoek": "NA", "kathmandu": "NP",
+    "amsterdam": "NL", "wellington": "NZ", "managua": "NI", "niamey": "NE",
+    "abuja": "NG", "skopje": "MK", "oslo": "NO", "muscat": "OM",
+    "islamabad": "PK", "ramallah": "PS", "panama city": "PA", "asuncion": "PY",
+    "lima": "PE", "manila": "PH", "warsaw": "PL", "lisbon": "PT", "doha": "QA",
+    "bucharest": "RO", "moscow": "RU", "kigali": "RW", "riyadh": "SA",
+    "dakar": "SN", "belgrade": "RS", "freetown": "SL", "bratislava": "SK",
+    "ljubljana": "SI", "mogadishu": "SO", "pretoria": "ZA", "seoul": "KR",
+    "juba": "SS", "madrid": "ES", "colombo": "LK", "khartoum": "SD",
+    "stockholm": "SE", "bern": "CH", "damascus": "SY", "taipei": "TW",
+    "dushanbe": "TJ", "dodoma": "TZ", "bangkok": "TH", "dili": "TL",
+    "lome": "TG", "tunis": "TN", "ankara": "TR", "ashgabat": "TM",
+    "kampala": "UG", "kyiv": "UA", "abu dhabi": "AE", "london": "GB",
+    "montevideo": "UY", "tashkent": "UZ", "caracas": "VE", "hanoi": "VN",
+    "sanaa": "YE", "lusaka": "ZM", "harare": "ZW",
+}
+
+
 def resolve_country_alias(text: str) -> str | None:
     """Look up an abbreviation/demonym against COUNTRY_ALIASES. Returns the
     matching country code, or None when `text` isn't a known alias."""
