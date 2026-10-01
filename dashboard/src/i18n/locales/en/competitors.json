@@ -1,4 +1,9 @@
 {
+  "outputLanguage": {
+    "label": "Report language",
+    "hint": "Independent of the interface language - view these reports in a specific language.",
+    "translating": "Translating..."
+  },
   "shared": {
     "viewModes": { "card": "Cards", "list": "List" },
     "clearFilters": "Clear filters",

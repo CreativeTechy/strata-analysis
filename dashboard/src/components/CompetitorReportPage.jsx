@@ -15,13 +15,16 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Calendar, Check, ChevronRight, Download, ExternalLink, FileText,
-  Filter, Info, Lightbulb, ShieldCheck, Sparkles, Target, ThumbsDown,
+  Filter, Info, Languages, Lightbulb, ShieldCheck, Sparkles, Target, ThumbsDown,
 } from 'lucide-react';
 import {
   EFFORT_LABELS, IMPACT_LABELS, SIZE_TIER_LABELS, URGENCY_LABELS, avatarGradient,
   exportFindingReportPdf, getFinding, initials, validateFinding,
 } from '../api/competitorApi.js';
 import { formatDate, formatRelativeTime } from '../lib/i18nFormat.js';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 import '../styles/Competitors.css';
 
 // Sanitized the same way the backend names the file (competitor_api.py's
@@ -55,6 +58,15 @@ export default function CompetitorReportPage() {
   const location = useLocation();
   const backTo = location.state?.from || `/competitors/${studyId}`;
   const backLabel = location.state?.fromLabel || t('reportPage.backToWorkspace');
+  // The report's own output-language choice - deliberately separate state from
+  // the interface locale, same reasoning as VariationFromLastRun's
+  // narrativeLocale. Seeded from whatever was picked on the workspace card
+  // grid (if any), else the interface locale at mount.
+  const [reportLocale, setReportLocale] = useState(() => {
+    const seeded = location.state?.reportLocale;
+    if (isSupportedLocale(seeded)) return seeded;
+    return isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE;
+  });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -68,8 +80,9 @@ export default function CompetitorReportPage() {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError('');
       try {
-        const result = await getFinding(findingId, { locale });
+        const result = await getFinding(findingId, { locale: reportLocale });
         if (!cancelled) setData(result);
       } catch (caught) {
         if (!cancelled) setError(caught.message);
@@ -80,7 +93,7 @@ export default function CompetitorReportPage() {
     return () => {
       cancelled = true;
     };
-  }, [findingId, locale]);
+  }, [findingId, reportLocale]);
 
   const decide = async (status) => {
     setSaving(true);
@@ -152,17 +165,40 @@ export default function CompetitorReportPage() {
         <Link to={backTo} className="cs-link-back">
           <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {backLabel}
         </Link>
-        <button
-          type="button"
-          className="cs-btn cs-btn-sm"
-          onClick={handleExportReport}
-          disabled={exporting}
-          aria-busy={exporting}
-          title={t('reportPage.export.title')}
-        >
-          <Download size={13} className={exporting ? 'spin' : ''} />
-          {exporting ? t('reportPage.export.preparing') : t('reportPage.export.button')}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div
+            className="language-switcher"
+            role="group"
+            aria-label={t('outputLanguage.label')}
+            title={t('outputLanguage.hint')}
+          >
+            <Languages size={14} aria-hidden="true" className="language-switcher-icon" />
+            {SUPPORTED_LOCALES.map((code) => (
+              <button
+                key={code}
+                type="button"
+                lang={code}
+                dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                className={`language-switcher-option${code === reportLocale ? ' is-active' : ''}`}
+                aria-pressed={code === reportLocale}
+                onClick={() => setReportLocale(code)}
+              >
+                {LOCALE_NATIVE_NAMES[code]}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="cs-btn cs-btn-sm"
+            onClick={handleExportReport}
+            disabled={exporting}
+            aria-busy={exporting}
+            title={t('reportPage.export.title')}
+          >
+            <Download size={13} className={exporting ? 'spin' : ''} />
+            {exporting ? t('reportPage.export.preparing') : t('reportPage.export.button')}
+          </button>
+        </div>
       </div>
 
       {exportError ? (

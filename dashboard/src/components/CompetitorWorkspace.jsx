@@ -19,7 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart3, CalendarClock, Check, ChevronRight,
-  Download, Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
+  Download, Languages, Layers, LayoutGrid, Lightbulb, List, Pencil, Radar, Search,
   Sparkles, Target, TrendingUp, Upload, X,
 } from 'lucide-react';
 import {
@@ -27,6 +27,9 @@ import {
   initials, listCompetitors, listFindings,
 } from '../api/competitorApi.js';
 import { formatDate, formatRelativeTime, formatTime } from '../lib/i18nFormat.js';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 import { useAuth } from '../auth/useAuth.js';
 import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,
@@ -172,6 +175,13 @@ function StatTile({ icon: Icon, label, value, tone }) {
 export default function CompetitorWorkspace() {
   const { t, i18n } = useTranslation('competitors');
   const locale = i18n.language;
+  // The findings' own output-language choice - deliberately separate state
+  // from the interface locale, same reasoning as VariationFromLastRun's
+  // narrativeLocale. Defaults to whatever the interface locale is at mount,
+  // but doesn't silently follow it afterwards.
+  const [reportLocale, setReportLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
   const { studyId } = useParams();
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
@@ -208,6 +218,7 @@ export default function CompetitorWorkspace() {
   // everything already on file until the user asks to narrow it.
   const [findingsRunId, setFindingsRunId] = useState(null);
   const [findingsLoading, setFindingsLoading] = useState(false);
+  const [findingsError, setFindingsError] = useState('');
   const [exportingRunReport, setExportingRunReport] = useState(false);
   const [exportRunReportError, setExportRunReportError] = useState('');
   const [viewMode, setViewMode] = useState(() => {
@@ -259,6 +270,7 @@ export default function CompetitorWorkspace() {
     let cancelled = false;
     (async () => {
       setFindingsLoading(true);
+      setFindingsError('');
       try {
         const result = await listFindings(studyId, {
           impact: impact || undefined,
@@ -269,11 +281,11 @@ export default function CompetitorWorkspace() {
           date_from: findingsRunId ? undefined : (dateFrom || undefined),
           date_to: findingsRunId ? undefined : (dateTo || undefined),
           analysis_run_id: findingsRunId || undefined,
-          locale,
+          locale: reportLocale,
         });
         if (!cancelled) setFindings(result.findings || []);
       } catch (caught) {
-        if (!cancelled) setError(caught.message);
+        if (!cancelled) setFindingsError(caught.message);
       } finally {
         if (!cancelled) setFindingsLoading(false);
       }
@@ -281,7 +293,7 @@ export default function CompetitorWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [studyId, impact, search, dateFrom, dateTo, findingsRunId, locale]);
+  }, [studyId, impact, search, dateFrom, dateTo, findingsRunId, reportLocale]);
 
   const hasFindingFilters = Boolean(impact || search || dateFrom || dateTo || findingsRunId);
 
@@ -415,6 +427,12 @@ export default function CompetitorWorkspace() {
         </div>
       ) : null}
 
+      {findingsError ? (
+        <div className="cs-alert cs-alert-error">
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span dir="auto">{findingsError}</span>
+        </div>
+      ) : null}
+
       {notice ? (
         <div className="cs-alert cs-alert-info">
           <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -545,6 +563,30 @@ export default function CompetitorWorkspace() {
                 );
               })}
             </div>
+
+            <div
+              className="language-switcher"
+              role="group"
+              aria-label={t('outputLanguage.label')}
+              title={findingsLoading ? t('outputLanguage.translating') : t('outputLanguage.hint')}
+              aria-busy={findingsLoading}
+            >
+              <Languages size={14} aria-hidden="true" className={`language-switcher-icon${findingsLoading ? ' spin' : ''}`} />
+              {SUPPORTED_LOCALES.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  lang={code}
+                  dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                  className={`language-switcher-option${code === reportLocale ? ' is-active' : ''}`}
+                  aria-pressed={code === reportLocale}
+                  disabled={findingsLoading}
+                  onClick={() => setReportLocale(code)}
+                >
+                  {LOCALE_NATIVE_NAMES[code]}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div style={{ opacity: findingsLoading ? 0.6 : 1, transition: 'opacity 0.15s ease' }}>
@@ -553,14 +595,14 @@ export default function CompetitorWorkspace() {
                 <div className="cs-finding-list">
                   {findings.map((finding) => (
                     <FindingRow key={finding.id} finding={finding} t={t} locale={locale}
-                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
+                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`, { state: { reportLocale } })} />
                   ))}
                 </div>
               ) : (
                 <div className="cs-card-grid">
                   {findings.map((finding) => (
                     <FindingCard key={finding.id} finding={finding} t={t} locale={locale}
-                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`)} />
+                      onOpen={(id) => navigate(`/competitors/${studyId}/reports/${id}`, { state: { reportLocale } })} />
                   ))}
                 </div>
               )
