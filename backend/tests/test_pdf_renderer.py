@@ -184,6 +184,24 @@ class TrustTierTests(unittest.TestCase):
         self.assertIn(">Mixed<", html)
 
 
+class TopArticlePublishedDateTests(unittest.TestCase):
+    def test_renders_formatted_published_date(self):
+        html = _top_articles_html({"top_articles": [{
+            "rank": 1, "article_id": 1, "title": "t", "short_summary": "s", "sentiment": "neutral",
+            "source": "doc.pdf", "reference": "/articles/1", "relevance_score": 0.5,
+            "published_at": "2026-02-01T00:00:00+00:00",
+        }]})
+        self.assertIn("Published: Feb 01, 2026", html)
+
+    def test_falls_back_to_unknown_date_when_missing(self):
+        html = _top_articles_html({"top_articles": [{
+            "rank": 1, "article_id": 1, "title": "t", "short_summary": "s", "sentiment": "neutral",
+            "source": "doc.pdf", "reference": "/articles/1", "relevance_score": 0.5,
+            "published_at": None,
+        }]})
+        self.assertIn("Published: Unknown date", html)
+
+
 class IdeaComparisonsHtmlTests(unittest.TestCase):
     def test_is_the_last_pdf_section(self):
         html = _build_html(MINIMAL_REPORT_DATA, MINIMAL_COMPARISON)

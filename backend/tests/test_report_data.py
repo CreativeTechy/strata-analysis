@@ -105,6 +105,17 @@ class TopArticlesTests(unittest.TestCase):
         self.assertEqual(len(top), 10)
         self.assertEqual(top[0]["article_id"], 14)
 
+    def test_published_at_is_the_article_date_isoformat(self):
+        published = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        rows = [_row(1, relevance=0.5, published=published)]
+        top, _ = report_data._top_articles(rows, limit=10)
+        self.assertEqual(top[0]["published_at"], published.isoformat())
+
+    def test_published_at_is_none_without_a_date(self):
+        rows = [_row(1, relevance=0.5, published=None)]
+        top, _ = report_data._top_articles(rows, limit=10)
+        self.assertIsNone(top[0]["published_at"])
+
 
 class SourceLabelTests(unittest.TestCase):
     def test_prefers_the_document_filename(self):
