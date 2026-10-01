@@ -372,6 +372,26 @@ def _candidate_articles(project_id: int, pipeline_run_id: str | None = None,
     )
 
 
+def _document_article_ids(project_id: int, document_ids: list[int]) -> dict[int, set[int]]:
+    """Distinct approved article ids per document, for reconciling the
+    per-document pipeline_run_documents breakdown with which of those
+    articles actually ended up kept as evidence (see run_analysis_job)."""
+    if not document_ids:
+        return {}
+    rows = db.fetch_all(
+        """
+        select distinct document_id, article_id
+        from competitor_document_articles
+        where project_id = %s and status = 'approved' and document_id = any(%s)
+        """,
+        (int(project_id), [int(d) for d in document_ids]),
+    )
+    mapping: dict[int, set[int]] = {}
+    for row in rows:
+        mapping.setdefault(int(row["document_id"]), set()).add(int(row["article_id"]))
+    return mapping
+
+
 def _competitor_embedding_map(competitors: list[dict]) -> dict[int, list[float]]:
     """Each competitor's identity vector (name + aliases + description), keyed
     by id - fetched fresh rather than trusted from the `competitors` list
@@ -589,7 +609,12 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
                 rows,
             )
 
-    kept = sum(stats["valid"] for stats in per_competitor.values())
+    # Deduplicated by article, not summed per-competitor: one article valid
+    # for several competitors is still one analyzed article, and this number
+    # is reported upstream as `articles_analyzed` against `articles_selected`
+    # (a per-article count), so it must never exceed it.
+    kept_article_ids = {row[1] for row in rows if row[4] == "valid"}
+    kept = len(kept_article_ids)
     log(f"Kept {kept} article(s) as evidence.", "kept_evidence", {"count": kept})
     if rejection_reasons:
         ordered_reasons = sorted(rejection_reasons.items(), key=lambda item: -item[1])
@@ -607,6 +632,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
         "scanned": len(articles),
         "linked": len(rows),
         "kept": kept,
+        "kept_article_ids": sorted(kept_article_ids),
         "per_competitor": {
             competitor_id: {
                 "valid": stats["valid"],
@@ -1211,6 +1237,32 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
         analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
         validation = result["validation"] or {}
         screening = validation.get("screening") or {}
+
+        # The stats written above (just before generate_findings) are a
+        # placeholder of "every approved article will be analyzed" so the
+        # dashboard has something to show while the run is in flight. Now
+        # that validation has actually run, replace them with how many of
+        # each document's approved articles were kept as evidence, so the
+        # per-document breakdown doesn't permanently disagree with the
+        # articles_analyzed/articles_excluded totals computed from the same
+        # validation result. Best-effort: a failure reconciling these must
+        # not turn an otherwise-successful run into a failed one.
+        try:
+            kept_ids = set(validation.get("kept_article_ids") or [])
+            article_doc_map = _document_article_ids(project_id, resolved)
+            upsert_pipeline_run_document_stats(str(run_id), {
+                doc["original_filename"] or f"Document {doc['id']}": {
+                    "document_id": doc["id"],
+                    "selected": doc["approved_article_count"],
+                    "analyzed": len(article_doc_map.get(int(doc["id"]), set()) & kept_ids),
+                    "failed": 0,
+                }
+                for doc in analysis_runs_store.documents_with_scope(project_id)
+                if int(doc["id"]) in resolved_set
+            })
+        except Exception:
+            logger.exception("Failed to reconcile per-document stats for run %s.", run_id)
+
         update_pipeline_run(
             str(run_id), status="success", stage="done",
             message=f"Generated {result['generated']} report(s).",
