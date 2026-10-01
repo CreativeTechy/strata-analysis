@@ -78,7 +78,7 @@ def extract_frequent_ideas_for_documents(project_id: int, document_ids: list[int
 
     Returns how many articles were successfully extracted.
     """
-    log = log or (lambda _message: None)
+    log = log or (lambda *_args, **_kwargs: None)
     if document_ids is not None and not document_ids:
         return 0
 
@@ -101,7 +101,8 @@ def extract_frequent_ideas_for_documents(project_id: int, document_ids: list[int
     if not articles:
         return 0
 
-    log(f"Extracting recurring ideas from {len(articles)} article{'' if len(articles) == 1 else 's'}...")
+    log(f"Extracting recurring ideas from {len(articles)} article{'' if len(articles) == 1 else 's'}...",
+        "extracting_ideas", {"count": len(articles)})
     extracted = 0
     for article in articles:
         try:

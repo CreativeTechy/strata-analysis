@@ -35,6 +35,7 @@ import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,
 } from './CompetitorRunAnalysis.jsx';
 import { useRunAnalysis } from '../useRunAnalysis.js';
+import { rejectionReasonsList, skipReasonText } from '../lib/competitorAnalysisLog.js';
 import '../styles/Competitors.css';
 
 function impactLabel(t, level) {
@@ -443,15 +444,13 @@ export default function CompetitorWorkspace() {
             {Object.keys(notice.reasons || {}).length ? (
               <>
                 {' '}{t('workspace.notice.filteredOutPrefix')}{' '}
-                {Object.entries(notice.reasons)
-                  .map(([reason, count]) => `${count} ${reason.replace(/_/g, ' ')}`)
-                  .join(', ')}
+                {rejectionReasonsList(t, Object.entries(notice.reasons).map(([reason, count]) => ({ reason, count })))}
                 .
               </>
             ) : null}
             {notice.skipped?.length ? (
               <> {t('workspace.notice.skipped', { count: notice.skipped.length })} —{' '}
-                {notice.skipped.map((item) => `${item.name}: ${item.reason}`).join(' ')}</>
+                {notice.skipped.map((item) => `${item.name}: ${skipReasonText(t, item)}`).join(' ')}</>
             ) : null}
           </span>
         </div>

@@ -426,20 +426,29 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     the document set is already a fixed, bounded pool. `document_ids` takes
     precedence when both would otherwise apply.
     """
-    log = log or (lambda _message: None)
+    log = log or (lambda *_args, **_kwargs: None)
     articles = _candidate_articles(project_id, pipeline_run_id, document_ids)
     since = None
     if not pipeline_run_id and not document_ids:
         since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
         if since is not None:
             articles = [a for a in articles if (_effective_date(a) or since) >= since]
+    # `window` in the log params is a code, not the English phrase, so the
+    # dashboard can word "from the selected documents" in the UI's language.
     if document_ids:
         window = f"the selected document{'' if len(document_ids) == 1 else 's'}"
+        window_params = {"window": "documents", "documents": len(document_ids)}
     elif pipeline_run_id:
         window = "the selected pipeline run"
+        window_params = {"window": "pipeline_run"}
+    elif period_days:
+        window = f"the last {period_days} days"
+        window_params = {"window": "days", "days": period_days}
     else:
-        window = f"the last {period_days} days" if period_days else "all time"
-    log(f"Checking {len(articles)} article(s) from {window} against each competitor...")
+        window = "all time"
+        window_params = {"window": "all_time"}
+    log(f"Checking {len(articles)} article(s) from {window} against each competitor...",
+        "checking_articles", {"count": len(articles), **window_params})
 
     alias_map = {int(c["id"]): _aliases(c) for c in competitors}
     embedding_map = _competitor_embedding_map(competitors)
@@ -539,16 +548,18 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             )
 
     kept = sum(stats["valid"] for stats in per_competitor.values())
-    log(f"Kept {kept} article(s) as evidence.")
+    log(f"Kept {kept} article(s) as evidence.", "kept_evidence", {"count": kept})
     if rejection_reasons:
+        ordered_reasons = sorted(rejection_reasons.items(), key=lambda item: -item[1])
         log("Filtered out: " + ", ".join(
-            f"{count} {reason.replace('_', ' ')}"
-            for reason, count in sorted(rejection_reasons.items(), key=lambda item: -item[1])
-        ) + ".")
+            f"{count} {reason.replace('_', ' ')}" for reason, count in ordered_reasons
+        ) + ".", "filtered_out", {"reasons": [{"reason": reason, "count": count}
+                                              for reason, count in ordered_reasons]})
     for competitor in competitors:
         stats = per_competitor[int(competitor["id"])]
         if not stats["valid"]:
-            log(f"{competitor.get('name')}: nothing usable found.")
+            log(f"{competitor.get('name')}: nothing usable found.",
+                "nothing_usable", {"name": competitor.get("name")})
 
     return {
         "scanned": len(articles),
@@ -935,7 +946,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     from services.competitors.business_profile_store import get_profile
     from services.competitors.competitors_store import list_competitors
 
-    log = log or (lambda _message: None)
+    log = log or (lambda *_args, **_kwargs: None)
 
     profile = get_profile(project_id)
     competitors = list_competitors(project_id, status="tracked")
@@ -943,7 +954,8 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
         return {"generated": 0, "skipped": 0, "validation": None,
                 "error": "No tracked competitors. Track at least one to analyze."}
 
-    log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.")
+    log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.",
+        "analyzing_competitors", {"count": len(competitors)})
     validation = validate_competitor_articles(project_id, competitors, period_days,
                                               pipeline_run_id, document_ids, log=log)
 
@@ -971,15 +983,19 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
         # Validation already reported the ones with nothing to read; claiming to
         # write a report from zero stories would just be noise contradicting it.
         if stories:
-            log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...")
+            log(f"{name}: writing a report from {stories} stor{'y' if stories == 1 else 'ies'}...",
+                "writing_report", {"name": name, "count": stories})
         try:
             finding = generate_finding(profile, competitor, period_days, period_start, period_end,
                                        pipeline_run_id, analysis_run_id)
         except LLMError as exc:
-            log(f"{name}: failed - {exc.user_message}")
+            log(f"{name}: failed - {exc.user_message}",
+                "competitor_failed", {"name": name, "error_code": exc.code})
             return competitor, None, exc
         if finding:
-            log(f"{name}: {finding.get('impact_level')} impact - {finding.get('headline')}")
+            log(f"{name}: {finding.get('impact_level')} impact - {finding.get('headline')}",
+                "finding_generated", {"name": name, "impact": finding.get("impact_level"),
+                                      "headline": finding.get("headline")})
         return competitor, finding, None
 
     # Independent LLM calls that were being awaited one at a time on a request
@@ -1018,16 +1034,21 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
                     # Checked only once semantic matching has also come up
                     # empty (stats["valid"] would be nonzero otherwise), since
                     # that fallback doesn't depend on aliases at all.
+                    reason_code = "generic_name"
                     reason = "Name is too generic to identify in article text. Add a website or a more specific name."
                 else:
+                    reason_code = "no_evidence"
                     reason = "No validated evidence in this period."
             else:
+                reason_code = "not_generated"
                 reason = "Analysis could not be generated."
-            log(f"{competitor['name']}: skipped - {reason}")
+            log(f"{competitor['name']}: skipped - {reason}",
+                "competitor_skipped", {"name": competitor["name"], "reason_code": reason_code})
             skipped.append({
                 "competitor_id": competitor["id"],
                 "name": competitor["name"],
                 "reason": reason,
+                "reason_code": reason_code,
             })
 
     # An LLM/provider failure (bad key, insufficient balance, rate limit,
@@ -1048,7 +1069,8 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
         )
 
     log(f"Done. Generated {generated} report{'' if generated == 1 else 's'}"
-        + (f", skipped {len(skipped)}." if skipped else "."))
+        + (f", skipped {len(skipped)}." if skipped else "."),
+        "done", {"generated": generated, "skipped": len(skipped)})
 
     return {
         "generated": generated,
@@ -1097,18 +1119,19 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
     try:
         resolved = analysis_runs_store.resolve_scope(project_id, scope, document_ids)
         if not resolved:
-            message = (
-                "No documents matched this selection."
+            code, message = (
+                ("scope_empty_selected", "No documents matched this selection.")
                 if scope == "selected"
-                else "Every document has already been analyzed by a previous run."
+                else ("scope_empty_pending", "Every document has already been analyzed by a previous run.")
                 if scope == "pending"
-                else "No documents with approved articles to analyze."
+                else ("scope_empty", "No documents with approved articles to analyze.")
             )
-            log(message)
+            log(message, code)
             analysis_runs_store.mark_failed(run_id, message)
             return
 
-        log(f"Scope: {len(resolved)} document{'' if len(resolved) == 1 else 's'}.")
+        log(f"Scope: {len(resolved)} document{'' if len(resolved) == 1 else 's'}.",
+            "scope_documents", {"count": len(resolved)})
         extract_frequent_ideas_for_documents(project_id, resolved, log=log)
         result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log)
 
@@ -1125,7 +1148,7 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
         analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
         _regenerate_idea_comparisons(project_id)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
-        log(f"Analysis failed: {exc}")
+        log(f"Analysis failed: {exc}", "analysis_failed", {"error": str(exc)})
         analysis_runs_store.mark_failed(run_id, str(exc))
 
 

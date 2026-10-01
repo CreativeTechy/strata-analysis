@@ -81,17 +81,27 @@ def mark_running(run_id: int) -> None:
     db.execute("update competitor_analysis_runs set status = 'running' where id = %s", (int(run_id),))
 
 
-def append_log(run_id: int, message: str) -> None:
+def append_log(run_id: int, message: str, code: str | None = None,
+               params: dict | None = None) -> None:
+    """`message` is the English line (what the CLI/server log and any client
+    without a translation for `code` show); `code` + `params` are what the
+    dashboard renders in the UI's language - the same split api_errors.py
+    draws for errors, so a log line isn't English-only just because it was
+    written from a worker thread."""
+    entry = {"ts": _now_iso(), "message": message}
+    if code:
+        entry["code"] = code
+        entry["params"] = params or {}
     db.execute(
         "update competitor_analysis_runs set logs = logs || %s::jsonb where id = %s",
-        (Jsonb([{"ts": _now_iso(), "message": message}]), int(run_id)),
+        (Jsonb([entry]), int(run_id)),
     )
 
 
 def logger(run_id: int):
-    """A one-argument `log(message)` to hand to generate_findings, which
-    shouldn't have to know it's writing to Postgres versus anywhere else."""
-    return lambda message: append_log(run_id, message)
+    """A `log(message, code=None, params=None)` to hand to generate_findings,
+    which shouldn't have to know it's writing to Postgres versus anywhere else."""
+    return lambda message, code=None, params=None: append_log(run_id, message, code, params)
 
 
 def mark_success(run_id: int, generated: int, skipped: list | None = None,
