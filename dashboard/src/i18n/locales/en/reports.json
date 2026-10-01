@@ -59,7 +59,6 @@
     "dialogProjectLabel": "Project",
     "dialogScopeLabel": "Scope",
     "dialogLanguageLabel": "Output language",
-    "dialogLanguageValue": "English (the exported PDF is always generated in English, independent of the on-screen report language)",
     "dialogIncludesTitle": "This PDF will include:",
     "confirmButton": "Download PDF"
   },

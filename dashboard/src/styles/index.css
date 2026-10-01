@@ -2238,6 +2238,7 @@ h1, h2, h3 {
 .report-export-preview-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .report-export-preview-facts dt { display: inline-flex; align-items: center; gap: 5px; color: var(--text-light); font-size: .8rem; font-weight: 700; }
 .report-export-preview-facts dd { margin: 0; text-align: end; color: var(--text-dark); font-weight: 700; font-size: .86rem; max-width: 60%; }
+.report-export-language-switcher { background: rgba(255, 255, 255, .75); }
 .report-export-preview-includes-title { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: .84rem; font-weight: 700; color: var(--text-dark); }
 .report-export-preview-includes { margin: 0; padding-inline-start: 20px; color: var(--text-light); font-size: .86rem; line-height: 1.7; }
 

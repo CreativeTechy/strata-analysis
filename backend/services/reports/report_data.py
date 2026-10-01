@@ -315,7 +315,9 @@ def _scope_label(scope_type: str, period: str | None, run: dict | None, tz: Zone
     return f"{label} (through {today})", None
 
 
-def _safe_generate_trend_summary(project: dict, period: str, run_id: str | None, force: bool = False) -> dict:
+def _safe_generate_trend_summary(
+    project: dict, period: str, run_id: str | None, force: bool = False, locale: str | None = None,
+) -> dict:
     """generate_trend_summary() calls out to the configured LLM with no
     internal error handling of its own (main.py's /trend-summary route wraps
     it in exactly this try/except) - a provider outage is the most common
@@ -324,7 +326,7 @@ def _safe_generate_trend_summary(project: dict, period: str, run_id: str | None,
     way an unguarded call here used to. Shaped like generate_trend_summary's
     own return value, with `error`/`error_code` added on failure."""
     try:
-        return generate_trend_summary(project, period, run_id=run_id, force=force)
+        return generate_trend_summary(project, period, run_id=run_id, force=force, locale=locale)
     except LLMError as e:
         logger.warning("Report executive summary generation failed (%s): %s", e.code, e.detail or e)
         return {"summary": None, "cached": False, "error": e.user_message, "error_code": e.code}
@@ -337,7 +339,9 @@ def _safe_generate_trend_summary(project: dict, period: str, run_id: str | None,
         }
 
 
-def build_report_data(project: dict, period: str | None = None, run: dict | None = None) -> dict:
+def build_report_data(
+    project: dict, period: str | None = None, run: dict | None = None, locale: str | None = None,
+) -> dict:
     """`run`, when given, is the already-fetched-and-ownership-validated
     pipeline_runs row (see main.py's endpoint) - this function trusts it
     belongs to `project` rather than re-checking."""
@@ -360,10 +364,12 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
 
     analysis_date_label, run_label = _scope_label(scope_type, period, run, tz)
 
-    cached_summary = _safe_generate_trend_summary(project, normalize_period(period or "30d"), run_id=(run["id"] if run else None))
+    cached_summary = _safe_generate_trend_summary(
+        project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), locale=locale,
+    )
     if _stale_executive_summary(cached_summary, analyzed_rows):
         refreshed = _safe_generate_trend_summary(
-            project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), force=True,
+            project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), force=True, locale=locale,
         )
         # Keep the stale-but-real paragraph rather than discarding it for
         # nothing at all when the forced refresh itself fails (e.g. the same
@@ -384,6 +390,12 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
             "period": normalize_period(period) if scope_type == "period" else None,
             "run_id": run["id"] if run else None,
             "run_label": run_label,
+            "run_sequence_number": run.get("sequence_number") if run else None,
+            "run_date": (
+                (run.get("finished_at") or run.get("created_at")).astimezone(tz).date().isoformat()
+                if run and isinstance(run.get("finished_at") or run.get("created_at"), datetime) else None
+            ),
+            "through_date": datetime.now(tz).date().isoformat() if scope_type == "period" else None,
             "analysis_date_label": analysis_date_label,
             "timezone": config.REPORT_TIMEZONE,
         },
@@ -398,6 +410,8 @@ def build_report_data(project: dict, period: str | None = None, run: dict | None
             "text": (cached_summary or {}).get("summary"),
             "cached": bool((cached_summary or {}).get("cached")),
             "error": (cached_summary or {}).get("error"),
+            "locale": (cached_summary or {}).get("locale"),
+            "locale_fallback": bool((cached_summary or {}).get("locale_fallback")),
         },
         "top_articles": top_articles,
         "top_articles_fallback_used": fallback_used,

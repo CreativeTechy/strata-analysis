@@ -82,9 +82,26 @@ TRUST_TIER_LABELS = {
     "unknown": "Not yet assessed",
 }
 
+AR_SENTIMENT_LABELS = {
+    "positive": "إيجابي",
+    "negative": "سلبي",
+    "neutral": "محايد",
+    "mixed": "متباين",
+}
+
+AR_TRUST_TIER_LABELS = {
+    "trusted": "موثوق",
+    "mixed": "مختلط",
+    "untrusted": "غير موثوق",
+    "unknown": "لم يُقيَّم بعد",
+}
+
 BASE_CSS = """
 * { font-family: sans-serif; }
 body { font-size: 10.5px; line-height: 1.45; color: #1a1a1a; }
+body[dir="rtl"] { direction: rtl; text-align: right; }
+body[dir="rtl"] th, body[dir="rtl"] td { text-align: right; }
+body[dir="rtl"] table.stats td { text-align: center; }
 h1 { font-size: 18px; margin: 0 0 4px 0; }
 h2 { font-size: 13.5px; margin: 16px 0 6px 0; padding-bottom: 3px;
      border-bottom: 1px solid #cccccc; }
@@ -160,15 +177,18 @@ def _esc_multiline(value) -> str:
     return "".join(blocks)
 
 
-def _fmt_iso(value: str | None) -> str:
+def _fmt_iso(value: str | None, locale: str = "en") -> str:
     if not value:
-        return "Unknown"
+        return "غير معروف" if locale == "ar" else "Unknown"
     text = str(value)
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc).strftime("%b %d, %Y %H:%M UTC")
+        parsed = parsed.astimezone(timezone.utc)
+        if locale == "ar":
+            return parsed.strftime("%Y-%m-%d %H:%M UTC")
+        return parsed.strftime("%b %d, %Y %H:%M UTC")
     except (ValueError, TypeError):
         return _esc(text)
 
@@ -185,14 +205,15 @@ def _esc_or(value, default="Unknown") -> str:
     return _esc(value)
 
 
-def _sentiment_tag_html(sentiment: str) -> str:
+def _sentiment_tag_html(sentiment: str, locale: str = "en") -> str:
     key = str(sentiment or "neutral").lower()
     color = SENTIMENT_COLORS.get(key, "#757575")
-    label = SENTIMENT_LABELS.get(key, key.title() or "Neutral")
+    labels = AR_SENTIMENT_LABELS if locale == "ar" else SENTIMENT_LABELS
+    label = labels.get(key, key.title() or ("محايد" if locale == "ar" else "Neutral"))
     return f'<span class="sentiment-tag" style="background-color:{color};">{_esc(label)}</span>'
 
 
-def _trust_tag_html(source_tier: dict | None) -> str:
+def _trust_tag_html(source_tier: dict | None, locale: str = "en") -> str:
     """Tier badge for a source. A tier that is only the seeded default (no
     operator has reviewed it) is marked as such, so "Trusted" from the
     curated allowlist doesn't read as a human's judgment."""
@@ -200,19 +221,37 @@ def _trust_tag_html(source_tier: dict | None) -> str:
     key = str(source_tier.get("tier") or "unknown").lower()
     if key not in TRUST_TIER_LABELS:
         key = "unknown"
-    label = TRUST_TIER_LABELS[key]
+    labels = AR_TRUST_TIER_LABELS if locale == "ar" else TRUST_TIER_LABELS
+    label = labels[key]
     if key != "unknown" and source_tier.get("is_default"):
-        label += " (default)"
+        label += " (افتراضي)" if locale == "ar" else " (default)"
     return f'<span class="trust-tag" style="background-color:{TRUST_TIER_COLORS[key]};">{_esc(label)}</span>'
 
 
-def _header_html(report_data: dict) -> str:
+def _header_html(report_data: dict, locale: str = "en") -> str:
     project = report_data.get("project") or {}
     scope = report_data.get("scope") or {}
-    project_name = project.get("name") or f"Project {project.get('id', '')}"
-    analysis_label = scope.get("analysis_date_label") or "Unknown reporting scope"
+    project_name = project.get("name") or (("المشروع " if locale == "ar" else "Project ") + str(project.get("id", "")))
+    analysis_label = scope.get("analysis_date_label") or ("نطاق التقرير غير معروف" if locale == "ar" else "Unknown reporting scope")
+    if locale == "ar":
+        if scope.get("type") == "run":
+            sequence = scope.get("run_sequence_number")
+            run_label = f"عملية التحليل رقم {sequence}" if sequence else "عملية تحليل"
+            analysis_label = f'{run_label} - {scope.get("run_date")}' if scope.get("run_date") else run_label
+        elif scope.get("type") == "period":
+            period_labels = {"7d": "آخر 7 أيام", "30d": "آخر 30 يومًا", "all": "كل الوقت"}
+            analysis_label = period_labels.get(scope.get("period"), "آخر 30 يومًا")
+            if scope.get("through_date"):
+                analysis_label += f' (حتى {scope["through_date"]})'
     tz = scope.get("timezone") or "UTC"
-    generated_at = _fmt_iso(report_data.get("generated_at"))
+    generated_at = _fmt_iso(report_data.get("generated_at"), locale)
+
+    if locale == "ar":
+        return f"""
+<h1 dir="auto">ملخص التقرير - {_esc(project_name)}</h1>
+<p class="subtitle" dir="auto">نطاق التقرير: {_esc(analysis_label)} ({_esc(tz)})</p>
+<p class="subtitle">تاريخ التصدير: {generated_at} (وقت التصدير، وهو مختلف عن تاريخ نطاق التقرير أعلاه)</p>
+"""
 
     return f"""
 <h1 dir="auto">Export Summary - {_esc(project_name)}</h1>
@@ -221,84 +260,96 @@ def _header_html(report_data: dict) -> str:
 """
 
 
-def _counts_html(report_data: dict) -> str:
+def _counts_html(report_data: dict, locale: str = "en") -> str:
     counts = report_data.get("counts") or {}
-    fields = [
-        ("total", "Total in Scope"),
-        ("analyzed", "Analyzed"),
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("failed", "Failed"),
-        ("partial", "Partial"),
-    ]
+    fields = (
+        [("total", "الإجمالي ضمن النطاق"), ("analyzed", "مُحلَّل"), ("pending", "قيد الانتظار"),
+         ("processing", "قيد المعالجة"), ("failed", "فشل"), ("partial", "جزئي")]
+        if locale == "ar" else
+        [("total", "Total in Scope"), ("analyzed", "Analyzed"), ("pending", "Pending"),
+         ("processing", "Processing"), ("failed", "Failed"), ("partial", "Partial")]
+    )
     cells = "".join(
         f'<td><span class="stat-value">{_fmt_num(counts.get(key))}</span>'
         f'<span class="stat-label">{_esc(label)}</span></td>'
         for key, label in fields
     )
-    return f'<h2>Overview</h2><table class="stats"><tr>{cells}</tr></table>'
+    heading = "نظرة عامة" if locale == "ar" else "Overview"
+    return f'<h2>{heading}</h2><table class="stats"><tr>{cells}</tr></table>'
 
 
-def _executive_summary_html(report_data: dict) -> str:
+def _executive_summary_html(report_data: dict, locale: str = "en") -> str:
     summary = report_data.get("executive_summary") or {}
     text = summary.get("text")
     error = summary.get("error")
     if text:
         body = _esc_multiline(text)
+        if locale == "ar" and summary.get("locale_fallback"):
+            body += '<div class="note">تعذّرت ترجمة هذا الملخص حاليًا، لذا يظهر النص الإنجليزي المتاح.</div>'
     elif error:
         # Distinct from "nothing generated yet" - this is report_data.py's
         # own build_report_data() disclosing that generating it was actually
         # attempted and failed (an LLM outage, most commonly), the same way
         # _comparison_html discloses a failure in its own section rather than
         # silently rendering nothing.
-        body = f'<div class="unavailable">AI executive summary unavailable - {_esc(error)}</div>'
+        message = "ملخص الذكاء الاصطناعي غير متاح" if locale == "ar" else "AI executive summary unavailable"
+        body = f'<div class="unavailable">{message} - {_esc(error)}</div>'
     else:
-        body = '<p class="muted">No executive summary available.</p>'
-    return f'<h2>Executive Summary</h2>{body}'
+        message = "لا يتوفر ملخص تنفيذي." if locale == "ar" else "No executive summary available."
+        body = f'<p class="muted">{message}</p>'
+    heading = "الملخص التنفيذي" if locale == "ar" else "Executive Summary"
+    return f'<h2>{heading}</h2>{body}'
 
 
-def _top_articles_html(report_data: dict) -> str:
+def _top_articles_html(report_data: dict, locale: str = "en") -> str:
     articles = report_data.get("top_articles") or []
     fallback_note = ""
     if report_data.get("top_articles_fallback_used"):
         fallback_note = (
+            '<div class="note">لم تتوفر درجات الصلة لهذا النطاق؛ رُتبت المقالات أدناه حسب الأحدث.</div>'
+            if locale == "ar" else
             '<div class="note">Relevance scores were not available for this scope - '
             "articles below are ordered by recency instead.</div>"
         )
 
     if not articles:
-        return (
-            "<h2>Top Articles</h2>"
-            f"{fallback_note}"
-            '<p class="muted">No articles available for this scope.</p>'
-        )
+        heading = "أبرز المقالات" if locale == "ar" else "Top Articles"
+        empty = "لا تتوفر مقالات لهذا النطاق." if locale == "ar" else "No articles available for this scope."
+        return f'<h2>{heading}</h2>{fallback_note}<p class="muted">{empty}</p>'
 
     blocks = []
     for item in articles:
         rank = item.get("rank")
-        title = item.get("title") or "(untitled)"
+        title = item.get("title") or ("(بلا عنوان)" if locale == "ar" else "(untitled)")
         summary = item.get("short_summary") or ""
         sentiment = item.get("sentiment") or "neutral"
-        source = item.get("source") or "Unknown source"
+        source = item.get("source") or ("مصدر غير معروف" if locale == "ar" else "Unknown source")
         reference = item.get("reference") or ""
         score = item.get("relevance_score")
-        score_label = f"relevance {score:.2f}" if isinstance(score, (int, float)) else "relevance n/a"
+        if locale == "ar":
+            score_label = f"الصلة {score:.2f}" if isinstance(score, (int, float)) else "الصلة غير متاحة"
+        else:
+            score_label = f"relevance {score:.2f}" if isinstance(score, (int, float)) else "relevance n/a"
+        source_label = "المصدر" if locale == "ar" else "Source"
+        published_heading = "تاريخ النشر" if locale == "ar" else "Published"
         published_label = (
-            _fmt_iso(item.get("published_at")) if item.get("published_at") else "Unknown date"
+            _fmt_iso(item.get("published_at"), locale)
+            if item.get("published_at") else ("تاريخ غير معروف" if locale == "ar" else "Unknown date")
         )
 
         blocks.append(f"""
 <div class="article-block">
-  <p class="article-title" dir="auto">{_esc(rank)}. {_esc(title)} {_sentiment_tag_html(sentiment)}</p>
-  <p class="article-meta" dir="auto">Source: {_esc(source)} {_trust_tag_html(item.get("source_tier"))} &bull; {_esc(score_label)} &bull; Published: {_esc(published_label)} &bull; {_esc(reference)}</p>
+  <p class="article-title" dir="auto">{_esc(rank)}. {_esc(title)} {_sentiment_tag_html(sentiment, locale)}</p>
+  <p class="article-meta" dir="auto">{source_label}: {_esc(source)} {_trust_tag_html(item.get("source_tier"), locale)} &bull; {_esc(score_label)} &bull; {published_heading}: {_esc(published_label)} &bull; {_esc(reference)}</p>
   <p dir="auto">{_esc(summary)}</p>
 </div>
 """)
 
-    return f'<h2>Top Articles</h2>{fallback_note}{"".join(blocks)}'
+    heading = "أبرز المقالات" if locale == "ar" else "Top Articles"
+    return f'<h2>{heading}</h2>{fallback_note}{"".join(blocks)}'
 
 
-def _sentiment_html(report_data: dict) -> str:
+def _sentiment_html(report_data: dict, locale: str = "en") -> str:
     sentiment = report_data.get("sentiment") or {}
     rows = []
     for key in ("positive", "negative", "neutral", "mixed"):
@@ -309,7 +360,7 @@ def _sentiment_html(report_data: dict) -> str:
         color = SENTIMENT_COLORS.get(key, "#757575")
         rows.append(f"""
 <tr>
-  <td class="bar-label">{_esc(SENTIMENT_LABELS[key])}</td>
+  <td class="bar-label">{_esc((AR_SENTIMENT_LABELS if locale == "ar" else SENTIMENT_LABELS)[key])}</td>
   <td class="bar-cell"><div class="bar-fill" style="width:{width}%;background-color:{color};">&#160;</div></td>
   <td class="bar-pct">{_esc(pct)}% ({_fmt_num(count)})</td>
 </tr>
@@ -317,46 +368,67 @@ def _sentiment_html(report_data: dict) -> str:
     net = sentiment.get("net_sentiment", 0)
     analyzed_total = sentiment.get("analyzed_total", 0)
     table = f'<table class="bars">{"".join(rows)}</table>'
-    footer = (
-        f'<p class="muted">Net sentiment: {_esc(net)} &bull; '
-        f"based on {_fmt_num(analyzed_total)} analyzed article(s)</p>"
-    )
-    return f"<h2>Sentiment Breakdown</h2>{table}{footer}"
+    if locale == "ar":
+        footer = f'<p class="muted">صافي المشاعر: {_esc(net)} &bull; استنادًا إلى {_fmt_num(analyzed_total)} مقالة محلَّلة</p>'
+        heading = "توزيع المشاعر"
+    else:
+        footer = f'<p class="muted">Net sentiment: {_esc(net)} &bull; based on {_fmt_num(analyzed_total)} analyzed article(s)</p>'
+        heading = "Sentiment Breakdown"
+    return f"<h2>{heading}</h2>{table}{footer}"
 
 
-def _idea_comparisons_html(report_data: dict) -> str:
+def _idea_comparisons_html(report_data: dict, locale: str = "en") -> str:
     section = report_data.get("idea_comparisons") or {}
     items = section.get("items") or []
     error = section.get("error")
 
-    parts = ["<h2>Idea Comparisons</h2>"]
+    parts = ["<h2>مقارنات الأفكار</h2>" if locale == "ar" else "<h2>Idea Comparisons</h2>"]
     if section.get("project_wide"):
         parts.append(
+            ('<p class="muted">أفكار ناقشها أكثر من مصدر على مستوى المشروع بالكامل '
+             '(ولا تقتصر على فترة التقرير أعلاه).</p>')
+            if locale == "ar" else
             '<p class="muted">Ideas more than one source discussed, across the whole project '
-            "(not limited to the reporting period above).</p>"
+            '(not limited to the reporting period above).</p>'
         )
     else:
-        parts.append('<p class="muted">Ideas more than one source discussed in this analysis run.</p>')
+        parts.append(
+            '<p class="muted">أفكار ناقشها أكثر من مصدر في عملية التحليل هذه.</p>'
+            if locale == "ar" else
+            '<p class="muted">Ideas more than one source discussed in this analysis run.</p>'
+        )
     if error:
-        parts.append(f'<div class="unavailable">Idea comparisons unavailable - {_esc(error)}</div>')
+        message = "مقارنات الأفكار غير متاحة" if locale == "ar" else "Idea comparisons unavailable"
+        parts.append(f'<div class="unavailable">{message} - {_esc(error)}</div>')
     if not items:
         if not error:
-            parts.append('<p class="muted">No idea was discussed by more than one source in this scope.</p>')
+            parts.append(
+                '<p class="muted">لم يناقش أكثر من مصدر أي فكرة ضمن هذا النطاق.</p>'
+                if locale == "ar" else
+                '<p class="muted">No idea was discussed by more than one source in this scope.</p>'
+            )
         return "".join(parts)
 
-    header = "<tr><th>Source</th><th>Trust tier</th><th>Claim</th><th>Article</th></tr>"
+    header = (
+        "<tr><th>المصدر</th><th>درجة الثقة</th><th>الادعاء</th><th>المقالة</th></tr>"
+        if locale == "ar" else
+        "<tr><th>Source</th><th>Trust tier</th><th>Claim</th><th>Article</th></tr>"
+    )
     for item in items:
         if item.get("diverges"):
-            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["negative"]};">Sources disagree</span>'
+            tag_label = "المصادر تختلف" if locale == "ar" else "Sources disagree"
+            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["negative"]};">{tag_label}</span>'
         else:
-            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["positive"]};">Sources agree</span>'
+            tag_label = "المصادر تتفق" if locale == "ar" else "Sources agree"
+            tag = f'<span class="divergence-tag" style="background-color:{SENTIMENT_COLORS["positive"]};">{tag_label}</span>'
         rows = []
         for claim in item.get("claims") or []:
             claim_text = claim.get("claim")
-            claim_html = _esc(claim_text) if claim_text else '<span class="muted">No specific figure stated</span>'
+            no_figure = "لم يُذكر رقم محدد" if locale == "ar" else "No specific figure stated"
+            claim_html = _esc(claim_text) if claim_text else f'<span class="muted">{no_figure}</span>'
             rows.append(
-                f'<tr><td dir="auto">{_esc(claim.get("source") or "Unknown source")}</td>'
-                f'<td>{_trust_tag_html(claim.get("source_tier"))}</td>'
+                f'<tr><td dir="auto">{_esc(claim.get("source") or ("مصدر غير معروف" if locale == "ar" else "Unknown source"))}</td>'
+                f'<td>{_trust_tag_html(claim.get("source_tier"), locale)}</td>'
                 f'<td dir="auto">{claim_html}</td>'
                 f'<td dir="auto">{_esc(claim.get("title"))} <span class="muted">{_esc(claim.get("reference"))}</span></td></tr>'
             )
@@ -371,9 +443,10 @@ def _idea_comparisons_html(report_data: dict) -> str:
     return "".join(parts)
 
 
-def _metrics_row_html(label: str, metrics: dict | None) -> str:
+def _metrics_row_html(label: str, metrics: dict | None, locale: str = "en") -> str:
     if not metrics:
-        return f'<tr><td>{_esc(label)}</td><td colspan="6" class="muted">No data</td></tr>'
+        no_data = "لا توجد بيانات" if locale == "ar" else "No data"
+        return f'<tr><td>{_esc(label)}</td><td colspan="6" class="muted">{no_data}</td></tr>'
     cells = "".join(
         f"<td>{_fmt_num(metrics.get(key))}</td>"
         for key in ("total", "positive", "negative", "neutral", "mixed", "net_sentiment")
@@ -381,7 +454,7 @@ def _metrics_row_html(label: str, metrics: dict | None) -> str:
     return f"<tr><td>{_esc(label)}</td>{cells}</tr>"
 
 
-def _comparison_html(comparison: dict | None) -> str:
+def _comparison_html(comparison: dict | None, locale: str = "en") -> str:
     comparison = comparison or {}
     status = comparison.get("status") or "unavailable"
     reason = comparison.get("reason")
@@ -393,47 +466,87 @@ def _comparison_html(comparison: dict | None) -> str:
 
     current_date = comparison.get("current_date") or ""
     previous_date = comparison.get("previous_date") or ""
-    current_label = comparison.get("current_scope_label") or ""
-    previous_label = comparison.get("previous_scope_label") or ""
+    if locale == "ar":
+        current_sequence = comparison.get("current_sequence_number")
+        previous_sequence = comparison.get("previous_sequence_number")
+        current_label = f"عملية التحليل رقم {current_sequence}" if current_sequence else "عملية التحليل المحددة"
+        previous_label = f"عملية التحليل رقم {previous_sequence}" if previous_sequence else "عملية التحليل السابقة"
+    else:
+        current_label = comparison.get("current_scope_label") or ""
+        previous_label = comparison.get("previous_scope_label") or ""
     tz = comparison.get("timezone") or "UTC"
 
-    parts = ["<h2>Variation from Last Run</h2>"]
-    parts.append(
-        f'<p class="subtitle">Selected run: {_esc(current_label)} ({_esc(current_date)}) vs. '
-        f"Previous run: {_esc(previous_label)} ({_esc(previous_date)}) &bull; {_esc(tz)}</p>"
-    )
+    if locale == "ar":
+        parts = ["<h2>التغيّر منذ آخر عملية تحليل</h2>"]
+        parts.append(
+            f'<p class="subtitle">العملية المحددة: {_esc(current_label)} ({_esc(current_date)}) مقابل '
+            f'العملية السابقة: {_esc(previous_label)} ({_esc(previous_date)}) &bull; {_esc(tz)}</p>'
+        )
+    else:
+        parts = ["<h2>Variation from Last Run</h2>"]
+        parts.append(
+            f'<p class="subtitle">Selected run: {_esc(current_label)} ({_esc(current_date)}) vs. '
+            f"Previous run: {_esc(previous_label)} ({_esc(previous_date)}) &bull; {_esc(tz)}</p>"
+        )
 
     if status != "ok":
-        message = "AI narrative unavailable" if status == "llm_failed" else "Comparison unavailable"
-        reason_html = f" - {_esc(reason)}" if reason else ""
+        if locale == "ar":
+            message = "سرد الذكاء الاصطناعي غير متاح" if status == "llm_failed" else "المقارنة غير متاحة"
+            reason_messages = {
+                "no_run_selected": "اختر عملية تحليل لمقارنتها بالعملية السابقة.",
+                "no_current_articles": "لا توجد مقالات محلَّلة في عملية التحليل المحددة.",
+                "invalid_previous_run": "عملية التحليل المحددة للمقارنة غير متاحة.",
+                "no_previous_run": "لا توجد عملية تحليل سابقة ذات نتائج محفوظة لهذا المشروع.",
+                "no_previous_articles": "لا تحتوي عملية التحليل السابقة على مقالات محلَّلة بنجاح.",
+            }
+            localized_reason = reason_messages.get(comparison.get("reason_code"))
+            reason_html = f" - {_esc(localized_reason)}" if localized_reason else ""
+        else:
+            message = "AI narrative unavailable" if status == "llm_failed" else "Comparison unavailable"
+            reason_html = f" - {_esc(reason)}" if reason else ""
         parts.append(f'<div class="unavailable">{_esc(message)}{reason_html}</div>')
 
     if current_metrics is not None or previous_metrics is not None:
         header = (
+            "<tr><th>النطاق</th><th>الإجمالي</th><th>إيجابي</th><th>سلبي</th><th>محايد</th><th>متباين</th><th>الصافي</th></tr>"
+            if locale == "ar" else
             "<tr><th>Scope</th><th>Total</th><th>Positive</th><th>Negative</th>"
             "<th>Neutral</th><th>Mixed</th><th>Net</th></tr>"
         )
-        rows = _metrics_row_html("Selected run", current_metrics) + _metrics_row_html("Previous run", previous_metrics)
+        selected_label = "العملية المحددة" if locale == "ar" else "Selected run"
+        previous_row_label = "العملية السابقة" if locale == "ar" else "Previous run"
+        rows = _metrics_row_html(selected_label, current_metrics, locale) + _metrics_row_html(previous_row_label, previous_metrics, locale)
         if deltas:
-            rows += _metrics_row_html("Delta", deltas)
+            rows += _metrics_row_html("التغيّر" if locale == "ar" else "Delta", deltas, locale)
         parts.append(f"<table>{header}{rows}</table>")
 
     if coverage:
-        parts.append(
-            '<p class="muted">Coverage: '
-            f"{_fmt_num(coverage.get('common'))} article(s) common to both runs, "
-            f"{_fmt_num(coverage.get('added'))} added, {_fmt_num(coverage.get('removed'))} removed "
-            f"(selected: {_fmt_num(coverage.get('current_ids'))} ids, previous: {_fmt_num(coverage.get('previous_ids'))} ids)"
-            + (" - sampled" if coverage.get("sampled") else "")
-            + "</p>"
-        )
+        if locale == "ar":
+            coverage_text = (
+                f'<p class="muted">التغطية: {_fmt_num(coverage.get("common"))} مقالة مشتركة بين العمليتين، '
+                f'{_fmt_num(coverage.get("added"))} مضافة، {_fmt_num(coverage.get("removed"))} محذوفة '
+                f'(المحددة: {_fmt_num(coverage.get("current_ids"))}، السابقة: {_fmt_num(coverage.get("previous_ids"))})'
+                + (" - عينة" if coverage.get("sampled") else "") + "</p>"
+            )
+        else:
+            coverage_text = (
+                '<p class="muted">Coverage: '
+                f"{_fmt_num(coverage.get('common'))} article(s) common to both runs, "
+                f"{_fmt_num(coverage.get('added'))} added, {_fmt_num(coverage.get('removed'))} removed "
+                f"(selected: {_fmt_num(coverage.get('current_ids'))} ids, previous: {_fmt_num(coverage.get('previous_ids'))} ids)"
+                + (" - sampled" if coverage.get("sampled") else "") + "</p>"
+            )
+        parts.append(coverage_text)
 
     if status == "ok":
         narrative = comparison.get("narrative")
         if narrative:
-            parts.append(f'<h3>Narrative</h3>{_esc_multiline(narrative)}')
+            heading = "السرد" if locale == "ar" else "Narrative"
+            parts.append(f'<h3>{heading}</h3>{_esc_multiline(narrative)}')
+            if locale == "ar" and comparison.get("locale_fallback"):
+                parts.append('<div class="note">تعذّرت ترجمة هذا السرد حاليًا، لذا يظهر النص الإنجليزي المتاح.</div>')
         else:
-            parts.append('<p class="muted">No narrative available.</p>')
+            parts.append('<p class="muted">لا يتوفر سرد.</p>' if locale == "ar" else '<p class="muted">No narrative available.</p>')
 
     evidence = comparison.get("evidence") or []
     if evidence:
@@ -441,40 +554,45 @@ def _comparison_html(comparison: dict | None) -> str:
         for entry in evidence:
             point = entry.get("point") or ""
             article_ids = entry.get("article_ids") or []
-            ids_label = ", ".join(str(i) for i in article_ids) if article_ids else "none"
+            ids_label = ", ".join(str(i) for i in article_ids) if article_ids else ("لا يوجد" if locale == "ar" else "none")
+            articles_label = "المقالات" if locale == "ar" else "articles"
             items.append(
                 f'<p class="evidence-item" dir="auto">&bull; {_esc(point)} '
-                f'<span class="muted">(articles: {_esc(ids_label)})</span></p>'
+                f'<span class="muted">({articles_label}: {_esc(ids_label)})</span></p>'
             )
-        parts.append(f'<h3>Evidence</h3>{"".join(items)}')
+        heading = "الأدلة" if locale == "ar" else "Evidence"
+        parts.append(f'<h3>{heading}</h3>{"".join(items)}')
 
     return "".join(parts)
 
 
-def _build_html(report_data: dict, comparison: dict) -> str:
+def _build_html(report_data: dict, comparison: dict, locale: str = "en") -> str:
     report_data = report_data or {}
     comparison = comparison or {}
     sections = [
-        _header_html(report_data),
-        _counts_html(report_data),
-        _executive_summary_html(report_data),
-        _top_articles_html(report_data),
-        _sentiment_html(report_data),
-        _comparison_html(comparison),
-        _idea_comparisons_html(report_data),
+        _header_html(report_data, locale),
+        _counts_html(report_data, locale),
+        _executive_summary_html(report_data, locale),
+        _top_articles_html(report_data, locale),
+        _sentiment_html(report_data, locale),
+        _comparison_html(comparison, locale),
+        _idea_comparisons_html(report_data, locale),
     ]
     body = "\n".join(sections)
-    return f"<html><body>{body}</body></html>"
+    direction = "rtl" if locale == "ar" else "ltr"
+    return f'<html lang="{locale}"><body dir="{direction}">{body}</body></html>'
 
 
-def _stamp_page_numbers(pdf_bytes: bytes) -> bytes:
+def _stamp_page_numbers(pdf_bytes: bytes, locale: str = "en") -> bytes:
     """Adds a centered "Page X of Y" footer to every page. Plain ASCII/digits
     only, so the low-level page.insert_text call (which does not shape
     Arabic) is fine here - nothing user-supplied ever reaches this text."""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total = doc.page_count
     for index, page in enumerate(doc, start=1):
-        label = f"Page {index} of {total}"
+        # fitz's low-level insert_text does not shape Arabic, so the Arabic
+        # report uses a language-neutral numeric footer.
+        label = f"{index} / {total}" if locale == "ar" else f"Page {index} of {total}"
         rect = page.rect
         text_width = fitz.get_text_length(label, fontname="helv", fontsize=8)
         x = (rect.width - text_width) / 2
@@ -486,7 +604,7 @@ def _stamp_page_numbers(pdf_bytes: bytes) -> bytes:
         doc.close()
 
 
-def _render_story_pdf(html_doc: str) -> bytes:
+def _render_story_pdf(html_doc: str, locale: str = "en") -> bytes:
     """Lays out one already-built HTML document through fitz.Story and
     returns the finished PDF bytes. Shared by every renderer in this module
     so a new report type gets the same RTL/Arabic-safe pagination as the
@@ -509,18 +627,18 @@ def _render_story_pdf(html_doc: str) -> bytes:
             break
     writer.close()
 
-    return _stamp_page_numbers(buffer.getvalue())
+    return _stamp_page_numbers(buffer.getvalue(), locale)
 
 
-def render_summary_pdf(report_data: dict, comparison: dict) -> bytes:
+def render_summary_pdf(report_data: dict, comparison: dict, locale: str = "en") -> bytes:
     """Renders the Export Summary PDF for one project/scope. Both arguments
     are plain dicts already assembled by callers (report_data.py's
     build_report_data / yesterday_comparison.py) - every string value inside
     them is treated as untrusted, document-derived content and is
     html.escape()'d before it reaches the HTML template. Returns the PDF as
     bytes; this function performs no filesystem writes itself."""
-    html_doc = _build_html(report_data or {}, comparison or {})
-    return _render_story_pdf(html_doc)
+    html_doc = _build_html(report_data or {}, comparison or {}, locale)
+    return _render_story_pdf(html_doc, locale)
 
 
 def _processing_location_label() -> str:

@@ -201,6 +201,15 @@ class BuildReportDataTests(_NoDbLookups):
         self.assertEqual(gen.call_count, 2)
         self.assertTrue(gen.call_args_list[1].kwargs.get("force"))
 
+    def test_requests_the_executive_summary_in_the_export_locale(self):
+        project = {"id": 1, "name": "Acme"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=[]), \
+             patch.object(report_data, "generate_trend_summary", return_value={"summary": "ملخص", "cached": True}) as gen:
+            data = report_data.build_report_data(project, period="30d", run=None, locale="ar")
+
+        self.assertEqual(data["executive_summary"]["text"], "ملخص")
+        self.assertEqual(gen.call_args.kwargs["locale"], "ar")
+
 
 class ExecutiveSummaryLlmFailureTests(_NoDbLookups):
     """generate_trend_summary() calls the configured LLM with no internal
