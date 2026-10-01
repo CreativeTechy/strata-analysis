@@ -77,6 +77,7 @@ from services.projects.projects_store import (
 )
 from services.intelligence.intelligence import PERIOD_DAYS, get_project_intelligence, get_project_keyword_existence, normalize_period
 from services.intelligence import evidence_links
+from services.intelligence.feedback_translation import localize_categorized_feedback
 from services.intelligence.idea_translation import localize_frequent_ideas
 from services.articles.idea_comparisons import (
     create_comparison_fact, delete_comparison_fact, generate_idea_comparisons_detailed,
@@ -1004,10 +1005,12 @@ def get_project_intelligence_view(
     locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
-    """`locale`, when given, renders insights.frequent_ideas' idea text into
-    that locale - validated against config.SUPPORTED_LOCALES, same as
+    """`locale`, when given, renders insights.frequent_ideas' idea text and
+    insights.positive_feedback/negative_feedback's feedback text into that
+    locale - validated against config.SUPPORTED_LOCALES, same as
     /trend-summary and /articles/{id}/analysis. See
-    services/intelligence/idea_translation.py."""
+    services/intelligence/idea_translation.py and
+    services/intelligence/feedback_translation.py."""
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
@@ -1019,6 +1022,7 @@ def get_project_intelligence_view(
     result = get_project_intelligence(project, normalize_period(period), run_id=run_id)
     if resolved_locale != config.DEFAULT_LOCALE:
         result = localize_frequent_ideas(result, project_id=project_id, locale=resolved_locale)
+        result = localize_categorized_feedback(result, project_id=project_id, locale=resolved_locale)
     return result
 
 
