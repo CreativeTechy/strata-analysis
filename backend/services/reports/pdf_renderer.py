@@ -283,11 +283,14 @@ def _top_articles_html(report_data: dict) -> str:
         reference = item.get("reference") or ""
         score = item.get("relevance_score")
         score_label = f"relevance {score:.2f}" if isinstance(score, (int, float)) else "relevance n/a"
+        published_label = (
+            _fmt_iso(item.get("published_at")) if item.get("published_at") else "Unknown date"
+        )
 
         blocks.append(f"""
 <div class="article-block">
   <p class="article-title" dir="auto">{_esc(rank)}. {_esc(title)} {_sentiment_tag_html(sentiment)}</p>
-  <p class="article-meta" dir="auto">Source: {_esc(source)} {_trust_tag_html(item.get("source_tier"))} &bull; {_esc(score_label)} &bull; {_esc(reference)}</p>
+  <p class="article-meta" dir="auto">Source: {_esc(source)} {_trust_tag_html(item.get("source_tier"))} &bull; {_esc(score_label)} &bull; Published: {_esc(published_label)} &bull; {_esc(reference)}</p>
   <p dir="auto">{_esc(summary)}</p>
 </div>
 """)
