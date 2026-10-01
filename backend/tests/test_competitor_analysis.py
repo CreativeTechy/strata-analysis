@@ -369,9 +369,11 @@ class AnalysisJobTests(unittest.TestCase):
 
     def _run(self, project_id, scope="pending", document_ids=None, resolved=(1, 2),
              **generate_kwargs):
+        self.logs = []
+        log = lambda message, code=None, params=None: self.logs.append((message, code, params))  # noqa: E731
         with patch.object(analysis_runs_store, "mark_running") as mark_running, \
              patch.object(analysis_runs_store, "resolve_scope", return_value=list(resolved)) as resolve, \
-             patch.object(analysis_runs_store, "logger", return_value=lambda _message: None), \
+             patch.object(analysis_runs_store, "logger", return_value=log), \
              patch.object(analysis_runs_store, "mark_success") as mark_success, \
              patch.object(analysis_runs_store, "mark_failed") as mark_failed, \
              patch.object(analysis_runs_store, "record_covered_documents") as record_covered, \
@@ -404,6 +406,9 @@ class AnalysisJobTests(unittest.TestCase):
         # the run actually succeeds.
         calls["extract_ideas"].assert_called_once_with(11, [1, 2], log=calls["generate"].call_args.kwargs["log"])
         calls["regenerate_ideas"].assert_called_once_with(11)
+        # The dashboard renders progress lines from code + params in the UI's
+        # language; the English message rides along as the fallback.
+        self.assertIn(("Scope: 2 documents.", "scope_documents", {"count": 2}), self.logs)
 
     def test_provider_failure_is_a_failed_run_not_zero_reports(self):
         """Same distinction generate_findings itself draws: a quota/outage error
@@ -434,6 +439,54 @@ class AnalysisJobTests(unittest.TestCase):
         calls["generate"].assert_not_called()
         calls["mark_failed"].assert_called_once()
         calls["mark_success"].assert_not_called()
+        self.assertEqual([code for _message, code, _params in self.logs], ["scope_empty_pending"])
+
+
+class AnalysisLogEntryTests(unittest.TestCase):
+    def test_append_log_stores_code_and_params_alongside_the_message(self):
+        with patch.object(analysis_runs_store.db, "execute") as execute:
+            analysis_runs_store.logger(5)("Kept 3 article(s) as evidence.", "kept_evidence", {"count": 3})
+        entry = execute.call_args[0][1][0].obj[0]
+        self.assertEqual(entry["message"], "Kept 3 article(s) as evidence.")
+        self.assertEqual(entry["code"], "kept_evidence")
+        self.assertEqual(entry["params"], {"count": 3})
+
+    def test_append_log_without_a_code_stays_message_only(self):
+        with patch.object(analysis_runs_store.db, "execute") as execute:
+            analysis_runs_store.logger(5)("Plain line.")
+        entry = execute.call_args[0][1][0].obj[0]
+        self.assertEqual(set(entry), {"ts", "message"})
+
+    def test_generate_findings_logs_codes_for_each_step(self):
+        """Every line the UI shows during a run has a code, so none of them is
+        stuck in English when the dashboard is in Arabic."""
+        competitor = {"id": 1, "project_id": 1, "name": "Them"}
+        validation = {
+            "scanned": 5, "linked": 1,
+            "per_competitor": {1: {"valid": 1, "rejected": 0, "stories": 4}},
+            "rejection_reasons": {}, "period_days": 30,
+        }
+        logs = []
+        with patch(
+            "services.competitors.business_profile_store.get_profile", return_value={"name": "Us"}
+        ), patch(
+            "services.competitors.competitors_store.list_competitors", return_value=[competitor]
+        ), patch.object(
+            competitor_analysis, "validate_competitor_articles", return_value=validation
+        ), patch.object(
+            competitor_analysis, "generate_finding",
+            return_value={"impact_level": "high", "headline": "Opens a roastery"},
+        ), patch.object(competitor_analysis.db, "execute"):
+            competitor_analysis.generate_findings(
+                1, log=lambda message, code=None, params=None: logs.append((code, params)),
+            )
+
+        self.assertEqual(logs, [
+            ("analyzing_competitors", {"count": 1}),
+            ("writing_report", {"name": "Them", "count": 4}),
+            ("finding_generated", {"name": "Them", "impact": "high", "headline": "Opens a roastery"}),
+            ("done", {"generated": 1, "skipped": 0}),
+        ])
 
 
 if __name__ == "__main__":
