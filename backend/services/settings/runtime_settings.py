@@ -167,6 +167,15 @@ SETTINGS_SCHEMA = {
             "configured LLM provider directly instead, at the cost of one extra per-article round trip."
         ),
     },
+    "DEMOGRAPHICS_LLM_FALLBACK": {
+        "type": "enum",
+        "choices": ("off", "on"),
+        "description": (
+            "\"on\" skips the majority vote over structured_extraction's per-quote gender/age_range tags "
+            "(analysis/demographics_detection.py) entirely and asks the configured LLM provider directly "
+            "instead, at the cost of one extra per-article round trip."
+        ),
+    },
     "EVIDENCE_CLAIM_SIMILARITY_THRESHOLD": {
         "type": "float",
         "min": -1.0,

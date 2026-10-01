@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Settings, RotateCcw, Languages, Brain, Radar, Smile, Tags, Cpu, Timer, Check,
   Users, Box, HardDrive, Gauge, Building2, Filter, CheckCircle2, XCircle, Link, ChevronDown, Globe,
+  UserCheck,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth.js';
 import { listRuntimeSettings, updateRuntimeSetting, resetRuntimeSetting } from '../api/adminApi.js';
@@ -22,6 +23,7 @@ const GROUPS = [
       'LLM_PROVIDER', 'COMPETITOR_ANALYSIS_LLM_PROVIDER',
       'SENTIMENT_CLASSIFIER_PROVIDER', 'SENTIMENT_CLASSIFIER_MODEL', 'SENTIMENT_CLASSIFIER_DEVICE',
       'SENTIMENT_CONFIDENCE_THRESHOLD', 'CLASSIFICATION_PROVIDER', 'REGION_DETECTION_LLM_FALLBACK',
+      'DEMOGRAPHICS_LLM_FALLBACK',
     ],
   },
   {
@@ -49,6 +51,7 @@ const ICONS = {
   SENTIMENT_CONFIDENCE_THRESHOLD: Gauge,
   CLASSIFICATION_PROVIDER: Tags,
   REGION_DETECTION_LLM_FALLBACK: Globe,
+  DEMOGRAPHICS_LLM_FALLBACK: UserCheck,
   ANALYSIS_CONCURRENCY: Cpu,
   COMPETITOR_ANALYSIS_CONCURRENCY: Users,
   LLM_REQUEST_TIMEOUT_SECONDS: Timer,
