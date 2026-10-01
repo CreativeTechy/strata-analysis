@@ -1285,6 +1285,7 @@ def export_report_summary_pdf(
     project_id: int,
     period: str = "30d",
     run_id: str | None = None,
+    locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """Reports page's "Export Summary" button: one PDF built from the exact
@@ -1294,7 +1295,10 @@ def export_report_summary_pdf(
     the immediately preceding eligible analysis run regardless of elapsed time.
     `period`/`run_id`
     mirror /trend-summary and /idea-comparisons above so the same scope shown
-    on screen is what gets exported.
+    on screen is what gets exported. `locale` selects English or Arabic for
+    the generated narrative, fixed PDF labels, and document direction; it is
+    validated against the same output-locale allow-list as the on-screen
+    report summaries.
 
     A rendering failure is a 500 (nothing partial to fall back to - the PDF
     itself is the whole response body), but an LLM failure inside either
@@ -1307,6 +1311,10 @@ def export_report_summary_pdf(
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
 
     run = None
     if run_id:
@@ -1314,12 +1322,12 @@ def export_report_summary_pdf(
         if not run or run.get("project_id") is None or int(run["project_id"]) != project_id:
             raise HTTPException(status_code=400, detail="Selected analysis run does not belong to this project.")
 
-    report_data = build_report_data(project, normalize_period(period), run=run)
-    comparison = build_variation_from_last_run(project, report_data, run=run)
+    report_data = build_report_data(project, normalize_period(period), run=run, locale=resolved_locale)
+    comparison = build_variation_from_last_run(project, report_data, run=run, locale=resolved_locale)
 
     from services.reports.pdf_renderer import render_summary_pdf
     try:
-        pdf_bytes = render_summary_pdf(report_data, comparison)
+        pdf_bytes = render_summary_pdf(report_data, comparison, locale=resolved_locale)
     except Exception:
         logger.exception("Failed to render report summary PDF for project %s", project_id)
         raise HTTPException(status_code=500, detail="Failed to generate the report PDF.")
@@ -1328,7 +1336,7 @@ def export_report_summary_pdf(
     safe_project = safe_project or f"project-{project_id}"
     scope_label = f"run-{run['id'][:8]}" if run else normalize_period(period)
     date_label = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    filename = f"{safe_project}-summary-{scope_label}-{date_label}.pdf"
+    filename = f"{safe_project}-summary-{scope_label}-{resolved_locale}-{date_label}.pdf"
 
     return Response(
         content=pdf_bytes,

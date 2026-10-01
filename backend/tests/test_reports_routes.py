@@ -149,6 +149,24 @@ class ExportSummaryPdfTests(ReportsRoutesTestCase):
         _, kwargs = build_data.call_args
         self.assertEqual(kwargs.get("run"), run)
 
+    def test_arabic_export_passes_the_locale_to_data_comparison_and_renderer(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.build_report_data", return_value={"project": {"id": 1, "name": "Acme"}}) as build_data, \
+             patch("main.build_variation_from_last_run", return_value={"status": "unavailable"}) as build_cmp, \
+             patch("services.reports.pdf_renderer.render_summary_pdf", return_value=b"%PDF-1.7 fake") as render:
+            resp = self.client.post("/api/projects/1/reports/summary.pdf?locale=ar")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(build_data.call_args.kwargs["locale"], "ar")
+        self.assertEqual(build_cmp.call_args.kwargs["locale"], "ar")
+        self.assertEqual(render.call_args.kwargs["locale"], "ar")
+        self.assertIn("-ar-", resp.headers["content-disposition"])
+
+    def test_rejects_an_unsupported_export_locale(self):
+        with patch("main.get_project", return_value=self.PROJECT):
+            resp = self.client.post("/api/projects/1/reports/summary.pdf?locale=fr")
+        self.assertEqual(resp.status_code, 400)
+
     def test_an_llm_failure_in_the_comparison_still_exports_the_rest_of_the_report(self):
         """build_variation_from_last_run never raises - it degrades to
         status=llm_failed - so a provider outage must not turn the whole

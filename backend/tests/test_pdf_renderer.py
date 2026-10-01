@@ -57,6 +57,16 @@ class RenderSummaryPdfTests(unittest.TestCase):
         self.assertIsInstance(pdf_bytes, bytes)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
+    def test_arabic_report_uses_rtl_layout_and_arabic_fixed_labels(self):
+        html = _build_html(MINIMAL_REPORT_DATA, MINIMAL_COMPARISON, locale="ar")
+        self.assertIn('<html lang="ar"><body dir="rtl">', html)
+        self.assertIn("ملخص التقرير", html)
+        self.assertIn("الملخص التنفيذي", html)
+        self.assertIn("توزيع المشاعر", html)
+        self.assertNotIn("<h2>Executive Summary</h2>", html)
+        pdf_bytes = render_summary_pdf(MINIMAL_REPORT_DATA, MINIMAL_COMPARISON, locale="ar")
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
     def test_handles_a_populated_report_with_a_comparison_narrative(self):
         report_data = {
             **MINIMAL_REPORT_DATA,

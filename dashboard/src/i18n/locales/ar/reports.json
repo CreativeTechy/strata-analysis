@@ -59,7 +59,6 @@
     "dialogProjectLabel": "المشروع",
     "dialogScopeLabel": "النطاق",
     "dialogLanguageLabel": "لغة الإخراج",
-    "dialogLanguageValue": "الإنجليزية (يُنشأ ملف PDF المُصدَّر دائمًا بالإنجليزية، بصرف النظر عن لغة عرض التقرير على الشاشة)",
     "dialogIncludesTitle": "سيتضمن ملف PDF هذا:",
     "confirmButton": "تنزيل PDF"
   },

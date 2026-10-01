@@ -10,6 +10,7 @@ import { exportReportSummaryPdf } from '../api/projectsApi.js';
 import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { REPORT_PERIODS, pipelineRunNumber } from '../lib/appHelpers.js';
 import { formatNumber, formatRelativeTime } from '../lib/i18nFormat.js';
+import { LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale } from '../i18n/locales.js';
 
 // Sanitized the same way the backend names the file (main.py's
 // export_report_summary_pdf) - not load-bearing for correctness (the
@@ -67,6 +68,7 @@ export default function ReportsView({
   const [exportingSummary, setExportingSummary] = useState(false);
   const [exportError, setExportError] = useState(null);
   const [exportPreviewOpen, setExportPreviewOpen] = useState(false);
+  const [exportLocale, setExportLocale] = useState(locale === 'ar' ? 'ar' : 'en');
 
   const scopeRangeLabel = reportRunId
     ? runTabLabel(
@@ -83,6 +85,7 @@ export default function ReportsView({
       const blob = await exportReportSummaryPdf(selectedProjectId, {
         period: reportPeriod,
         run_id: reportRunId || undefined,
+        locale: exportLocale,
       });
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
@@ -329,7 +332,23 @@ export default function ReportsView({
             <div><dt>{t('export.dialogScopeLabel')}</dt><dd>{scopeRangeLabel}</dd></div>
             <div>
               <dt><Languages size={13} aria-hidden="true" /> {t('export.dialogLanguageLabel')}</dt>
-              <dd>{t('export.dialogLanguageValue')}</dd>
+              <dd>
+                <div className="language-switcher report-export-language-switcher" role="group" aria-label={t('export.dialogLanguageLabel')}>
+                  {SUPPORTED_LOCALES.map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      lang={code}
+                      dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                      className={`language-switcher-option${exportLocale === code ? ' is-active' : ''}`}
+                      aria-pressed={exportLocale === code}
+                      onClick={() => setExportLocale(code)}
+                    >
+                      {LOCALE_NATIVE_NAMES[code]}
+                    </button>
+                  ))}
+                </div>
+              </dd>
             </div>
           </dl>
           <p className="report-export-preview-includes-title"><ListChecks size={14} aria-hidden="true" /> {t('export.dialogIncludesTitle')}</p>

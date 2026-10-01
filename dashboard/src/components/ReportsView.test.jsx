@@ -127,7 +127,7 @@ describe('ReportsView - Export Summary', () => {
     confirmExport()
 
     expect(await screen.findByText('Preparing...')).toBeInTheDocument()
-    expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: undefined })
+    expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: undefined, locale: 'en' })
 
     const fakeBlob = new Blob(['%PDF-1.7'], { type: 'application/pdf' })
     resolveExport(fakeBlob)
@@ -147,7 +147,22 @@ describe('ReportsView - Export Summary', () => {
     openExportDialog()
     confirmExport()
 
-    await waitFor(() => expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: 'run-42' }))
+    await waitFor(() => expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, { period: '30d', run_id: 'run-42', locale: 'en' }))
+  })
+
+  it('exports in the language selected in the confirmation dialog', async () => {
+    exportReportSummaryPdf.mockResolvedValue(new Blob(['%PDF-1.7']))
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ReportsView {...baseProps()} />)
+    openExportDialog()
+    fireEvent.click(screen.getByRole('button', { name: 'العربية' }))
+    expect(screen.getByRole('button', { name: 'العربية' })).toHaveAttribute('aria-pressed', 'true')
+    confirmExport()
+
+    await waitFor(() => expect(exportReportSummaryPdf).toHaveBeenCalledWith(1, {
+      period: '30d', run_id: undefined, locale: 'ar',
+    }))
   })
 
   it('shows an error message when the export fails, without crashing', async () => {
