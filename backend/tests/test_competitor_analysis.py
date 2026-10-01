@@ -377,14 +377,18 @@ class AnalysisJobTests(unittest.TestCase):
              patch.object(analysis_runs_store, "mark_success") as mark_success, \
              patch.object(analysis_runs_store, "mark_failed") as mark_failed, \
              patch.object(analysis_runs_store, "record_covered_documents") as record_covered, \
+             patch.object(analysis_runs_store, "documents_with_scope", return_value=[]), \
              patch.object(competitor_analysis, "extract_frequent_ideas_for_documents") as extract_ideas, \
              patch.object(competitor_analysis, "_regenerate_idea_comparisons") as regenerate_ideas, \
+             patch.object(competitor_analysis, "update_pipeline_run") as update_pipeline_run, \
+             patch.object(competitor_analysis, "upsert_pipeline_run_document_stats"), \
              patch.object(competitor_analysis, "generate_findings", **generate_kwargs) as generate:
             competitor_analysis.run_analysis_job(99, project_id, scope, document_ids)
         return {
             "mark_running": mark_running, "resolve_scope": resolve, "mark_success": mark_success,
             "mark_failed": mark_failed, "record_covered_documents": record_covered, "generate": generate,
             "extract_ideas": extract_ideas, "regenerate_ideas": regenerate_ideas,
+            "update_pipeline_run": update_pipeline_run,
         }
 
     def test_successful_job_resolves_scope_and_records_covered_documents(self):

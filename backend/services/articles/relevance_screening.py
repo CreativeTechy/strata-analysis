@@ -115,6 +115,17 @@ def _project_vector(project: dict) -> list[float]:
     return refreshed.get("embedding_json") or []
 
 
+def _text_vector(text: str) -> list[float]:
+    """Embed arbitrary scope text (e.g. a competitor study's business-profile
+    summary) directly, rather than caching it on a projects row the way
+    _project_vector does - this isn't the project's own embedding, and it's
+    one call per run, not per article, so there's nothing worth caching."""
+    if not text:
+        return []
+    embedded = get_embeddings([text], role="query")
+    return (embedded[0] if embedded else {}).get("embedding_json") or []
+
+
 def _article_vectors(rows: list[dict], should_cancel: Callable[[], bool] | None = None) -> dict[int, list[float]]:
     """Load cached vectors and embed all missing articles in batches."""
     vectors: dict[int, list[float]] = {}
@@ -177,15 +188,15 @@ def _validate_llm_results(payload, expected_ids: set[int]) -> dict[int, dict] | 
     return parsed if set(parsed) == expected_ids else None
 
 
-def _classify_borderline(project: dict, rows: list[dict]) -> dict[int, dict]:
+def _classify_borderline(project: dict, rows: list[dict], scope_text: str | None = None) -> dict[int, dict]:
     if not rows:
         return {}
     prompt = {
         "project": {
             "title": project.get("name"),
-            "description": project.get("description"),
-            "location": project.get("location"),
-            "keywords": project.get("keywords") or [],
+            "description": scope_text if scope_text is not None else project.get("description"),
+            "location": None if scope_text is not None else project.get("location"),
+            "keywords": [] if scope_text is not None else (project.get("keywords") or []),
         },
         "articles": [
             {"id": int(row["id"]), "title": row.get("title"), "excerpt": str(row.get("text") or "")[:800]}
@@ -274,7 +285,7 @@ def _record_run_screenings(run_id: str, project_id: int, results: list[dict]) ->
 
 def screen_project_articles(
     project_id: int, run_id: str, mode: str | None = None, article_ids: list[int] | None = None,
-    should_cancel: Callable[[], bool] | None = None,
+    should_cancel: Callable[[], bool] | None = None, scope_text: str | None = None,
 ) -> dict:
     """`article_ids`, when not None, restricts screening to that specific set
     (a run's own candidate articles) rather than everything article_projects
@@ -287,7 +298,13 @@ def screen_project_articles(
     between the borderline LLM batches - the only steps slow enough that a
     stop request needs to land inside them rather than waiting for the whole
     call to finish. Raises ScreeningCancelled rather than returning early, so
-    a stop can't be silently swallowed as "screening produced nothing"."""
+    a stop can't be silently swallowed as "screening produced nothing".
+
+    `scope_text`, when given, replaces the project's own
+    name/description/location/keywords (build_project_embedding_text) as what
+    articles are screened against - for a caller whose real scope lives
+    elsewhere (a competitor study's business profile, not the generic project
+    fields, which it typically leaves empty)."""
     mode = str(mode or config.ARTICLE_RELEVANCE_SCREENING_MODE).strip().lower()
     if mode not in {"off", "observe", "enforce"}:
         mode = "observe"
@@ -314,9 +331,16 @@ def screen_project_articles(
                 "included": 0, "excluded": 0, "needs_review": 0}
 
     project = get_project(project_id) or {}
-    scope_digest = _scope_hash(project)
+    scope_digest = _hash_text(scope_text) if scope_text is not None else _scope_hash(project)
     rules_version = _rules_version()
-    project_vector = _project_vector(project) if mode != "off" and project.get("id") else []
+    if mode == "off":
+        project_vector = []
+    elif scope_text is not None:
+        project_vector = _text_vector(scope_text)
+    elif project.get("id"):
+        project_vector = _project_vector(project)
+    else:
+        project_vector = []
     results, pending, borderline = [], [], []
     for row in rows:
         article_id = int(row["id"])
@@ -378,7 +402,7 @@ def screen_project_articles(
         if should_cancel and should_cancel():
             raise ScreeningCancelled()
         batch = borderline[start:start + batch_size]
-        classified = _classify_borderline(project, [item[0] for item in batch])
+        classified = _classify_borderline(project, [item[0] for item in batch], scope_text=scope_text)
         for row, common, similarity in batch:
             answer = classified[int(row["id"])]
             # An outage (LLMError, timeout, malformed JSON) falls back to

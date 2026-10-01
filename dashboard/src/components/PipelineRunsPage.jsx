@@ -313,7 +313,7 @@ export default function PipelineRunsPage({ projects = [] }) {
                   >
                     {t('common:actions.view')}
                   </Link>
-                  {ACTIVE_STATUSES.includes(run.status) ? (
+                  {run.pipeline === 'competitor-analysis' ? null : ACTIVE_STATUSES.includes(run.status) ? (
                     <button
                       className="btn-secondary"
                       onClick={() => stopRun(run.id)}

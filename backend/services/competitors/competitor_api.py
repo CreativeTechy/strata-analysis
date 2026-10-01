@@ -28,6 +28,7 @@ from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
 from services.competitors.finding_translation import localize_finding, localize_findings
+from services.pipeline.pipeline_runs import create_pipeline_run
 from services.auth.auth import require_permission
 from services.auth.authz import ensure_project_visible, visible_project_ids_or_none
 from services.common.api_errors import api_error
@@ -513,6 +514,11 @@ def analyze(
         return {"run_id": active["id"], "status": active["status"]}
 
     run = analysis_runs_store.create_run(project_id, scope)
+    # Mirrored into pipeline_runs (same id, pipeline='competitor-analysis') so
+    # this run shows up on the main Analysis Runs dashboard alongside
+    # opinion-monitor runs instead of only in this study's own run history.
+    create_pipeline_run(run_id=str(run["id"]), pipeline="competitor-analysis", project_id=project_id,
+                        status="queued", stage="queued", message="Queued for execution.")
     background_tasks.add_task(
         competitor_analysis.run_analysis_job, run["id"], project_id, scope, document_ids,
     )

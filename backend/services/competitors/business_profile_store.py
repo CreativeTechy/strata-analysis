@@ -127,6 +127,26 @@ def get_profile(project_id: int) -> dict | None:
     )
 
 
+def build_scope_text(profile: dict | None) -> str:
+    """What this study is actually about, for article-relevance screening
+    (services/articles/relevance_screening.py). A competitor study's generic
+    projects.description/keywords are typically left empty - this profile is
+    where the real scope (industry/market/geography/positioning/...) lives."""
+    if not profile:
+        return ""
+    parts = []
+    for key in ("name", "description", "industry", "market", "geography", "positioning"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            parts.append(value)
+    for key in ("offerings", "audience", "differentiators", "keywords"):
+        for value in profile.get(key) or []:
+            text = str(value or "").strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts)[:8000]
+
+
 def upsert_profile(project_id: int, values: dict) -> dict | None:
     """Insert or update the profile for a project."""
     from psycopg.types.json import Jsonb
