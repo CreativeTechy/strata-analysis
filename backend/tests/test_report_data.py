@@ -210,6 +210,65 @@ class BuildReportDataTests(_NoDbLookups):
         self.assertEqual(data["executive_summary"]["text"], "ملخص")
         self.assertEqual(gen.call_args.kwargs["locale"], "ar")
 
+    def test_arabic_export_regenerates_a_stale_canonical_summary_before_localizing(self):
+        """A localized result's cached/generated_at describe the translation,
+        not the canonical summary it came from - so staleness has to be
+        judged on the canonical summary, or a fresh translation of an
+        out-of-date paragraph would skip the refresh."""
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, status="success", published=datetime(2026, 3, 5, tzinfo=timezone.utc))]
+        stale_canonical = {"summary": "old", "cached": True, "generated_at": "2026-01-01T00:00:00+00:00"}
+        fresh_canonical = {"summary": "new", "cached": False}
+        localized = {"summary": "جديد", "cached": False, "locale": "ar"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows), \
+             patch.object(report_data, "generate_trend_summary",
+                          side_effect=[stale_canonical, fresh_canonical, localized]) as gen:
+            data = report_data.build_report_data(project, period="all", run=None, locale="ar")
+
+        self.assertEqual(data["executive_summary"]["text"], "جديد")
+        self.assertEqual(data["executive_summary"]["locale"], "ar")
+        self.assertEqual(gen.call_count, 3)
+        first, refresh, localize = gen.call_args_list
+        self.assertNotEqual(first.kwargs.get("locale"), "ar")
+        self.assertTrue(refresh.kwargs.get("force"))
+        self.assertNotEqual(refresh.kwargs.get("locale"), "ar")
+        self.assertEqual(localize.kwargs.get("locale"), "ar")
+        self.assertFalse(localize.kwargs.get("force"))
+
+    def test_arabic_export_ignores_a_localized_timestamp_newer_than_the_stale_canonical(self):
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, status="success", published=datetime(2026, 3, 5, tzinfo=timezone.utc))]
+        stale_canonical = {"summary": "old", "cached": True, "generated_at": "2026-01-01T00:00:00+00:00"}
+        fresh_canonical = {"summary": "new", "cached": False}
+        localized = {"summary": "جديد", "cached": True, "generated_at": "2026-04-01T00:00:00+00:00", "locale": "ar"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows), \
+             patch.object(report_data, "generate_trend_summary",
+                          side_effect=[stale_canonical, fresh_canonical, localized]) as gen:
+            data = report_data.build_report_data(project, period="all", run=None, locale="ar")
+
+        self.assertEqual(data["executive_summary"]["text"], "جديد")
+        self.assertTrue(gen.call_args_list[1].kwargs.get("force"))
+
+    def test_arabic_export_falls_back_to_the_canonical_summary_when_localizing_fails(self):
+        project = {"id": 1, "name": "Acme"}
+        canonical = {"summary": "current", "cached": False}
+        failed = {"summary": None, "cached": False, "error": "LLM down", "error_code": "llm_connection_error"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=[]), \
+             patch.object(report_data, "generate_trend_summary", side_effect=[canonical, failed]):
+            data = report_data.build_report_data(project, period="30d", run=None, locale="ar")
+
+        self.assertEqual(data["executive_summary"]["text"], "current")
+        self.assertTrue(data["executive_summary"]["locale_fallback"])
+        self.assertIsNone(data["executive_summary"]["error"])
+
+    def test_english_export_never_requests_a_localized_summary(self):
+        project = {"id": 1, "name": "Acme"}
+        with patch.object(report_data, "_fetch_period_rows", return_value=[]), \
+             patch.object(report_data, "generate_trend_summary", return_value={"summary": "ok", "cached": False}) as gen:
+            report_data.build_report_data(project, period="30d", run=None, locale="en")
+
+        self.assertEqual(gen.call_count, 1)
+
 
 class ExecutiveSummaryLlmFailureTests(_NoDbLookups):
     """generate_trend_summary() calls the configured LLM with no internal

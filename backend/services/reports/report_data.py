@@ -364,18 +364,31 @@ def build_report_data(
 
     analysis_date_label, run_label = _scope_label(scope_type, period, run, tz)
 
-    cached_summary = _safe_generate_trend_summary(
-        project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), locale=locale,
-    )
+    summary_period = normalize_period(period or "30d")
+    summary_run_id = run["id"] if run else None
+
+    # Staleness is judged on the canonical (default-locale) summary, never on
+    # a localized rendering of it: a localized result's `cached`/`generated_at`
+    # describe the translation, not the summary it was translated from, so
+    # checking those would let a translation of an out-of-date canonical
+    # paragraph read as fresh.
+    cached_summary = _safe_generate_trend_summary(project, summary_period, run_id=summary_run_id)
     if _stale_executive_summary(cached_summary, analyzed_rows):
-        refreshed = _safe_generate_trend_summary(
-            project, normalize_period(period or "30d"), run_id=(run["id"] if run else None), force=True, locale=locale,
-        )
+        refreshed = _safe_generate_trend_summary(project, summary_period, run_id=summary_run_id, force=True)
         # Keep the stale-but-real paragraph rather than discarding it for
         # nothing at all when the forced refresh itself fails (e.g. the same
         # LLM outage that made the first call above return an error too).
         if refreshed.get("summary") is not None:
             cached_summary = refreshed
+
+    if (locale or config.DEFAULT_LOCALE) != config.DEFAULT_LOCALE and cached_summary.get("summary"):
+        # Rendered from the canonical row settled above - a refresh there
+        # changes its updated_at, which invalidates any older localized copy.
+        localized = _safe_generate_trend_summary(project, summary_period, run_id=summary_run_id, locale=locale)
+        if localized.get("summary") is not None:
+            cached_summary = localized
+        else:
+            cached_summary = {**cached_summary, "locale": config.DEFAULT_LOCALE, "locale_fallback": True}
 
     top_articles, fallback_used = _top_articles(analyzed_rows, config.REPORT_TOP_ARTICLES_LIMIT)
     top_ids = {item["article_id"] for item in top_articles}
