@@ -205,7 +205,7 @@ export default function TopicDetailPage() {
         </div>
         <div className="admin-page-toolbar">
           {state.projectId ? <Link
-            to={`/projects/${state.projectId}/evidence?${new URLSearchParams({ ...(distinctRunIds[0] ? { run_id: distinctRunIds[0] } : {}), topic: state.idea }).toString()}`}
+            to={`/projects/${state.projectId}/evidence?${new URLSearchParams({ ...(distinctRunIds[0] ? { run_id: distinctRunIds[0] } : {}), topic: state.topicQuery || state.idea }).toString()}`}
             className="btn-secondary"
             style={{ textDecoration: 'none' }}
           >
