@@ -163,6 +163,7 @@ def _top_articles(analyzed_rows: list[dict], limit: int) -> tuple[list[dict], bo
     articles = []
     for rank, row in enumerate(top, start=1):
         score = row.get("relevance_score")
+        published = article_date(row)
         articles.append({
             "rank": rank,
             "article_id": row.get("id"),
@@ -173,6 +174,7 @@ def _top_articles(analyzed_rows: list[dict], limit: int) -> tuple[list[dict], bo
             "reference": f"/articles/{row.get('id')}",
             "relevance_score": float(score) if score is not None else None,
             "ranking_method": "relevance_score" if has_scores else "fallback_recency",
+            "published_at": published.isoformat() if published else None,
         })
     return articles, not has_scores
 
