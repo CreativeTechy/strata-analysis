@@ -7,7 +7,7 @@ might contain many separate respondents' feedback, a report might cover
 several distinct mentions - so each becomes its own row rather than the whole
 document turning into one undifferentiated blob. project_documents_store
 auto-approves every candidate right after it's generated (see
-`_approve_all_and_queue_analysis`), so in practice a candidate is materialized
+`_try_approve_document_candidates`), so in practice a candidate is materialized
 before anyone has looked at it; excluding one is a delete on the Articles page
 after the fact, not a reject beforehand. The pending/approved/rejected status
 and set_status()/approve_all() below still work exactly as they did when a
@@ -163,16 +163,18 @@ def _select_candidate(candidate_id: int) -> dict | None:
     )
 
 
-def list_candidates(project_id: int) -> list[dict]:
+def list_candidates(project_id: int, document_ids: list[int] | None = None) -> list[dict]:
+    document_filter = "" if document_ids is None else "and pda.document_id = any(%s)"
+    params = (int(project_id),) if document_ids is None else (int(project_id), document_ids)
     return db.fetch_all(
         f"""
         select {CANDIDATE_COLUMNS}
         from project_document_articles pda
         left join articles a on a.id = pda.article_id
-        where pda.project_id = %s
+        where pda.project_id = %s {document_filter}
         order by pda.created_at
         """,
-        (int(project_id),),
+        params,
     )
 
 
@@ -261,15 +263,12 @@ def _materialize(candidate: dict, cur) -> int | None:
 
 
 def set_status(candidate_id: int, status: str) -> dict | None:
-    """Does NOT queue analysis itself - callers (the API layer) compare the
-    pre-update article_id to the post-update one to tell "just materialized"
-    apart from "already had an article", and background reanalyze_article
-    only for the former, matching how every other on-demand analysis trigger
-    in this codebase runs via FastAPI BackgroundTasks rather than inline.
+    """Approval saves an article; analysis starts only through an explicit run.
 
     Materializing and recording the result on this candidate row happen in one
     transaction: an approval that fails partway must not leave the candidate
-    still 'pending' while an article already exists for it (or vice versa)."""
+    still 'pending' while an article already exists for it (or vice versa).
+    """
     if status not in {"pending", "approved", "rejected"}:
         return None
     candidate = get_candidate(candidate_id)
@@ -291,8 +290,7 @@ def approve_all(project_id: int) -> list[dict]:
     """Approves every still-pending candidate for a project. Already-decided
     ones (approved or rejected) are left alone - this is "approve the rest",
     not "undo any rejections". Every candidate returned here was pending
-    before this call, so its article_id (if any) was just materialized -
-    the API layer can safely queue reanalyze_article for all of them."""
+    before this call. Approval materializes articles without starting analysis."""
     approved = []
     for candidate in list_candidates(project_id):
         if candidate["status"] == "pending":
@@ -303,21 +301,16 @@ def approve_all(project_id: int) -> list[dict]:
 
 
 def approve_for_documents(project_id: int, document_ids: list[int]) -> list[dict]:
-    """Approves every still-pending candidate split out of *these* documents,
-    leaving the rest of the project's pending candidates (from a wizard mid-
-    review elsewhere) untouched - the scoped counterpart of approve_all(),
-    for a caller (the Articles page's import) that only wants to auto-approve
-    what it just uploaded.
+    """Include pending candidates from these documents within this project.
 
-    One Python-level loop, same as approve_all(), but called once per import
-    batch instead of once per candidate over HTTP: the caller is expected to
-    queue exactly one start_or_reuse_analysis_run() after this returns,
-    rather than one per candidate - see project_documents_api.py's route."""
+    Existing review decisions are preserved. Approval materializes saved
+    articles without starting analysis; callers start analysis explicitly.
+    """
     wanted = {int(document_id) for document_id in document_ids}
     if not wanted:
         return []
     approved = []
-    for candidate in list_candidates(project_id):
+    for candidate in list_candidates(project_id, document_ids=sorted(wanted)):
         if candidate["status"] == "pending" and int(candidate["document_id"]) in wanted:
             updated = set_status(candidate["id"], "approved")
             if updated:

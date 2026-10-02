@@ -134,7 +134,7 @@
     "step3": {
       "heading": "Add documents",
       "optionalBadge": "optional",
-      "hint": "Upload files to give your tracked competitors something to be reported on. Each one is extracted as soon as it uploads — text where the file has any, OCR where it doesn’t — split into candidate articles below, and approved automatically. Skip this and add documents later from the workspace if you’d rather do that first.",
+      "hint": "Articles extracted from each new document are automatically included and saved to the Articles page. Delete unwanted saved articles there before starting analysis. Pending candidates can be approved or rejected here. Approval saves articles; analysis starts explicitly.",
       "emptyBody": "Add some above, or finish now and add them later from the workspace.",
       "finish": "Finish",
       "skipFinish": "Skip & finish"
@@ -160,12 +160,12 @@
     "notExtracted": "Not extracted",
     "readingIntoArticles": "Reading your documents into articles...",
     "reviewHeading": "Review extracted articles",
-    "reviewSummary": "{{approved}} approved, {{pending}} pending",
+    "reviewSummary": "{{approved}} included, {{pending}} awaiting approval",
     "approvingEllipsis": "Approving...",
-    "approveAll": "Approve all",
-    "approveAllWithCount": "Approve all ({{count}})",
+    "approveAll": "Approve pending",
+    "approveAllWithCount": "Approve pending ({{count}})",
     "documentFallback": "Document",
-    "approved": "Approved",
+    "approved": "Included · saved article",
     "rejected": "Rejected",
     "rejectAction": "Reject",
     "approveAction": "Approve",
@@ -176,7 +176,7 @@
   },
   "documents": {
     "pageTitleWord": "Documents",
-    "pageHint": "Upload files to give this study evidence to report on. Each one is extracted as soon as it uploads — text where the file has any, OCR where it doesn’t — split into candidate articles, and approved automatically so they’re usable evidence right away. Don’t want one included? Reject it here, or delete it from the Articles page later.",
+    "pageHint": "Articles extracted from each new document are automatically included and saved to the Articles page. Delete unwanted saved articles there before starting analysis. Pending candidates can be approved or rejected here. Approval saves articles; analysis starts explicitly.",
     "doneButton": "Done"
   },
   "workspace": {

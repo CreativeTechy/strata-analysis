@@ -163,7 +163,7 @@ def refresh_competitors_from_mirrored_evidence(project_id: int) -> None:
     try:
         document_analysis.derive_competitors(project_id)
     except Exception:
-        # Best-effort, same reasoning as _try_approve_all_and_queue_analysis:
+        # Best-effort, same reasoning as _try_approve_document_candidates:
         # the mirror rows already landed, so evidence is available for
         # "Run analysis" even if this particular naming pass fails.
         logger.exception("derive_competitors failed after syncing project-document evidence for project %s", project_id)

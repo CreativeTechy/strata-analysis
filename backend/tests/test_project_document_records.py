@@ -231,7 +231,7 @@ class ProcessRecordDocumentTests(unittest.TestCase):
         with patch.object(project_documents_store, "db") as mock_db, \
              patch.object(project_documents_store.project_document_articles,
                           "generate_candidates_from_records") as mock_generate, \
-             patch.object(project_documents_store, "_try_approve_all_and_queue_analysis") as mock_approve:
+             patch.object(project_documents_store, "_try_approve_document_candidates") as mock_approve:
             project_documents_store._process_record_document(document, path, filename)
         updates = " ".join(str(call.args) for call in mock_db.execute.call_args_list)
         return updates, mock_db, mock_generate, mock_approve
@@ -244,7 +244,7 @@ class ProcessRecordDocumentTests(unittest.TestCase):
         document_id, project_id, parsed_records = mock_generate.call_args.args
         self.assertEqual((document_id, project_id), (5, 9))
         self.assertEqual([record["title"] for record in parsed_records], ["A", "B"])
-        mock_approve.assert_called_once_with(9)
+        mock_approve.assert_called_once_with(9, 5)
 
     def test_extracted_text_is_article_text_not_raw_json(self):
         _, mock_db, _, _ = self._run("export.jsonl", '{"title": "A", "text": "one"}\n')
@@ -267,7 +267,7 @@ class ProcessRecordDocumentTests(unittest.TestCase):
             if "articles_status = 'ready'" in call.args[0] and call.args[1:]
         ]
         self.assertTrue(notes and notes[0] and f"of {records.MAX_RECORDS + 2:,} records" in notes[0])
-        mock_approve.assert_called_once_with(9)
+        mock_approve.assert_called_once_with(9, 5)
 
 
 class ProcessDocumentFailureTests(unittest.TestCase):
@@ -390,34 +390,34 @@ class MaterializeRecordCandidateTests(unittest.TestCase):
         self.assertEqual(article["source_provenance"]["original_url"], "https://record.example/story")
 
 
-class AutoApproveAndQueueAnalysisTests(unittest.TestCase):
+class AutoApproveDocumentCandidatesTests(unittest.TestCase):
     """Candidates are approved as soon as they're extracted - no human review
     gate - so this is the function that makes that happen. Excluding one from
     then on is a delete on the Articles page, not a pre-approval reject."""
 
     def test_newly_materialized_candidates_sync_competitor_evidence_but_do_not_start_a_run(self):
-        with patch.object(project_document_articles, "approve_all",
+        with patch.object(project_document_articles, "approve_for_documents",
                            return_value=[{"article_id": 42}]) as mock_approve, \
              patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
-            project_documents_store._try_approve_all_and_queue_analysis(9)
-        mock_approve.assert_called_once_with(9)
+            project_documents_store._try_approve_document_candidates(9, 5)
+        mock_approve.assert_called_once_with(9, [5])
         mock_sync.assert_called_once_with(9)
 
     def test_nothing_materialized_does_not_sync(self):
-        """Every candidate was already approved (e.g. a re-run) - approve_all
-        reports them but materialized nothing new, so there's nothing to sync."""
-        with patch.object(project_document_articles, "approve_all", return_value=[]), \
+        """Every candidate was already approved (e.g. a re-run) - approval
+        materializes nothing new, so there's nothing to sync."""
+        with patch.object(project_document_articles, "approve_for_documents", return_value=[]), \
              patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
-            project_documents_store._try_approve_all_and_queue_analysis(9)
+            project_documents_store._try_approve_document_candidates(9, 5)
         mock_sync.assert_not_called()
 
     def test_approval_failure_is_logged_not_raised(self):
         """A failure here must not propagate: the caller already recorded
         articles_status = 'ready', and process_document's outer guard would
         otherwise overwrite that true state with 'failed'."""
-        with patch.object(project_document_articles, "approve_all", side_effect=RuntimeError("boom")), \
+        with patch.object(project_document_articles, "approve_for_documents", side_effect=RuntimeError("boom")), \
              patch.object(project_documents_store, "sync_competitor_evidence_after_approval") as mock_sync:
-            project_documents_store._try_approve_all_and_queue_analysis(9)  # must not raise
+            project_documents_store._try_approve_document_candidates(9, 5)  # must not raise
         mock_sync.assert_not_called()
 
 

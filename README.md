@@ -31,10 +31,14 @@ leave the operator's machine.
 2. **Split** - the LLM splits each document's text into discrete article
    candidates. A survey export holds many respondents; a report covers several
    distinct mentions. Each becomes its own reviewable item.
-3. **Review** - you approve or reject each candidate. Approving materializes it
-   into the `articles` table and queues its analysis.
-4. **Analyze** - the AI stage pipeline runs over it: sentiment, tone, topics,
-   demographics, entities, structured feedback.
+3. **Review** - candidates from each processed document are automatically
+   included and materialized as saved articles. Delete unwanted saved articles
+   from the Articles page before analysis. Candidates still pending after an
+   approval failure can be approved or rejected in the review step. Processing
+   another document leaves existing review decisions untouched.
+4. **Analyze** - choose **Run analysis** explicitly to start sentiment, tone,
+   topics, demographics, entities, and structured feedback. Approval and saving
+   an article do not start analysis.
 
 A JSONL import (`Articles → Import`) is the other way in, for moving data
 between deployments or bringing in an export from elsewhere.

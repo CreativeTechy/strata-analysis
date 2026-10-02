@@ -27,10 +27,10 @@ project_document_articles.generate_candidates() in the same background
 task - `articles_status` (pending -> generating -> ready/failed, or 'skipped'
 when extraction itself failed) is that step's own progress signal, tracked the
 same way status/extraction_error track extraction. Every candidate generated
-this way is then auto-approved (`_approve_all_and_queue_analysis`): there is
+this way is then auto-approved (`_try_approve_document_candidates`): there is
 no human-review gate between "split into candidates" and "materialized into
 `articles`" - a user who doesn't want one included deletes it from the
-Articles page afterward instead of rejecting it beforehand.
+Articles page afterward. Analysis is started explicitly with Run analysis.
 
 A .json/.jsonl/.ndjson upload is already a list of articles, so it skips both
 OCR and the LLM split: _process_record_document() parses it with
@@ -242,7 +242,7 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
         )
         return
 
-    _try_approve_all_and_queue_analysis(document["project_id"])
+    _try_approve_document_candidates(document["project_id"], document_id)
 
 
 def _process_record_document(document: dict, disk_path: Path, filename: str) -> None:
@@ -318,34 +318,21 @@ def _process_record_document(document: dict, disk_path: Path, filename: str) -> 
         "update project_documents set articles_status = 'ready', articles_error = %s where id = %s",
         (note, document_id),
     )
-    _try_approve_all_and_queue_analysis(document["project_id"])
+    _try_approve_document_candidates(document["project_id"], document_id)
 
 
-def _try_approve_all_and_queue_analysis(project_id: int) -> None:
-    """Extracted candidates start out approved rather than waiting for a human
-    review click - the review step is now "delete what you don't want" on the
-    materialized Articles page, not "pick what you do". Reuses set_status's own
-    materialize-then-analyze path (project_document_articles.approve_all), so
-    an auto-approved candidate is indistinguishable from a manually-approved
-    one downstream.
+def _try_approve_document_candidates(project_id: int, document_id: int) -> None:
+    """Include only this document's pending candidates and save their articles.
 
-    Despite the name, this no longer starts an analysis run automatically -
-    only approval/materialization happens on its own; analysis is something
-    the user now starts explicitly (the Analysis page's "Run analysis", or
-    the document review's own manual trigger). Kept as a no-op function name
-    rather than renamed outright since callers elsewhere still refer to "the
-    auto-approve step" by this name.
-
-    Failures here are logged rather than raised: process_document's caller
-    already recorded articles_status = 'ready' (splitting genuinely
-    succeeded), and letting an approval hiccup bubble up would have the outer
-    try/except in process_document overwrite that true state with 'failed' -
-    the candidates would still be there, just still 'pending' for someone to
-    approve by hand."""
+    Analysis starts explicitly through Run analysis. Existing decisions in
+    this document and pending reviews in other documents are left alone.
+    Approval failures are logged without overwriting successful extraction;
+    remaining pending candidates can still be approved manually.
+    """
     try:
-        approved = project_document_articles.approve_all(project_id)
+        approved = project_document_articles.approve_for_documents(project_id, [document_id])
     except Exception:
-        logger.exception("auto-approving extracted candidates failed for project %s", project_id)
+        logger.exception("auto-approving extracted candidates failed for document %s", document_id)
         return
     if any(candidate.get("article_id") for candidate in approved):
         sync_competitor_evidence_after_approval(project_id)

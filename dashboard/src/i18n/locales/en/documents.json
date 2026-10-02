@@ -2,7 +2,7 @@
   "wizard": {
     "stepNav": {
       "upload": { "label": "Upload documents", "detail": "Add the files to analyze" },
-      "review": { "label": "Review articles", "detail": "Approve what should be analyzed" }
+      "review": { "label": "Review articles", "detail": "Check included articles before analysis" }
     },
     "upload": {
       "stepHeading": "Step {{step}}. Upload documents",
@@ -43,14 +43,14 @@
     },
     "review": {
       "stepHeading": "Step {{step}}. Review articles",
-      "summaryChip": "{{approved}} approved, {{pending}} pending",
-      "description": "Strata read your documents into individual articles and approved them all for analysis. Don’t want one included? Reject it here, or delete it from the Articles page later.",
+      "summaryChip": "{{approved}} included, {{pending}} awaiting approval",
+      "description": "Articles extracted from each new document are automatically included and saved to the Articles page. Delete unwanted saved articles there before choosing Run analysis. Pending candidates can be approved or rejected here. Approval saves an article; analysis starts only when you choose Run analysis.",
       "loadingTitle": "Reading your documents into articles...",
       "emptyTitle": "No articles yet",
       "emptySplittingFailed": "Splitting failed for at least one document — try re-uploading it.",
       "emptyGoBack": "Go back and upload a document to get started.",
       "emptyNoDocuments": "No documents were uploaded. You can finish the project now and add articles later.",
-      "approveAllButton": "Approve all",
+      "approveAllButton": "Approve pending",
       "approveAllCount": " ({{count}})",
       "approving": "Approving...",
       "documentFallback": "Document",
@@ -59,7 +59,7 @@
         "analysisFailed": "Analysis failed",
         "analyzing": "Analyzing...",
         "notAnalyzed": "Not analyzed yet",
-        "approved": "Approved",
+        "approved": "Included · saved article",
         "rejected": "Rejected"
       },
       "rejectButton": "Reject",
