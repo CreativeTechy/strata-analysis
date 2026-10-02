@@ -496,6 +496,15 @@ REGION_DETECTION_CONFIDENCE_THRESHOLD = float(
 # LLM round trip against a single local Ollama server isn't free.
 REGION_DETECTION_LLM_FALLBACK = os.environ.get("REGION_DETECTION_LLM_FALLBACK", "off").strip().lower()
 
+# "off" (default) or "on" - "on" bypasses the majority vote over
+# structured_extraction's per-quote gender/age_range tags entirely and
+# answers from a single direct LLM call instead (see
+# analysis/demographics_detection.py's _llm_only_demographics()), through the
+# same configured provider as the rest of the pipeline (config.LLM_PROVIDER).
+# Off by default for the same reason as REGION_DETECTION_LLM_FALLBACK above -
+# a per-article LLM round trip against a single local Ollama server isn't free.
+DEMOGRAPHICS_LLM_FALLBACK = os.environ.get("DEMOGRAPHICS_LLM_FALLBACK", "off").strip().lower()
+
 # Chunking for long article text: applied uniformly by article_prep.py before
 # handing text to any model with a limited context window.
 ANALYSIS_CHUNK_SIZE_CHARS = int(os.environ.get("ANALYSIS_CHUNK_SIZE_CHARS", "2000") or 2000)

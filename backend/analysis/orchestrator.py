@@ -27,8 +27,8 @@ import logging
 from datetime import datetime, timezone
 
 import config
-from analysis import article_prep, classification, entity_extraction, language, region_detection, structured_extraction
-from analysis.aggregation import compute_dominant_demographics, compute_overall_tone
+from analysis import article_prep, classification, demographics_detection, entity_extraction, language, region_detection, structured_extraction
+from analysis.aggregation import compute_overall_tone
 from analysis.sentiment import classify_article_sentiment
 from embeddings import build_article_embedding_text, get_embedding
 
@@ -211,7 +211,9 @@ def analyze_article(article: dict, *, project_context: str = "") -> dict:
     writer_tone = writer_tone_result["label"]
     article_tone = article_tone_result["label"]
     overall_tone = compute_overall_tone(article_tone, writer_tone)
-    dominant_demographics = compute_dominant_demographics(extracted.get("people_opinions"))
+    dominant_demographics = demographics_detection.detect_demographics(
+        title=model_title, text=model_text, people_opinions=extracted.get("people_opinions"),
+    )
     region_result = region_detection.detect_region(
         title=model_title,
         text=model_text,
