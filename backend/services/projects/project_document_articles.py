@@ -50,8 +50,9 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = load_prompt("project_document_article_extraction_system_prompt.txt")
 PROMPT_VERSION = "project-document-article-extraction-2026-08-18"
 
-MAX_INPUT_CHARS = 12000  # matches embeddings.py's article-embedding-text cap
-MAX_CANDIDATES = 20
+MAX_INPUT_CHARS = 12000  # per-chunk LLM input size, matches embeddings.py's article-embedding-text cap
+MAX_CANDIDATES_PER_CHUNK = 20
+MAX_CANDIDATES = 100  # across the whole document, once it's been split into MAX_INPUT_CHARS-sized chunks
 
 CANDIDATE_COLUMNS = """
     pda.id, pda.document_id, pda.project_id, pda.title, pda.summary, pda.status, pda.article_id,
@@ -69,10 +70,39 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def _ask_llm(text: str, filename: str) -> list[dict]:
+def _split_into_chunks(text: str, max_chars: int) -> list[str]:
+    """Breaks text into MAX_INPUT_CHARS-sized windows so a document longer than
+    one LLM call's input isn't silently cut down to its first window - every
+    window gets its own _ask_llm() call in generate_candidates(). Prefers a
+    blank-line boundary near the end of a window over a hard cut, so an
+    article isn't split in half across two chunks more often than necessary."""
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(start + max_chars, length)
+        if end < length:
+            boundary = text.rfind("\n\n", start + max_chars // 2, end)
+            if boundary != -1:
+                end = boundary
+        piece = text[start:end].strip()
+        if piece:
+            chunks.append(piece)
+        start = end
+    return chunks
+
+
+def _ask_llm(text: str, filename: str, *, part: int | None = None, total_parts: int | None = None) -> list[dict]:
+    part_note = f" (part {part} of {total_parts})" if total_parts and total_parts > 1 else ""
     user_prompt = (
-        f"Source document: {filename}\n\n"
-        f"<document>\n{text[:MAX_INPUT_CHARS]}\n</document>\n\n"
+        f"Source document: {filename}{part_note}\n\n"
+        f"<document>\n{text}\n</document>\n\n"
         "Return the JSON now."
     )
     raw = chat_completion(
@@ -96,7 +126,7 @@ def _ask_llm(text: str, filename: str) -> list[dict]:
         return []
 
     cleaned = []
-    for item in items[:MAX_CANDIDATES]:
+    for item in items[:MAX_CANDIDATES_PER_CHUNK]:
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or "").strip()
@@ -107,14 +137,44 @@ def _ask_llm(text: str, filename: str) -> list[dict]:
     return cleaned
 
 
-def generate_candidates(document_id: int, project_id: int, text: str, filename: str) -> list[dict]:
-    """Calls the LLM and persists each result as a 'pending' candidate.
+def generate_candidates(document_id: int, project_id: int, text: str, filename: str) -> dict:
+    """Splits text into MAX_INPUT_CHARS windows, calls the LLM on each in turn,
+    and persists every result as a 'pending' candidate - so a document longer
+    than one LLM call's input still gets split end to end instead of only its
+    first ~12,000 characters.
+
+    Returns {"candidates": [...], "truncated": bool, "chunks_processed": int}
+    rather than a bare list - "truncated" is true when MAX_CANDIDATES (the
+    overall per-document cap) was hit before every chunk had been processed,
+    which the caller (project_documents_store._extract_document) surfaces as
+    an articles_error note, the same way a .jsonl import's own record cap does.
 
     Raises LLMError/json errors rather than swallowing them - the caller
-    (project_documents_store.process_document) records articles_status
-    from whether this raised, so a failure is visible rather than silently
-    producing zero candidates that read the same as "nothing to extract"."""
-    return _insert_candidates(document_id, project_id, _ask_llm(text, filename))
+    records articles_status from whether this raised, so a failure is visible
+    rather than silently producing zero candidates that read the same as
+    "nothing to extract"."""
+    chunks = _split_into_chunks(text, MAX_INPUT_CHARS)
+    items: list[dict] = []
+    truncated = False
+    chunks_processed = 0
+    for index, chunk in enumerate(chunks, start=1):
+        if len(items) >= MAX_CANDIDATES:
+            truncated = True
+            break
+        chunks_processed = index
+        chunk_items = _ask_llm(chunk, filename, part=index, total_parts=len(chunks))
+        room = MAX_CANDIDATES - len(items)
+        if len(chunk_items) > room:
+            chunk_items = chunk_items[:room]
+            truncated = True
+        items.extend(chunk_items)
+
+    return {
+        "candidates": _insert_candidates(document_id, project_id, items),
+        "truncated": truncated or chunks_processed < len(chunks),
+        "chunks_processed": chunks_processed,
+        "total_chunks": len(chunks),
+    }
 
 
 def generate_candidates_from_records(document_id: int, project_id: int, records: list[dict]) -> list[dict]:
