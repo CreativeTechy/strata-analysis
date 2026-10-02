@@ -209,8 +209,7 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
 
     db.execute("update competitor_documents set articles_status = 'generating' where id = %s", (document_id,))
     try:
-        competitor_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
-        db.execute("update competitor_documents set articles_status = 'ready' where id = %s", (document_id,))
+        result = competitor_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
     except Exception as exc:
         db.execute(
             "update competitor_documents set articles_status = 'failed', articles_error = %s where id = %s",
@@ -218,6 +217,20 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
         )
         return
 
+    # A document whose text took more chunks than the per-document candidate
+    # cap allows is reported rather than left to look fully covered - mirrors
+    # the .jsonl import's own "Imported the first X of Y records" note below.
+    note = None
+    if result.get("truncated"):
+        note = (
+            f"Generated {len(result['candidates']):,} article candidates from "
+            f"{result['chunks_processed']:,} of {result['total_chunks']:,} parts of this document. "
+            "Split the file to cover the rest."
+        )
+    db.execute(
+        "update competitor_documents set articles_status = 'ready', articles_error = %s where id = %s",
+        (note, document_id),
+    )
     _try_approve_document_candidates(document["project_id"], document_id)
 
 
