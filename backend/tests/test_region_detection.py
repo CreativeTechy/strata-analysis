@@ -186,7 +186,7 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("analysis.region_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_llm_answer_is_used_even_when_rule_based_signals_would_disagree(self, mock_chat):
         mock_chat.return_value = '{"country": "Lebanon"}'
         result = region_detection.detect_region(
@@ -201,7 +201,7 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         self.assertFalse(result["region_low_confidence"])
         mock_chat.assert_called_once()
 
-    @patch("analysis.region_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_rule_based_scan_never_runs_in_this_mode(self, mock_chat):
         """A body that would trivially resolve via the rule-based scan alone
         (a bare, unambiguous country mention) must still go through the LLM
@@ -212,7 +212,7 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         self.assertEqual(result["region"], "unknown")
         self.assertEqual(result["region_confidence"], 0.0)
 
-    @patch("analysis.region_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_unparseable_json_returns_unknown_rather_than_falling_back_to_the_scan(self, mock_chat):
         """The model's own response being unusable (not the provider call
         itself failing) is this function's problem to handle - see
@@ -224,7 +224,7 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         self.assertEqual(result["region_confidence"], 0.0)
         self.assertTrue(result["region_low_confidence"])
 
-    @patch("analysis.region_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_non_object_json_returns_unknown_rather_than_crashing(self, mock_chat):
         """llm_client.chat_completion's json_mode only guarantees well-formed
         JSON syntax, not a particular shape - a bare array/string is valid
@@ -237,7 +237,7 @@ class LlmOnlyRegionModeTests(unittest.TestCase):
         self.assertTrue(result["region_low_confidence"])
 
     @patch(
-        "analysis.region_detection.llm_client.chat_completion",
+        "analysis.llm_fallback.llm_client.chat_completion",
         side_effect=llm_client.LLMConnectionError("ollama unreachable"),
     )
     def test_provider_failure_propagates_instead_of_being_swallowed(self, mock_chat):

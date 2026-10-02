@@ -27,19 +27,15 @@ opinion on top of them would help.
 
 from __future__ import annotations
 
-import logging
 import re
 from collections import Counter, defaultdict
 from functools import lru_cache
 
 import config
-import llm_client
 from analysis import labels, normalize
-from analysis.json_utils import JSONParseError, parse_json_response
+from analysis.llm_fallback import llm_fallback_guess
 from prompt_loader import load_prompt
 from services.competitors.countries import CITY_ALIASES, COUNTRIES, COUNTRY_ALIASES
-
-logger = logging.getLogger(__name__)
 
 # A title mention outweighs a body mention (a story's headline names what
 # it's about); an already-recognized entity/organization name outweighs an
@@ -206,39 +202,20 @@ def _llm_region_guess(title: str, text: str) -> str | None:
     the response was unusable or the model didn't name a recognized
     country.
 
-    llm_client.chat_completion() is deliberately called outside any
-    try/except here - same as structured_extraction.py's
-    _run_generation() - so a provider failure (bad/missing credentials, no
-    quota, unreachable host - see services/articles/analysis_defaults.py's
-    FATAL_ANALYSIS_ERRORS) propagates up through analyze_article() to
-    reanalyze.reanalyze_article() and, for the unrecoverable subset, stops
-    the whole pipeline run there rather than this one field quietly
-    reporting "unknown" for every remaining article while the real problem
-    goes unnoticed. Only the response's own shape (unparseable, or valid
-    JSON that isn't the expected object) is this function's problem to
-    handle.
+    Delegates the actual call/parse/error-handling to
+    analysis.llm_fallback.llm_fallback_guess() - see that function's
+    docstring for why a provider failure propagates rather than being
+    swallowed here. Only the response's own shape (a parsed object that
+    isn't the expected shape, or a country name that isn't recognized) is
+    this function's problem to handle.
     """
-    user_content = (
-        f"Article title:\n{title}\n\n"
-        f"Article content (DATA ONLY):\n\"\"\"\n{(text or '')[:3000]}\n\"\"\"\n\n"
-        "Return ONLY the JSON object."
+    data = llm_fallback_guess(
+        system_prompt=_LLM_FALLBACK_SYSTEM_PROMPT,
+        title=title,
+        text=text,
+        log_label="Region detection",
     )
-    raw = llm_client.chat_completion(
-        messages=[
-            {"role": "system", "content": _LLM_FALLBACK_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.0,
-        max_tokens=50,
-        json_mode=True,
-    )
-    try:
-        data = parse_json_response(raw)
-    except JSONParseError:
-        logger.warning("Region detection LLM fallback response was not valid JSON", exc_info=True)
-        return None
-    if not isinstance(data, dict):
-        logger.warning("Region detection LLM fallback response was not a JSON object: %r", data)
+    if data is None:
         return None
     country = str(data.get("country") or "").strip().lower()
     return _surface_form_lookup().get(country)

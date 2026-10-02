@@ -27,7 +27,7 @@ class DetectDemographicsDefaultModeTests(unittest.TestCase):
         self.assertEqual(result["gender"], "unknown")
         self.assertEqual(result["age_range"], "unknown")
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_llm_never_called_in_default_mode(self, mock_chat):
         demographics_detection.detect_demographics(title="t", text="x", people_opinions=[])
         mock_chat.assert_not_called()
@@ -42,7 +42,7 @@ class LlmOnlyDemographicsModeTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_llm_answer_is_used_even_when_vote_would_disagree(self, mock_chat):
         mock_chat.return_value = '{"gender": "female", "age_range": "35-44"}'
         result = demographics_detection.detect_demographics(
@@ -52,7 +52,7 @@ class LlmOnlyDemographicsModeTests(unittest.TestCase):
         self.assertEqual(result["age_range"], "35-44")
         mock_chat.assert_called_once()
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_majority_vote_never_runs_in_this_mode(self, mock_chat):
         mock_chat.return_value = '{"gender": "unknown", "age_range": "unknown"}'
         result = demographics_detection.detect_demographics(
@@ -61,21 +61,21 @@ class LlmOnlyDemographicsModeTests(unittest.TestCase):
         mock_chat.assert_called_once()
         self.assertEqual(result["gender"], "unknown")
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_unparseable_json_returns_unknown_rather_than_falling_back_to_the_vote(self, mock_chat):
         mock_chat.return_value = "not json at all"
         result = demographics_detection.detect_demographics(title="t", text="x")
         self.assertEqual(result["gender"], "unknown")
         self.assertEqual(result["age_range"], "unknown")
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_non_object_json_returns_unknown_rather_than_crashing(self, mock_chat):
         mock_chat.return_value = '["female"]'
         result = demographics_detection.detect_demographics(title="t", text="x")
         self.assertEqual(result["gender"], "unknown")
         self.assertEqual(result["age_range"], "unknown")
 
-    @patch("analysis.demographics_detection.llm_client.chat_completion")
+    @patch("analysis.llm_fallback.llm_client.chat_completion")
     def test_aliases_in_llm_response_are_normalized(self, mock_chat):
         mock_chat.return_value = '{"gender": "she", "age_range": "65+"}'
         result = demographics_detection.detect_demographics(title="t", text="x")
@@ -83,7 +83,7 @@ class LlmOnlyDemographicsModeTests(unittest.TestCase):
         self.assertEqual(result["age_range"], "65_plus")
 
     @patch(
-        "analysis.demographics_detection.llm_client.chat_completion",
+        "analysis.llm_fallback.llm_client.chat_completion",
         side_effect=llm_client.LLMConnectionError("ollama unreachable"),
     )
     def test_provider_failure_propagates_instead_of_being_swallowed(self, mock_chat):

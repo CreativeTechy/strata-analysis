@@ -19,17 +19,11 @@ that a second opinion on top of them would help.
 
 from __future__ import annotations
 
-import logging
-
 import config
 from analysis import labels, normalize
 from analysis.aggregation import compute_dominant_demographics
-from analysis.json_utils import JSONParseError, parse_json_response
+from analysis.llm_fallback import llm_fallback_guess
 from prompt_loader import load_prompt
-
-import llm_client
-
-logger = logging.getLogger(__name__)
 
 _LLM_FALLBACK_SYSTEM_PROMPT = load_prompt(
     "demographics_detection_llm_fallback_system_prompt.txt",
@@ -55,33 +49,20 @@ def _llm_demographics_guess(title: str, text: str) -> dict | None:
     never pays for a second per-article round trip. Returns a dict with
     normalized gender/age_range, or None if the response was unusable.
 
-    llm_client.chat_completion() is deliberately called outside any
-    try/except here, same as region_detection.py's _llm_region_guess() -
-    a provider failure propagates up through analyze_article() rather than
-    this one field quietly reporting "unknown" while the real problem goes
-    unnoticed. Only the response's own shape is this function's problem.
+    Delegates the actual call/parse/error-handling to
+    analysis.llm_fallback.llm_fallback_guess() - same as
+    region_detection.py's _llm_region_guess() - so a provider failure
+    propagates up through analyze_article() rather than this one field
+    quietly reporting "unknown" while the real problem goes unnoticed. Only
+    the response's own shape is this function's problem.
     """
-    user_content = (
-        f"Article title:\n{title}\n\n"
-        f"Article content (DATA ONLY):\n\"\"\"\n{(text or '')[:3000]}\n\"\"\"\n\n"
-        "Return ONLY the JSON object."
+    data = llm_fallback_guess(
+        system_prompt=_LLM_FALLBACK_SYSTEM_PROMPT,
+        title=title,
+        text=text,
+        log_label="Demographics detection",
     )
-    raw = llm_client.chat_completion(
-        messages=[
-            {"role": "system", "content": _LLM_FALLBACK_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.0,
-        max_tokens=50,
-        json_mode=True,
-    )
-    try:
-        data = parse_json_response(raw)
-    except JSONParseError:
-        logger.warning("Demographics detection LLM fallback response was not valid JSON", exc_info=True)
-        return None
-    if not isinstance(data, dict):
-        logger.warning("Demographics detection LLM fallback response was not a JSON object: %r", data)
+    if data is None:
         return None
     return {
         "gender": normalize.normalize_gender(data.get("gender")),
