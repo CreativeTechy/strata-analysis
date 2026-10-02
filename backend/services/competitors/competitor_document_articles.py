@@ -145,10 +145,12 @@ def _insert_candidates(document_id: int, project_id: int, items: list[dict]) -> 
     return saved
 
 
-def list_candidates(project_id: int) -> list[dict]:
+def list_candidates(project_id: int, document_ids: list[int] | None = None) -> list[dict]:
+    document_filter = "" if document_ids is None else "and document_id = any(%s)"
+    params = (int(project_id),) if document_ids is None else (int(project_id), document_ids)
     return db.fetch_all(
-        f"select {CANDIDATE_COLUMNS} from competitor_document_articles where project_id = %s order by created_at",
-        (int(project_id),),
+        f"select {CANDIDATE_COLUMNS} from competitor_document_articles where project_id = %s {document_filter} order by created_at",
+        params,
     )
 
 
@@ -261,6 +263,20 @@ def approve_all(project_id: int) -> list[dict]:
     approved = []
     for candidate in list_candidates(project_id):
         if candidate["status"] == "pending":
+            updated = set_status(candidate["id"], "approved")
+            if updated:
+                approved.append(updated)
+    return approved
+
+
+def approve_for_documents(project_id: int, document_ids: list[int]) -> list[dict]:
+    """Include only these documents' pending candidates; analysis is explicit."""
+    wanted = {int(document_id) for document_id in document_ids}
+    if not wanted:
+        return []
+    approved = []
+    for candidate in list_candidates(project_id, document_ids=sorted(wanted)):
+        if candidate["status"] == "pending" and int(candidate["document_id"]) in wanted:
             updated = set_status(candidate["id"], "approved")
             if updated:
                 approved.append(updated)

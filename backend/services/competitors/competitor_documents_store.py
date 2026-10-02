@@ -21,7 +21,7 @@ competitor_document_articles.generate_candidates() in the same background
 task - `articles_status` (pending -> generating -> ready/failed, or 'skipped'
 when extraction itself failed) is that step's own progress signal, tracked the
 same way status/extraction_error track extraction. Every candidate generated
-this way is then auto-approved (competitor_document_articles.approve_all):
+this way is then auto-approved (competitor_document_articles.approve_for_documents):
 there is no human-review gate between "split into candidates" and
 "materialized into `articles`" - a user who doesn't want one included deletes
 it from the Articles page afterward instead of rejecting it beforehand.
@@ -218,7 +218,7 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
         )
         return
 
-    _try_approve_all(document["project_id"])
+    _try_approve_document_candidates(document["project_id"], document_id)
 
 
 def _process_record_document(document: dict, disk_path: Path, filename: str) -> None:
@@ -294,23 +294,19 @@ def _process_record_document(document: dict, disk_path: Path, filename: str) -> 
         "update competitor_documents set articles_status = 'ready', articles_error = %s where id = %s",
         (note, document_id),
     )
-    _try_approve_all(document["project_id"])
+    _try_approve_document_candidates(document["project_id"], document_id)
 
 
-def _try_approve_all(project_id: int) -> None:
-    """Extracted candidates start out approved rather than waiting for a human
-    review click - the review step is now "delete what you don't want" on the
-    materialized Articles page, not "pick what you do".
+def _try_approve_document_candidates(project_id: int, document_id: int) -> None:
+    """Include and materialize only this document's pending candidates.
 
-    Failures here are logged rather than raised: the caller already recorded
-    articles_status = 'ready' (splitting genuinely succeeded), and letting an
-    approval hiccup bubble up would have process_document's outer try/except
-    overwrite that true state with 'failed' - the candidates would still be
-    there, just still 'pending' for someone to approve by hand."""
+    Analysis starts explicitly. Approval failures are logged without changing
+    successful extraction; pending candidates remain available for review.
+    """
     try:
-        competitor_document_articles.approve_all(project_id)
+        competitor_document_articles.approve_for_documents(project_id, [document_id])
     except Exception:
-        logger.exception("auto-approving extracted candidates failed for project %s", project_id)
+        logger.exception("auto-approving extracted candidates failed for document %s", document_id)
 
 
 def get_document_text(document_id: int) -> str | None:
