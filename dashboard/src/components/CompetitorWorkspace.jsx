@@ -162,9 +162,9 @@ function FindingRow({ finding, onOpen, t, locale }) {
 
 function StatTile({ icon: Icon, label, value, tone }) {
   return (
-    <div className="cs-panel" style={{ padding: '15px 17px', flex: '1 1 150px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-light)', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-        <Icon size={13} /> {label}
+    <div className="cs-panel" style={{ padding: '15px 17px', flex: '1 1 150px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-light)', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', minHeight: '2.2em' }}>
+        <Icon size={13} style={{ flexShrink: 0 }} /> {label}
       </div>
       <div style={{ fontSize: '1.5rem', fontWeight: 680, marginTop: 6, color: tone || 'var(--text-dark)', letterSpacing: '-0.02em' }}>
         {value}

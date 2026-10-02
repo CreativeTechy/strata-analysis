@@ -51,11 +51,15 @@ from psycopg.types.json import Jsonb
 import config
 import db
 from content_guard import is_blocked_article
-from embeddings import cosine_similarity
+from embeddings import build_project_embedding_text, cosine_similarity
 from llm_client import LLMError, chat_completion
 from prompt_loader import load_prompt
 from services.competitors import analysis_runs_store
+from services.competitors import business_profile_store
 from services.competitors.idea_extraction import extract_frequent_ideas_for_documents
+from services.articles.relevance_screening import screen_project_articles
+from services.pipeline.pipeline_runs import update_pipeline_run, upsert_pipeline_run_document_stats
+from services.projects.projects_store import get_project
 
 logger = logging.getLogger(__name__)
 
@@ -331,9 +335,15 @@ def _candidate_articles(project_id: int, pipeline_run_id: str | None = None,
     offers over `articles.pipeline_run_id`.
     """
     if document_ids:
+        # distinct: the same article can be approved more than once under a
+        # document (re-extraction, a document re-uploaded under a new id with
+        # overlapping content) - competitor_document_articles has one row per
+        # approval, not per distinct article, so a plain join here would hand
+        # the same article to the mention-validation loop below once per
+        # approval row and double (or worse) count it as evidence.
         return db.fetch_all(
             """
-            select a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
+            select distinct a.id, a.url, a.source, a.source_url, a.title, a.summary, a.text,
                    a.published_at, a.published_precision, a.created_at,
                    a.content_changed_at, a.story_id,
                    a.sentiment, a.article_category, a.embedding_json
@@ -360,6 +370,26 @@ def _candidate_articles(project_id: int, pipeline_run_id: str | None = None,
         """,
         params,
     )
+
+
+def _document_article_ids(project_id: int, document_ids: list[int]) -> dict[int, set[int]]:
+    """Distinct approved article ids per document, for reconciling the
+    per-document pipeline_run_documents breakdown with which of those
+    articles actually ended up kept as evidence (see run_analysis_job)."""
+    if not document_ids:
+        return {}
+    rows = db.fetch_all(
+        """
+        select distinct document_id, article_id
+        from competitor_document_articles
+        where project_id = %s and status = 'approved' and document_id = any(%s)
+        """,
+        (int(project_id), [int(d) for d in document_ids]),
+    )
+    mapping: dict[int, set[int]] = {}
+    for row in rows:
+        mapping.setdefault(int(row["document_id"]), set()).add(int(row["article_id"]))
+    return mapping
 
 
 def _competitor_embedding_map(competitors: list[dict]) -> dict[int, list[float]]:
@@ -414,7 +444,9 @@ def _semantic_match(article_vector, competitor_vector) -> float | None:
 def validate_competitor_articles(project_id: int, competitors: list[dict],
                                  period_days: int = DEFAULT_PERIOD_DAYS,
                                  pipeline_run_id: str | None = None,
-                                 document_ids: list[int] | None = None, log=None) -> dict:
+                                 document_ids: list[int] | None = None, log=None,
+                                 profile: dict | None = None,
+                                 analysis_run_id: int | None = None) -> dict:
     """Attribute articles to competitors, recording accept/reject reasons.
 
     Returns per-competitor counts plus an aggregate rejection breakdown, so the
@@ -425,9 +457,39 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     means `period_days` is ignored entirely rather than applied on top, since
     the document set is already a fixed, bounded pool. `document_ids` takes
     precedence when both would otherwise apply.
+
+    `profile` (the study's business profile) and `analysis_run_id` (the
+    persisted competitor-analysis run this call is part of) together gate a
+    first, project-scope pass before the per-competitor mention check below:
+    services.articles.relevance_screening.screen_project_articles asks
+    whether each candidate is even relevant to what this study tracks at all,
+    independent of which competitor it might name. Falls back to the study's
+    generic project fields (name/description/keywords - the same text an
+    opinion-monitor project screens against) when there is no business
+    profile yet, since most studies in practice never fill that wizard in and
+    "no profile" would otherwise mean screening silently never runs. Skipped
+    entirely only when there is no scope text at all (a bare, undescribed
+    study) or this isn't tied to a persisted run (e.g. a non-UI caller).
     """
     log = log or (lambda *_args, **_kwargs: None)
     articles = _candidate_articles(project_id, pipeline_run_id, document_ids)
+
+    screening = None
+    scope_text = (business_profile_store.build_scope_text(profile)
+                  or build_project_embedding_text(get_project(project_id) or {}))
+    if scope_text and analysis_run_id and articles:
+        screening = screen_project_articles(
+            project_id, str(analysis_run_id),
+            article_ids=[int(a["id"]) for a in articles],
+            scope_text=scope_text,
+        )
+        included_ids = set(screening["included_ids"])
+        excluded_count = len(articles) - len(included_ids)
+        articles = [a for a in articles if int(a["id"]) in included_ids]
+        if excluded_count:
+            log(f"Excluded {excluded_count} article(s) as not relevant to this study's scope.",
+                "excluded_irrelevant", {"count": excluded_count})
+
     since = None
     if not pipeline_run_id and not document_ids:
         since = datetime.now(timezone.utc) - timedelta(days=period_days) if period_days else None
@@ -547,7 +609,12 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
                 rows,
             )
 
-    kept = sum(stats["valid"] for stats in per_competitor.values())
+    # Deduplicated by article, not summed per-competitor: one article valid
+    # for several competitors is still one analyzed article, and this number
+    # is reported upstream as `articles_analyzed` against `articles_selected`
+    # (a per-article count), so it must never exceed it.
+    kept_article_ids = {row[1] for row in rows if row[4] == "valid"}
+    kept = len(kept_article_ids)
     log(f"Kept {kept} article(s) as evidence.", "kept_evidence", {"count": kept})
     if rejection_reasons:
         ordered_reasons = sorted(rejection_reasons.items(), key=lambda item: -item[1])
@@ -564,6 +631,8 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
     return {
         "scanned": len(articles),
         "linked": len(rows),
+        "kept": kept,
+        "kept_article_ids": sorted(kept_article_ids),
         "per_competitor": {
             competitor_id: {
                 "valid": stats["valid"],
@@ -576,6 +645,7 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
         "period_days": None if (pipeline_run_id or document_ids) else period_days,
         "pipeline_run_id": pipeline_run_id,
         "document_ids": document_ids,
+        "screening": screening,
     }
 
 
@@ -957,7 +1027,8 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     log(f"Analyzing {len(competitors)} tracked competitor{'' if len(competitors) == 1 else 's'}.",
         "analyzing_competitors", {"count": len(competitors)})
     validation = validate_competitor_articles(project_id, competitors, period_days,
-                                              pipeline_run_id, document_ids, log=log)
+                                              pipeline_run_id, document_ids, log=log,
+                                              profile=profile, analysis_run_id=analysis_run_id)
 
     period_start = period_end = None
     if document_ids:
@@ -1113,9 +1184,14 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
     Every failure path ends as a `failed` run carrying a readable message
     rather than an exception nobody sees: this executes after the response has
     already been sent, so raising here would only reach the server log.
+
+    Mirrors status/counters into pipeline_runs (same id, created by
+    competitor_api.analyze()) alongside each analysis_runs_store call, so this
+    run's progress shows up on the main Analysis Runs dashboard too.
     """
     log = analysis_runs_store.logger(run_id)
     analysis_runs_store.mark_running(run_id)
+    update_pipeline_run(str(run_id), status="running", stage="analyze", message="Analyzing competitors...")
     try:
         resolved = analysis_runs_store.resolve_scope(project_id, scope, document_ids)
         if not resolved:
@@ -1128,10 +1204,22 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
             )
             log(message, code)
             analysis_runs_store.mark_failed(run_id, message)
+            update_pipeline_run(str(run_id), status="failed", stage="error", error=message)
             return
 
         log(f"Scope: {len(resolved)} document{'' if len(resolved) == 1 else 's'}.",
             "scope_documents", {"count": len(resolved)})
+        resolved_set = set(resolved)
+        upsert_pipeline_run_document_stats(str(run_id), {
+            doc["original_filename"] or f"Document {doc['id']}": {
+                "document_id": doc["id"],
+                "selected": doc["approved_article_count"],
+                "analyzed": doc["approved_article_count"],
+                "failed": 0,
+            }
+            for doc in analysis_runs_store.documents_with_scope(project_id)
+            if int(doc["id"]) in resolved_set
+        })
         extract_frequent_ideas_for_documents(project_id, resolved, log=log)
         result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log)
 
@@ -1142,14 +1230,60 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
                 run_id, result["error"], result.get("generated") or 0,
                 result.get("skipped"), result.get("validation"),
             )
+            update_pipeline_run(str(run_id), status="failed", stage="error", error=result["error"])
             return
 
         analysis_runs_store.record_covered_documents(run_id, resolved)
         analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
+        validation = result["validation"] or {}
+        screening = validation.get("screening") or {}
+
+        # The stats written above (just before generate_findings) are a
+        # placeholder of "every approved article will be analyzed" so the
+        # dashboard has something to show while the run is in flight. Now
+        # that validation has actually run, replace them with how many of
+        # each document's approved articles were kept as evidence, so the
+        # per-document breakdown doesn't permanently disagree with the
+        # articles_analyzed/articles_excluded totals computed from the same
+        # validation result. Best-effort: a failure reconciling these must
+        # not turn an otherwise-successful run into a failed one.
+        try:
+            kept_ids = set(validation.get("kept_article_ids") or [])
+            article_doc_map = _document_article_ids(project_id, resolved)
+            upsert_pipeline_run_document_stats(str(run_id), {
+                doc["original_filename"] or f"Document {doc['id']}": {
+                    "document_id": doc["id"],
+                    "selected": doc["approved_article_count"],
+                    "analyzed": len(article_doc_map.get(int(doc["id"]), set()) & kept_ids),
+                    "failed": 0,
+                }
+                for doc in analysis_runs_store.documents_with_scope(project_id)
+                if int(doc["id"]) in resolved_set
+            })
+        except Exception:
+            logger.exception("Failed to reconcile per-document stats for run %s.", run_id)
+
+        update_pipeline_run(
+            str(run_id), status="success", stage="done",
+            message=f"Generated {result['generated']} report(s).",
+            articles_selected=validation.get("scanned") or 0,
+            # "kept" is articles actually used as evidence for at least one
+            # competitor - "linked" counts competitor-article link rows
+            # (valid + rejected, and one article can link to several
+            # competitors), which is a different, usually larger number that
+            # doesn't mean "analyzed" in the dashboard's sense.
+            articles_analyzed=validation.get("kept") or 0,
+            articles_screened=screening.get("screened") or 0,
+            articles_included=screening.get("included") or 0,
+            articles_excluded=screening.get("excluded") or 0,
+            articles_needs_review=screening.get("needs_review") or 0,
+            screening_mode=screening.get("mode"),
+        )
         _regenerate_idea_comparisons(project_id)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
         log(f"Analysis failed: {exc}", "analysis_failed", {"error": str(exc)})
         analysis_runs_store.mark_failed(run_id, str(exc))
+        update_pipeline_run(str(run_id), status="failed", stage="error", error=str(exc))
 
 
 # --------------------------------------------------------------------------- #

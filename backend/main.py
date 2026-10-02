@@ -836,6 +836,17 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
     if run["status"] not in ACTIVE_STATUSES:
         return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
 
+    # cancel_pipeline_run only sets a flag the opinion-monitor pipeline's own
+    # worker thread checks between articles - a competitor-analysis run has no
+    # such checkpoint (see run_analysis_job/generate_findings), so "stopping"
+    # it here would only mark the pipeline_runs row cancelled while the real
+    # background job kept running and later overwrote that status itself.
+    if run.get("pipeline") == "competitor-analysis":
+        raise HTTPException(
+            status_code=409,
+            detail="A competitor-analysis run can't be stopped once started; wait for it to finish.",
+        )
+
     cancel_pipeline_run(run_id)
 
     now = datetime.now(timezone.utc).isoformat()

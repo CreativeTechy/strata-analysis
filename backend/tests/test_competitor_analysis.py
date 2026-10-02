@@ -189,6 +189,42 @@ class ValidateCompetitorArticlesTests(unittest.TestCase):
         self.assertEqual(delete_params, ([3], []))
         self.assertEqual(result["per_competitor"][3]["valid"], 0)
 
+    def test_kept_counts_a_multi_competitor_article_once(self):
+        """One article valid for two tracked competitors is still one
+        analyzed article - `kept`/`kept_article_ids` must be deduplicated by
+        article, not summed per-competitor, since `kept` is reported upstream
+        as `articles_analyzed` against a per-article `articles_selected` and
+        must never exceed it."""
+        now = datetime.now(timezone.utc)
+        article = {
+            "id": 7,
+            "url": "https://news.example.com/acme-globex",
+            "source": "news.example.com",
+            "source_url": "https://news.example.com/feed.xml",
+            "title": "Acme and Globex announce merger talks",
+            "summary": "",
+            "text": "Details " * 100,
+            "story_id": 1,
+            "published_at": now,
+            "created_at": now,
+        }
+
+        cursor = MagicMock()
+        transaction = MagicMock()
+        transaction.__enter__.return_value = cursor
+        transaction.__exit__.return_value = False
+
+        with patch.object(competitor_analysis.db, "fetch_all", return_value=[article]), \
+             patch.object(competitor_analysis.db, "transaction", return_value=transaction):
+            result = competitor_analysis.validate_competitor_articles(
+                1, [{"id": 3, "name": "Acme"}, {"id": 4, "name": "Globex"}], period_days=30
+            )
+
+        self.assertEqual(result["per_competitor"][3]["valid"], 1)
+        self.assertEqual(result["per_competitor"][4]["valid"], 1)
+        self.assertEqual(result["kept"], 1)
+        self.assertEqual(result["kept_article_ids"], [7])
+
 
 class EffectiveDateTests(unittest.TestCase):
     """Which timestamp decides whether an article is inside the period."""
@@ -368,7 +404,7 @@ class AnalysisJobTests(unittest.TestCase):
     run_analysis_job's orchestration, not Postgres."""
 
     def _run(self, project_id, scope="pending", document_ids=None, resolved=(1, 2),
-             **generate_kwargs):
+             documents=(), article_doc_map=None, **generate_kwargs):
         self.logs = []
         log = lambda message, code=None, params=None: self.logs.append((message, code, params))  # noqa: E731
         with patch.object(analysis_runs_store, "mark_running") as mark_running, \
@@ -377,14 +413,21 @@ class AnalysisJobTests(unittest.TestCase):
              patch.object(analysis_runs_store, "mark_success") as mark_success, \
              patch.object(analysis_runs_store, "mark_failed") as mark_failed, \
              patch.object(analysis_runs_store, "record_covered_documents") as record_covered, \
+             patch.object(analysis_runs_store, "documents_with_scope", return_value=list(documents)), \
              patch.object(competitor_analysis, "extract_frequent_ideas_for_documents") as extract_ideas, \
              patch.object(competitor_analysis, "_regenerate_idea_comparisons") as regenerate_ideas, \
+             patch.object(competitor_analysis, "update_pipeline_run") as update_pipeline_run, \
+             patch.object(competitor_analysis, "upsert_pipeline_run_document_stats") as upsert_stats, \
+             patch.object(competitor_analysis, "_document_article_ids",
+                           return_value=article_doc_map or {}) as doc_article_ids, \
              patch.object(competitor_analysis, "generate_findings", **generate_kwargs) as generate:
             competitor_analysis.run_analysis_job(99, project_id, scope, document_ids)
         return {
             "mark_running": mark_running, "resolve_scope": resolve, "mark_success": mark_success,
             "mark_failed": mark_failed, "record_covered_documents": record_covered, "generate": generate,
             "extract_ideas": extract_ideas, "regenerate_ideas": regenerate_ideas,
+            "update_pipeline_run": update_pipeline_run, "upsert_stats": upsert_stats,
+            "document_article_ids": doc_article_ids,
         }
 
     def test_successful_job_resolves_scope_and_records_covered_documents(self):
@@ -409,6 +452,32 @@ class AnalysisJobTests(unittest.TestCase):
         # The dashboard renders progress lines from code + params in the UI's
         # language; the English message rides along as the fallback.
         self.assertIn(("Scope: 2 documents.", "scope_documents", {"count": 2}), self.logs)
+
+    def test_per_document_stats_are_reconciled_after_validation_not_frozen_pre_analysis(self):
+        """The initial per-document upsert (written before generate_findings
+        runs) is a placeholder claiming every approved article will be
+        analyzed. Once validation actually runs, document 1's two approved
+        articles should be reported as 1 analyzed (only one was kept as
+        evidence), not 2 - otherwise the per-document breakdown permanently
+        disagrees with the real outcome."""
+        documents = [
+            {"id": 1, "original_filename": "doc-1.pdf", "approved_article_count": 2},
+            {"id": 2, "original_filename": "doc-2.pdf", "approved_article_count": 1},
+        ]
+        calls = self._run(
+            11, documents=documents,
+            article_doc_map={1: {101, 102}, 2: {201}},
+            return_value={
+                "generated": 2, "skipped": [], "error": None,
+                "validation": {"scanned": 3, "kept": 2, "kept_article_ids": [101, 201]},
+            },
+        )
+        calls["mark_failed"].assert_not_called()
+        final_stats = calls["upsert_stats"].call_args.args[1]
+        self.assertEqual(final_stats["doc-1.pdf"]["selected"], 2)
+        self.assertEqual(final_stats["doc-1.pdf"]["analyzed"], 1)
+        self.assertEqual(final_stats["doc-2.pdf"]["selected"], 1)
+        self.assertEqual(final_stats["doc-2.pdf"]["analyzed"], 1)
 
     def test_provider_failure_is_a_failed_run_not_zero_reports(self):
         """Same distinction generate_findings itself draws: a quota/outage error

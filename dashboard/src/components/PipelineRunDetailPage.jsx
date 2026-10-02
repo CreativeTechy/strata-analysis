@@ -338,7 +338,7 @@ export default function PipelineRunDetailPage({ projects = [] }) {
                 </div>
               </div>
             ))}
-            {ACTIVE_STATUSES.includes(run.status) ? (
+            {run.pipeline !== 'competitor-analysis' && ACTIVE_STATUSES.includes(run.status) ? (
               <div
                 className="admin-stat-card"
                 style={{ border: '1px solid rgba(255, 71, 87, 0.28)', background: 'rgba(255, 71, 87, 0.05)' }}
