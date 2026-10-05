@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -22,6 +22,7 @@ import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDateTime as formatLocaleDateTime, formatNumber } from '../lib/i18nFormat.js';
 import { ACTIVE_STATUSES } from '../lib/pipelineRunStatus.js';
+import Dialog from './Dialog.jsx';
 
 function prettyStage(t, stage) {
   if (!stage) return t('shared.stage.queued');
@@ -165,6 +166,31 @@ function SummaryField({ label, children }) {
       </div>
       <div style={{ fontSize: '0.9rem', color: 'var(--text-dark)', wordBreak: 'break-word' }}>{children}</div>
     </div>
+  );
+}
+
+// Asks for the reason behind a manual relevance include/exclude. Mounted only
+// while a draft exists; opens on the reason field, since nothing can be saved
+// without one, and stays open while the override is being saved.
+function RelevanceOverrideDialog({ draft, saving, onReasonChange, onCancel, onSave }) {
+  const { t } = useTranslation(['analysis', 'common']);
+  const titleId = useId();
+  const reasonId = useId();
+  const reasonRef = useRef(null);
+
+  return (
+    <Dialog titleId={titleId} onClose={onCancel} busy={saving} initialFocusRef={reasonRef}>
+      <h3 id={titleId}>{draft.decision === 'include' ? t('runDetail.relevance.overrideTitleInclude') : t('runDetail.relevance.overrideTitleExclude')}</h3>
+      <p dir="auto">{draft.title || t('shared.articleFallback', { id: draft.articleId })}</p>
+      <label className="run-detail-override-label" htmlFor={reasonId}>{t('runDetail.relevance.reasonLabel')}</label>
+      <textarea ref={reasonRef} id={reasonId} rows={4} value={draft.reason} onChange={(event) => onReasonChange(event.target.value)} placeholder={t('runDetail.relevance.reasonPlaceholder')} dir="auto" />
+      <div className="confirm-modal-actions">
+        <button type="button" className="btn-secondary" disabled={saving} onClick={onCancel}>{t('runDetail.relevance.cancel')}</button>
+        <button type="button" className="btn-primary" disabled={saving || !draft.reason.trim()} onClick={onSave}>
+          {saving ? t('runDetail.relevance.saving') : t('runDetail.relevance.save')}
+        </button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -624,20 +650,13 @@ export default function PipelineRunDetailPage({ projects = [] }) {
           </div>
 
           {overrideDraft ? (
-            <div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => !overrideSaving && setOverrideDraft(null)}>
-              <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="relevance-override-title" onMouseDown={(event) => event.stopPropagation()}>
-                <h3 id="relevance-override-title">{overrideDraft.decision === 'include' ? t('runDetail.relevance.overrideTitleInclude') : t('runDetail.relevance.overrideTitleExclude')}</h3>
-                <p dir="auto">{overrideDraft.title || t('shared.articleFallback', { id: overrideDraft.articleId })}</p>
-                <label className="run-detail-override-label" htmlFor="relevance-override-reason">{t('runDetail.relevance.reasonLabel')}</label>
-                <textarea id="relevance-override-reason" rows={4} value={overrideDraft.reason} onChange={(event) => setOverrideDraft((draft) => ({ ...draft, reason: event.target.value }))} placeholder={t('runDetail.relevance.reasonPlaceholder')} dir="auto" />
-                <div className="confirm-modal-actions">
-                  <button type="button" className="btn-secondary" disabled={overrideSaving} onClick={() => setOverrideDraft(null)}>{t('runDetail.relevance.cancel')}</button>
-                  <button type="button" className="btn-primary" disabled={overrideSaving || !overrideDraft.reason.trim()} onClick={saveOverride}>
-                    {overrideSaving ? t('runDetail.relevance.saving') : t('runDetail.relevance.save')}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <RelevanceOverrideDialog
+              draft={overrideDraft}
+              saving={overrideSaving}
+              onReasonChange={(reason) => setOverrideDraft((draft) => ({ ...draft, reason }))}
+              onCancel={() => setOverrideDraft(null)}
+              onSave={saveOverride}
+            />
           ) : null}
         </>
       )}
