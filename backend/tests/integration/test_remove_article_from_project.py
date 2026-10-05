@@ -115,6 +115,40 @@ class TestRemoveArticleFromProject:
 
         assert restore_article_to_project(a, article_id) is False
 
+    def test_removal_clears_the_articles_project_derived_rows_and_rejects_its_candidate(self, two_projects):
+        from services.articles.store import remove_article_from_project
+
+        db, a, _b = two_projects
+        article_id = _article_id(db, "https://example.com/only-a")
+        other_id = _article_id(db, "https://example.com/shared")
+        run = int(db.fetch_one(
+            "insert into pipeline_runs (project_id, status) values (%s, 'completed') returning id", (a,)
+        )["id"])
+        cluster = int(db.fetch_one(
+            "insert into idea_clusters (project_id, idea) values (%s, 'c') returning id", (a,)
+        )["id"])
+        for aid in (article_id, other_id):
+            db.execute("insert into idea_cluster_articles (idea_cluster_id, article_id) values (%s, %s)", (cluster, aid))
+
+        assert remove_article_from_project(a, article_id, actor="tester") is not None
+
+        rows = db.fetch_all("select article_id from idea_cluster_articles where idea_cluster_id = %s", (cluster,))
+        assert [int(r["article_id"]) for r in rows] == [other_id]
+        assert run  # run history itself is untouched
+        assert db.fetch_one("select 1 as x from pipeline_runs where id = %s", (run,))
+
+    def test_restore_is_blocked_while_a_run_is_active(self, two_projects):
+        from services.articles.store import ArticleRemovalConflict, remove_article_from_project, restore_article_to_project
+
+        db, a, _b = two_projects
+        article_id = _article_id(db, "https://example.com/only-a")
+        remove_article_from_project(a, article_id, actor="tester")
+        db.execute("insert into pipeline_runs (project_id, status) values (%s, 'running')", (a,))
+
+        with pytest.raises(ArticleRemovalConflict):
+            restore_article_to_project(a, article_id)
+        assert _projects_of(db, "https://example.com/only-a") == []
+
 
 class TestDeleteArticlePermanently:
     def test_deletes_the_row_and_every_projects_link(self, two_projects):

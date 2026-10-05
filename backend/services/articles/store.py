@@ -921,6 +921,65 @@ def _guard_article_removal(cur, project_id=None):
     cur.execute("lock table article_projects in share row exclusive mode")
 
 
+_PROJECT_CACHED_SUMMARY_TABLES = (
+    "project_trend_summaries",
+    "project_trend_summaries_localized",
+    "project_report_variation_summaries",
+    "idea_comparisons",
+    "idea_comparisons_generation_attempts",
+)
+
+
+def _clear_article_project_derived_rows(cur, project_id, article_id):
+    """Single-article counterpart of _clear_project_derived_rows: drops the
+    rows that tie one article to one project's analysis output, plus the
+    project's cached aggregate summaries (they were computed with this article
+    in them), and rejects the project's approved document candidates for it."""
+    existing = _existing_tables(cur, _REMOVAL_TABLES)
+    run_scoped = (
+        ("evidence_claims", "source_article_id"),
+        ("evidence_claim_candidates", "article_id"),
+        ("evidence_article_screenings", "article_id"),
+        ("evidence_article_screening_reviews", "article_id"),
+        ("article_analyses", "article_id"),
+    )
+    for table, column in run_scoped:
+        if table in existing:
+            cur.execute(
+                f"delete from {table} where {column} = %s "
+                "and run_id in (select id from pipeline_runs where project_id = %s)",
+                (article_id, project_id),
+            )
+    for table in ("evidence_run_articles", "evidence_provenance_reviews", "survey_observations"):
+        if table in existing:
+            cur.execute(
+                f"delete from {table} where article_id = %s and project_id = %s",
+                (article_id, project_id),
+            )
+    if "idea_cluster_articles" in existing:
+        cur.execute(
+            "delete from idea_cluster_articles where article_id = %s "
+            "and idea_cluster_id in (select id from idea_clusters where project_id = %s)",
+            (article_id, project_id),
+        )
+    if "competitor_articles" in existing:
+        cur.execute(
+            "delete from competitor_articles where article_id = %s "
+            "and competitor_id in (select id from competitors where project_id = %s)",
+            (article_id, project_id),
+        )
+    for table in _PROJECT_CACHED_SUMMARY_TABLES:
+        if table in existing:
+            cur.execute(f"delete from {table} where project_id = %s", (project_id,))
+    for table in _CANDIDATE_TABLES:
+        if table in existing:
+            cur.execute(
+                f"update {table} set status = 'rejected', article_id = null, updated_at = now() "
+                "where project_id = %s and article_id = %s",
+                (project_id, article_id),
+            )
+
+
 def preview_project_article_removal(project_id):
     """What remove_project_articles(project_id) would do, without doing it -
     the numbers the confirmation dialog shows. None on a database error."""
@@ -1133,6 +1192,7 @@ def remove_article_from_project(project_id, article_id, actor=None):
                 values,
             )
 
+            _clear_article_project_derived_rows(cur, project_id, article_id)
             cur.execute(
                 "delete from article_projects where project_id = %s and article_id = %s",
                 (project_id, article_id),
@@ -1158,7 +1218,9 @@ def remove_article_from_project(project_id, article_id, actor=None):
 def restore_article_to_project(project_id, article_id, actor=None):
     """Undoes remove_article_from_project(): re-links the article to the
     project with its previous relevance/manual-override fields, and drops the
-    trash row. Returns True on success, False if there's nothing to restore
+    trash row. Project-level derived output removed with the article (evidence,
+    cluster links, cached summaries) is not restored; the next analysis run
+    regenerates it. Raises ArticleRemovalConflict while a run is active. Returns True on success, False if there's nothing to restore
     or on a database error."""
     if not config.DATABASE_URL:
         logger.warning("Database credentials not set, skipping article restore.")
@@ -1168,6 +1230,7 @@ def restore_article_to_project(project_id, article_id, actor=None):
     article_id = int(article_id)
     try:
         with db.transaction() as cur:
+            _guard_article_removal(cur, project_id)
             cur.execute(
                 "select * from removed_article_projects where project_id = %s and article_id = %s",
                 (project_id, article_id),
@@ -1198,6 +1261,8 @@ def restore_article_to_project(project_id, article_id, actor=None):
             article_id, project_id, actor,
         )
         return True
+    except ArticleRemovalConflict:
+        raise
     except Exception as e:
         _log_db_error("  article restore error", e)
         return False

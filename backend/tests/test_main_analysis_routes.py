@@ -566,6 +566,13 @@ class RemoveArticleFromProjectRouteTests(AnalysisRoutesTestCase):
             resp = self.client.post("/api/projects/1/articles/42/restore")
         self.assertEqual(resp.status_code, 404)
 
+    def test_409_when_a_run_is_active(self):
+        from services.articles.store import ArticleRemovalConflict
+
+        with patch("main.get_project", return_value=self.PROJECT),              patch("services.articles.store.restore_article_to_project", side_effect=ArticleRemovalConflict("run")):
+            resp = self.client.post("/api/projects/1/articles/42/restore")
+        self.assertEqual(resp.status_code, 409)
+
 
 class RemoveProjectArticlesRouteTests(AnalysisRoutesTestCase):
     """Removing one project's articles: needs articles.delete, visibility of

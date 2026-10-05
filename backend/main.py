@@ -1867,14 +1867,18 @@ def restore_project_article_route(
 ):
     """Undoes remove_project_article_route above - re-links the article to
     this project with the relevance/override fields it had before removal."""
-    from services.articles.store import restore_article_to_project
+    from services.articles.store import ArticleRemovalConflict, restore_article_to_project
 
     _ensure_project_visible(project_id, user)
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
 
-    if not restore_article_to_project(project_id, article_id, actor=_actor_name(user)):
+    try:
+        restored = restore_article_to_project(project_id, article_id, actor=_actor_name(user))
+    except ArticleRemovalConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not restored:
         raise HTTPException(status_code=404, detail="Nothing to restore for this article in this project.")
     return {"ok": True, "project": {"id": project.get("id"), "name": project.get("name")}}
 
