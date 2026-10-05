@@ -143,35 +143,49 @@ def generate_candidates(document_id: int, project_id: int, text: str, filename: 
     than one LLM call's input still gets split end to end instead of only its
     first ~12,000 characters.
 
-    Returns {"candidates": [...], "truncated": bool, "chunks_processed": int}
-    rather than a bare list - "truncated" is true when MAX_CANDIDATES (the
-    overall per-document cap) was hit before every chunk had been processed,
-    which the caller (project_documents_store._extract_document) surfaces as
-    an articles_error note, the same way a .jsonl import's own record cap does.
+    Returns {"candidates": [...], "truncated": bool, "cap_reached": bool,
+    "error": str | None, "chunks_processed": int, "total_chunks": int}
+    rather than a bare list. Each chunk's candidates are persisted as soon as
+    that chunk's LLM call succeeds, so a failure on chunk k keeps chunks 1..k-1:
+    "error" then carries the failure and "chunks_processed" says how far it got.
+    "cap_reached" means MAX_CANDIDATES (the per-document cap) stopped the run -
+    distinct from unread chunks, since it can trim the last chunk's own tail.
+    "truncated" is true whenever the result doesn't cover the whole document;
+    the caller surfaces it as an articles_error note, the same way a .jsonl
+    import's own record cap does.
 
-    Raises LLMError/json errors rather than swallowing them - the caller
-    records articles_status from whether this raised, so a failure is visible
-    rather than silently producing zero candidates that read the same as
-    "nothing to extract"."""
+    Raises LLMError/json errors only when the *first* chunk fails (nothing to
+    keep) - the caller records articles_status from whether this raised, so a
+    total failure is visible rather than silently producing zero candidates
+    that read the same as "nothing to extract"."""
     chunks = _split_into_chunks(text, MAX_INPUT_CHARS)
-    items: list[dict] = []
-    truncated = False
+    saved: list[dict] = []
+    cap_reached = False
+    error = None
     chunks_processed = 0
     for index, chunk in enumerate(chunks, start=1):
-        if len(items) >= MAX_CANDIDATES:
-            truncated = True
+        if len(saved) >= MAX_CANDIDATES:
+            cap_reached = True
+            break
+        try:
+            chunk_items = _ask_llm(chunk, filename, part=index, total_parts=len(chunks))
+        except Exception as exc:
+            if not saved and chunks_processed == 0:
+                raise
+            error = str(exc)
             break
         chunks_processed = index
-        chunk_items = _ask_llm(chunk, filename, part=index, total_parts=len(chunks))
-        room = MAX_CANDIDATES - len(items)
+        room = MAX_CANDIDATES - len(saved)
         if len(chunk_items) > room:
             chunk_items = chunk_items[:room]
-            truncated = True
-        items.extend(chunk_items)
+            cap_reached = True
+        saved.extend(_insert_candidates(document_id, project_id, chunk_items))
 
     return {
-        "candidates": _insert_candidates(document_id, project_id, items),
-        "truncated": truncated or chunks_processed < len(chunks),
+        "candidates": saved,
+        "truncated": cap_reached or error is not None or chunks_processed < len(chunks),
+        "cap_reached": cap_reached,
+        "error": error,
         "chunks_processed": chunks_processed,
         "total_chunks": len(chunks),
     }

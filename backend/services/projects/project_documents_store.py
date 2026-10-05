@@ -241,16 +241,26 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
         )
         return
 
-    # A document whose text took more chunks than the per-document candidate
-    # cap allows is reported rather than left to look fully covered - mirrors
-    # the .jsonl import's own "Imported the first X of Y records" note below.
+    # Anything short of a clean, full-coverage split is reported rather than
+    # left to look fully covered - mirrors the .jsonl import's own "Imported
+    # the first X of Y records" note below.
     note = None
     if result.get("truncated"):
-        note = (
-            f"Generated {len(result['candidates']):,} article candidates from "
-            f"{result['chunks_processed']:,} of {result['total_chunks']:,} parts of this document. "
-            "Split the file to cover the rest."
-        )
+        generated = f"Generated {len(result['candidates']):,} article candidates"
+        read = f"{result['chunks_processed']:,} of {result['total_chunks']:,} parts"
+        if result.get("error"):
+            note = (
+                f"{generated} from {read} of this document before part "
+                f"{result['chunks_processed'] + 1:,} failed: {result['error']}. "
+                "Re-upload the file to retry."
+            )
+        elif result["chunks_processed"] < result["total_chunks"]:
+            note = f"{generated} from {read} of this document. Split the file to cover the rest."
+        else:
+            note = (
+                f"{generated}, the per-document limit, so some articles in the last "
+                "part were left out."
+            )
     db.execute(
         "update project_documents set articles_status = 'ready', articles_error = %s where id = %s",
         (note, int(document_id)),
