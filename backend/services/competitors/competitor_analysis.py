@@ -484,8 +484,12 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             scope_text=scope_text,
         )
         included_ids = set(screening["included_ids"])
-        excluded_count = len(articles) - len(included_ids)
-        articles = [a for a in articles if int(a["id"]) in included_ids]
+        kept = [a for a in articles if int(a["id"]) in included_ids]
+        # Count distinct articles: `articles` can hold one row per document an
+        # article appears in, so subtracting row counts reports duplicates as
+        # "excluded as not relevant".
+        excluded_count = len({int(a["id"]) for a in articles} - included_ids)
+        articles = kept
         if excluded_count:
             log(f"Excluded {excluded_count} article(s) as not relevant to this study's scope.",
                 "excluded_irrelevant", {"count": excluded_count})
