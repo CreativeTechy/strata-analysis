@@ -171,7 +171,7 @@
 }
 
 .articles-page-shell .articles-page-btn.active {
-  background: linear-gradient(135deg, #ff6b35, #ff8a5c);
+  background: var(--primary-action-gradient);
   border-color: transparent;
   color: #fff;
   font-weight: 600;
@@ -394,7 +394,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #ff6b35, #ff8a5c);
+  background: var(--primary-action-gradient);
   color: #fff;
 }
 

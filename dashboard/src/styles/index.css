@@ -17,6 +17,10 @@
 
 :root {
   --primary-color: #f97316;
+  /* White-text surfaces: #c2410c = 5.18:1, #9a3412 = 7.3:1 with #fff (WCAG AA 4.5:1) */
+  --primary-action-gradient: linear-gradient(135deg, #c2410c, #9a3412);
+  --primary-action-hover-gradient: linear-gradient(135deg, #9a3412, #7c2d12);
+  --primary-action-shadow: rgba(154, 52, 18, 0.28);
   --secondary-color: #2563eb;
   --bg-color: #f8fafc;
   --surface-color: rgba(255, 255, 255, 0.78);
@@ -466,7 +470,7 @@ h1, h2, h3 {
 
 /* Buttons */
 .btn-primary {
-  background: linear-gradient(135deg, #fb923c, #f97316);
+  background: var(--primary-action-gradient);
   color: white;
   border: none;
   padding: 11px 20px;
@@ -475,7 +479,7 @@ h1, h2, h3 {
   font-weight: 700;
   font-size: 0.95rem;
   cursor: pointer;
-  box-shadow: 0 8px 18px rgba(249, 115, 22, 0.22);
+  box-shadow: 0 8px 18px var(--primary-action-shadow);
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   display: flex;
   align-items: center;
@@ -484,8 +488,21 @@ h1, h2, h3 {
 }
 
 .btn-primary:hover {
+  background: var(--primary-action-hover-gradient);
   transform: translateY(-1px);
-  box-shadow: 0 12px 24px rgba(249, 115, 22, 0.26);
+  box-shadow: 0 12px 24px var(--primary-action-shadow);
+}
+
+.btn-primary:focus-visible,
+.cs-btn-primary:focus-visible {
+  outline: 3px solid var(--text-dark);
+  outline-offset: 2px;
+}
+
+.btn-primary:disabled {
+  background: #78716c;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .btn-primary:active {

@@ -69,15 +69,15 @@
 }
 
 .cs-btn-primary {
-  background: linear-gradient(135deg, #fb923c, #f97316);
+  background: var(--primary-action-gradient);
   border-color: transparent;
   color: #fff;
-  box-shadow: 0 8px 18px rgba(249, 115, 22, 0.22);
+  box-shadow: 0 8px 18px var(--primary-action-shadow);
 }
 
 .cs-btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #fb923c, #f97316);
-  box-shadow: 0 12px 24px rgba(249, 115, 22, 0.26);
+  background: var(--primary-action-hover-gradient);
+  box-shadow: 0 12px 24px var(--primary-action-shadow);
 }
 
 .cs-btn-ghost {
@@ -555,7 +555,7 @@
 }
 
 .cs-mode-card-selected .cs-mode-card-icon {
-  background: linear-gradient(135deg, #fb923c, #f97316);
+  background: var(--primary-action-gradient);
   color: #fff;
 }
 
@@ -615,7 +615,7 @@
 }
 
 .cs-dropzone-active .cs-dropzone-icon {
-  background: linear-gradient(135deg, #fb923c, #f97316);
+  background: var(--primary-action-gradient);
   color: #fff;
 }
 
@@ -1223,7 +1223,7 @@
 }
 
 .cs-candidates-pager-btn.active {
-  background: linear-gradient(135deg, var(--primary-color), #2e86de);
+  background: var(--primary-action-gradient);
   border-color: transparent;
   color: #fff;
   font-weight: 600;
