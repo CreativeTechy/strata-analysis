@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from psycopg.types.json import Jsonb
 
+import config
 import db
 
 RUN_COLUMNS = """
@@ -54,15 +55,21 @@ def get_run(run_id: int) -> dict | None:
 
 def get_active_run(project_id: int) -> dict | None:
     """The most recent queued/running run for this project, if any - a second
-    click on "Run analysis" attaches to it instead of starting another."""
+    click on "Run analysis" attaches to it instead of starting another.
+
+    Only runs started within STALE_RUN_MINUTES count: this runs as a background
+    task in the backend process, so a restart mid-run leaves the row 'running'
+    forever, and without a cutoff every later click would attach to that dead
+    run instead of starting a new one (the same guard pipeline_runs has)."""
     return db.fetch_one(
         f"""
         select {RUN_COLUMNS} from competitor_analysis_runs
          where project_id = %s and status = any(%s)
+           and started_at > now() - (%s || ' minutes')::interval
          order by sequence_number desc
          limit 1
         """,
-        (int(project_id), list(ACTIVE_STATUSES)),
+        (int(project_id), list(ACTIVE_STATUSES), config.STALE_RUN_MINUTES),
     )
 
 
