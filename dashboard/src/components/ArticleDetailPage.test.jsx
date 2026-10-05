@@ -3,13 +3,14 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ArticleDetailPage from './ArticleDetailPage.jsx'
 import { useAuth } from '../auth/useAuth.js'
-import { getArticleAnalysis, deleteArticle } from '../api/articlesApi.js'
+import { getArticleAnalysis, removeArticleFromProject, restoreArticleToProject } from '../api/articlesApi.js'
 
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }))
 vi.mock('../api/articlesApi.js', () => ({
   getArticleAnalysis: vi.fn(),
   reprocessArticle: vi.fn(),
-  deleteArticle: vi.fn(),
+  removeArticleFromProject: vi.fn(),
+  restoreArticleToProject: vi.fn(),
 }))
 
 function renderPage(articleId = '1', { state } = {}) {
@@ -98,60 +99,97 @@ describe('ArticleDetailPage', () => {
     expect(screen.getByText('The full body of the article goes here.')).toBeInTheDocument()
   })
 
-  it('shows the delete button only when permitted', async () => {
-    getArticleAnalysis.mockResolvedValue({ analysis: { analysis_status: 'success', sentiment: 'positive' } })
+  it('shows the remove-from-project button only when permitted', async () => {
+    getArticleAnalysis.mockResolvedValue({
+      analysis: { analysis_status: 'success', sentiment: 'positive', projects: [{ id: 7, name: 'Launch Watch' }] },
+    })
     useAuth.mockReturnValue({ hasPermission: () => false })
     renderPage()
     await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Remove from project/ })).not.toBeInTheDocument()
   })
 
-  it('deletes the article and returns to the article library', async () => {
-    getArticleAnalysis.mockResolvedValue({ analysis: { analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall' } })
-    deleteArticle.mockResolvedValue({})
+  it('removes the article from its project and offers an undo, without navigating away', async () => {
+    getArticleAnalysis.mockResolvedValue({
+      analysis: {
+        analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall',
+        projects: [{ id: 7, name: 'Launch Watch' }],
+      },
+    })
+    removeArticleFromProject.mockResolvedValue({ shared_with_other_projects: false })
     useAuth.mockReturnValue({ hasPermission: () => true })
     renderPage()
     await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('button', { name: /Delete/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Remove from project/ }))
     const dialog = await screen.findByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete article' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove from project' }))
 
-    await waitFor(() => expect(deleteArticle).toHaveBeenCalledWith('1'))
-    await waitFor(() => expect(screen.getByText('Article library page')).toBeInTheDocument())
+    await waitFor(() => expect(removeArticleFromProject).toHaveBeenCalledWith('7', '1'))
+    // Stays on the detail page - the article/analysis is untouched - and
+    // offers an inline Undo instead of navigating back to the list.
+    expect(screen.queryByText('Article library page')).not.toBeInTheDocument()
+    expect(await screen.findByText(/Removed "Battery fires spark recall" from Launch Watch/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+  })
+
+  it('restores the article to its project when Undo is clicked', async () => {
+    getArticleAnalysis.mockResolvedValue({
+      analysis: {
+        analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall',
+        projects: [{ id: 7, name: 'Launch Watch' }],
+      },
+    })
+    removeArticleFromProject.mockResolvedValue({ shared_with_other_projects: false })
+    restoreArticleToProject.mockResolvedValue({ ok: true })
+    useAuth.mockReturnValue({ hasPermission: () => true })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove from project/ }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove from project' }))
+    await screen.findByRole('button', { name: 'Undo' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await waitFor(() => expect(restoreArticleToProject).toHaveBeenCalledWith('7', '1'))
+    await waitFor(() => expect(screen.getByText(/Restored "Battery fires spark recall" to Launch Watch/)).toBeInTheDocument())
   })
 
   // Regression for F002: get_article_analysis returns null (and the route
   // 404s) for any backend failure, not just a genuinely missing article, so
   // this state is reachable for an article that still exists. Delete used to
   // stay clickable and confirm against a hardcoded "Untitled article".
-  it('disables the delete button when the analysis failed to load', async () => {
+  it('disables the remove-from-project button when the analysis failed to load', async () => {
     getArticleAnalysis.mockRejectedValue(new Error('network down'))
     useAuth.mockReturnValue({ hasPermission: () => true })
     renderPage()
     await waitFor(() => expect(screen.getByText('network down')).toBeInTheDocument())
-    expect(screen.getByRole('button', { name: /Delete/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Remove from project/ })).toBeDisabled()
   })
 
-  // Regression for F001/F003: the back link and the post-delete redirect
-  // used to always go to a bare /articles, discarding whatever search/filter
-  // state the operator had on the list. They now return to the location the
-  // list handed over via router state, and do so with history replacement so
-  // Back from the list can't land on the just-deleted article's dead page.
-  it('returns to the originating list location (not a bare /articles) after deleting', async () => {
-    getArticleAnalysis.mockResolvedValue({ analysis: { analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall' } })
-    deleteArticle.mockResolvedValue({})
+  it('disables the remove-from-project button when the article has no project links', async () => {
+    getArticleAnalysis.mockResolvedValue({
+      analysis: { analysis_status: 'success', sentiment: 'positive', projects: [] },
+    })
+    useAuth.mockReturnValue({ hasPermission: () => true })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Remove from project/ })).toBeDisabled()
+  })
+
+  // Regression for F001/F003: the back link used to always go to a bare
+  // /articles, discarding whatever search/filter state the operator had on
+  // the list. It now returns to the location the list handed over via
+  // router state.
+  it('points the back link at the originating list location (not a bare /articles)', async () => {
+    getArticleAnalysis.mockResolvedValue({
+      analysis: { analysis_status: 'success', sentiment: 'positive', title: 'Battery fires spark recall' },
+    })
     useAuth.mockReturnValue({ hasPermission: () => true })
     renderPage('1', { state: { from: '/articles?search=battery' } })
     await waitFor(() => expect(screen.getByText('Success')).toBeInTheDocument())
 
     expect(screen.getByRole('link', { name: /Back to Articles/ })).toHaveAttribute('href', '/articles?search=battery')
-
-    fireEvent.click(screen.getByRole('button', { name: /Delete/ }))
-    const dialog = await screen.findByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete article' }))
-
-    await waitFor(() => expect(deleteArticle).toHaveBeenCalledWith('1'))
-    await waitFor(() => expect(screen.getByText('Article library page')).toBeInTheDocument())
   })
 })

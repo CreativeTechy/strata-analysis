@@ -24,6 +24,7 @@ function ConfirmModalDialog({
   onConfirm,
   onClose,
   hideCancel = false,
+  confirmDisabled = false,
   children,
 }) {
   const { t } = useTranslation('common');
@@ -102,7 +103,7 @@ function ConfirmModalDialog({
           className="btn-primary"
           onClick={confirm}
           style={confirmButtonStyle}
-          disabled={isBusy}
+          disabled={isBusy || confirmDisabled}
         >
           {resolvedConfirmLabel}
         </button>
