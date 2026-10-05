@@ -2207,6 +2207,12 @@ h1, h2, h3 {
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
 }
 
+/* The panel only takes focus as a fallback (nothing focusable, or a click on
+   plain text inside it) so keyboard handling stays inside the dialog. */
+.confirm-modal:focus {
+  outline: none;
+}
+
 .confirm-modal-header {
   display: flex;
   align-items: flex-start;
