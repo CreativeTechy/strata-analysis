@@ -1218,10 +1218,13 @@ def remove_article_from_project(project_id, article_id, actor=None):
 def restore_article_to_project(project_id, article_id, actor=None):
     """Undoes remove_article_from_project(): re-links the article to the
     project with its previous relevance/manual-override fields, and drops the
-    trash row. Project-level derived output removed with the article (evidence,
-    cluster links, cached summaries) is not restored; the next analysis run
-    regenerates it. Raises ArticleRemovalConflict while a run is active. Returns True on success, False if there's nothing to restore
-    or on a database error."""
+    trash row. Only the link comes back: the project-level derived output that
+    removal cleared (evidence, run snapshots, cluster/competitor links, cached
+    summaries) and the rejected document candidate are not restored. The
+    article keeps its successful analysis_status, so a scope="pending" run
+    does not pick it up; a scope="all" run rebuilds that output. Raises
+    ArticleRemovalConflict while a run is active. Returns True on success,
+    False if there's nothing to restore or on a database error."""
     if not config.DATABASE_URL:
         logger.warning("Database credentials not set, skipping article restore.")
         return False

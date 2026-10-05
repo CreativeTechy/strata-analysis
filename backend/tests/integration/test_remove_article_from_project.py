@@ -115,7 +115,7 @@ class TestRemoveArticleFromProject:
 
         assert restore_article_to_project(a, article_id) is False
 
-    def test_removal_clears_the_articles_project_derived_rows_and_rejects_its_candidate(self, two_projects):
+    def test_removal_clears_the_articles_cluster_links_and_keeps_run_history(self, two_projects):
         from services.articles.store import remove_article_from_project
 
         db, a, _b = two_projects
@@ -134,7 +134,6 @@ class TestRemoveArticleFromProject:
 
         rows = db.fetch_all("select article_id from idea_cluster_articles where idea_cluster_id = %s", (cluster,))
         assert [int(r["article_id"]) for r in rows] == [other_id]
-        assert run  # run history itself is untouched
         assert db.fetch_one("select 1 as x from pipeline_runs where id = %s", (run,))
 
     def test_restore_is_blocked_while_a_run_is_active(self, two_projects):
