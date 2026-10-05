@@ -252,7 +252,7 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
             note = (
                 f"{generated} from {read} of this document before part "
                 f"{result['chunks_processed'] + 1:,} failed: {result['error']}. "
-                "Re-upload the file to retry."
+                "Delete this document before re-uploading the file, or the parts already generated will be duplicated."
             )
         elif result["chunks_processed"] < result["total_chunks"]:
             note = f"{generated} from {read} of this document. Split the file to cover the rest."
