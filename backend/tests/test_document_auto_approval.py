@@ -47,7 +47,10 @@ def test_processing_b_leaves_a_pending_and_does_not_start_analysis(
         execute = stack.enter_context(patch.object(store.db, "execute"))
         stack.enter_context(patch.object(articles.db, "fetch_all", side_effect=select_candidates))
         decide_mock = stack.enter_context(patch.object(articles, "set_status", side_effect=decide))
-        stack.enter_context(patch.object(articles, "generate_candidates"))
+        stack.enter_context(patch.object(
+            articles, "generate_candidates",
+            return_value={"candidates": [], "truncated": False, "chunks_processed": 1, "total_chunks": 1},
+        ))
         stack.enter_context(patch.object(articles, "generate_candidates_from_records"))
         extraction = getattr(store, extraction_name)
         stack.enter_context(patch.object(extraction, "total_chunks", return_value=1))
@@ -107,7 +110,10 @@ def test_approval_failure_keeps_successful_extraction_recoverable(
     with patch.object(store, "get_document", return_value=document), \
          patch.object(store, "STORAGE_DIR", tmp_path), \
          patch.object(store.db, "execute") as execute, \
-         patch.object(articles, "generate_candidates"), \
+         patch.object(
+             articles, "generate_candidates",
+             return_value={"candidates": [], "truncated": False, "chunks_processed": 1, "total_chunks": 1},
+         ), \
          patch.object(articles, "generate_candidates_from_records"), \
          patch.object(extraction, "total_chunks", return_value=1), \
          patch.object(extraction, "iter_chunks", return_value=[

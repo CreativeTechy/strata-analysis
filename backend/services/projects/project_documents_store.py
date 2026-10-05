@@ -233,8 +233,7 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
 
     db.execute("update project_documents set articles_status = 'generating' where id = %s", (int(document_id),))
     try:
-        project_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
-        db.execute("update project_documents set articles_status = 'ready' where id = %s", (int(document_id),))
+        result = project_document_articles.generate_candidates(document_id, document["project_id"], combined_text, filename)
     except Exception as exc:
         db.execute(
             "update project_documents set articles_status = 'failed', articles_error = %s where id = %s",
@@ -242,6 +241,30 @@ def _extract_document(document: dict, disk_path: Path, filename: str) -> None:
         )
         return
 
+    # Anything short of a clean, full-coverage split is reported rather than
+    # left to look fully covered - mirrors the .jsonl import's own "Imported
+    # the first X of Y records" note below.
+    note = None
+    if result.get("truncated"):
+        generated = f"Generated {len(result['candidates']):,} article candidates"
+        read = f"{result['chunks_processed']:,} of {result['total_chunks']:,} parts"
+        if result.get("error"):
+            note = (
+                f"{generated} from {read} of this document before part "
+                f"{result['chunks_processed'] + 1:,} failed: {result['error']}. "
+                "Delete this document before re-uploading the file, or the parts already generated will be duplicated."
+            )
+        elif result["chunks_processed"] < result["total_chunks"]:
+            note = f"{generated} from {read} of this document. Split the file to cover the rest."
+        else:
+            note = (
+                f"{generated}, the per-document limit, so some articles in the last "
+                "part were left out."
+            )
+    db.execute(
+        "update project_documents set articles_status = 'ready', articles_error = %s where id = %s",
+        (note, int(document_id)),
+    )
     _try_approve_document_candidates(document["project_id"], document_id)
 
 
