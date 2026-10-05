@@ -447,6 +447,9 @@
   "runAnalysis": {
     "runAnalysisLabel": "تشغيل التحليل",
     "analysingEllipsis": "جارٍ التحليل...",
+    "stop": "إيقاف التحليل",
+    "stopping": "جارٍ الإيقاف...",
+    "stopFailed": "تعذّر إيقاف التحليل.",
     "description": "يقرأ أدلة المستندات المختارة ويعيد كتابة بطاقة لكل منافس متابَع.",
     "lastRun": "آخر تشغيل {{time}}.",
     "neverAnalysed": "لم يتم تحليل هذه الدراسة قط.",
@@ -558,6 +561,7 @@
     "done_with_skipped_many": "اكتمل. تم إنشاء {{count}} تقريرًا، وتم تخطي {{skipped}}.",
     "done_with_skipped_other": "اكتمل. تم إنشاء {{count}} تقرير، وتم تخطي {{skipped}}.",
     "analysis_failed": "فشل التحليل: {{error}}",
+    "analysis_cancelled": "تم إيقاف التحليل.",
     "rejectionReasons": {
       "blocked_page_zero": "0 صفحة محجوبة",
       "blocked_page_one": "صفحة محجوبة واحدة",

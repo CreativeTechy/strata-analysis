@@ -25,7 +25,7 @@ import db
 import migrate
 from core.logging import configure_logging, reset_request_id, set_request_id
 from prompt_loader import load_prompt
-from services.competitors import competitor_api
+from services.competitors import analysis_runs_store, competitor_api
 from services.projects import project_documents_api
 from services.auth import permissions_store
 from services.auth import sessions_store
@@ -836,18 +836,14 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
     if run["status"] not in ACTIVE_STATUSES:
         return {"run": run, "message": f"Run is already {run['status']}; nothing to stop."}
 
-    # cancel_pipeline_run only sets a flag the opinion-monitor pipeline's own
-    # worker thread checks between articles - a competitor-analysis run has no
-    # such checkpoint (see run_analysis_job/generate_findings), so "stopping"
-    # it here would only mark the pipeline_runs row cancelled while the real
-    # background job kept running and later overwrote that status itself.
+    # A competitor-analysis run has its own row in competitor_analysis_runs,
+    # which is also its stop signal: its background job re-reads that status at
+    # each checkpoint (between stages and before each competitor's LLM call),
+    # so the stop lands at the next boundary, not mid-call. No in-memory flag.
     if run.get("pipeline") == "competitor-analysis":
-        raise HTTPException(
-            status_code=409,
-            detail="A competitor-analysis run can't be stopped once started; wait for it to finish.",
-        )
-
-    cancel_pipeline_run(run_id)
+        analysis_runs_store.mark_cancelled(int(run_id))
+    else:
+        cancel_pipeline_run(run_id)
 
     now = datetime.now(timezone.utc).isoformat()
     updated = update_pipeline_run(

@@ -7,7 +7,7 @@
 
 import { useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, Square, X } from 'lucide-react';
 import { formatRelativeTime } from '../lib/i18nFormat.js';
 import { DiscoveryLog } from './CompetitorOnboarding.jsx';
 import Dialog from './Dialog.jsx';
@@ -29,8 +29,24 @@ export function RunAnalysisButton({ run, label, primary = true, disabled }) {
 }
 
 export function RunAnalysisLog({ run }) {
+  const { t } = useTranslation('competitors');
   if (!run.analyzing && !run.analysisLogs.length) return null;
-  return <DiscoveryLog logs={run.analysisLogs} active={run.analyzing} />;
+  return (
+    <>
+      <DiscoveryLog logs={run.analysisLogs} active={run.analyzing} />
+      {run.analyzing && run.stopAnalysis ? (
+        <button
+          type="button"
+          className="cs-btn"
+          onClick={run.stopAnalysis}
+          disabled={run.stopping}
+        >
+          <Square size={14} />
+          {run.stopping ? t('runAnalysis.stopping') : t('runAnalysis.stop')}
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 const SCOPES = ['pending', 'all', 'selected'];
