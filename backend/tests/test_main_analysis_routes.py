@@ -445,26 +445,125 @@ class DeleteArticlesRouteTests(AnalysisRoutesTestCase):
             resp = self.client.delete(self.CONFIRM)
         self.assertEqual(resp.status_code, 503)
 
-    def test_deletes_one_article(self):
+    def test_permanently_deletes_one_article_for_an_admin_with_the_confirmation_phrase(self):
         with patch(
             "services.auth.permissions_store.user_permission_keys",
             return_value={"articles.delete"},
         ), patch(
-            "services.articles.store.delete_article", return_value=True
+            "services.articles.store.delete_article_permanently", return_value=True
         ) as mock_delete:
-            resp = self.client.delete("/api/articles/42")
+            resp = self.client.delete("/api/admin/articles/42?confirm=DELETE%20ARTICLE%20PERMANENTLY")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"ok": True})
-        mock_delete.assert_called_once_with(42)
+        mock_delete.assert_called_once_with(42, actor="admin")
 
-    def test_404s_when_article_not_found(self):
+    def test_permanent_delete_refuses_without_the_confirmation_phrase(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch("services.articles.store.delete_article_permanently") as mock_delete:
+            resp = self.client.delete("/api/admin/articles/42")
+        self.assertEqual(resp.status_code, 400)
+        mock_delete.assert_not_called()
+
+    def test_permanent_delete_refuses_a_non_admin(self):
         with patch(
             "services.auth.permissions_store.user_permission_keys",
             return_value={"articles.delete"},
         ), patch(
-            "services.articles.store.delete_article", return_value=False
+            "services.auth.permissions_store.user_is_full_access", return_value=False
+        ), patch("services.articles.store.delete_article_permanently") as mock_delete:
+            resp = self.client.delete("/api/admin/articles/42?confirm=DELETE%20ARTICLE%20PERMANENTLY")
+        self.assertEqual(resp.status_code, 403)
+        mock_delete.assert_not_called()
+
+    def test_permanent_delete_404s_when_article_not_found(self):
+        with patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.delete"},
+        ), patch(
+            "services.articles.store.delete_article_permanently", return_value=False
         ):
-            resp = self.client.delete("/api/articles/999")
+            resp = self.client.delete("/api/admin/articles/999?confirm=DELETE%20ARTICLE%20PERMANENTLY")
+        self.assertEqual(resp.status_code, 404)
+
+
+class RemoveArticleFromProjectRouteTests(AnalysisRoutesTestCase):
+    """The Article Detail page's ordinary delete: project-scoped, restorable,
+    needs articles.delete, visibility of the project, and no in-flight run."""
+
+    PROJECT = {"id": 1, "name": "UK Oil Evidence"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._delete_perm_patcher = patch(
+            "services.auth.permissions_store.user_permission_keys",
+            return_value={"articles.view", "articles.delete"},
+        )
+        cls._delete_perm_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._delete_perm_patcher.stop()
+        super().tearDownClass()
+
+    def test_removes_the_article_from_the_project(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch(
+                 "services.articles.store.remove_article_from_project",
+                 return_value={"shared_with_other_projects": False},
+             ) as mock_remove:
+            resp = self.client.delete("/api/projects/1/articles/42")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "ok": True, "project": {"id": 1, "name": "UK Oil Evidence"},
+            "restorable": True, "shared_with_other_projects": False,
+        })
+        mock_remove.assert_called_once_with(1, 42, actor="admin")
+
+    def test_404_when_the_article_is_not_linked_to_the_project(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value=None), \
+             patch("services.articles.store.remove_article_from_project", return_value=None):
+            resp = self.client.delete("/api/projects/1/articles/42")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_404_for_an_unknown_project(self):
+        with patch("main.get_project", return_value=None), \
+             patch("services.articles.store.remove_article_from_project") as mock_remove:
+            resp = self.client.delete("/api/projects/1/articles/42")
+        self.assertEqual(resp.status_code, 404)
+        mock_remove.assert_not_called()
+
+    def test_refuses_while_an_analysis_run_is_in_flight(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("main.get_active_run_for_project", return_value={"id": "run-1", "status": "running"}), \
+             patch("services.articles.store.remove_article_from_project") as mock_remove:
+            resp = self.client.delete("/api/projects/1/articles/42")
+        self.assertEqual(resp.status_code, 409)
+        mock_remove.assert_not_called()
+
+    def test_403_without_articles_delete(self):
+        with patch("services.auth.permissions_store.user_permission_keys", return_value={"articles.view"}), \
+             patch("services.articles.store.remove_article_from_project") as mock_remove:
+            resp = self.client.delete("/api/projects/1/articles/42")
+        self.assertEqual(resp.status_code, 403)
+        mock_remove.assert_not_called()
+
+    def test_restores_the_article_to_the_project(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("services.articles.store.restore_article_to_project", return_value=True) as mock_restore:
+            resp = self.client.post("/api/projects/1/articles/42/restore")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"ok": True, "project": {"id": 1, "name": "UK Oil Evidence"}})
+        mock_restore.assert_called_once_with(1, 42, actor="admin")
+
+    def test_404_when_theres_nothing_to_restore(self):
+        with patch("main.get_project", return_value=self.PROJECT), \
+             patch("services.articles.store.restore_article_to_project", return_value=False):
+            resp = self.client.post("/api/projects/1/articles/42/restore")
         self.assertEqual(resp.status_code, 404)
 
 

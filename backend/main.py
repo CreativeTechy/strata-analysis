@@ -1820,12 +1820,88 @@ def remove_project_articles_route(
     return {"ok": True, **result}
 
 
-@app.delete("/api/articles/{article_id}")
-def delete_article_endpoint(article_id: int, user: dict = Depends(require_permission("articles.delete"))):
-    """Delete a single stored article from Postgres."""
-    from services.articles.store import delete_article
+@app.delete("/api/projects/{project_id}/articles/{article_id}")
+def remove_project_article_route(
+    project_id: int,
+    article_id: int,
+    user: dict = Depends(require_permission("articles.delete")),
+):
+    """Remove one article from one project - the Article Detail page's
+    ordinary delete action. Only unlinks this project (an article shared with
+    other projects keeps its row and its other links; one that belonged only
+    here becomes an orphan, never destroyed) and is always restorable via
+    restore_project_article_route below. Permanently destroying the article's
+    row is a separate, admin-only action (see delete_article_permanently_route)."""
+    from services.articles.store import ArticleRemovalConflict, remove_article_from_project
 
-    if not delete_article(article_id):
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if get_active_run_for_project(project_id):
+        raise HTTPException(
+            status_code=409,
+            detail="An analysis run is in progress for this project. Stop it before removing an article.",
+        )
+
+    try:
+        result = remove_article_from_project(project_id, article_id, actor=_actor_name(user))
+    except ArticleRemovalConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="This article isn't linked to this project.")
+    return {
+        "ok": True,
+        "project": {"id": project.get("id"), "name": project.get("name")},
+        "restorable": True,
+        **result,
+    }
+
+
+@app.post("/api/projects/{project_id}/articles/{article_id}/restore")
+def restore_project_article_route(
+    project_id: int,
+    article_id: int,
+    user: dict = Depends(require_permission("articles.delete")),
+):
+    """Undoes remove_project_article_route above - re-links the article to
+    this project with the relevance/override fields it had before removal."""
+    from services.articles.store import restore_article_to_project
+
+    _ensure_project_visible(project_id, user)
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if not restore_article_to_project(project_id, article_id, actor=_actor_name(user)):
+        raise HTTPException(status_code=404, detail="Nothing to restore for this article in this project.")
+    return {"ok": True, "project": {"id": project.get("id"), "name": project.get("name")}}
+
+
+@app.delete("/api/admin/articles/{article_id}")
+def delete_article_permanently_route(
+    article_id: int,
+    confirm: str = "",
+    user: dict = Depends(require_permission("articles.delete")),
+):
+    """Permanently delete one article's row, everywhere, for every project it
+    was linked to. Admin-only and only with the exact confirmation phrase -
+    the dashboard's ordinary delete action is the project-scoped, restorable
+    remove_project_article_route above; this is for an administrator who
+    deliberately wants the row gone for good (e.g. purging an orphan nobody
+    restored)."""
+    from services.articles.store import DELETE_ARTICLE_PERMANENTLY_CONFIRMATION, delete_article_permanently
+
+    if not permissions_store.user_is_full_access(user):
+        raise HTTPException(status_code=403, detail="Only administrators can permanently delete an article.")
+    if confirm != DELETE_ARTICLE_PERMANENTLY_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Pass ?confirm={DELETE_ARTICLE_PERMANENTLY_CONFIRMATION.replace(" ", "%20")} to confirm this irreversible action.',
+        )
+
+    if not delete_article_permanently(article_id, actor=_actor_name(user)):
         raise HTTPException(status_code=404, detail="Article not found.")
     return {"ok": True}
 

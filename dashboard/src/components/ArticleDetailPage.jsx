@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
-import { getArticleAnalysis, reprocessArticle, deleteArticle } from '../api/articlesApi.js';
+import { getArticleAnalysis, reprocessArticle, removeArticleFromProject, restoreArticleToProject } from '../api/articlesApi.js';
 import { prettyLabel, sentimentBadgeState, isLlmFallbackStatus } from '../lib/articleHelpers.jsx';
 import { formatDate, formatDateTime, formatPercent, formatLanguageName } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
@@ -57,13 +57,12 @@ export default function ArticleDetailPage() {
   const { t, i18n } = useTranslation(['articles', 'common']);
   const locale = i18n.language;
   const { articleId } = useParams();
-  const navigate = useNavigate();
   const location = useLocation();
-  // Where "Back to Articles" (and a successful delete) should return to -
-  // the article list's own path+query at the moment Details was clicked, so
-  // its filters/search/page survive the round trip instead of resetting to
-  // the article library's default view. Falls back to a bare /articles for
-  // any other way of landing on this page (a direct link, a bookmark).
+  // Where "Back to Articles" should return to - the article list's own
+  // path+query at the moment Details was clicked, so its filters/search/page
+  // survive the round trip instead of resetting to the article library's
+  // default view. Falls back to a bare /articles for any other way of
+  // landing on this page (a direct link, a bookmark).
   const backTo = location.state?.from || '/articles';
   const { hasPermission } = useAuth();
   const canReprocess = hasPermission('pipeline.run');
@@ -76,6 +75,16 @@ export default function ArticleDetailPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  // The project a removal would target. Auto-picked when the article is only
+  // linked to one project; left for the user to choose from the modal's
+  // dropdown when it's linked to several (the same article row can be shared
+  // across projects, so "delete" has to say which link it means).
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  // Set right after a successful removal so the page can offer an inline
+  // Undo instead of just navigating away - the article/project link still
+  // exists in the trash table at this point, so restoring is instant.
+  const [removedInfo, setRemovedInfo] = useState(null);
+  const [restoring, setRestoring] = useState(false);
   const activeArticle = useRef(articleId);
 
   useEffect(() => {
@@ -89,6 +98,7 @@ export default function ArticleDetailPage() {
     setLoading(true);
     setError('');
     setActionMessage('');
+    setRemovedInfo(null);
     getArticleAnalysis(articleId, { locale }, controller.signal)
       .then((res) => setData(res?.analysis || null))
       .catch((err) => {
@@ -97,6 +107,15 @@ export default function ArticleDetailPage() {
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, [articleId, locale, t]);
+
+  const projects = data?.projects || [];
+  // Derived at render time rather than mirrored into state via an effect:
+  // whichever project selectedProjectId last pointed at, falling back to the
+  // only (or first) project once the article data loads or a removal
+  // changes the list.
+  const effectiveProjectId = projects.some((p) => String(p.id) === String(selectedProjectId))
+    ? selectedProjectId
+    : String(projects[0]?.id || '');
 
   const handleReprocess = async () => {
     if (reprocessing) return;
@@ -113,19 +132,40 @@ export default function ArticleDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (deleting) return;
+    if (deleting || !effectiveProjectId) return;
     setDeleting(true);
     setDeleteError('');
     try {
-      await deleteArticle(articleId);
-      // Replace, not push: the deleted article's own /articles/:id stays
-      // out of the back-button history, so Back from the list can't return
-      // to a 404 for a row that's already gone.
-      navigate(backTo, { replace: true });
+      const target = projects.find((p) => String(p.id) === String(effectiveProjectId));
+      await removeArticleFromProject(effectiveProjectId, articleId);
+      // Stays on the page instead of navigating away - the article's row and
+      // analysis are untouched, so there's something left to show, and an
+      // inline Undo is only meaningful while the user is still looking at it.
+      setShowDeleteModal(false);
+      setRemovedInfo({ projectId: effectiveProjectId, projectName: target?.name || '' });
+      setData((prev) => (prev ? { ...prev, projects: prev.projects.filter((p) => String(p.id) !== String(effectiveProjectId)) } : prev));
     } catch (err) {
       setDeleteError(err?.message || t('detail.deleteFailed'));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (restoring || !removedInfo) return;
+    setRestoring(true);
+    setActionMessage('');
+    try {
+      await restoreArticleToProject(removedInfo.projectId, articleId);
+      setActionMessage(t('detail.restoredBanner', { title: data?.title || t('common.untitledArticle'), project: removedInfo.projectName }));
+      setData((prev) => (prev
+        ? { ...prev, projects: [...prev.projects, { id: Number(removedInfo.projectId), name: removedInfo.projectName }] }
+        : prev));
+      setRemovedInfo(null);
+    } catch (err) {
+      setActionMessage(err?.message || t('detail.undoFailed'));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -134,9 +174,17 @@ export default function ArticleDetailPage() {
       <ConfirmModal
         open={showDeleteModal}
         title={t('detail.deleteModal.title')}
-        message={t('detail.deleteModal.message', { title: data?.title || t('common.untitledArticle') })}
+        message={
+          projects.length > 1
+            ? t('detail.deleteModal.messageMultiProject', { title: data?.title || t('common.untitledArticle') })
+            : t('detail.deleteModal.messageSingleProject', {
+                title: data?.title || t('common.untitledArticle'),
+                project: projects[0]?.name || '',
+              })
+        }
         confirmLabel={deleting ? t('detail.deleteModal.confirmLabelBusy') : t('detail.deleteModal.confirmLabel')}
         cancelLabel={t('detail.deleteModal.cancelLabel')}
+        confirmDisabled={!effectiveProjectId}
         confirmButtonStyle={{
           background: 'linear-gradient(135deg, #ff4757, #e03131)',
           boxShadow: '0 4px 15px rgba(255, 71, 87, 0.28)',
@@ -146,8 +194,31 @@ export default function ArticleDetailPage() {
         }}
         onConfirm={handleDelete}
       >
+        {projects.length > 1 ? (
+          <label style={{ display: 'block', fontSize: '0.85rem', margin: '8px 0' }}>
+            {t('detail.deleteProjectLabel')}
+            <select
+              value={effectiveProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+              style={{ display: 'block', width: '100%', marginTop: 4 }}
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {deleteError ? <p style={{ color: '#b42318', fontSize: '0.85rem' }} dir="auto">{deleteError}</p> : null}
       </ConfirmModal>
+
+      {removedInfo ? (
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderLeft: '4px solid #ff8787', marginBottom: 14 }}>
+          <span dir="auto">{t('detail.removedBanner', { title: data?.title || t('common.untitledArticle'), project: removedInfo.projectName })}</span>
+          <button type="button" className="btn-secondary" onClick={handleUndo} disabled={restoring}>
+            {restoring ? t('detail.undoingButton') : t('detail.undoButton')}
+          </button>
+        </div>
+      ) : null}
 
       <div className="admin-page-header">
         <div>
@@ -182,8 +253,17 @@ export default function ArticleDetailPage() {
               // leaves `data` null with `loading` already false, and
               // confirming a delete with no article to name and no
               // confirmed title is worse than just disabling the button.
-              disabled={loading || !data}
-              title={!loading && !data ? t('detail.deleteDisabledTitle') : undefined}
+              // Also gated on having a project left to remove it from - once
+              // the article has no project links, there's nothing left for
+              // this project-scoped action to do.
+              disabled={loading || !data || !projects.length}
+              title={
+                !loading && !data
+                  ? t('detail.deleteDisabledTitle')
+                  : !loading && data && !projects.length
+                    ? t('detail.deleteDisabledNoProject')
+                    : undefined
+              }
             >
               <Trash2 size={16} /> {t('detail.deleteButton')}
             </button>

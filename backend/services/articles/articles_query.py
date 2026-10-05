@@ -919,6 +919,29 @@ def _shape_article_analysis(row: dict) -> dict:
     }
 
 
+def list_projects_for_article(article_id) -> list[dict]:
+    """The projects one article is currently linked to (via article_projects)
+    - what the Article Detail page's "Remove from project" action needs to
+    know which project(s) removal would even apply to, since the same
+    article row can be shared across several projects."""
+    if not config.DATABASE_URL:
+        return []
+    try:
+        rows = db.fetch_all(
+            """
+            select p.id, p.name
+            from article_projects ap
+            join projects p on p.id = ap.project_id
+            where ap.article_id = %s
+            order by p.name
+            """,
+            (int(article_id),),
+        )
+        return [{"id": row["id"], "name": row["name"]} for row in rows]
+    except Exception:
+        return []
+
+
 def get_article_analysis(article_id):
     """Full analysis detail for one article - the response shape GET
     /api/articles/{id}/analysis returns. None if the article doesn't exist
@@ -936,4 +959,6 @@ def get_article_analysis(article_id):
         return None
     if not row:
         return None
-    return _shape_article_analysis(row)
+    analysis = _shape_article_analysis(row)
+    analysis["projects"] = list_projects_for_article(article_id)
+    return analysis

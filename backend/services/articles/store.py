@@ -1071,13 +1071,158 @@ def delete_all_articles(actor=None):
         return None
 
 
-def delete_article(article_id):
+_ARTICLE_PROJECT_LINK_COLUMNS = (
+    "similarity_score",
+    "relevance_decision",
+    "relevance_explanation",
+    "relevance_source",
+    "relevance_scope_hash",
+    "relevance_content_hash",
+    "relevance_model",
+    "relevance_rules_version",
+    "relevance_screened_at",
+    "manual_relevance_override",
+    "manual_relevance_reason",
+    "manual_relevance_reviewer_id",
+    "manual_relevance_reviewer_name",
+    "manual_relevance_updated_at",
+)
+
+
+def remove_article_from_project(project_id, article_id, actor=None):
+    """The ordinary, non-admin "Remove from project" action (Article Detail
+    page): unlinks one article from one project and nothing else - the
+    `articles` row, its analysis, and its links to every *other* project are
+    never touched, even when this was the article's only project. The
+    unlinked article_projects row is copied into removed_article_projects
+    first, so the removal is always undoable via restore_article_to_project().
+
+    Returns {"shared_with_other_projects": bool} on success, None if the
+    article wasn't linked to this project or on a database error.
+    """
+    if not config.DATABASE_URL:
+        logger.warning("Database credentials not set, skipping article removal.")
+        return None
+
+    project_id = int(project_id)
+    article_id = int(article_id)
+    try:
+        with db.transaction() as cur:
+            _guard_article_removal(cur, project_id)
+            cur.execute(
+                "select * from article_projects where project_id = %s and article_id = %s",
+                (project_id, article_id),
+            )
+            link = cur.fetchone()
+            if not link:
+                return None
+
+            columns = ["article_id", "project_id", "linked_created_at", "removed_by"]
+            values = [article_id, project_id, link.get("created_at"), actor]
+            for column in _ARTICLE_PROJECT_LINK_COLUMNS:
+                columns.append(column)
+                values.append(link.get(column))
+            updates = ", ".join(f"{c} = excluded.{c}" for c in columns if c not in ("article_id", "project_id"))
+            cur.execute(
+                f"""
+                insert into removed_article_projects ({", ".join(columns)})
+                values ({", ".join(["%s"] * len(columns))})
+                on conflict (article_id, project_id) do update set
+                    {updates}, removed_at = now()
+                """,
+                values,
+            )
+
+            cur.execute(
+                "delete from article_projects where project_id = %s and article_id = %s",
+                (project_id, article_id),
+            )
+            cur.execute(
+                "select count(*)::int as c from article_projects where article_id = %s",
+                (article_id,),
+            )
+            remaining = (cur.fetchone() or {}).get("c", 0)
+
+        logger.warning(
+            "REMOVE ARTICLE FROM PROJECT: article %s removed from project %s (restorable); by %r.",
+            article_id, project_id, actor,
+        )
+        return {"shared_with_other_projects": remaining > 0}
+    except ArticleRemovalConflict:
+        raise
+    except Exception as e:
+        _log_db_error("  article removal error", e)
+        return None
+
+
+def restore_article_to_project(project_id, article_id, actor=None):
+    """Undoes remove_article_from_project(): re-links the article to the
+    project with its previous relevance/manual-override fields, and drops the
+    trash row. Returns True on success, False if there's nothing to restore
+    or on a database error."""
+    if not config.DATABASE_URL:
+        logger.warning("Database credentials not set, skipping article restore.")
+        return False
+
+    project_id = int(project_id)
+    article_id = int(article_id)
+    try:
+        with db.transaction() as cur:
+            cur.execute(
+                "select * from removed_article_projects where project_id = %s and article_id = %s",
+                (project_id, article_id),
+            )
+            trashed = cur.fetchone()
+            if not trashed:
+                return False
+
+            columns = ["article_id", "project_id"] + list(_ARTICLE_PROJECT_LINK_COLUMNS)
+            values = [article_id, project_id] + [trashed.get(c) for c in _ARTICLE_PROJECT_LINK_COLUMNS]
+            if trashed.get("linked_created_at"):
+                columns.append("created_at")
+                values.append(trashed.get("linked_created_at"))
+            cur.execute(
+                f"""
+                insert into article_projects ({", ".join(columns)})
+                values ({", ".join(["%s"] * len(columns))})
+                on conflict (article_id, project_id) do nothing
+                """,
+                values,
+            )
+            cur.execute(
+                "delete from removed_article_projects where project_id = %s and article_id = %s",
+                (project_id, article_id),
+            )
+        logger.warning(
+            "RESTORE ARTICLE TO PROJECT: article %s restored to project %s; by %r.",
+            article_id, project_id, actor,
+        )
+        return True
+    except Exception as e:
+        _log_db_error("  article restore error", e)
+        return False
+
+
+# The exact phrase DELETE /api/admin/articles/{id} requires before destroying
+# a single article's row outright, globally, with no way back - same shape as
+# DELETE_ALL_ARTICLES_CONFIRMATION above, for the same reason (a deliberate,
+# typed admin action, not a button a project user can reach).
+DELETE_ARTICLE_PERMANENTLY_CONFIRMATION = "DELETE ARTICLE PERMANENTLY"
+
+
+def delete_article_permanently(article_id, actor=None):
+    """Admin-only, irreversible: deletes one article's row everywhere, for
+    every project it was linked to (see main.py's DELETE
+    /api/admin/articles/{id}). Ordinary removal never calls this - it calls
+    remove_article_from_project() above instead, which only unlinks."""
     if not config.DATABASE_URL:
         logger.warning("Database credentials not set, skipping article delete.")
         return False
 
     try:
         row = db.execute("delete from articles where id = %s returning id", (article_id,))
+        if row is not None:
+            logger.warning("DELETE ARTICLE PERMANENTLY: article %s deleted by %r.", article_id, actor)
         return row is not None
     except Exception as e:
         _log_db_error("  article delete error", e)

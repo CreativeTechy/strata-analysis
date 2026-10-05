@@ -61,7 +61,15 @@ export const getProjectArticleRemovalPreview = (projectId, signal) =>
  *  exact name - the backend rejects anything else with a 400. */
 export const removeProjectArticles = (projectId, confirm) =>
   request(`/projects/${projectId}/articles`, { method: 'DELETE', body: { confirm } });
-export const deleteArticle = (articleId) => request(`/articles/${articleId}`, { method: 'DELETE' });
+/** Removes one article from one project (the Article Detail page's ordinary
+ *  delete action). Only unlinks that project - the article's row and its
+ *  other project links are untouched - and can be undone with
+ *  restoreArticleToProject below. */
+export const removeArticleFromProject = (projectId, articleId) =>
+  request(`/projects/${projectId}/articles/${articleId}`, { method: 'DELETE' });
+/** Undoes removeArticleFromProject. */
+export const restoreArticleToProject = (projectId, articleId) =>
+  request(`/projects/${projectId}/articles/${articleId}/restore`, { method: 'POST' });
 
 // --- analysis health (Performance Logs page) --------------------------------
 export const getAnalysisStatus = (params, signal) => request(`/analysis/status${query(params)}`, { signal });

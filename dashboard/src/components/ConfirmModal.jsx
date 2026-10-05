@@ -12,6 +12,7 @@ export default function ConfirmModal({
   onConfirm,
   onClose,
   hideCancel = false,
+  confirmDisabled = false,
   children,
 }) {
   const { t } = useTranslation('common');
@@ -56,7 +57,7 @@ export default function ConfirmModal({
               {resolvedCancelLabel}
             </button>
           )}
-          <button type="button" className="btn-primary" onClick={onConfirm || onClose} style={confirmButtonStyle}>
+          <button type="button" className="btn-primary" onClick={onConfirm || onClose} style={confirmButtonStyle} disabled={confirmDisabled}>
             {resolvedConfirmLabel}
           </button>
         </div>
