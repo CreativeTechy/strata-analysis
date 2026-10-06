@@ -85,7 +85,33 @@ def list_runs(project_id: int) -> list[dict]:
 
 
 def mark_running(run_id: int) -> None:
-    db.execute("update competitor_analysis_runs set status = 'running' where id = %s", (int(run_id),))
+    # Only from 'queued': a run stopped before its background job began must
+    # stay cancelled rather than be revived.
+    db.execute(
+        "update competitor_analysis_runs set status = 'running' where id = %s and status = 'queued'",
+        (int(run_id),),
+    )
+
+
+def mark_cancelled(run_id: int) -> dict | None:
+    """End a queued/running run as cancelled. Returns None if it was already
+    terminal. The row itself is the stop signal: the background job re-reads
+    its status at each checkpoint (see is_cancelled), and mark_success/
+    mark_failed refuse to overwrite it."""
+    return db.fetch_one(
+        f"""
+        update competitor_analysis_runs
+           set status = 'cancelled', finished_at = now()
+         where id = %s and status = any(%s)
+        returning {RUN_COLUMNS}
+        """,
+        (int(run_id), list(ACTIVE_STATUSES)),
+    )
+
+
+def is_cancelled(run_id: int) -> bool:
+    row = db.fetch_one("select status from competitor_analysis_runs where id = %s", (int(run_id),))
+    return bool(row) and row["status"] == "cancelled"
 
 
 def append_log(run_id: int, message: str, code: str | None = None,
@@ -118,7 +144,7 @@ def mark_success(run_id: int, generated: int, skipped: list | None = None,
         update competitor_analysis_runs
            set status = 'success', generated = %s, skipped = %s, validation = %s,
                finished_at = now()
-         where id = %s
+         where id = %s and status <> 'cancelled'
         returning {RUN_COLUMNS}
         """,
         (int(generated), Jsonb(skipped or []), Jsonb(validation) if validation is not None else None,
@@ -133,7 +159,7 @@ def mark_failed(run_id: int, error: str, generated: int = 0, skipped: list | Non
         update competitor_analysis_runs
            set status = 'failed', error = %s, generated = %s, skipped = %s, validation = %s,
                finished_at = now()
-         where id = %s
+         where id = %s and status <> 'cancelled'
         returning {RUN_COLUMNS}
         """,
         (error, int(generated), Jsonb(skipped or []), Jsonb(validation) if validation is not None else None,

@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import {
   analyze, getAnalysisScope, listAnalysisRuns, pollAnalysisRun,
 } from './api/competitorApi.js';
+import { stopPipelineRun } from './api/pipelineRunsApi.js';
 
 export const SCOPE_LABELS = {
   pending: 'Documents not yet analyzed',
@@ -48,12 +49,12 @@ const ACTIVE_RUN_STATUSES = ['queued', 'running'];
 // One in-flight poll per study, however many pages/components currently
 // render it - re-entering a page that's already watching a run reattaches to
 // the same state instead of starting a second poll loop or losing the log.
-const watchStates = new Map(); // studyId -> { analyzing, logs, terminalRun }
+const watchStates = new Map(); // studyId -> { analyzing, logs, terminalRun, runId }
 const watchListeners = new Map(); // studyId -> Set<listener>
 // useSyncExternalStore requires getSnapshot to return a stable reference when
 // nothing changed - a fresh {} literal on every call for a study with no
 // entry yet would look like a change on every render and loop forever.
-const IDLE_WATCH_STATE = { analyzing: false, logs: [], terminalRun: null };
+const IDLE_WATCH_STATE = { analyzing: false, logs: [], terminalRun: null, runId: null };
 
 function getWatchState(studyId) {
   return watchStates.get(studyId) || IDLE_WATCH_STATE;
@@ -76,7 +77,7 @@ function subscribeWatch(studyId, listener) {
 // happens to be mounted when the run finishes reacts via the effect below.
 function watchRun(studyId, runId) {
   if (getWatchState(studyId).analyzing) return;
-  setWatchState(studyId, { analyzing: true, logs: [], terminalRun: null });
+  setWatchState(studyId, { analyzing: true, logs: [], terminalRun: null, runId });
   (async () => {
     try {
       const run = await pollAnalysisRun(studyId, runId, (r) => setWatchState(studyId, { logs: r.logs || [] }));
@@ -100,6 +101,7 @@ export function useRunAnalysis(studyId, { onSuccess, onError } = {}) {
   const [documents, setDocuments] = useState([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [analysisRuns, setAnalysisRuns] = useState([]);
+  const [stopping, setStopping] = useState(false);
 
   // Seeded with whatever terminal run already exists at mount time, so a run
   // that finished before this page opened (or before it was last reopened)
@@ -191,7 +193,8 @@ export function useRunAnalysis(studyId, { onSuccess, onError } = {}) {
       // itself to the run history - both need to be current before the next
       // dialog open or toolbar filter reflects reality.
       await Promise.all([refreshScope(), refreshRuns()]);
-      if (!cancelled) onSuccessRef.current?.(run);
+      // A stopped run still changes the run history, but it is not a result to announce.
+      if (!cancelled && run.status !== 'cancelled') onSuccessRef.current?.(run);
     })();
     return () => {
       cancelled = true;
@@ -214,8 +217,22 @@ export function useRunAnalysis(studyId, { onSuccess, onError } = {}) {
     }
   };
 
+  // The backend ends the run at its next checkpoint (not mid LLM call), and the
+  // poll then delivers the 'cancelled' terminal run, which clears `analyzing`.
+  const stopAnalysis = async () => {
+    if (!watchState.runId || stopping) return;
+    setStopping(true);
+    try {
+      await stopPipelineRun(String(watchState.runId));
+    } catch (caught) {
+      onError?.(caught.message);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return {
-    analyzing: watchState.analyzing, showRunChoice, setShowRunChoice,
+    analyzing: watchState.analyzing, stopping, stopAnalysis, showRunChoice, setShowRunChoice,
     scope, setScope, documents, eligibleDocuments, pendingDocuments,
     selectedDocumentIds, setSelectedDocumentIds,
     analysisRuns, analysisLogs: watchState.logs, runAnalysis,

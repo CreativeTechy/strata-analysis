@@ -484,6 +484,19 @@ def validate_competitor_articles(project_id: int, competitors: list[dict],
             scope_text=scope_text,
         )
         included_ids = set(screening["included_ids"])
+        # Publish the screening outcome as soon as it exists, not only when the
+        # whole run ends: the run detail page shows its relevance section from
+        # these counters, and the (slow) per-competitor stage that follows
+        # would otherwise leave it blank for the entire run.
+        update_pipeline_run(
+            str(analysis_run_id),
+            articles_selected=len(articles),
+            articles_screened=screening.get("screened") or 0,
+            articles_included=screening.get("included") or 0,
+            articles_excluded=screening.get("excluded") or 0,
+            articles_needs_review=screening.get("needs_review") or 0,
+            screening_mode=screening.get("mode"),
+        )
         kept = [a for a in articles if int(a["id"]) in included_ids]
         # Count distinct articles: `articles` can hold one row per document an
         # article appears in, so subtracting row counts reports duplicates as
@@ -996,10 +1009,15 @@ def generate_finding(business_profile: dict, competitor: dict, period_days: int 
     )
 
 
+class AnalysisCancelled(Exception):
+    """Raised at a checkpoint when the user has stopped the run."""
+
+
 def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
                       pipeline_run_id: str | None = None,
                       document_ids: list[int] | None = None,
-                      analysis_run_id: int | None = None, log=None) -> dict:
+                      analysis_run_id: int | None = None, log=None,
+                      should_cancel=None) -> dict:
     """Validate evidence then produce one card per tracked competitor.
 
     `log` receives one human-readable progress line per step. It exists because
@@ -1022,6 +1040,10 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
 
     log = log or (lambda *_args, **_kwargs: None)
 
+    def _checkpoint() -> None:
+        if should_cancel is not None and should_cancel():
+            raise AnalysisCancelled()
+
     profile = get_profile(project_id)
     competitors = list_competitors(project_id, status="tracked")
     if not competitors:
@@ -1033,6 +1055,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     validation = validate_competitor_articles(project_id, competitors, period_days,
                                               pipeline_run_id, document_ids, log=log,
                                               profile=profile, analysis_run_id=analysis_run_id)
+    _checkpoint()
 
     period_start = period_end = None
     if document_ids:
@@ -1052,6 +1075,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     def _analyze(competitor: dict) -> tuple[dict, dict | None, LLMError | None]:
         """One competitor's card. Returns the error rather than raising it so a
         single provider failure doesn't cancel the rest of the pool."""
+        _checkpoint()  # a stop lands before this competitor's LLM call, not mid-call
         name = competitor.get("name")
         stats = validation["per_competitor"].get(int(competitor["id"]), {})
         stories = stats.get("stories") or 0
@@ -1087,6 +1111,7 @@ def generate_findings(project_id: int, period_days: int = DEFAULT_PERIOD_DAYS,
     # enrichment and Copilot chat.
     with ThreadPoolExecutor(max_workers=min(config.COMPETITOR_ANALYSIS_CONCURRENCY, len(competitors))) as pool:
         results = list(pool.map(_analyze, competitors))
+    _checkpoint()
 
     for competitor, finding, error in results:
         if error is not None:
@@ -1194,8 +1219,15 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
     run's progress shows up on the main Analysis Runs dashboard too.
     """
     log = analysis_runs_store.logger(run_id)
+    if analysis_runs_store.is_cancelled(run_id):
+        _finish_cancelled(run_id, log)
+        return
     analysis_runs_store.mark_running(run_id)
     update_pipeline_run(str(run_id), status="running", stage="analyze", message="Analyzing competitors...")
+
+    def should_cancel() -> bool:
+        return analysis_runs_store.is_cancelled(run_id)
+
     try:
         resolved = analysis_runs_store.resolve_scope(project_id, scope, document_ids)
         if not resolved:
@@ -1218,32 +1250,47 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
             doc["original_filename"] or f"Document {doc['id']}": {
                 "document_id": doc["id"],
                 "selected": doc["approved_article_count"],
-                "analyzed": doc["approved_article_count"],
+                "analyzed": 0,
                 "failed": 0,
             }
             for doc in analysis_runs_store.documents_with_scope(project_id)
             if int(doc["id"]) in resolved_set
         })
+        if should_cancel():
+            raise AnalysisCancelled()
         extract_frequent_ideas_for_documents(project_id, resolved, log=log)
-        result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log)
+        if should_cancel():
+            raise AnalysisCancelled()
+        result = generate_findings(project_id, document_ids=resolved, analysis_run_id=run_id, log=log,
+                                   should_cancel=should_cancel)
 
         # A provider failure is a failed run, not a run that generated zero
         # reports - same distinction generate_findings itself draws.
         if result.get("error"):
-            analysis_runs_store.mark_failed(
+            if analysis_runs_store.mark_failed(
                 run_id, result["error"], result.get("generated") or 0,
                 result.get("skipped"), result.get("validation"),
-            )
+            ) is None:
+                raise AnalysisCancelled()
             update_pipeline_run(str(run_id), status="failed", stage="error", error=result["error"])
             return
 
+        # Coverage is recorded before the success transition so a failure here
+        # can't leave a 'success' run with uncovered documents. Coverage only
+        # counts for 'success' runs (analyzed_document_ids), so if the run was
+        # stopped after the last checkpoint, mark_success returns None, the run
+        # stays cancelled, and these rows cover nothing.
         analysis_runs_store.record_covered_documents(run_id, resolved)
-        analysis_runs_store.mark_success(run_id, result["generated"], result["skipped"], result["validation"])
+        if analysis_runs_store.mark_success(
+            run_id, result["generated"], result["skipped"], result["validation"],
+        ) is None:
+            raise AnalysisCancelled()
         validation = result["validation"] or {}
         screening = validation.get("screening") or {}
 
         # The stats written above (just before generate_findings) are a
-        # placeholder of "every approved article will be analyzed" so the
+        # placeholder (selected = approved articles, analyzed = 0 until validation
+        # has actually run) so the
         # dashboard has something to show while the run is in flight. Now
         # that validation has actually run, replace them with how many of
         # each document's approved articles were kept as evidence, so the
@@ -1284,10 +1331,28 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
             screening_mode=screening.get("mode"),
         )
         _regenerate_idea_comparisons(project_id)
+    except AnalysisCancelled:
+        _finish_cancelled(run_id, log)
     except Exception as exc:  # noqa: BLE001 - terminal state must carry the reason
+        if analysis_runs_store.is_cancelled(run_id):
+            _finish_cancelled(run_id, log)
+            return
         log(f"Analysis failed: {exc}", "analysis_failed", {"error": str(exc)})
         analysis_runs_store.mark_failed(run_id, str(exc))
         update_pipeline_run(str(run_id), status="failed", stage="error", error=str(exc))
+
+
+def _finish_cancelled(run_id: int, log) -> None:
+    """Terminal bookkeeping for a stopped run. Idempotent: the stop endpoint
+    has normally already marked both rows; this covers a job that reaches its
+    checkpoint first."""
+    analysis_runs_store.mark_cancelled(run_id)
+    log("Analysis stopped by user.", "analysis_cancelled")
+    now = datetime.now(timezone.utc).isoformat()
+    update_pipeline_run(
+        str(run_id), status="cancelled", stage="cancelled", message="Cancelled by user.",
+        cancelled_at=now, finished_at=now,
+    )
 
 
 # --------------------------------------------------------------------------- #

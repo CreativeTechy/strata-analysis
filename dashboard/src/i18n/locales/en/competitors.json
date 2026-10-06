@@ -355,6 +355,9 @@
   "runAnalysis": {
     "runAnalysisLabel": "Run analysis",
     "analysingEllipsis": "Analysing...",
+    "stop": "Stop analysis",
+    "stopping": "Stopping...",
+    "stopFailed": "Could not stop the analysis.",
     "description": "Reads the chosen documents’ evidence and rewrites a card per tracked competitor.",
     "lastRun": "Last run {{time}}.",
     "neverAnalysed": "This study has never been analysed.",
@@ -414,6 +417,7 @@
     "done_with_skipped_one": "Done. Generated {{count}} report, skipped {{skipped}}.",
     "done_with_skipped_other": "Done. Generated {{count}} reports, skipped {{skipped}}.",
     "analysis_failed": "Analysis failed: {{error}}",
+    "analysis_cancelled": "Analysis stopped.",
     "rejectionReasons": {
       "blocked_page_one": "{{count}} blocked page",
       "blocked_page_other": "{{count}} blocked pages",

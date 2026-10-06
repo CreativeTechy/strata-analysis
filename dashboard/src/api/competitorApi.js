@@ -218,7 +218,7 @@ export async function pollAnalysisRun(studyId, runId, onUpdate) {
   for (;;) {
     const { run } = await getAnalysisStatus(studyId, runId);
     if (onUpdate) onUpdate(run);
-    if (run.status === 'success' || run.status === 'failed') return run;
+    if (run.status === 'success' || run.status === 'failed' || run.status === 'cancelled') return run;
     await sleep(RUN_POLL_MS);
   }
 }

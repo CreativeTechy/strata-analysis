@@ -408,6 +408,7 @@ class AnalysisJobTests(unittest.TestCase):
         self.logs = []
         log = lambda message, code=None, params=None: self.logs.append((message, code, params))  # noqa: E731
         with patch.object(analysis_runs_store, "mark_running") as mark_running, \
+             patch.object(analysis_runs_store, "is_cancelled", return_value=False), \
              patch.object(analysis_runs_store, "resolve_scope", return_value=list(resolved)) as resolve, \
              patch.object(analysis_runs_store, "logger", return_value=log), \
              patch.object(analysis_runs_store, "mark_success") as mark_success, \
