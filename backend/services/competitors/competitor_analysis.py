@@ -1275,13 +1275,16 @@ def run_analysis_job(run_id: int, project_id: int, scope: str,
             update_pipeline_run(str(run_id), status="failed", stage="error", error=result["error"])
             return
 
-        # None means the run was stopped after the last checkpoint: it stays
-        # cancelled and, never having completed, covers none of its documents.
+        # Coverage is recorded before the success transition so a failure here
+        # can't leave a 'success' run with uncovered documents. Coverage only
+        # counts for 'success' runs (analyzed_document_ids), so if the run was
+        # stopped after the last checkpoint, mark_success returns None, the run
+        # stays cancelled, and these rows cover nothing.
+        analysis_runs_store.record_covered_documents(run_id, resolved)
         if analysis_runs_store.mark_success(
             run_id, result["generated"], result["skipped"], result["validation"],
         ) is None:
             raise AnalysisCancelled()
-        analysis_runs_store.record_covered_documents(run_id, resolved)
         validation = result["validation"] or {}
         screening = validation.get("screening") or {}
 

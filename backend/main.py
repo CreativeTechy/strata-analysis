@@ -841,7 +841,10 @@ def stop_pipeline_run(run_id: str, user: dict = Depends(require_permission("pipe
     # each checkpoint (between stages and before each competitor's LLM call),
     # so the stop lands at the next boundary, not mid-call. No in-memory flag.
     if run.get("pipeline") == "competitor-analysis":
-        analysis_runs_store.mark_cancelled(int(run_id))
+        if analysis_runs_store.mark_cancelled(int(run_id)) is None:
+            # The job already reached a terminal state; don't contradict it.
+            return {"run": get_pipeline_run(run_id) or run,
+                    "message": "Run already finished; nothing to stop."}
     else:
         cancel_pipeline_run(run_id)
 

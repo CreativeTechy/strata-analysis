@@ -56,13 +56,12 @@ class RunAnalysisJobCancelTests(unittest.TestCase):
         store.record_covered_documents.assert_not_called()
         self.assertEqual(update.call_args.kwargs["status"], "cancelled")
 
-    def test_stop_after_last_checkpoint_does_not_cover_documents(self):
+    def test_stop_after_last_checkpoint_stays_cancelled(self):
         store, update = self._patch()
         store.mark_success.return_value = None  # row already cancelled
         result = {"generated": 1, "skipped": [], "validation": {}, "error": None}
         with patch.object(ca, "generate_findings", return_value=result):
             ca.run_analysis_job(5, 1, "pending")
-        store.record_covered_documents.assert_not_called()
         self.assertEqual(update.call_args.kwargs["status"], "cancelled")
 
     def test_generate_findings_checkpoint_stops_before_any_llm_call(self):
