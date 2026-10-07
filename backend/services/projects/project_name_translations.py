@@ -26,6 +26,9 @@ TRANSLATION_SYSTEM_PROMPT = load_prompt("project_name_translation_system_prompt.
 
 # A down LLM must not cost a request timeout on every project-list load.
 FAILURE_CACHE_SECONDS = 300
+# Names per LLM call, so the response always fits max_tokens however many
+# projects are uncached; each chunk is cached on its own.
+TRANSLATION_BATCH_SIZE = 20
 _failure_cache: dict[str, float] = {}
 
 
@@ -114,16 +117,19 @@ def localize_project_names(projects: list[dict], *, locale: str) -> list[dict]:
 
     if missing and not _recent_failure(locale):
         distinct = sorted({name for _, name in missing})
-        try:
-            translated = dict(zip(distinct, _translate_names(distinct, locale)))
-        except Exception:
-            logger.exception("Project name translation failed for locale=%s", locale)
-            _failure_cache[locale] = time.monotonic()
-        else:
-            _failure_cache.pop(locale, None)
-            new = {pair: translated[pair[1]] for pair in missing}
+        for start in range(0, len(distinct), TRANSLATION_BATCH_SIZE):
+            chunk = distinct[start:start + TRANSLATION_BATCH_SIZE]
+            try:
+                translated = dict(zip(chunk, _translate_names(chunk, locale)))
+            except Exception:
+                logger.exception("Project name translation failed for locale=%s", locale)
+                _failure_cache[locale] = time.monotonic()
+                break
+            new = {pair: translated[pair[1]] for pair in missing if pair[1] in translated}
             _save_cached(locale, new)
             translations.update(new)
+        else:
+            _failure_cache.pop(locale, None)
 
     for item in result:
         key = (item.get("id"), str(item.get("name") or "").strip())
