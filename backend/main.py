@@ -80,6 +80,7 @@ from services.intelligence import evidence_links
 from services.intelligence.feedback_translation import localize_categorized_feedback
 from services.intelligence.idea_translation import localize_frequent_ideas
 from services.projects.project_name_translations import localize_project_names
+from services.articles.idea_comparison_translation import localize_idea_comparison_detail, localize_idea_comparisons
 from services.articles.idea_comparisons import (
     create_comparison_fact, delete_comparison_fact, generate_idea_comparisons_detailed,
     get_idea_comparison, has_run_generation_attempt, list_idea_comparisons,
@@ -1175,6 +1176,7 @@ def get_project_idea_comparisons_view(
     project_id: int,
     run_id: str | None = None,
     regenerate: bool = False,
+    locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     """Cross-source idea comparison cards - which of the project's recurring
@@ -1204,13 +1206,24 @@ def get_project_idea_comparisons_view(
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
+
+    def localized(rows: list[dict]) -> list[dict]:
+        # idea/summary/source values rendered into `locale` and cached by text
+        # (services/articles/idea_comparison_translation.py); a no-op for the
+        # default locale.
+        return localize_idea_comparisons(rows, project_id=project_id, locale=resolved_locale)
+
     cached = list_idea_comparisons(project_id, run_id=run_id)
     if regenerate or (run_id and not has_run_generation_attempt(project_id, run_id)):
         try:
             status = generate_idea_comparisons_detailed(project_id, run_id=run_id)
             cached = list_idea_comparisons(project_id, run_id=run_id)
             return {
-                "comparisons": cached,
+                "comparisons": localized(cached),
                 "regeneration_timed_out": status["truncated"],
                 "regenerated_count": status["written"],
                 "regeneration_total": status["total"],
@@ -1222,30 +1235,35 @@ def get_project_idea_comparisons_view(
             # re-fetching here shows that partial progress instead of the
             # stale pre-attempt list fetched above.
             cached = list_idea_comparisons(project_id, run_id=run_id)
-            return {"comparisons": cached, "error": e.user_message, "error_code": e.code}
+            return {"comparisons": localized(cached), "error": e.user_message, "error_code": e.code}
         except Exception:
             logger.exception("Idea comparison generation failed unexpectedly")
             cached = list_idea_comparisons(project_id, run_id=run_id)
             return {
-                "comparisons": cached,
+                "comparisons": localized(cached),
                 "error": "Something went wrong while regenerating idea comparisons. Please try again.",
                 "error_code": "llm_provider_error",
             }
-    return {"comparisons": cached}
+    return {"comparisons": localized(cached)}
 
 
 @app.get("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}")
 def get_project_idea_comparison_detail(
-    project_id: int, idea_cluster_id: int, run_id: str | None = None,
+    project_id: int, idea_cluster_id: int, run_id: str | None = None, locale: str | None = None,
     user: dict = Depends(require_permission("articles.view")),
 ):
     _ensure_project_visible(project_id, user)
     if not get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
     comparison = get_idea_comparison(project_id, idea_cluster_id, run_id=run_id)
     if not comparison:
         raise HTTPException(status_code=404, detail="Idea comparison not found.")
-    return {"comparison": comparison}
+    # Rendered view only - the facts/regenerate endpoints keep working on the canonical text.
+    return {"comparison": localize_idea_comparison_detail(comparison, project_id=project_id, locale=resolved_locale)}
 
 
 @app.post("/api/projects/{project_id}/idea-comparisons/{idea_cluster_id}/facts")

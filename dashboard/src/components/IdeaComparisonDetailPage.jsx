@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Lightbulb, Loader2,
+  ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Languages, Lightbulb, Loader2,
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
@@ -15,6 +15,9 @@ import {
   regenerateIdeaComparison, updateIdeaComparisonFact,
 } from '../api/projectsApi.js';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 import { useDirectionalMargin } from '../lib/chartDirection.js';
 import '../styles/IdeaComparisonDetail.css';
 
@@ -273,7 +276,7 @@ function NumericEvidence({ evidence, onReveal }) {
 }
 
 export default function IdeaComparisonDetailPage() {
-  const { t } = useTranslation('dashboard');
+  const { t, i18n } = useTranslation('dashboard');
   const { projectId, clusterId } = useParams();
   const [searchParams] = useSearchParams();
   const runId = searchParams.get('run_id') || undefined;
@@ -282,6 +285,14 @@ export default function IdeaComparisonDetailPage() {
   const canManage = hasPermission('projects.update');
   const backTo = location.state?.from || '/dashboard';
   const [comparison, setComparison] = useState(null);
+  // Output language of this page's content - independent of the interface
+  // locale. Carried over from the dashboard card's switcher when opened from
+  // it, otherwise the interface locale; translations are cached server-side.
+  const [contentLocale, setContentLocale] = useState(() => {
+    const initial = location.state?.locale || i18n.language;
+    return isSupportedLocale(initial) ? initial : DEFAULT_LOCALE;
+  });
+  const hasLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -297,17 +308,20 @@ export default function IdeaComparisonDetailPage() {
   const [targetId, setTargetId] = useState('');
 
   const load = useCallback(async (signal) => {
-    setLoading(true);
+    // Only the first load blanks the page; a language switch or a refresh
+    // after an edit swaps the content in place.
+    if (!hasLoaded.current) setLoading(true);
     setError('');
     try {
-      const data = await getIdeaComparison(projectId, clusterId, { run_id: runId }, signal);
+      const data = await getIdeaComparison(projectId, clusterId, { run_id: runId, locale: contentLocale }, signal);
       setComparison(data?.comparison || null);
+      hasLoaded.current = true;
     } catch (err) {
       if (err?.name !== 'AbortError') setError(err?.message || t('ideaComparisonDetail.loadFailed'));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [projectId, clusterId, runId, t]);
+  }, [projectId, clusterId, runId, contentLocale, t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -378,7 +392,7 @@ export default function IdeaComparisonDetailPage() {
     setEditingFactId(fact.id);
     const observations = fact.observations || [];
     setForm({
-      fact_text: fact.fact_text || '', reference_label: fact.reference_label || '',
+      fact_text: fact.fact_text_original ?? fact.fact_text ?? '', reference_label: fact.reference_label || '',
       reference_url: fact.reference_url || '', observed_at: fact.observed_at || '',
       observations: observations.map((item) => ({ ...item, numeric_value: String(item.numeric_value) })),
     });
@@ -396,8 +410,8 @@ export default function IdeaComparisonDetailPage() {
     setMessage('');
     const elapsedTimer = setInterval(() => setRegeneratingElapsedSeconds((s) => s + 1), 1000);
     try {
-      const data = await regenerateIdeaComparison(projectId, clusterId, { run_id: runId });
-      setComparison(data?.comparison || null);
+      await regenerateIdeaComparison(projectId, clusterId, { run_id: runId });
+      await load(); // re-fetch so the new summary comes back in the selected language
       setMessage(t('ideaComparisonDetail.regenerateSuccess'));
       return true;
     } catch (err) {
@@ -470,6 +484,27 @@ export default function IdeaComparisonDetailPage() {
             {comparison.diverges ? <Scale size={14} /> : <CheckCircle2 size={14} />}
             {comparison.diverges ? t('ideaComparisonDetail.statusDiverges') : t('ideaComparisonDetail.statusAgrees')}
           </div>
+        </div>
+        <div
+          className="language-switcher"
+          role="group"
+          aria-label={t('ideaComparisons.outputLanguage.label')}
+          title={t('ideaComparisons.outputLanguage.hint')}
+        >
+          <Languages size={14} aria-hidden="true" className="language-switcher-icon" />
+          {SUPPORTED_LOCALES.map((code) => (
+            <button
+              key={code}
+              type="button"
+              lang={code}
+              dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+              className={`language-switcher-option${code === contentLocale ? ' is-active' : ''}`}
+              aria-pressed={code === contentLocale}
+              onClick={() => setContentLocale(code)}
+            >
+              {LOCALE_NATIVE_NAMES[code]}
+            </button>
+          ))}
         </div>
         {canManage ? (
           <button type="button" className="btn-secondary" onClick={regenerate} disabled={regenerating}>

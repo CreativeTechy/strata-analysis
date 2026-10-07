@@ -566,6 +566,16 @@ def _comparison_html(comparison: dict | None, locale: str = "en") -> str:
     return "".join(parts)
 
 
+def _source_articles_html(report_data: dict, locale: str = "en") -> str:
+    ids = report_data.get("source_article_ids") or []
+    heading = "المقالات المستخدمة في هذا التقرير" if locale == "ar" else "Articles Used in This Report"
+    if not ids:
+        return ""
+    count_label = f"({_fmt_num(len(ids))})"
+    listing = ", ".join(f"#{int(i)}" for i in ids)
+    return f'<h2>{heading} {count_label}</h2><p dir="ltr" style="font-size: 9px;">{_esc(listing)}</p>'
+
+
 def _build_html(report_data: dict, comparison: dict, locale: str = "en") -> str:
     report_data = report_data or {}
     comparison = comparison or {}
@@ -577,6 +587,7 @@ def _build_html(report_data: dict, comparison: dict, locale: str = "en") -> str:
         _sentiment_html(report_data, locale),
         _comparison_html(comparison, locale),
         _idea_comparisons_html(report_data, locale),
+        _source_articles_html(report_data, locale),
     ]
     body = "\n".join(sections)
     direction = "rtl" if locale == "ar" else "ltr"
@@ -765,7 +776,7 @@ def _competitor_appendix_html(finding: dict, rejected_evidence: list[dict]) -> s
                 parts.append(f"""
 <div class="article-block">
   <p class="article-title" dir="auto">{_esc(title)}</p>
-  <p class="article-meta">{published}</p>
+  <p class="article-meta">{f"Article #{int(item['article_id'])} &bull; " if item.get("article_id") is not None else ""}{published}</p>
   {f'<p class="evidence-item" dir="auto">{_esc(excerpt)}</p>' if excerpt else ""}
 </div>
 """)
@@ -773,23 +784,26 @@ def _competitor_appendix_html(finding: dict, rejected_evidence: list[dict]) -> s
     if rejected_evidence:
         parts.append(f"<h3>Filtered out ({len(rejected_evidence)})</h3>")
         rows = "".join(
-            f'<tr><td dir="auto">{_esc(item.get("title") or item.get("url"))}</td>'
+            f'<tr><td dir="ltr">{"#" + str(item["id"]) if item.get("id") is not None else ""}</td>'
+            f'<td dir="auto">{_esc(item.get("title") or item.get("url"))}</td>'
             f'<td dir="auto">{_esc(item.get("source"))}</td>'
             f'<td>{_esc(str(item.get("rejected_reason") or "").replace("_", " "))}</td>'
             f'<td>{_fmt_iso(item.get("dated"))}</td></tr>'
             for item in rejected_evidence
         )
         parts.append(
-            f'<table><tr><th>Title</th><th>Source</th><th>Reason excluded</th><th>Date</th></tr>{rows}</table>'
+            f'<table><tr><th>ID</th><th>Title</th><th>Source</th><th>Reason excluded</th><th>Date</th></tr>{rows}</table>'
         )
 
     confidence = finding.get("confidence")
     confidence_label = f"{round(float(confidence) * 100)}%" if confidence is not None else "Not assessed"
+    used_ids = sorted({int(i["article_id"]) for i in evidence if i.get("article_id") is not None})
     other_rows = [
         ("Validation status", _esc_or(finding.get("validation_status"))),
         ("Confidence", _esc(confidence_label)),
         ("Independent stories", _fmt_num(finding.get("story_count"))),
         ("Articles used", _fmt_num(finding.get("article_count"))),
+        ("Article IDs used", _esc(", ".join(f"#{i}" for i in used_ids)) if used_ids else "Not recorded"),
         ("Analysis model", _esc_or(finding.get("analysis_model"))),
     ]
     other_html = "".join(

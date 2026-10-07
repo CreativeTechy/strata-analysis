@@ -432,6 +432,11 @@ def build_report_data(
             "locale": (cached_summary or {}).get("locale"),
             "locale_fallback": bool((cached_summary or {}).get("locale_fallback")),
         },
+        # Every in-scope article id the counts/sentiment above were computed
+        # from, so the exported PDF can name exactly what it was built on.
+        "source_article_ids": sorted(
+            int(row["id"]) for row in in_scope_rows if row.get("id") is not None
+        ),
         "top_articles": top_articles,
         "top_articles_fallback_used": fallback_used,
         "idea_comparisons": _idea_comparisons(project_id, run["id"] if run else None),
