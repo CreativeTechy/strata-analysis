@@ -123,11 +123,19 @@ def localize_frequent_ideas(intelligence: dict, *, project_id: int, locale: str)
     """
     locale = locale or config.DEFAULT_LOCALE
     insights = intelligence.get("insights") if isinstance(intelligence.get("insights"), dict) else None
-    frequent_ideas = insights.get("frequent_ideas") if insights else None
-    if locale == config.DEFAULT_LOCALE or not isinstance(frequent_ideas, list) or not frequent_ideas:
+    if locale == config.DEFAULT_LOCALE or not insights:
         return intelligence
 
-    distinct_ideas = sorted({str(item.get("idea") or "").strip() for item in frequent_ideas if item.get("idea")})
+    # frequent_concerns is the dashboard's default "Top concerns" tab: a
+    # separate (ranked-over-everything) list of the same kind of items.
+    keys = [
+        key for key in ("frequent_ideas", "frequent_concerns")
+        if isinstance(insights.get(key), list) and insights[key]
+    ]
+    distinct_ideas = sorted({
+        str(item.get("idea") or "").strip()
+        for key in keys for item in insights[key] if item.get("idea")
+    })
     if not distinct_ideas:
         return intelligence
 
@@ -146,8 +154,18 @@ def localize_frequent_ideas(intelligence: dict, *, project_id: int, locale: str)
             _save_cached(project_id, locale, new_translations)
             translations.update(new_translations)
 
-    localized_ideas = [
-        {**item, "idea": translations.get(str(item.get("idea") or "").strip(), item.get("idea"))}
-        for item in frequent_ideas
-    ]
-    return {**intelligence, "insights": {**insights, "frequent_ideas": localized_ideas}}
+    # source_text keeps the original text alongside the translation: the
+    # topic/evidence links search articles by it, and a translated string
+    # would match nothing (same reason feedback_translation.py carries it).
+    localized = {
+        key: [
+            {
+                **item,
+                "idea": translations.get(str(item.get("idea") or "").strip(), item.get("idea")),
+                "source_text": item.get("idea"),
+            }
+            for item in insights[key]
+        ]
+        for key in keys
+    }
+    return {**intelligence, "insights": {**insights, **localized}}

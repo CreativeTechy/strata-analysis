@@ -14,7 +14,7 @@ import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
-import { getIdeaComparisons } from '../api/projectsApi.js';
+import { getIdeaComparisons, getProjectIntelligence } from '../api/projectsApi.js';
 import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
@@ -216,7 +216,7 @@ function IdeaRow({ idea, maxFrequency, projectId }) {
       className={`intelligence-idea intelligence-idea-clickable ${idea.type || 'issue'}`}
       style={{ textDecoration: 'none', color: 'inherit' }}
       to={`/projects/${projectId}/topics`}
-      state={{ idea: idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), projectId, backTo: '/dashboard', backLabel: t('dashboard:ideas.backLabel') }}
+      state={{ idea: idea.idea, topicQuery: idea.source_text || idea.idea, type: idea.type, category: idea.category, frequencyEstimate: idea.frequency_estimate, sources: mapTopicSources(idea.sources), projectId, backTo: '/dashboard', backLabel: t('dashboard:ideas.backLabel') }}
     >
       {body}
     </Link>;
@@ -371,6 +371,14 @@ export default function DashboardOverview({
   const [ideaComparisonsLocale, setIdeaComparisonsLocale] = useState(
     () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
   );
+  // Output language of the "Most talked-about ideas" card - independent of the
+  // interface locale. `intelligence` (App.jsx) is already fetched in the
+  // interface locale, so only a diverging choice needs its own request; the
+  // translations are cached server-side by idea text.
+  const [ideasLocale, setIdeasLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
+  const [ideasResult, setIdeasResult] = useState(null);
   const [platformListPage, setPlatformListPage] = useState(0);
   // Tab and page are keyed by project, so switching project lands back on
   // page 1 of Top concerns - the first screen's point - rather than carrying
@@ -386,6 +394,24 @@ export default function DashboardOverview({
     const base = prev.projectId === selectedProjectId ? prev : { projectId: selectedProjectId, filter: 'concerns', page: 0 };
     return { ...base, page: typeof next === 'function' ? next(base.page) : next };
   });
+  const ideasWantTranslation = Boolean(selectedProjectId) && ideasLocale !== i18n.language;
+  const ideasKey = `${selectedProjectId}|${period}|${selectedRunId || ''}|${ideasLocale}`;
+  useEffect(() => {
+    if (!ideasWantTranslation) return undefined;
+    let cancelled = false;
+    getProjectIntelligence(selectedProjectId, { period, run_id: selectedRunId || undefined, locale: ideasLocale })
+      .then((result) => { if (!cancelled) setIdeasResult({ key: ideasKey, insights: result?.insights || null }); })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load translated ideas', err);
+          setIdeasResult({ key: ideasKey, insights: null });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [ideasWantTranslation, selectedProjectId, period, selectedRunId, ideasLocale, ideasKey]);
+  const translatedIdeas = ideasWantTranslation && ideasResult?.key === ideasKey ? ideasResult.insights : null;
+  const ideasTranslating = ideasWantTranslation && ideasResult?.key !== ideasKey;
+
   const [detailedBreakdownsOpen, setDetailedBreakdownsOpen] = useState(() => {
     try {
       return window.localStorage.getItem(DETAILED_BREAKDOWNS_STORAGE_KEY) === 'open';
@@ -489,11 +515,12 @@ export default function DashboardOverview({
     (ideaComparisonsPage + 1) * IDEA_COMPARISONS_PAGE_SIZE,
   );
 
-  const frequentIdeas = data.insights?.frequent_ideas || [];
+  const ideaInsights = translatedIdeas || data.insights;
+  const frequentIdeas = ideaInsights?.frequent_ideas || [];
   // frequent_concerns is ranked over every idea, not just frequent_ideas'
   // top-12 slice - filtering that slice would drop concerns outranked by 12
   // more-repeated praise/suggestion ideas.
-  const concernIdeas = data.insights?.frequent_concerns
+  const concernIdeas = ideaInsights?.frequent_concerns
     || frequentIdeas.filter((idea) => CONCERN_IDEA_TYPES.has(idea.type || 'issue'));
   const filteredIdeas = (ideaFilter === 'concerns' ? concernIdeas : frequentIdeas).slice(0, TOP_IDEAS_LIMIT);
   const ideasTotalPages = Math.max(1, Math.ceil(filteredIdeas.length / IDEAS_PAGE_SIZE));
@@ -583,6 +610,29 @@ export default function DashboardOverview({
               <div className="filter-tab-buttons filter-mode-toggle" role="tablist" aria-label={t('dashboard:topConcerns.filterAria')}>
                 <button type="button" role="tab" aria-selected={ideaFilter === 'concerns'} className={`source-type-tab ${ideaFilter === 'concerns' ? 'active' : ''}`} onClick={() => { setIdeaFilter('concerns'); setIdeasPage(0); }}>{t('dashboard:topConcerns.concernsTab')}</button>
                 <button type="button" role="tab" aria-selected={ideaFilter === 'all'} className={`source-type-tab ${ideaFilter === 'all' ? 'active' : ''}`} onClick={() => { setIdeaFilter('all'); setIdeasPage(0); }}>{t('dashboard:topConcerns.allTab')}</button>
+              </div>
+              <div
+                className="language-switcher"
+                role="group"
+                aria-label={t('dashboard:ideas.outputLanguage.label')}
+                title={ideasTranslating ? t('dashboard:ideas.outputLanguage.translating') : t('dashboard:ideas.outputLanguage.hint')}
+                aria-busy={ideasTranslating}
+              >
+                <Languages size={14} aria-hidden="true" className={`language-switcher-icon${ideasTranslating ? ' spin' : ''}`} />
+                {SUPPORTED_LOCALES.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    lang={code}
+                    dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                    className={`language-switcher-option${code === ideasLocale ? ' is-active' : ''}`}
+                    aria-pressed={code === ideasLocale}
+                    disabled={ideasTranslating}
+                    onClick={() => { setIdeasLocale(code); setIdeasPage(0); }}
+                  >
+                    {LOCALE_NATIVE_NAMES[code]}
+                  </button>
+                ))}
               </div>
             </div>
             {visibleIdeas.map((idea) => <IdeaRow key={idea.idea} idea={idea} maxFrequency={maxIdeaFrequency} projectId={selectedProjectId} />)}

@@ -77,6 +77,24 @@ class LocalizeFrequentIdeasTests(unittest.TestCase):
         self.assertEqual(ideas[0]["idea"], "لا يمكن للمستخدمين العثور على الوضع الداكن")
         self.assertEqual(ideas[1]["idea"], "عمر البطارية رائع")
 
+    def test_translates_frequent_concerns_and_keeps_source_text(self):
+        data = {"insights": {
+            "frequent_ideas": [{"idea": "Battery life is great", "type": "praise"}],
+            "frequent_concerns": [{"idea": "Users can't find dark mode", "type": "issue"}],
+        }}
+        cached = {
+            "Battery life is great": "عمر البطارية رائع",
+            "Users can't find dark mode": "لا يمكن للمستخدمين العثور على الوضع الداكن",
+        }
+        with patch.object(idea_translation, "_load_cached", return_value=cached),              patch("services.intelligence.idea_translation.chat_completion") as mock_chat:
+            result = idea_translation.localize_frequent_ideas(data, project_id=10, locale="ar")
+
+        concern = result["insights"]["frequent_concerns"][0]
+        self.assertEqual(concern["idea"], "لا يمكن للمستخدمين العثور على الوضع الداكن")
+        self.assertEqual(concern["source_text"], "Users can't find dark mode")
+        self.assertEqual(result["insights"]["frequent_ideas"][0]["source_text"], "Battery life is great")
+        mock_chat.assert_not_called()
+
     def test_llm_failure_falls_back_to_original_english_text(self):
         with patch.object(idea_translation, "_load_cached", return_value={}), \
              patch.object(idea_translation, "_save_cached") as mock_save, \
