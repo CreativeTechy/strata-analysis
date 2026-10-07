@@ -145,7 +145,12 @@
     "title": "Most talked-about ideas",
     "subtitle": "Grouped by theme",
     "empty": "No repeated ideas detected yet.",
-    "backLabel": "Back to Dashboard"
+    "backLabel": "Back to Dashboard",
+    "outputLanguage": {
+      "label": "Ideas language",
+      "hint": "Independent of the interface language - view these ideas in a specific language.",
+      "translating": "Translating..."
+    }
   },
   "topConcerns": {
     "title": "Top concerns",
