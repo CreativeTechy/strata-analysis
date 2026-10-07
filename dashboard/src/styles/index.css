@@ -839,6 +839,13 @@ h1, h2, h3 {
   white-space: nowrap;
 }
 
+.article-row-id {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text-light);
+  font-variant-numeric: tabular-nums;
+}
+
 .article-row-source {
   flex: 0 0 auto;
   font-size: 0.82rem;
