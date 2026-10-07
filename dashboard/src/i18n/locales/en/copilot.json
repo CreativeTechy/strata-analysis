@@ -1,10 +1,10 @@
 {
   "outputLanguage": {
     "label": "Response language",
-    "hint": "Independent of the interface language - ask Copilot to answer in a specific language."
+    "hint": "Independent of the interface language - ask Insights to answer in a specific language."
   },
-  "chatTitle": "{{brand}} Intelligence Copilot",
-  "greeting": "Hello! I am your Intelligence Copilot. Select a project or browse all projects, then ask me to summarize or analyze the articles.",
+  "chatTitle": "{{brand}} Ask Insights",
+  "greeting": "Hello! I am Ask Insights, your analysis assistant. Select a project or browse all projects, then ask me to summarize or analyze the articles.",
   "chattingOver_one": "Chatting over {{count}} article",
   "chattingOver_other": "Chatting over {{count}} articles",
   "allProjectsScope": "all projects",
@@ -45,7 +45,7 @@
     "summarizeThemesPrompt": "Summarize the overall sentiment and the key themes across these articles.",
     "draftBrief": "Draft Brief",
     "draftBriefPrompt": "Draft a short executive brief highlighting the most important signals in these articles.",
-    "networkError": "Can't reach the Copilot service right now. Please check your connection and try again."
+    "networkError": "Can't reach the Ask Insights service right now. Please check your connection and try again."
   },
   "detail": {
     "close": "Close",
