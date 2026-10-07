@@ -198,7 +198,10 @@ def localize_idea_comparison_detail(comparison: dict, *, project_id: int, locale
         {**s, "title": tr(s.get("title")), "excerpt": tr(s.get("excerpt"))} for s in localized.get("sources") or []
     ]
     localized["facts"] = [
-        {**f, "fact_text": tr(f.get("fact_text")), "stated_value": tr(f.get("stated_value"))}
+        # The originals ride along: an edit form must start from the canonical
+        # text, never from the rendered translation.
+        {**f, "fact_text": tr(f.get("fact_text")), "stated_value": tr(f.get("stated_value")),
+         "fact_text_original": f.get("fact_text"), "stated_value_original": f.get("stated_value")}
         for f in comparison.get("facts") or []
     ]
     evidence = comparison.get("numeric_evidence") or {}

@@ -388,7 +388,7 @@ export default function IdeaComparisonDetailPage() {
     setEditingFactId(fact.id);
     const observations = fact.observations || [];
     setForm({
-      fact_text: fact.fact_text || '', reference_label: fact.reference_label || '',
+      fact_text: fact.fact_text_original ?? fact.fact_text ?? '', reference_label: fact.reference_label || '',
       reference_url: fact.reference_url || '', observed_at: fact.observed_at || '',
       observations: observations.map((item) => ({ ...item, numeric_value: String(item.numeric_value) })),
     });
