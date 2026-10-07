@@ -7,8 +7,9 @@ import {
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
-  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, Tooltip, XAxis, YAxis,
+  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, Text, Tooltip,
 } from 'recharts';
+import { XAxis, YAxis } from './ChartAxes.jsx';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
@@ -57,6 +58,23 @@ function sentimentLabel(t, key) {
 function ideaTypeLabel(t, type) {
   const value = type || 'issue';
   return t(`dashboard:ideaType.${value}`, value);
+}
+
+// Recharts' default 80% leaves little room beside the radar for its angle
+// labels; RadarAngleTick below handles whatever still doesn't fit.
+const RADAR_OUTER_RADIUS = '68%';
+
+// An angle label beside the radar can only use the space between its anchor
+// and the chart edge on its own side (the chart is centered, so the full
+// width is 2 * cx); a long one ("Anticipation" on a phone) wraps or is
+// ellipsized into that space instead of being cut off at the card edge.
+function RadarAngleTick({ payload, x, cx, textAnchor, formatLabel, index, ...props }) {
+  const room = textAnchor === 'start' ? 2 * cx - x : textAnchor === 'end' ? x : 2 * cx;
+  return (
+    <Text {...props} x={x} textAnchor={textAnchor} width={Math.max(room - 4, 24)} maxLines={2} className="recharts-polar-angle-axis-tick-value">
+      {formatLabel(payload.value, index)}
+    </Text>
+  );
 }
 
 function emotionAxisLabel(t, axis) {
@@ -588,7 +606,7 @@ export default function DashboardOverview({
 
         <section className="intelligence-top-grid">
           <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><p className="subtitle">{t('dashboard:sentimentBreakdown.denominator', { assessed: formatNumber(total, locale), total: formatNumber(populationTotal, locale), notAssessed: formatNumber(notAssessedTotal, locale) })}</p><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
-          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
+          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} outerRadius={RADAR_OUTER_RADIUS} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tick={<RadarAngleTick formatLabel={(value) => emotionAxisLabel(t, value)} />} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
           <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)} dir="auto">{item.platform}</Link> : <span dir="auto">{item.platform}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${item.platform}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
         </section>
 
