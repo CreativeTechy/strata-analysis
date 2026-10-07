@@ -179,7 +179,7 @@ export default function ArticleDetailPage() {
             ? t('detail.deleteModal.messageMultiProject', { title: data?.title || t('common.untitledArticle') })
             : t('detail.deleteModal.messageSingleProject', {
                 title: data?.title || t('common.untitledArticle'),
-                project: projects[0]?.name || '',
+                project: (projects[0]?.display_name || projects[0]?.name) || '',
               })
         }
         confirmLabel={deleting ? t('detail.deleteModal.confirmLabelBusy') : t('detail.deleteModal.confirmLabel')}
@@ -203,7 +203,7 @@ export default function ArticleDetailPage() {
               style={{ display: 'block', width: '100%', marginTop: 4 }}
             >
               {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
               ))}
             </select>
           </label>

@@ -92,9 +92,9 @@ function stageDuration(startIso, endIso) {
 
 function projectNameForRun(run, projectsById, t) {
   if (!run) return '';
-  if (run.project_name) return run.project_name;
   const project = projectsById.get(Number(run.project_id));
-  if (project?.name) return project.name;
+  if (project?.name) return project.display_name || project.name;
+  if (run.project_name) return run.project_name;
   return run.project_id != null ? t('shared.projectFallback', { id: run.project_id }) : t('shared.projectUnassigned');
 }
 

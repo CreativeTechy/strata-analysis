@@ -530,7 +530,7 @@ export default function DashboardOverview({
       </div>
       <div className="intelligence-controls">
         <select className="filter-select" value={selectedProjectId ?? ''} onChange={(event) => onProjectChange(Number(event.target.value))} disabled={!projects.length} aria-label={t('dashboard:overview.projectSelectAria')}>
-          {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+          {projects.map((project) => <option value={project.id} key={project.id}>{project.display_name || project.name}</option>)}
         </select>
       </div>
     </header>

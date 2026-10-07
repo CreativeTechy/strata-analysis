@@ -88,7 +88,7 @@ export default function ProjectLinkageEditPage({ projects = [], users = [], onSe
             <Link2 size={14} /> {t('kickers.projectLinkage')}
           </div>
           <h1 className="admin-page-title">
-            {t('projectLinkage.edit.titlePrefix')}: <span dir="auto">{project.name}</span>
+            {t('projectLinkage.edit.titlePrefix')}: <span dir="auto">{project.display_name || project.name}</span>
           </h1>
           <p className="admin-page-subtitle">{t('projectLinkage.edit.subtitle')}</p>
         </div>

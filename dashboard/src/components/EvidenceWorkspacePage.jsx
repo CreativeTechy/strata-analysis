@@ -472,7 +472,7 @@ export default function EvidenceWorkspacePage({ projects = [] }) {
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker"><ShieldCheck size={14} /> {t('sources:evidence.header.kicker')}</div>
-          <h1 className="admin-page-title" dir="auto">{project?.name || t('sources:evidence.header.titleFallback')}</h1>
+          <h1 className="admin-page-title" dir="auto">{(project?.display_name || project?.name) || t('sources:evidence.header.titleFallback')}</h1>
           <p className="admin-page-subtitle">{t('sources:evidence.header.subtitle')}</p>
         </div>
         <div className="admin-page-toolbar">

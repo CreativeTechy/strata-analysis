@@ -41,6 +41,7 @@ from services.intelligence.intelligence import (
     normalize_period,
 )
 from services.intelligence.trend_summary import generate_trend_summary
+from services.projects.project_name_translations import localize_project_names
 
 logger = logging.getLogger(__name__)
 
@@ -396,8 +397,13 @@ def build_report_data(
     for item in top_articles:
         item["source_tier"] = tiers.get(item["article_id"]) or {"tier": "unknown", "is_default": True}
 
+    project_name = project.get("name") or f"Project {project_id}"
+    if (locale or config.DEFAULT_LOCALE) != config.DEFAULT_LOCALE and project.get("name"):
+        # Display-only: the PDF/report header shows the name in the report's language.
+        project_name = localize_project_names([project], locale=locale)[0]["display_name"] or project_name
+
     return {
-        "project": {"id": project_id, "name": project.get("name") or f"Project {project_id}"},
+        "project": {"id": project_id, "name": project_name},
         "scope": {
             "type": scope_type,
             "period": normalize_period(period) if scope_type == "period" else None,

@@ -309,7 +309,7 @@ export default function ProjectDetailPage({
           <div className="admin-page-kicker">
             <CalendarDays size={14} /> {t('detail.kicker')}
           </div>
-          <h1 className="admin-page-title" dir="auto">{project.name}</h1>
+          <h1 className="admin-page-title" dir="auto">{project.display_name || project.name}</h1>
           <p className="admin-page-subtitle">
             {t('detail.subtitle')}
           </p>
@@ -822,7 +822,7 @@ export default function ProjectDetailPage({
 
       <ConfirmModal
         open={deleteOpen}
-        title={t('detail.deleteModal.title', { name: project.name })}
+        title={t('detail.deleteModal.title', { name: project.display_name || project.name })}
         message={t('detail.deleteModal.body')}
         confirmLabel={t('detail.deleteModal.confirmLabel')}
         cancelLabel={t('detail.deleteModal.cancelLabel')}

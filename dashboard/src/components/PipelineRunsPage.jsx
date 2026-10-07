@@ -50,9 +50,9 @@ function buildScopeOptions(t) {
 }
 
 function projectNameForRun(run, projectsById, t) {
-  if (run.project_name) return run.project_name;
   const project = projectsById.get(Number(run.project_id));
-  if (project?.name) return project.name;
+  if (project?.name) return project.display_name || project.name;
+  if (run.project_name) return run.project_name;
   return run.project_id != null ? t('shared.projectFallback', { id: run.project_id }) : t('shared.projectUnassigned');
 }
 
@@ -157,7 +157,7 @@ export default function PipelineRunsPage({ projects = [] }) {
     const idsInRuns = new Set(runs.map((run) => Number(run.project_id)).filter((id) => Number.isFinite(id)));
     return projects
       .filter((project) => idsInRuns.has(Number(project.id)))
-      .map((project) => ({ id: Number(project.id), name: project.name || t('shared.projectFallback', { id: project.id }) }))
+      .map((project) => ({ id: Number(project.id), name: project.display_name || project.name || t('shared.projectFallback', { id: project.id }) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [projects, runs, t]);
 
@@ -208,7 +208,7 @@ export default function PipelineRunsPage({ projects = [] }) {
           {projects.length ? (
             projects.map((project) => (
               <option key={project.id} value={String(project.id)}>
-                {project.name || t('shared.projectFallback', { id: project.id })}
+                {project.display_name || project.name || t('shared.projectFallback', { id: project.id })}
               </option>
             ))
           ) : (
