@@ -99,6 +99,34 @@ body::after {
   transform: scaleX(-1);
 }
 
+/* Charts (Recharts). Recharts positions every SVG label with a physical
+   text-anchor ("end" = the text finishes at x, e.g. a y-axis tick ending
+   just before its axis line), but SVG resolves start/end against the
+   inherited CSS direction - so under <html dir="rtl"> every anchor flips
+   and labels are drawn on top of the axis, bars or radar grid they label.
+   Pinning chart text to ltr keeps the anchors physical; unicode-bidi:
+   plaintext then lets each label order itself by its own first strong
+   character, so an Arabic date keeps its day on the right and "+100" stays
+   "+100" instead of becoming "100+". Mirroring the chart itself for RTL is
+   ChartAxes.jsx's job, not this rule's. */
+.recharts-surface text {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
+/* The default legend hardcodes inline margin-right spacing, which in RTL
+   lands on the outer side and glues each swatch to its own label.
+   !important is the only way past an inline style. */
+.recharts-default-legend .recharts-legend-item {
+  margin-right: 0 !important;
+  margin-inline-end: 10px !important;
+}
+
+.recharts-default-legend .recharts-legend-item > .recharts-surface {
+  margin-right: 0 !important;
+  margin-inline-end: 4px !important;
+}
+
 .language-switcher {
   display: inline-flex;
   align-items: center;
@@ -200,6 +228,48 @@ body::after {
   overflow-y: auto;
   z-index: 950;
   transition: width 0.25s ease, transform 0.25s ease, padding 0.25s ease;
+}
+
+.sidebar,
+.sidebar-nav {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
+}
+
+.sidebar:hover,
+.sidebar-nav:hover {
+  scrollbar-color: rgb(100 116 139 / 0.35) transparent;
+}
+
+.sidebar::-webkit-scrollbar,
+.sidebar-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track,
+.sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 8px;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.2s ease;
+}
+
+.sidebar:hover::-webkit-scrollbar-thumb,
+.sidebar-nav:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(100 116 139 / 0.35);
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover,
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(100 116 139 / 0.6);
 }
 
 .sidebar.sidebar-collapsed {
@@ -809,6 +879,13 @@ h1, h2, h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.article-row-id {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text-light);
+  font-variant-numeric: tabular-nums;
 }
 
 .article-row-source {

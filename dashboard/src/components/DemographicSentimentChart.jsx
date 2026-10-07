@@ -1,15 +1,26 @@
 import { useTranslation } from 'react-i18next';
-import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Legend, Text, Tooltip } from 'recharts';
+import { XAxis, YAxis } from './ChartAxes.jsx';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/DemographicSentimentChart.css';
 import { formatPercent } from '../lib/i18nFormat.js';
 import { titleCase, useDemographicLabels } from '../lib/demographicLabels.js';
+import { useDirectionalMargin } from '../lib/chartDirection.js';
 
 // Same status palette and fixed series order as StatsOverview.jsx's sentiment
 // donut, reused here so a "positive" segment reads the same color everywhere
 // in the app rather than introducing a second palette for the same meaning.
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
 const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
+
+// Each bar's band has to hold its category label: a long bucket (e.g.
+// "Middle East And North Africa") wraps inside the 110px axis, so the band
+// is sized for two lines and anything longer is ellipsized (full value in
+// the tooltip) rather than spilling into the neighbouring bar's label. The
+// fixed part covers the x axis and legend, which share the same height.
+const ROW_HEIGHT = 44;
+const AXIS_AND_LEGEND_HEIGHT = 64;
+const CHART_MARGIN = { top: 4, right: 16, left: 0, bottom: 4 };
 
 // SENTIMENT_KEYS is a fixed 4-value enum - translated through a label map
 // (dashboard:sentiment.*) so the object keys (used for colors/data lookups)
@@ -19,6 +30,15 @@ function sentimentLabel(t, key) {
   return t(`dashboard:sentiment.${key}`, titleCase(key));
 }
 
+// Recharts strips non-SVG keys such as maxLines out of a `tick` object, so
+// the two-line cap needs a tick element of its own.
+function CategoryTick({ payload, tickFormatter, index, ...props }) {
+  return (
+    <Text {...props} fontSize={12} maxLines={2}>
+      {tickFormatter ? tickFormatter(payload.value, index) : payload.value}
+    </Text>
+  );
+}
 function ChartTooltip({ active, payload, label, t, locale, bucketLabel }) {
   if (!active || !payload?.length) return null;
   const bucket = payload[0]?.payload;
@@ -50,6 +70,7 @@ function ChartTooltip({ active, payload, label, t, locale, bucketLabel }) {
 export default function DemographicSentimentChart({ title, data, maxBuckets = 7 }) {
   const { t, i18n } = useTranslation('dashboard');
   const locale = i18n.language;
+  const margin = useDirectionalMargin(CHART_MARGIN);
   const nonEmpty = (Array.isArray(data) ? data : []).filter((item) => Number(item?.total) > 0);
   const rows = nonEmpty.slice(0, maxBuckets).map((item) => {
     const total = Number(item.total) || 0;
@@ -77,17 +98,17 @@ export default function DemographicSentimentChart({ title, data, maxBuckets = 7 
     );
   }
 
-  const chartHeight = Math.max(140, rows.length * 44);
+  const chartHeight = rows.length * ROW_HEIGHT + AXIS_AND_LEGEND_HEIGHT;
   const knownRecords = allRecords - unknownRecords;
   const coveragePct = allRecords ? Math.round((knownRecords / allRecords) * 100) : 0;
 
   return (
     <div className="demographic-chart">
       <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+        <BarChart data={rows} layout="vertical" margin={margin}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" horizontal={false} />
           <XAxis type="number" domain={[0, 100]} tickFormatter={(value) => formatPercent(value, locale, { alreadyWhole: true })} />
-          <YAxis type="category" dataKey="value" width={110} tickFormatter={bucketLabel} />
+          <YAxis type="category" dataKey="value" width={110} tick={<CategoryTick />} tickFormatter={bucketLabel} />
           <Tooltip content={<ChartTooltip t={t} locale={locale} bucketLabel={bucketLabel} />} />
           <Legend formatter={(key) => sentimentLabel(t, key)} />
           {SENTIMENT_KEYS.map((key) => (

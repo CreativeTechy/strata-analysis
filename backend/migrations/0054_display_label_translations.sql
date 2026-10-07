@@ -3,19 +3,21 @@
 -- that aren't a canonical country) and survey metadata (question,
 -- population, cohort, answer). See services/i18n/label_translation.py.
 --
--- Keyed on the source text alone (per locale), not per project: like
--- project_frequent_idea_translations, a label's translation doesn't depend
--- on where it was counted, and these are short labels rather than document
--- content, so one cache serves every project and every view.
+-- Scoped per project like project_frequent_idea_translations: the source
+-- text comes out of that project's uploaded documents, so it is removed with
+-- the project (cascade) and with its other derived data when its articles are
+-- removed (store.py's _PROJECT_DERIVED_TABLES), and one project's cached
+-- translation is never served to another.
 create table if not exists public.display_label_translations (
     id               bigint generated always as identity primary key,
+    project_id       bigint not null references public.projects(id) on delete cascade,
     locale           text not null,
     source_text      text not null,
     translated_text  text not null,
     model            text,
     created_at       timestamptz not null default now(),
     updated_at       timestamptz not null default now(),
-    constraint display_label_translations_key unique (locale, source_text)
+    constraint display_label_translations_key unique (project_id, locale, source_text)
 );
 
 drop trigger if exists set_display_label_translations_updated_at on public.display_label_translations;

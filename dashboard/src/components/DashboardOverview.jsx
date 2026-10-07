@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Layers, Lightbulb, Loader2, Network,
+  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Languages, Layers, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, Radar, RadarChart,
-  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, Tooltip, XAxis, YAxis,
+  PolarAngleAxis, PolarGrid, PolarRadiusAxis, ReferenceLine, Text, Tooltip,
 } from 'recharts';
+import { XAxis, YAxis } from './ChartAxes.jsx';
 import '../styles/IntelligenceDashboard.css';
 import CompetitorPulseCard from './CompetitorPulseCard.jsx';
 import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProjectsState, PendingAnalysisNotice } from './IntelligenceEmptyState.jsx';
@@ -18,6 +19,9 @@ import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligen
 import { useDemographicLabels } from '../lib/demographicLabels.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PLATFORM_LIST_PAGE_SIZE = 5;
@@ -57,6 +61,23 @@ function sentimentLabel(t, key) {
 function ideaTypeLabel(t, type) {
   const value = type || 'issue';
   return t(`dashboard:ideaType.${value}`, value);
+}
+
+// Recharts' default 80% leaves little room beside the radar for its angle
+// labels; RadarAngleTick below handles whatever still doesn't fit.
+const RADAR_OUTER_RADIUS = '68%';
+
+// An angle label beside the radar can only use the space between its anchor
+// and the chart edge on its own side (the chart is centered, so the full
+// width is 2 * cx); a long one ("Anticipation" on a phone) wraps or is
+// ellipsized into that space instead of being cut off at the card edge.
+function RadarAngleTick({ payload, x, cx, textAnchor, formatLabel, index, ...props }) {
+  const room = textAnchor === 'start' ? 2 * cx - x : textAnchor === 'end' ? x : 2 * cx;
+  return (
+    <Text {...props} x={x} textAnchor={textAnchor} width={Math.max(room - 4, 24)} maxLines={2} className="recharts-polar-angle-axis-tick-value">
+      {formatLabel(payload.value, index)}
+    </Text>
+  );
 }
 
 function emotionAxisLabel(t, axis) {
@@ -338,6 +359,12 @@ export default function DashboardOverview({
   const [ideaComparisonsTruncated, setIdeaComparisonsTruncated] = useState(null);
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
+  // Output language of the idea comparison cards - independent of the
+  // interface locale, same as the other output-language switchers. Defaults to
+  // the interface locale at mount; translations are cached server-side.
+  const [ideaComparisonsLocale, setIdeaComparisonsLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
   const [platformListPage, setPlatformListPage] = useState(0);
   // Tab and page are keyed by project, so switching project lands back on
   // page 1 of Top concerns - the first screen's point - rather than carrying
@@ -408,7 +435,7 @@ export default function DashboardOverview({
       try {
         const { ok, data } = await getIdeaComparisons(
           selectedProjectId,
-          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined },
+          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined, locale: ideaComparisonsLocale },
           controller.signal,
         );
         if (cancelled) return;
@@ -438,7 +465,7 @@ export default function DashboardOverview({
     loadIdeaComparisons();
     return () => { cancelled = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
+  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce, ideaComparisonsLocale]);
 
   // Spends an LLM call per qualifying idea cluster (see
   // services/articles/idea_comparisons.py), so this only runs on an explicit
@@ -506,7 +533,7 @@ export default function DashboardOverview({
       </div>
       <div className="intelligence-controls">
         <select className="filter-select" value={selectedProjectId ?? ''} onChange={(event) => onProjectChange(Number(event.target.value))} disabled={!projects.length} aria-label={t('dashboard:overview.projectSelectAria')}>
-          {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+          {projects.map((project) => <option value={project.id} key={project.id}>{project.display_name || project.name}</option>)}
         </select>
       </div>
     </header>
@@ -582,7 +609,7 @@ export default function DashboardOverview({
 
         <section className="intelligence-top-grid">
           <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><p className="subtitle">{t('dashboard:sentimentBreakdown.denominator', { assessed: formatNumber(total, locale), total: formatNumber(populationTotal, locale), notAssessed: formatNumber(notAssessedTotal, locale) })}</p><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
-          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
+          <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} outerRadius={RADAR_OUTER_RADIUS} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tick={<RadarAngleTick formatLabel={(value) => emotionAxisLabel(t, value)} />} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
           <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(platformLabel(t, item.platform))} dir="auto">{platformLabel(t, item.platform)}</Link> : <span dir="auto">{platformLabel(t, item.platform)}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${platformLabel(t, item.platform)}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
         </section>
 
@@ -623,6 +650,29 @@ export default function DashboardOverview({
               <div>
                 <h3>{t('dashboard:ideaComparisons.title')}</h3>
                 <span>{t('dashboard:ideaComparisons.subtitle')}</span>
+              </div>
+              <div
+                className="language-switcher"
+                role="group"
+                aria-label={t('dashboard:ideaComparisons.outputLanguage.label')}
+                title={ideaComparisonsLoading ? t('dashboard:ideaComparisons.outputLanguage.translating') : t('dashboard:ideaComparisons.outputLanguage.hint')}
+                aria-busy={ideaComparisonsLoading}
+              >
+                <Languages size={14} aria-hidden="true" className={`language-switcher-icon${ideaComparisonsLoading ? ' spin' : ''}`} />
+                {SUPPORTED_LOCALES.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    lang={code}
+                    dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                    className={`language-switcher-option${code === ideaComparisonsLocale ? ' is-active' : ''}`}
+                    aria-pressed={code === ideaComparisonsLocale}
+                    disabled={ideaComparisonsLoading || ideaComparisonsRegenerating}
+                    onClick={() => setIdeaComparisonsLocale(code)}
+                  >
+                    {LOCALE_NATIVE_NAMES[code]}
+                  </button>
+                ))}
               </div>
               <button
                 type="button"
@@ -677,7 +727,7 @@ export default function DashboardOverview({
                         <Link
                           className="intelligence-idea-comparison-details-link"
                           to={`/projects/${selectedProjectId}/idea-comparisons/${comparison.idea_cluster_id}${selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : ''}`}
-                          state={{ from: `${location.pathname}${location.search}` }}
+                          state={{ from: `${location.pathname}${location.search}`, locale: ideaComparisonsLocale }}
                           aria-label={t('dashboard:ideaComparisons.viewDetails', { idea: comparison.idea })}
                           title={t('dashboard:ideaComparisons.viewDetailsTitle')}
                         ><ChevronRight size={17} /></Link>

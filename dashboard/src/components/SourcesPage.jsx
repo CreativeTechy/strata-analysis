@@ -170,7 +170,7 @@ export default function SourcesPage({ projectId = null, projects = [] }) {
           <div className="admin-page-kicker"><Globe2 size={14} /> {t('sources:page.kicker')}</div>
           <h1 className="admin-page-title">{t('sources:page.title')}</h1>
           <p className="admin-page-subtitle">
-            {project ? <span dir="auto">{project.name}</span> : null}
+            {project ? <span dir="auto">{project.display_name || project.name}</span> : null}
             {project ? ' — ' : ''}
             {t('sources:page.subtitle')}
           </p>

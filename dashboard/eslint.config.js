@@ -17,5 +17,20 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Charts must mirror for RTL locales; the wrappers do that once so no
+      // chart can forget to (see src/lib/chartDirection.js).
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: 'recharts',
+          importNames: ['XAxis', 'YAxis', 'ResponsiveContainer'],
+          message: "Import XAxis/YAxis from './ChartAxes.jsx' and ResponsiveContainer from './ResponsiveChartContainer.jsx' so the chart follows the page direction.",
+        }],
+      }],
+    },
+  },
+  {
+    files: ['src/components/ChartAxes.jsx', 'src/components/ResponsiveChartContainer.jsx'],
+    rules: { 'no-restricted-imports': 'off' },
   },
 ])

@@ -8,6 +8,7 @@
  */
 
 import { apiErrorFromPayload } from '../lib/apiError.js';
+import i18n from '../i18n/index.js';
 
 const BASE = '/api/competitor';
 
@@ -61,9 +62,10 @@ async function requestForm(path, formData) {
 }
 
 // --- studies ---------------------------------------------------------------
-export const listStudies = () => request('/studies');
+// `locale` makes the backend add a translated `display_name` to each study.
+export const listStudies = () => request(`/studies?locale=${encodeURIComponent(i18n.language)}`);
 export const createStudy = (body) => request('/studies', { method: 'POST', body });
-export const getStudy = (id) => request(`/studies/${id}`);
+export const getStudy = (id) => request(`/studies/${id}?locale=${encodeURIComponent(i18n.language)}`);
 export const updateStudy = (id, body) => request(`/studies/${id}`, { method: 'PUT', body });
 export const deleteStudy = (id) => request(`/studies/${id}`, { method: 'DELETE' });
 /** Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card. */

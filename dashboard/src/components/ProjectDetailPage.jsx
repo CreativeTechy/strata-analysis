@@ -6,6 +6,7 @@ import ConfirmModal from './ConfirmModal';
 import RemoveProjectArticlesDialog from './articles/RemoveProjectArticlesDialog.jsx';
 import DemographicSentimentChart from './DemographicSentimentChart';
 import SurveyObservationsChart from './SurveyObservationsChart';
+import { LabelProjectProvider } from '../i18n/LabelProjectContext.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDate as formatDateIntl, formatDateTime as formatDateTimeIntl, formatNumber } from '../lib/i18nFormat.js';
@@ -304,13 +305,14 @@ export default function ProjectDetailPage({
   };
 
   return (
+    <LabelProjectProvider value={project?.id ?? null}>
     <div className="admin-page-shell project-detail-page">
       <div className="admin-page-header">
         <div>
           <div className="admin-page-kicker">
             <CalendarDays size={14} /> {t('detail.kicker')}
           </div>
-          <h1 className="admin-page-title" dir="auto">{project.name}</h1>
+          <h1 className="admin-page-title" dir="auto">{project.display_name || project.name}</h1>
           <p className="admin-page-subtitle">
             {t('detail.subtitle')}
           </p>
@@ -823,7 +825,7 @@ export default function ProjectDetailPage({
 
       <ConfirmModal
         open={deleteOpen}
-        title={t('detail.deleteModal.title', { name: project.name })}
+        title={t('detail.deleteModal.title', { name: project.display_name || project.name })}
         message={t('detail.deleteModal.body')}
         confirmLabel={t('detail.deleteModal.confirmLabel')}
         cancelLabel={t('detail.deleteModal.cancelLabel')}
@@ -835,5 +837,6 @@ export default function ProjectDetailPage({
         onConfirm={handleDelete}
       />
     </div>
+    </LabelProjectProvider>
   );
 }

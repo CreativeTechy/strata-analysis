@@ -162,7 +162,7 @@ export default function ProjectLinkageListPage({ projects = [], users = [], isLo
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title" dir="auto">{project.name}</strong>
+                      <strong className="admin-item-title" dir="auto">{project.display_name || project.name}</strong>
                       <span className={`panel-chip ${isActive ? 'success' : status === 'archived' ? 'muted' : 'warning'}`}>
                         {status.toUpperCase()}
                       </span>

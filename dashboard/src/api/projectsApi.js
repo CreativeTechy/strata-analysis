@@ -101,7 +101,7 @@ async function requestSoftError(path, { method = 'GET', body } = {}, fallback) {
 }
 
 // --- projects --------------------------------------------------------------
-export const listProjects = () => request('');
+export const listProjects = (params) => request(query(params));
 export const createProject = (body) => requestSoftError('', { method: 'POST', body }, 'Failed to add project');
 export const updateProject = (projectId, body) =>
   requestSoftError(`/${projectId}`, { method: 'PUT', body }, 'Failed to update project');
@@ -150,10 +150,10 @@ export const setSourceTrust = (projectId, { key, type, tier, reason }) => (
  *  Like getTrendSummary(), a 200 response can still carry a soft `{ error }`
  *  (an LLM failure during `regenerate`) alongside whatever was already
  *  cached - returns { ok, data } so the caller can show both. */
-export async function getIdeaComparisons(projectId, { regenerate, run_id } = {}, signal) {
+export async function getIdeaComparisons(projectId, { regenerate, run_id, locale } = {}, signal) {
   const deadline = regenerate ? withDeadline(signal, IDEA_COMPARISONS_REGENERATE_TIMEOUT_MS) : null;
   try {
-    const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate, run_id })}`, {
+    const response = await fetch(`${BASE}/${projectId}/idea-comparisons${query({ regenerate, run_id, locale })}`, {
       signal: deadline ? deadline.signal : signal,
     });
     const data = await response.json().catch(() => ({}));
@@ -163,8 +163,8 @@ export async function getIdeaComparisons(projectId, { regenerate, run_id } = {},
   }
 }
 
-export const getIdeaComparison = (projectId, clusterId, { run_id } = {}, signal) =>
-  request(`/${projectId}/idea-comparisons/${clusterId}${query({ run_id })}`, { signal });
+export const getIdeaComparison = (projectId, clusterId, { run_id, locale } = {}, signal) =>
+  request(`/${projectId}/idea-comparisons/${clusterId}${query({ run_id, locale })}`, { signal });
 export const createIdeaComparisonFact = (projectId, clusterId, body) =>
   request(`/${projectId}/idea-comparisons/${clusterId}/facts`, { method: 'POST', body });
 export const updateIdeaComparisonFact = (projectId, clusterId, factId, body) =>

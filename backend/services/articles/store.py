@@ -852,6 +852,7 @@ _PROJECT_DERIVED_TABLES = (
     "project_report_variation_summaries",
     "idea_comparisons",
     "idea_comparisons_generation_attempts",
+    "display_label_translations",
 )
 
 # The document-candidate tables whose approved rows point at an article. When

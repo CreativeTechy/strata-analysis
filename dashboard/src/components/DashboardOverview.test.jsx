@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render as baseRender, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import DashboardOverview from './DashboardOverview.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import i18n from '../i18n/index.js';
 import { useAuth } from '../auth/useAuth.js';
+import { LabelProjectProvider } from '../i18n/LabelProjectContext.jsx';
 import { resetTranslatedLabelsCache } from '../i18n/useTranslatedLabels.js';
 
 vi.mock('../api/projectsApi.js', () => ({ getIdeaComparisons: vi.fn() }));
@@ -14,8 +15,13 @@ vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => null }));
 vi.mock('./ResponsiveChartContainer.jsx', () => ({ default: () => null }));
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
 vi.mock('../api/i18nApi.js', () => ({
-  translateLabels: vi.fn(async (locale, values) => Object.fromEntries(values.map((value) => [value, `ع ${value}`]))),
+  translateLabels: vi.fn(async (projectId, locale, values) => Object.fromEntries(values.map((value) => [value, `ع ${value}`]))),
 }));
+
+function LabelProject({ children }) {
+  return <LabelProjectProvider value={1}>{children}</LabelProjectProvider>;
+}
+const render = (ui, options) => baseRender(ui, { wrapper: LabelProject, ...options });
 
 const PROJECT = { id: 1, name: 'Acme Study', mode: 'opinion' };
 

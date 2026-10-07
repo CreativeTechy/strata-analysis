@@ -62,6 +62,7 @@ export default function ArticleCard({ article, search, index, isRefreshing, onSh
           <span className={`badge ${sentimentState}`}>
             {sentimentLabel(t, sentimentState)}
           </span>
+          <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} dir="ltr">#{article.id}</span>
           <span className="badge category">
             {categoryLabel(t, article.article_category || article.category || 'general_article')}
           </span>

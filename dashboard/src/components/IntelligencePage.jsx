@@ -457,7 +457,7 @@ export default function IntelligencePage({ project = null, projectId = null, pro
           <p className="subtitle" style={{ fontSize: '0.9rem' }}>
             {t('chattingOver', { count: filteredArticles.length })}
             {' - '}
-            {activeProject ? <span dir="auto">{activeProject.name}</span> : t('allProjectsScope')}
+            {activeProject ? <span dir="auto">{activeProject.display_name || activeProject.name}</span> : t('allProjectsScope')}
           </p>
 
           <div className="intell-mobile-toggle-row">

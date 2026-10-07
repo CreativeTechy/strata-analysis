@@ -19,15 +19,15 @@ import '../styles/Competitors.css';
 function StudyRow({ study, t, locale }) {
   return (
     <Link to={`/competitors/${study.id}`} className="cs-finding-row" style={{ textDecoration: 'none' }}>
-      <span className="cs-avatar cs-finding-row-avatar" style={{ background: avatarGradient(study.name) }} aria-hidden="true">
-        {initials(study.name)}
+      <span className="cs-avatar cs-finding-row-avatar" style={{ background: avatarGradient(study.display_name || study.name) }} aria-hidden="true">
+        {initials(study.display_name || study.name)}
       </span>
       <span className="cs-finding-row-main">
         <span className="cs-finding-row-name" dir="auto">
           {study.business_name || t('shared.businessProfileNotSetUp')}
           {study.market ? ` · ${study.market}` : ''}
         </span>
-        <span className="cs-finding-row-headline" dir="auto">{study.name}</span>
+        <span className="cs-finding-row-headline" dir="auto">{study.display_name || study.name}</span>
       </span>
       <span className="cs-finding-row-meta">
         {t('studiesPage.trackedCount', { count: study.tracked_competitors })}
@@ -92,7 +92,8 @@ export default function CompetitorStudiesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+    // Refetch on a language switch: each study's display_name is translated.
+  }, [i18n.language]);
 
   // Debounce the free-text search the same way ArticlesPage does, so every
   // keystroke doesn't re-filter the list.
@@ -129,7 +130,7 @@ export default function CompetitorStudiesPage() {
     return studies.filter((study) => {
       if (statusFilter !== 'all' && (study.status || 'active') !== statusFilter) return false;
       if (search) {
-        const haystack = [study.name, study.business_name, study.market, study.industry]
+        const haystack = [study.display_name, study.name, study.business_name, study.market, study.industry]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
@@ -230,7 +231,7 @@ export default function CompetitorStudiesPage() {
                     <div className="cs-card-body">
                       <div className="cs-card-top">
                         <div style={{ minWidth: 0 }}>
-                          <h3 className="cs-card-headline" style={{ fontSize: '1.05rem' }} dir="auto">{study.name}</h3>
+                          <h3 className="cs-card-headline" style={{ fontSize: '1.05rem' }} dir="auto">{study.display_name || study.name}</h3>
                           {study.business_name ? (
                             <p className="cs-card-domain" style={{ marginTop: 5 }} dir="auto">
                               <Building2 size={11} style={{ display: 'inline', verticalAlign: -1, marginRight: 4 }} />

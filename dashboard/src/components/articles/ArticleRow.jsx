@@ -67,6 +67,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
         <span className={`badge ${sentimentState}`}>
           {sentimentLabel(t, sentimentState)}
         </span>
+        <span className="article-row-id" dir="ltr">#{article.id}</span>
         <span className="article-row-title" dir="auto">{highlightMatches(article.title || t('common.untitledArticle'), search)}</span>
         <span className="article-row-source" dir="auto">{articleSourceLabel(article)}</span>
         <span className="article-row-date">

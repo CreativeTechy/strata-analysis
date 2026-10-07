@@ -180,6 +180,11 @@
   },
   "ideaComparisons": {
     "title": "Idea comparisons across sources",
+    "outputLanguage": {
+      "label": "Comparison language",
+      "hint": "Independent of the interface language - view these comparisons in a specific language.",
+      "translating": "Translating..."
+    },
     "subtitle": "Where two or more sources cover the same idea, side by side",
     "loadError": "Failed to load idea comparisons.",
     "loading": "Loading idea comparisons…",

@@ -4,12 +4,12 @@
  * i18n/useTranslatedLabels.js, which batches and caches these calls.
  */
 
-export async function translateLabels(locale, values, { signal } = {}) {
+export async function translateLabels(projectId, locale, values, { signal } = {}) {
   const response = await fetch('/api/i18n/labels', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ locale, values }),
+    body: JSON.stringify({ project_id: projectId, locale, values }),
     signal,
   });
   if (!response.ok) throw new Error(`Label translation failed (${response.status})`);

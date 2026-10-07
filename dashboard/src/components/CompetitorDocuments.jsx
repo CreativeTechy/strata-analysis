@@ -504,7 +504,7 @@ export function DocumentsPanel({ studyId }) {
 }
 
 export default function CompetitorDocumentsPage() {
-  const { t } = useTranslation('competitors');
+  const { t, i18n } = useTranslation('competitors');
   const { studyId } = useParams();
   const navigate = useNavigate();
   const [study, setStudy] = useState(null);
@@ -523,7 +523,8 @@ export default function CompetitorDocumentsPage() {
     return () => {
       cancelled = true;
     };
-  }, [studyId]);
+    // Refetch on a language switch: the study's display_name is translated.
+  }, [studyId, i18n.language]);
 
   return (
     <div className="cs-page">
@@ -532,7 +533,7 @@ export default function CompetitorDocumentsPage() {
           <Link to={`/competitors/${studyId}`} className="cs-link-back">
             <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('shared.reports')}
           </Link>
-          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')} — {t('documents.pageTitleWord')}</h1>
+          <h1 dir="auto">{(study?.display_name || study?.name) || t('shared.competitorStudyFallback')} — {t('documents.pageTitleWord')}</h1>
           <p>{t('documents.pageHint')}</p>
         </div>
       </div>

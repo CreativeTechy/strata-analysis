@@ -255,7 +255,8 @@ export default function CompetitorWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [studyId]);
+    // Refetch on a language switch: the study's display_name is translated.
+  }, [studyId, i18n.language]);
 
   // Debounce the free-text search the same way ArticlesPage does, so every
   // keystroke doesn't fire its own request.
@@ -383,7 +384,7 @@ export default function CompetitorWorkspace() {
           <Link to="/competitors" className="cs-link-back">
             <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('workspace.backToAllStudies')}
           </Link>
-          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')}</h1>
+          <h1 dir="auto">{(study?.display_name || study?.name) || t('shared.competitorStudyFallback')}</h1>
           <p>
             {profile?.name ? (
               <>
