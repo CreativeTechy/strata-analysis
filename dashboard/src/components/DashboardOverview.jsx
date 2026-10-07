@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Layers, Lightbulb, Loader2, Network,
+  Activity, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Gauge, Languages, Layers, Lightbulb, Loader2, Network,
   RefreshCw, Scale, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
@@ -18,6 +18,9 @@ import { getIdeaComparisons } from '../api/projectsApi.js';
 import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 
 const IDEA_COMPARISONS_PAGE_SIZE = 3;
 const PLATFORM_LIST_PAGE_SIZE = 5;
@@ -362,6 +365,12 @@ export default function DashboardOverview({
   const [ideaComparisonsTruncated, setIdeaComparisonsTruncated] = useState(null);
   const [ideaComparisonsNonce, setIdeaComparisonsNonce] = useState(0);
   const [ideaComparisonsPage, setIdeaComparisonsPage] = useState(0);
+  // Output language of the idea comparison cards - independent of the
+  // interface locale, same as the other output-language switchers. Defaults to
+  // the interface locale at mount; translations are cached server-side.
+  const [ideaComparisonsLocale, setIdeaComparisonsLocale] = useState(
+    () => (isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE),
+  );
   const [platformListPage, setPlatformListPage] = useState(0);
   // Tab and page are keyed by project, so switching project lands back on
   // page 1 of Top concerns - the first screen's point - rather than carrying
@@ -432,7 +441,7 @@ export default function DashboardOverview({
       try {
         const { ok, data } = await getIdeaComparisons(
           selectedProjectId,
-          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined },
+          { regenerate: forceRegenerate || undefined, run_id: selectedRunId || undefined, locale: ideaComparisonsLocale },
           controller.signal,
         );
         if (cancelled) return;
@@ -462,7 +471,7 @@ export default function DashboardOverview({
     loadIdeaComparisons();
     return () => { cancelled = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce]);
+  }, [selectedProjectId, selectedRunId, ideaComparisonsNonce, ideaComparisonsLocale]);
 
   // Spends an LLM call per qualifying idea cluster (see
   // services/articles/idea_comparisons.py), so this only runs on an explicit
@@ -648,6 +657,29 @@ export default function DashboardOverview({
                 <h3>{t('dashboard:ideaComparisons.title')}</h3>
                 <span>{t('dashboard:ideaComparisons.subtitle')}</span>
               </div>
+              <div
+                className="language-switcher"
+                role="group"
+                aria-label={t('dashboard:ideaComparisons.outputLanguage.label')}
+                title={ideaComparisonsLoading ? t('dashboard:ideaComparisons.outputLanguage.translating') : t('dashboard:ideaComparisons.outputLanguage.hint')}
+                aria-busy={ideaComparisonsLoading}
+              >
+                <Languages size={14} aria-hidden="true" className={`language-switcher-icon${ideaComparisonsLoading ? ' spin' : ''}`} />
+                {SUPPORTED_LOCALES.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    lang={code}
+                    dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                    className={`language-switcher-option${code === ideaComparisonsLocale ? ' is-active' : ''}`}
+                    aria-pressed={code === ideaComparisonsLocale}
+                    disabled={ideaComparisonsLoading || ideaComparisonsRegenerating}
+                    onClick={() => setIdeaComparisonsLocale(code)}
+                  >
+                    {LOCALE_NATIVE_NAMES[code]}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 className="btn-secondary"
@@ -701,7 +733,7 @@ export default function DashboardOverview({
                         <Link
                           className="intelligence-idea-comparison-details-link"
                           to={`/projects/${selectedProjectId}/idea-comparisons/${comparison.idea_cluster_id}${selectedRunId ? `?run_id=${encodeURIComponent(selectedRunId)}` : ''}`}
-                          state={{ from: `${location.pathname}${location.search}` }}
+                          state={{ from: `${location.pathname}${location.search}`, locale: ideaComparisonsLocale }}
                           aria-label={t('dashboard:ideaComparisons.viewDetails', { idea: comparison.idea })}
                           title={t('dashboard:ideaComparisons.viewDetailsTitle')}
                         ><ChevronRight size={17} /></Link>
