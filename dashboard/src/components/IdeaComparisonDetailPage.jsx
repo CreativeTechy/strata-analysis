@@ -6,8 +6,9 @@ import {
   Minus, Pencil, Plus, RefreshCw, Scale, Trash2, TrendingDown, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import {
-  CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis,
+  CartesianGrid, Legend, Line, LineChart, Tooltip,
 } from 'recharts';
+import { XAxis, YAxis } from './ChartAxes.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import {
   createIdeaComparisonFact, deleteIdeaComparisonFact, getIdeaComparison,
@@ -17,6 +18,7 @@ import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import {
   DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
 } from '../i18n/locales.js';
+import { useDirectionalMargin } from '../lib/chartDirection.js';
 import '../styles/IdeaComparisonDetail.css';
 
 // A comparison's sources and facts arrive in one response (sources are stored
@@ -24,6 +26,7 @@ import '../styles/IdeaComparisonDetail.css';
 // paging is client-side - the lists just aren't bounded in size.
 const EVIDENCE_PAGE_SIZE = 3;
 const FACTS_PAGE_SIZE = 3;
+const TREND_CHART_MARGIN = { top: 12, right: 18, bottom: 8, left: 4 };
 
 const pageCountFor = (total, size) => Math.max(1, Math.ceil(total / size));
 const clampPage = (page, total, size) => Math.min(Math.max(0, page), pageCountFor(total, size) - 1);
@@ -129,7 +132,7 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
         <div className="comparison-benchmark-heading">
           <i aria-hidden="true" />
           <div className="comparison-benchmark-axis-heading">
-            <span>{t('ideaComparisonDetail.benchmarkChart.lower')}</span><strong style={{ left: `${benchmarkPosition}%` }}>{benchmarkItem ? t('ideaComparisonDetail.benchmarkChart.yourFactShort') : t('ideaComparisonDetail.benchmarkChart.averageShort')}</strong><span>{t('ideaComparisonDetail.benchmarkChart.higher')}</span>
+            <span>{t('ideaComparisonDetail.benchmarkChart.lower')}</span><strong style={{ insetInlineStart: `${benchmarkPosition}%` }}>{benchmarkItem ? t('ideaComparisonDetail.benchmarkChart.yourFactShort') : t('ideaComparisonDetail.benchmarkChart.averageShort')}</strong><span>{t('ideaComparisonDetail.benchmarkChart.higher')}</span>
           </div>
           <i aria-hidden="true" />
         </div>
@@ -145,9 +148,9 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
             <a className={`comparison-benchmark-row ${isBenchmark ? 'is-benchmark' : ''}`} href={`#${item.evidence_id}`} onClick={(event) => onReveal(event, item.evidence_id)} key={item.id}>
               <div className="comparison-benchmark-source"><i className={`comparison-origin-dot ${item.origin}`} /><span>{item.source_label}</span><strong>{readableDisplayValue(item.display_value)}</strong></div>
               <div className="comparison-benchmark-track">
-                <i className="comparison-benchmark-line" style={{ left: `${benchmarkPosition}%` }} />
-                {!isBenchmark ? <i className={`comparison-distance-line ${comparisonChange.direction}`} style={{ left: `${start}%`, width: `${Math.max(width, 0.6)}%` }} /> : null}
-                <i className={`comparison-value-point ${item.origin} ${isBenchmark ? 'benchmark' : ''}`} style={{ left: `${itemPosition}%` }} />
+                <i className="comparison-benchmark-line" style={{ insetInlineStart: `${benchmarkPosition}%` }} />
+                {!isBenchmark ? <i className={`comparison-distance-line ${comparisonChange.direction}`} style={{ insetInlineStart: `${start}%`, width: `${Math.max(width, 0.6)}%` }} /> : null}
+                <i className={`comparison-value-point ${item.origin} ${isBenchmark ? 'benchmark' : ''}`} style={{ insetInlineStart: `${itemPosition}%` }} />
               </div>
               <div className={`comparison-benchmark-difference ${comparisonChange.direction}`}>
                 {isBenchmark ? <><b>→</b><span>{t('ideaComparisonDetail.benchmarkChart.yourComparisonBaseline')}</span></> : <>
@@ -178,6 +181,7 @@ function BenchmarkComparisonChart({ observations, benchmarkItem, benchmark, benc
 
 function NumericEvidence({ evidence, onReveal }) {
   const { t } = useTranslation('dashboard');
+  const trendChartMargin = useDirectionalMargin(TREND_CHART_MARGIN);
   if (!evidence?.groups?.length) return null;
   return (
     <section className="glass-card comparison-numeric-card">
@@ -236,7 +240,7 @@ function NumericEvidence({ evidence, onReveal }) {
                 group.display_type === 'trend' ? (
                   <div className="comparison-chart" role="img" aria-label={t('ideaComparisonDetail.numericEvidence.trendChartAria', { metric: group.metric })}>
                     <ResponsiveContainer width="100%" height={Math.max(220, chartData.length * 48)}>
-                      <LineChart data={chartData} margin={{ top: 12, right: 18, bottom: 8, left: 4 }}>
+                      <LineChart data={chartData} margin={trendChartMargin}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} width={58} />

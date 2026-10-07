@@ -245,7 +245,7 @@
       "EVIDENCE_CLAIM_SIMILARITY_THRESHOLD": "Evidence claim similarity threshold"
     },
     "descriptions": {
-      "LLM_PROVIDER": "Which backend every AI feature (article analysis, Intelligence Copilot, document splitting) talks to. Switching to a hosted provider sends uploaded document text to it, and only works if that provider's API key is already set in the server's .env.",
+      "LLM_PROVIDER": "Which backend every AI feature (article analysis, Ask Insights, document splitting) talks to. Switching to a hosted provider sends uploaded document text to it, and only works if that provider's API key is already set in the server's .env.",
       "COMPETITOR_ANALYSIS_LLM_PROVIDER": "Overrides the provider for just competitor-study document splitting, competitor naming, and finding generation. Same off-machine caveat as the LLM provider above.",
       "ANALYSIS_CONCURRENCY": "How many articles one analysis run analyzes in parallel.",
       "COMPETITOR_ANALYSIS_CONCURRENCY": "How many competitors' finding generation runs in parallel during one competitor analysis.",

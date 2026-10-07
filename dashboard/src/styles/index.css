@@ -99,6 +99,34 @@ body::after {
   transform: scaleX(-1);
 }
 
+/* Charts (Recharts). Recharts positions every SVG label with a physical
+   text-anchor ("end" = the text finishes at x, e.g. a y-axis tick ending
+   just before its axis line), but SVG resolves start/end against the
+   inherited CSS direction - so under <html dir="rtl"> every anchor flips
+   and labels are drawn on top of the axis, bars or radar grid they label.
+   Pinning chart text to ltr keeps the anchors physical; unicode-bidi:
+   plaintext then lets each label order itself by its own first strong
+   character, so an Arabic date keeps its day on the right and "+100" stays
+   "+100" instead of becoming "100+". Mirroring the chart itself for RTL is
+   ChartAxes.jsx's job, not this rule's. */
+.recharts-surface text {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
+/* The default legend hardcodes inline margin-right spacing, which in RTL
+   lands on the outer side and glues each swatch to its own label.
+   !important is the only way past an inline style. */
+.recharts-default-legend .recharts-legend-item {
+  margin-right: 0 !important;
+  margin-inline-end: 10px !important;
+}
+
+.recharts-default-legend .recharts-legend-item > .recharts-surface {
+  margin-right: 0 !important;
+  margin-inline-end: 4px !important;
+}
+
 .language-switcher {
   display: inline-flex;
   align-items: center;
