@@ -15,6 +15,7 @@ import IntelligenceEmptyState, { DashboardSkeleton, MetricValueSkeleton, NoProje
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import { isIntelligenceStale, resolveIntelligenceState } from '../lib/intelligenceState.js';
+import { useDemographicLabels } from '../lib/demographicLabels.js';
 import { formatDate as formatLocaleDate, formatLanguageName, formatNumber, formatPercent, formatTime } from '../lib/i18nFormat.js';
 import { articlesEvidencePath, isLinkableBucket } from '../lib/evidenceLinks.js';
 
@@ -48,8 +49,7 @@ const DETAILED_BREAKDOWNS_STORAGE_KEY = 'dashboard-detailed-breakdowns-open';
 // SENTIMENT_KEYS/idea "type"/EMOTION_AXES are fixed, small enums, so they go
 // through a real translation lookup (object keys stay the untranslated code -
 // see dashboard.json's sentiment.*/ideaType.*/emotionAxis.*); region/gender/
-// age/language buckets below are open-ended DB text and stay a plain
-// capitalize transform instead (see distributionLabel()).
+// age/segment buckets go through lib/demographicLabels.js.
 function sentimentLabel(t, key) {
   return t(`dashboard:sentiment.${key}`, key);
 }
@@ -71,22 +71,15 @@ function languageLabel(t, locale, code) {
   return name ? `${name} (${code.toUpperCase()})` : code.toUpperCase();
 }
 
-// Labels the demographic breakdown APIs' bucket values (region/gender/age_range)
-// - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
-// Open-ended DB text, so this stays a plain transform rather than a
-// translation lookup - except the "other"/"unknown" buckets, which the app
-// itself generates (capBreakdown() below, or a missing value) and so do
-// have a fixed translation.
-function distributionLabel(t, value) {
-  const key = String(value || 'unknown');
-  if (key === 'other' || key === 'unknown') return t(`dashboard:distributions.bucket.${key}`);
-  return key
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
 // Same fixed tiers (and labels) the Sources tab uses - see sources.json's
 // trustTier.* and TRUST_TIER_ORDER above.
+// "Documents"/"Web" are the generic platform buckets intelligence.py's
+// classify_platform() assigns; everything else it returns is a platform's
+// own brand name (X, Reddit, ...), which stays as written.
+function platformLabel(t, platform) {
+  return t(`dashboard:platforms.${platform}`, platform);
+}
+
 function trustTierLabel(t, tier) {
   return t(`sources:trustTier.${tier}`, tier);
 }
@@ -306,6 +299,7 @@ export default function DashboardOverview({
     .filter((entry) => entry.articles > 0);
   const ageRangeData = capBreakdown((data.insights?.age_range_breakdown || []).filter((entry) => entry.total > 0));
   const segmentData = capBreakdown((data.insights?.segment_breakdown || []).filter((entry) => entry.total > 0));
+  const bucketLabel = useDemographicLabels([...regionData, ...genderData, ...ageRangeData, ...segmentData].map((entry) => entry.value));
   const selectedProject = useMemo(() => projects.find((project) => Number(project.id) === Number(selectedProjectId)), [projects, selectedProjectId]);
   const selectedRunIndex = selectedRunId ? runs.findIndex((run) => run.id === selectedRunId) : -1;
   const selectedRun = selectedRunIndex >= 0 ? runs[selectedRunIndex] : null;
@@ -589,13 +583,13 @@ export default function DashboardOverview({
         <section className="intelligence-top-grid">
           <article className="glass-card intelligence-card intelligence-sentiment-card"><h3>{t('dashboard:sentimentBreakdown.title')}</h3><p className="subtitle">{t('dashboard:sentimentBreakdown.denominator', { assessed: formatNumber(total, locale), total: formatNumber(populationTotal, locale), notAssessed: formatNumber(notAssessedTotal, locale) })}</p><div className="intelligence-sentiment-layout"><div className="intelligence-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sentimentData} dataKey="value" innerRadius="63%" outerRadius="84%" paddingAngle={3} stroke="none" className="intelligence-clickable-chart" onClick={(sector) => openBucket('sentiment', sliceValue(sector, 'name'))}>{sentimentData.map((entry) => <Cell key={entry.name} fill={SENTIMENT_COLORS[entry.name]} />)}</Pie><Tooltip formatter={(value, name) => [t('dashboard:counts.articlesCount', { count: value }), sentimentLabel(t, name)]} /></PieChart></ResponsiveContainer><strong>{formatNumber(data.net_sentiment || 0, locale, { signDisplay: 'always', maximumFractionDigits: 0 })}</strong><span>{t('dashboard:sentimentBreakdown.netSentimentCaption')}</span></div><div className="intelligence-legend">{sentimentData.map((entry) => <LegendRow key={entry.name} to={entry.value > 0 ? bucketPath('sentiment', entry.name) : null} title={openArticlesTitle(sentimentLabel(t, entry.name))}><span style={{ background: SENTIMENT_COLORS[entry.name] }} /><label>{sentimentLabel(t, entry.name)}</label><strong>{formatPercent(percent(entry.value, total), locale, { alreadyWhole: true })}</strong></LegendRow>)}</div></div></article>
           <article className="glass-card intelligence-card intelligence-radar-card"><h3>{t('dashboard:emotionalSignature.title')}</h3><ResponsiveContainer width="100%" height={285}><RadarChart data={data.emotional_signature || []} className="intelligence-clickable-chart" onClick={(state) => openBucket('emotion', state?.activeLabel)}><PolarGrid /><PolarAngleAxis dataKey="axis" tickFormatter={(value) => emotionAxisLabel(t, value)} /><PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} /><Radar dataKey="value" stroke="#2563eb" fill="#2563eb" fillOpacity={0.22} /></RadarChart></ResponsiveContainer><p>{t('dashboard:emotionalSignature.description')}</p></article>
-          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)} dir="auto">{item.platform}</Link> : <span dir="auto">{item.platform}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${item.platform}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
+          <article className="glass-card intelligence-card"><h3>{t('dashboard:sentimentByPlatform.title')}</h3><div className="intelligence-platform-sentiment">{platformData.map((item) => <div key={item.platform}>{item.total > 0 ? <Link className="intelligence-platform-sentiment-name" to={bucketPath('platform', item.platform)} title={openArticlesTitle(platformLabel(t, item.platform))} dir="auto">{platformLabel(t, item.platform)}</Link> : <span dir="auto">{platformLabel(t, item.platform)}</span>}<div>{SENTIMENT_KEYS.map((tone) => { const label = t('dashboard:sentimentByPlatform.tooltipTitle', { tone: sentimentLabel(t, tone), count: item[tone] || 0 }); const style = { width: `${percent(item[tone], Math.max(1, item.total))}%`, background: SENTIMENT_COLORS[tone] }; return item[tone] > 0 ? <Link key={tone} to={evidencePath({ platform: item.platform, sentiment: tone })} title={label} aria-label={`${platformLabel(t, item.platform)}, ${label}`} style={style} /> : <i key={tone} title={label} style={style} />; })}</div></div>)}</div></article>
         </section>
 
         <section className="intelligence-bottom-grid">
           <article className={`glass-card intelligence-card${selectedProject?.mode === 'competitor' ? ' intelligence-card-full' : ''}`}>
             <h3>{t('dashboard:wherePosted.title')}</h3>
-            <div className="intelligence-platform-list">{pagedPlatformData.map((item) => { const row = <><div><strong dir="auto">{item.platform}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></>; return item.total > 0 ? <Link key={item.platform} className="intelligence-platform-link" to={bucketPath('platform', item.platform)} title={openArticlesTitle(item.platform)}>{row}</Link> : <div key={item.platform}>{row}</div>; })}</div>
+            <div className="intelligence-platform-list">{pagedPlatformData.map((item) => { const row = <><div><strong dir="auto">{platformLabel(t, item.platform)}</strong></div><div className="intelligence-track"><span style={{ width: `${percent(item.total, total)}%` }} /></div><div className="intelligence-platform-count"><strong>{formatNumber(item.total, locale)}</strong><small>{t('dashboard:counts.articleUnit', { count: item.total })}</small></div></>; return item.total > 0 ? <Link key={item.platform} className="intelligence-platform-link" to={bucketPath('platform', item.platform)} title={openArticlesTitle(platformLabel(t, item.platform))}>{row}</Link> : <div key={item.platform}>{row}</div>; })}</div>
             {platformListTotalPages > 1 ? (
               <div className="intelligence-idea-comparison-pagination">
                 <button
@@ -788,10 +782,10 @@ export default function DashboardOverview({
           <div id="intelligence-detailed-breakdowns-panel" className="intelligence-language-grid" hidden={!detailedBreakdownsOpen}>
             {detailedBreakdownsOpen ? (<>
               <DistributionCard title={t('dashboard:distributions.language.title')} linkFor={(value) => bucketPath('language', value)} entries={languageData} nameKey="language" valueKey="count" valueTotal={total} colorFor={paletteColor} labelFor={(code) => languageLabel(t, locale, code)} emptyText={t('dashboard:distributions.language.empty')} />
-              <DistributionCard title={t('dashboard:distributions.region.title')} linkFor={(value) => bucketPath('region', value)} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.region.empty')} />
-              <DistributionCard title={t('dashboard:distributions.gender.title')} linkFor={(value) => bucketPath('gender', value)} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.gender.empty')} />
-              <DistributionCard title={t('dashboard:distributions.ageRange.title')} linkFor={(value) => bucketPath('age_range', value)} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.ageRange.empty')} />
-              <DistributionCard title={t('dashboard:distributions.segment.title')} linkFor={(value) => bucketPath('segment', value)} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={(value) => distributionLabel(t, value)} emptyText={t('dashboard:distributions.segment.empty')} />
+              <DistributionCard title={t('dashboard:distributions.region.title')} linkFor={(value) => bucketPath('region', value)} entries={regionData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={bucketLabel} emptyText={t('dashboard:distributions.region.empty')} />
+              <DistributionCard title={t('dashboard:distributions.gender.title')} linkFor={(value) => bucketPath('gender', value)} entries={genderData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={bucketLabel} emptyText={t('dashboard:distributions.gender.empty')} />
+              <DistributionCard title={t('dashboard:distributions.ageRange.title')} linkFor={(value) => bucketPath('age_range', value)} entries={ageRangeData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={bucketLabel} emptyText={t('dashboard:distributions.ageRange.empty')} />
+              <DistributionCard title={t('dashboard:distributions.segment.title')} linkFor={(value) => bucketPath('segment', value)} entries={segmentData} nameKey="value" valueKey="total" valueTotal={total} colorFor={paletteColor} labelFor={bucketLabel} emptyText={t('dashboard:distributions.segment.empty')} />
               <DistributionCard title={t('dashboard:sourceTrust.title')} linkFor={(value) => bucketPath('trust', value)} entries={trustData} nameKey="tier" valueKey="articles" valueTotal={data.source_trust?.total_articles || 0} colorFor={(entry) => TRUST_TIER_COLORS[entry.tier]} labelFor={(tier) => trustTierLabel(t, tier)} emptyText={t('dashboard:sourceTrust.empty')} />
             </>) : null}
           </div>

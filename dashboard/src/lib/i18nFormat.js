@@ -102,3 +102,13 @@ export function formatLanguageName(languageCode, locale) {
     return languageCode;
   }
 }
+
+// Same idea as formatLanguageName(), for an ISO 3166-1 alpha-2 country code.
+export function formatRegionName(regionCode, locale) {
+  if (!regionCode) return '';
+  try {
+    return new Intl.DisplayNames([resolveIntlLocale(locale)], { type: 'region' }).of(regionCode);
+  } catch {
+    return regionCode;
+  }
+}

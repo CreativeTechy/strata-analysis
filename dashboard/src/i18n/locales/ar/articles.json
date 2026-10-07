@@ -308,5 +308,14 @@
       "emotion": "العاطفة",
       "date": "تاريخ النشر"
     }
+  },
+  "categoryLabels": {
+    "review": "مراجعة",
+    "comparison": "مقارنة",
+    "complaint": "شكوى",
+    "news": "خبر",
+    "ownership_experience": "تجربة امتلاك",
+    "buying_guide": "دليل شراء",
+    "general_article": "مقالة عامة"
   }
 }

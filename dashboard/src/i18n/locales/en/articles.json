@@ -276,5 +276,14 @@
       "emotion": "Emotion",
       "date": "Published"
     }
+  },
+  "categoryLabels": {
+    "review": "Review",
+    "comparison": "Comparison",
+    "complaint": "Complaint",
+    "news": "News",
+    "ownership_experience": "Ownership Experience",
+    "buying_guide": "Buying Guide",
+    "general_article": "General Article"
   }
 }

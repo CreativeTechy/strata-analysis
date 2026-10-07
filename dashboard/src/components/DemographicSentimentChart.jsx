@@ -3,6 +3,7 @@ import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from 'rec
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/DemographicSentimentChart.css';
 import { formatPercent } from '../lib/i18nFormat.js';
+import { titleCase, useDemographicLabels } from '../lib/demographicLabels.js';
 
 // Same status palette and fixed series order as StatsOverview.jsx's sentiment
 // donut, reused here so a "positive" segment reads the same color everywhere
@@ -10,29 +11,20 @@ import { formatPercent } from '../lib/i18nFormat.js';
 const SENTIMENT_COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
 const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
 
-// region/gender/age_range are open-ended text buckets straight off the DB, so
-// this transform (not a translation lookup) is what turns e.g. "north_america"
-// into "North America" - left untranslated on purpose, same as
-// DashboardOverview.jsx's distributionLabel().
-function labelize(value) {
-  return String(value || '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-// SENTIMENT_KEYS, unlike the bucket values above, is a fixed 4-value enum -
-// translated through a label map (dashboard:sentiment.*) so the object keys
-// (used for colors/data lookups) stay the untranslated code.
+// SENTIMENT_KEYS is a fixed 4-value enum - translated through a label map
+// (dashboard:sentiment.*) so the object keys (used for colors/data lookups)
+// stay the untranslated code. Bucket values (region/gender/age_range) go
+// through lib/demographicLabels.js.
 function sentimentLabel(t, key) {
-  return t(`dashboard:sentiment.${key}`, labelize(key));
+  return t(`dashboard:sentiment.${key}`, titleCase(key));
 }
 
-function ChartTooltip({ active, payload, label, t, locale }) {
+function ChartTooltip({ active, payload, label, t, locale, bucketLabel }) {
   if (!active || !payload?.length) return null;
   const bucket = payload[0]?.payload;
   return (
     <div className="demographic-chart-tooltip">
-      <strong>{labelize(label)}</strong>
+      <strong>{bucketLabel(label)}</strong>
       <span>{t('dashboard:counts.recordsCount', { count: bucket?.total || 0 })}</span>
       <ul>
         {SENTIMENT_KEYS.map((key) => (
@@ -72,6 +64,7 @@ export default function DemographicSentimentChart({ title, data, maxBuckets = 7 
     };
   });
   const droppedCount = nonEmpty.length - rows.length;
+  const bucketLabel = useDemographicLabels(rows.map((row) => row.value));
   const allRecords = nonEmpty.reduce((sum, item) => sum + Number(item.total || 0), 0);
   const unknownRecords = nonEmpty.find((item) => String(item.value).toLowerCase() === 'unknown')?.total || 0;
 
@@ -94,8 +87,8 @@ export default function DemographicSentimentChart({ title, data, maxBuckets = 7 
         <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.09)" horizontal={false} />
           <XAxis type="number" domain={[0, 100]} tickFormatter={(value) => formatPercent(value, locale, { alreadyWhole: true })} />
-          <YAxis type="category" dataKey="value" width={110} tickFormatter={labelize} />
-          <Tooltip content={<ChartTooltip t={t} locale={locale} />} />
+          <YAxis type="category" dataKey="value" width={110} tickFormatter={bucketLabel} />
+          <Tooltip content={<ChartTooltip t={t} locale={locale} bucketLabel={bucketLabel} />} />
           <Legend formatter={(key) => sentimentLabel(t, key)} />
           {SENTIMENT_KEYS.map((key) => (
             <Bar key={key} dataKey={key} name={key} stackId="sentiment" fill={SENTIMENT_COLORS[key]} stroke="#fff" strokeWidth={2} />

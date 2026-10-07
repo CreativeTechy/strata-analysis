@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, FileText, Loader2, Trash2 } from 'lucide-react';
 import { getArticleAnalysis, reprocessArticle, removeArticleFromProject, restoreArticleToProject } from '../api/articlesApi.js';
-import { prettyLabel, sentimentBadgeState, isLlmFallbackStatus } from '../lib/articleHelpers.jsx';
+import { categoryLabel, toneLabel, sentimentBadgeState, isLlmFallbackStatus } from '../lib/articleHelpers.jsx';
+import { useDemographicLabels } from '../lib/demographicLabels.js';
 import { formatDate, formatDateTime, formatPercent, formatLanguageName } from '../lib/i18nFormat.js';
 import { useAuth } from '../auth/useAuth.js';
 import ConfirmModal from './ConfirmModal';
@@ -70,6 +71,7 @@ export default function ArticleDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
+  const regionLabel = useDemographicLabels([data?.region]);
   const [reprocessing, setReprocessing] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -316,7 +318,7 @@ export default function ArticleDetailPage() {
             <strong>{t('detail.categoryLabel')}</strong>{' '}
             {data.classification_status === 'ran' || data.classification_status === 'ran_via_llm'
               || !Object.prototype.hasOwnProperty.call(data, 'classification_status')
-              ? prettyLabel(data.article_category)
+              ? categoryLabel(t, data.article_category)
               : t('sentiment.notAssessed')}
             {isLlmFallbackStatus(data.category_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.category, locale) && (
@@ -326,7 +328,7 @@ export default function ArticleDetailPage() {
             )}
           </div>
           <div>
-            <strong>{t('detail.writerToneLabel')}</strong> {prettyLabel(data.writer_tone)}
+            <strong>{t('detail.writerToneLabel')}</strong> {toneLabel(t, data.writer_tone)}
             {isLlmFallbackStatus(data.writer_tone_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.writer_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
@@ -335,7 +337,7 @@ export default function ArticleDetailPage() {
             )}
           </div>
           <div>
-            <strong>{t('detail.articleToneLabel')}</strong> {prettyLabel(data.article_tone)}
+            <strong>{t('detail.articleToneLabel')}</strong> {toneLabel(t, data.article_tone)}
             {isLlmFallbackStatus(data.article_tone_status) ? <LlmFallbackTag t={t} /> : null}
             {formatPercent(data.confidence?.article_tone, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
@@ -344,10 +346,10 @@ export default function ArticleDetailPage() {
             )}
           </div>
           <div>
-            <strong>{t('detail.overallToneLabel')}</strong> {prettyLabel(data.overall_tone)}
+            <strong>{t('detail.overallToneLabel')}</strong> {toneLabel(t, data.overall_tone)}
           </div>
           <div>
-            <strong>{t('detail.regionLabel')}</strong> {prettyLabel(data.region)}
+            <strong>{t('detail.regionLabel')}</strong> {regionLabel(data.region)}
             {formatPercent(data.confidence?.region, locale) && (
               <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '0.85rem' }}>
                 {t('detail.confidence', { pct: formatPercent(data.confidence.region, locale) })}

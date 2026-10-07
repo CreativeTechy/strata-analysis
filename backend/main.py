@@ -62,6 +62,7 @@ from services.articles.relevance_screening import set_relevance_override
 from llm_client import LLMError, chat_completion
 from services.common.api_errors import api_error
 from services.i18n.locales import UnsupportedLocaleError, language_instruction, normalize_locale
+from services.i18n.label_translation import clean_labels, translate_labels
 from services.projects.projects_store import (
     create_project,
     delete_project,
@@ -1005,6 +1006,26 @@ def get_articles_stats(
     if project_id is not None:
         _ensure_project_visible(project_id, user)
     return get_article_stats(search=search, category=category, project_id=project_id, date_from=date_from, date_to=date_to)
+
+
+@app.post("/api/i18n/labels")
+def translate_display_labels(payload: dict, user: dict = Depends(require_permission("articles.view"))):
+    """Render open-ended analysis values (free-text demographic buckets,
+    survey metadata) into `locale` for display. `values` is the list of raw
+    values as the API returned them; the response maps each one to its
+    label, falling back to the value itself when it can't be translated.
+    Fixed vocabularies are translated by the dashboard's own catalogs and
+    never need this. See services/i18n/label_translation.py."""
+    payload = payload or {}
+    try:
+        resolved_locale = normalize_locale(payload.get("locale"))
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(payload.get("locale")), "supported": list(config.SUPPORTED_LOCALES)})
+    try:
+        labels = clean_labels(payload.get("values") or [])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"locale": resolved_locale, "labels": translate_labels(labels, resolved_locale)}
 
 
 @app.get("/api/projects/{project_id}/intelligence")

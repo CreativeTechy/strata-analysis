@@ -5,6 +5,7 @@ import DashboardOverview from './DashboardOverview.jsx';
 import { getIdeaComparisons } from '../api/projectsApi.js';
 import i18n from '../i18n/index.js';
 import { useAuth } from '../auth/useAuth.js';
+import { resetTranslatedLabelsCache } from '../i18n/useTranslatedLabels.js';
 
 vi.mock('../api/projectsApi.js', () => ({ getIdeaComparisons: vi.fn() }));
 vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => null }));
@@ -12,6 +13,9 @@ vi.mock('./CompetitorPulseCard.jsx', () => ({ default: () => null }));
 // tests are about the text around them.
 vi.mock('./ResponsiveChartContainer.jsx', () => ({ default: () => null }));
 vi.mock('../auth/useAuth.js', () => ({ useAuth: vi.fn() }));
+vi.mock('../api/i18nApi.js', () => ({
+  translateLabels: vi.fn(async (locale, values) => Object.fromEntries(values.map((value) => [value, `ع ${value}`]))),
+}));
 
 const PROJECT = { id: 1, name: 'Acme Study', mode: 'opinion' };
 
@@ -270,6 +274,38 @@ describe('DashboardOverview', () => {
     expect(screen.getByText('تم بنجاح')).toBeInTheDocument();
     expect(screen.getByText('أخرى')).toBeInTheDocument();
     expect(screen.queryByText(/Source trust|Trusted|Untrusted|^success$/)).not.toBeInTheDocument();
+    await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
+  });
+
+  it('translates every demographic bucket and platform in Arabic', async () => {
+    resetTranslatedLabelsCache();
+    await i18n.changeLanguage('ar');
+    renderDashboard({
+      intelligence: {
+        ...INTELLIGENCE,
+        platforms: [{ platform: 'Documents', total: 4, positive: 2, negative: 1, neutral: 1, mixed: 0 }, { platform: 'Reddit', total: 1, positive: 1, negative: 0, neutral: 0, mixed: 0 }],
+        insights: {
+          ...INTELLIGENCE.insights,
+          region_breakdown: [{ value: 'Jordan', total: 4 }, { value: 'Middle East', total: 2 }],
+          segment_breakdown: [{ value: 'small_business_owner', total: 2 }],
+          gender_breakdown: [{ value: 'female', total: 3 }, { value: 'male', total: 2 }],
+          age_range_breakdown: [{ value: '65_plus', total: 2 }],
+        },
+      },
+    });
+    openDetailedBreakdowns();
+    expect(screen.getByText('الأردن')).toBeInTheDocument();
+    expect(screen.getByText('أنثى')).toBeInTheDocument();
+    expect(screen.getByText('ذكر')).toBeInTheDocument();
+    expect(screen.getByText('65 فأكثر')).toBeInTheDocument();
+    // Free-text buckets come back from the label translation endpoint.
+    expect(await screen.findByText('ع Middle East')).toBeInTheDocument();
+    expect(screen.getByText('ع small_business_owner')).toBeInTheDocument();
+    // Generic platform buckets translate; brand names stay as written.
+    expect(screen.getAllByText('المستندات').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Reddit').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Documents')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^(Jordan|Female|Male|65 Plus|Middle East|Small Business Owner)$/)).not.toBeInTheDocument();
     await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
   });
 

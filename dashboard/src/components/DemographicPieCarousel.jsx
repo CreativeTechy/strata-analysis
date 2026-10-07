@@ -5,34 +5,17 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Cell, Pie, PieChart, Tooltip } from 'recharts';
 import ResponsiveContainer from './ResponsiveChartContainer.jsx';
 import '../styles/IntelligenceDashboard.css';
+import { titleCase, useDemographicLabels } from '../lib/demographicLabels.js';
 
 // Same status palette as StatsOverview.jsx's sentiment donut, reused here so
 // a "positive" slice reads the same color everywhere in the app.
 const COLORS = { positive: '#16a34a', neutral: '#64748b', negative: '#e11d48', mixed: '#f59e0b' };
 const SENTIMENT_KEYS = ['positive', 'neutral', 'negative', 'mixed'];
 
-// Labels the demographic breakdown APIs' bucket values (region/gender/age_range/segment)
-// - see backend/services/articles/articles_store.py's _demographic_sentiment_breakdown.
-// Open-ended DB text, so this stays a plain transform rather than a
-// translation lookup - see DashboardOverview.jsx's distributionLabel().
-function labelize(value) {
-  return String(value || 'unknown')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-// SENTIMENT_KEYS is a fixed 4-value enum (unlike the open-ended bucket
-// values above), so it goes through a real translation lookup instead.
+// SENTIMENT_KEYS is a fixed 4-value enum, so it goes through a real
+// translation lookup; bucket values go through lib/demographicLabels.js.
 function sentimentLabel(t, key) {
-  return t(`dashboard:sentiment.${key}`, labelize(key));
-}
-
-// The "other"/"unknown" buckets are app-generated (capBreakdown() below, or
-// a missing value) rather than DB text, so unlike the rest they translate.
-function bucketLabel(t, value) {
-  const key = String(value || 'unknown');
-  if (key === 'other' || key === 'unknown') return t(`dashboard:distributions.bucket.${key}`);
-  return labelize(key);
+  return t(`dashboard:sentiment.${key}`, titleCase(key));
 }
 
 // These breakdowns are open-ended text buckets, so navigation is capped to
@@ -66,6 +49,7 @@ export default function DemographicPieCarousel({ data, emptyLabel, pathFor }) {
   const navigate = useNavigate();
   const [index, setIndex] = useState(0);
   const buckets = capBreakdown((Array.isArray(data) ? data : []).filter((entry) => Number(entry?.total) > 0));
+  const bucketLabel = useDemographicLabels(buckets.map((entry) => entry.value));
 
   if (buckets.length === 0) {
     return <p className="intelligence-empty">{emptyLabel || t('dashboard:carousel.emptyDefault')}</p>;
@@ -95,7 +79,7 @@ export default function DemographicPieCarousel({ data, emptyLabel, pathFor }) {
         >
           <ChevronLeft size={22} className="rtl-mirror" />
         </button>
-        <span className="demographic-pie-carousel-label" dir="auto">{bucketLabel(t, bucket.value)}</span>
+        <span className="demographic-pie-carousel-label" dir="auto">{bucketLabel(bucket.value)}</span>
         <button
           type="button"
           className="demographic-pie-carousel-arrow"
@@ -117,7 +101,7 @@ export default function DemographicPieCarousel({ data, emptyLabel, pathFor }) {
         </ResponsiveContainer>
       </div>
       {bucketPath ? (
-        <Link className="demographic-pie-carousel-count demographic-pie-carousel-count-link" to={bucketPath} title={t('dashboard:evidence.openArticles', { label: bucketLabel(t, bucket.value) })}>{t('dashboard:counts.articlesCount', { count: bucket.total })}</Link>
+        <Link className="demographic-pie-carousel-count demographic-pie-carousel-count-link" to={bucketPath} title={t('dashboard:evidence.openArticles', { label: bucketLabel(bucket.value) })}>{t('dashboard:counts.articlesCount', { count: bucket.total })}</Link>
       ) : (
         <span className="demographic-pie-carousel-count">{t('dashboard:counts.articlesCount', { count: bucket.total })}</span>
       )}
@@ -129,7 +113,7 @@ export default function DemographicPieCarousel({ data, emptyLabel, pathFor }) {
               type="button"
               className={`demographic-pie-carousel-dot ${entryIndex === safeIndex ? 'active' : ''}`}
               onClick={() => goTo(entryIndex)}
-              aria-label={t('dashboard:carousel.showValueAria', { value: bucketLabel(t, entry.value) })}
+              aria-label={t('dashboard:carousel.showValueAria', { value: bucketLabel(entry.value) })}
               aria-current={entryIndex === safeIndex}
             />
           ))}
