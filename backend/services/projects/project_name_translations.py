@@ -2,7 +2,7 @@
 lists). Adds a `display_name` next to each project's canonical `name`; `name`
 itself is never touched, so edit forms and exports keep the operator's text.
 
-Cached per (project_id, locale, source_name) - see migration 0052 - so a
+Cached per (project_id, locale, source_name) - see migration 0053 - so a
 rename misses the cache and re-translates. A failure leaves `display_name`
 equal to the original name rather than failing the project list.
 """
