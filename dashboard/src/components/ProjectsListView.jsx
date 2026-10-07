@@ -214,7 +214,7 @@ export default function ProjectsListView({ projects = [], isLoadingProjects }) {
                 <div className="admin-item-top">
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <strong className="admin-item-title project-item-title" dir="auto">{project.name}</strong>
+                      <strong className="admin-item-title project-item-title" dir="auto">{project.display_name || project.name}</strong>
                       <span className={`panel-chip ${isActive ? 'success' : project.status === 'archived' ? 'muted' : 'warning'}`}>
                         {(statusLabels[(project.status || 'draft').toLowerCase()] || project.status || 'draft').toUpperCase()}
                       </span>

@@ -188,7 +188,7 @@ export default function App() {
   const refreshProjects = async () => {
     setIsLoadingProjects(true);
     try {
-      const data = await listProjects();
+      const data = await listProjects({ locale: i18n.language });
       setProjects(Array.isArray(data?.projects) ? data.projects : []);
     } catch {
       setProjects([]);
@@ -245,7 +245,8 @@ export default function App() {
     refreshProjects();
     refreshUsers();
     return undefined;
-  }, [isAuthenticated]);
+    // Projects also refetch on a language switch for their translated display_name.
+  }, [isAuthenticated, i18n.language]);
 
   useEffect(() => {
     if (!isAuthenticated) return undefined;

@@ -101,7 +101,7 @@ async function requestSoftError(path, { method = 'GET', body } = {}, fallback) {
 }
 
 // --- projects --------------------------------------------------------------
-export const listProjects = () => request('');
+export const listProjects = (params) => request(query(params));
 export const createProject = (body) => requestSoftError('', { method: 'POST', body }, 'Failed to add project');
 export const updateProject = (projectId, body) =>
   requestSoftError(`/${projectId}`, { method: 'PUT', body }, 'Failed to update project');

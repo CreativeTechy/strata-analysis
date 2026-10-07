@@ -72,7 +72,7 @@ function AliasEditor({ competitor, onSave }) {
 }
 
 export default function CompetitorsPage() {
-  const { t } = useTranslation(['competitors', 'common']);
+  const { t, i18n } = useTranslation(['competitors', 'common']);
   const { studyId } = useParams();
   const { hasPermission } = useAuth();
   const canManage = hasPermission('competitors.manage');
@@ -109,7 +109,8 @@ export default function CompetitorsPage() {
     return () => {
       cancelled = true;
     };
-  }, [studyId]);
+    // Refetch on a language switch: the study's display_name is translated.
+  }, [studyId, i18n.language]);
 
   const refreshCompetitors = async () => {
     try {
@@ -199,7 +200,7 @@ export default function CompetitorsPage() {
           <Link to={`/competitors/${studyId}`} className="cs-link-back">
             <ChevronRight size={14} className="rtl-mirror" style={{ transform: 'rotate(180deg)' }} /> {t('shared.reports')}
           </Link>
-          <h1 dir="auto">{study?.name || t('shared.competitorStudyFallback')} — {t('competitorsPage.titleSuffix')}</h1>
+          <h1 dir="auto">{(study?.display_name || study?.name) || t('shared.competitorStudyFallback')} — {t('competitorsPage.titleSuffix')}</h1>
           <p>{t('competitorsPage.subtitle')}</p>
         </div>
         <div className="cs-head-actions">

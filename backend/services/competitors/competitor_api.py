@@ -17,6 +17,7 @@ import json
 import logging
 import re
 
+from services.projects.project_name_translations import localize_project_names
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile
 
 import config
@@ -74,9 +75,12 @@ def _document_or_404(document_id: int, user: dict) -> dict:
 # Studies
 # --------------------------------------------------------------------------- #
 @router.get("/studies")
-def list_studies(user: dict = Depends(require_permission("competitors.view"))):
-    """Competitor-mode projects with enough summary to render the index."""
-    return {"studies": competitors_store.list_studies(visible_project_ids=visible_project_ids_or_none(user))}
+def list_studies(locale: str | None = None, user: dict = Depends(require_permission("competitors.view"))):
+    """Competitor-mode projects with enough summary to render the index.
+    `locale` adds a translated `display_name` to each study."""
+    resolved_locale = _resolve_locale(locale)
+    studies = competitors_store.list_studies(visible_project_ids=visible_project_ids_or_none(user))
+    return {"studies": localize_project_names(studies, locale=resolved_locale)}
 
 
 @router.get("/studies/{project_id}/findings/recent")
@@ -111,10 +115,11 @@ def create_study(payload: dict, user: dict = Depends(require_permission("competi
 
 
 @router.get("/studies/{project_id}")
-def get_study(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+def get_study(project_id: int, locale: str | None = None, user: dict = Depends(require_permission("competitors.view"))):
     project = _project_or_404(project_id, user)
+    resolved_locale = _resolve_locale(locale)
     return {
-        "study": project,
+        "study": localize_project_names([project], locale=resolved_locale)[0],
         "profile": business_profile_store.get_profile(project_id),
         "competitors": competitors_store.competitor_overview(project_id),
         "findings": competitor_analysis.list_findings(project_id),

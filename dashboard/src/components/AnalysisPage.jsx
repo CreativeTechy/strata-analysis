@@ -197,7 +197,7 @@ export default function AnalysisPage({ projects = [] }) {
           <option value="all">{t('performanceLogs.allProjects')}</option>
           {projects.map((project) => (
             <option key={project.id} value={String(project.id)}>
-              {project.name}
+              {(project.display_name || project.name)}
             </option>
           ))}
         </select>

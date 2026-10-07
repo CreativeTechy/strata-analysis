@@ -356,7 +356,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const hasNext = offset + limit < total;
   const isInitialLoading = loading && articles.length === 0;
   const isRefreshing = loading && articles.length > 0;
-  const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.name || t('toolbar.selectedProjectScope'));
+  const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.display_name || activeProject?.name || t('toolbar.selectedProjectScope'));
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
   const searchBusy = Boolean(searchInput) && (searchInput.trim() !== search || loading);
@@ -547,7 +547,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
             <h1 className="admin-page-title">{t('list.title')}</h1>
             <p className="admin-page-subtitle">
               {t('list.subtitle')}
-              {project ? t('list.subtitleProjectSuffix', { name: project.name }) : t('list.subtitleAllProjects')}
+              {project ? t('list.subtitleProjectSuffix', { name: project.display_name || project.name }) : t('list.subtitleAllProjects')}
             </p>
           </div>
 

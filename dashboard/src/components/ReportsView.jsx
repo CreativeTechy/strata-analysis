@@ -150,7 +150,7 @@ export default function ReportsView({
               <BarChart3 size={13} /> {t('header.kicker')}
             </span>
             <h2 className="report-title" dir="auto">
-              {selectedProject ? selectedProject.name : t('header.selectProjectTitle')}
+              {selectedProject ? (selectedProject.display_name || selectedProject.name) : t('header.selectProjectTitle')}
             </h2>
             <p className="subtitle">
               {t('header.subtitle')}
@@ -208,7 +208,7 @@ export default function ReportsView({
                 {hasProjects ? (
                   projects.map((project) => (
                     <option key={project.id} value={project.id}>
-                      {project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
+                      {project.display_name || project.name} ({t(`projects:shared.statusLabels.${project.status || 'draft'}`, project.status || 'draft')})
                     </option>
                   ))
                 ) : (
@@ -328,7 +328,7 @@ export default function ReportsView({
       >
         <div className="report-export-preview">
           <dl className="report-export-preview-facts">
-            <div><dt>{t('export.dialogProjectLabel')}</dt><dd dir="auto">{selectedProject ? selectedProject.name : t('summaryChips.noneSelected')}</dd></div>
+            <div><dt>{t('export.dialogProjectLabel')}</dt><dd dir="auto">{selectedProject ? (selectedProject.display_name || selectedProject.name) : t('summaryChips.noneSelected')}</dd></div>
             <div><dt>{t('export.dialogScopeLabel')}</dt><dd>{scopeRangeLabel}</dd></div>
             <div>
               <dt><Languages size={13} aria-hidden="true" /> {t('export.dialogLanguageLabel')}</dt>
@@ -366,7 +366,7 @@ export default function ReportsView({
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <StatsOverview
             intelligence={liveReport}
-            scopeLabel={selectedProject ? selectedProject.name : t('noProjectSelectedScope')}
+            scopeLabel={selectedProject ? (selectedProject.display_name || selectedProject.name) : t('noProjectSelectedScope')}
             loading={showLoading}
             error={intelligenceError}
             onRetry={onRefresh}

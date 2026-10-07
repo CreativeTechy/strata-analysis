@@ -79,6 +79,7 @@ from services.intelligence.intelligence import PERIOD_DAYS, get_project_intellig
 from services.intelligence import evidence_links
 from services.intelligence.feedback_translation import localize_categorized_feedback
 from services.intelligence.idea_translation import localize_frequent_ideas
+from services.projects.project_name_translations import localize_project_names
 from services.articles.idea_comparison_translation import localize_idea_comparison_detail, localize_idea_comparisons
 from services.articles.idea_comparisons import (
     create_comparison_fact, delete_comparison_fact, generate_idea_comparisons_detailed,
@@ -502,11 +503,26 @@ def remove_role(role_id: int, user: dict = Depends(require_permission("roles.del
 
 
 @app.get("/api/projects")
-def get_projects(limit: int | None = None, offset: int = 0, user: dict = Depends(require_permission("projects.view"))):
+def get_projects(
+    limit: int | None = None,
+    offset: int = 0,
+    locale: str | None = None,
+    user: dict = Depends(require_permission("projects.view")),
+):
+    """`locale`, when given, adds a `display_name` to each project: its name
+    rendered into that locale (see services/projects/project_name_translations.py).
+    `name` stays the canonical text."""
+    try:
+        resolved_locale = normalize_locale(locale)
+    except UnsupportedLocaleError:
+        raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
     visible_ids = _visible_project_ids_or_none(user)
     if limit is None:
-        return {"projects": list_projects(visible_project_ids=visible_ids)}
-    return list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
+        result = {"projects": list_projects(visible_project_ids=visible_ids)}
+    else:
+        result = list_projects_page(limit=limit, offset=offset, visible_project_ids=visible_ids)
+    result["projects"] = localize_project_names(result["projects"], locale=resolved_locale)
+    return result
 
 
 def _strip_unauthorized_user_ids(payload: dict, user: dict) -> dict:
@@ -1551,6 +1567,8 @@ def get_article_analysis_endpoint(
         raise api_error(400, "unsupported_locale", {"locale": str(locale), "supported": list(config.SUPPORTED_LOCALES)})
     if resolved_locale != config.DEFAULT_LOCALE:
         analysis = localize_article_analysis(analysis, article_id=article_id, locale=resolved_locale)
+        if isinstance(analysis.get("projects"), list):
+            analysis = {**analysis, "projects": localize_project_names(analysis["projects"], locale=resolved_locale)}
     return {"analysis": analysis}
 
 

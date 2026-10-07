@@ -54,7 +54,7 @@ export default function ProjectLinkageDetailPage({ projects = [], users = [] }) 
           <div className="admin-page-kicker">
             <Link2 size={14} /> {t('kickers.projectLinkage')}
           </div>
-          <h1 className="admin-page-title" dir="auto">{project.name}</h1>
+          <h1 className="admin-page-title" dir="auto">{project.display_name || project.name}</h1>
           <p className="admin-page-subtitle">{t('projectLinkage.detail.subtitle')}</p>
         </div>
         <div className="admin-page-toolbar">
