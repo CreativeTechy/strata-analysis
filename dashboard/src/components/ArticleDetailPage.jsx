@@ -71,7 +71,6 @@ export default function ArticleDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
-  const regionLabel = useDemographicLabels([data?.region]);
   const [reprocessing, setReprocessing] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -118,6 +117,9 @@ export default function ArticleDetailPage() {
   const effectiveProjectId = projects.some((p) => String(p.id) === String(selectedProjectId))
     ? selectedProjectId
     : String(projects[0]?.id || '');
+  // A free-text region is translated for the article's own project, not
+  // whichever project the dashboard happens to have selected.
+  const regionLabel = useDemographicLabels([data?.region], { projectId: effectiveProjectId || null });
 
   const handleReprocess = async () => {
     if (reprocessing) return;

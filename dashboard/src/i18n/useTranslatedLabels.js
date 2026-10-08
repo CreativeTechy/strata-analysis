@@ -7,21 +7,40 @@
  * Every component on a page asks for its own values, so requests are
  * queued and flushed together on the next tick (one call per page render
  * rather than one per chart/row), and results are cached per locale for the
- * life of the page. Nothing is requested for the default locale - those
- * values already are in it, or when no project is in scope (see
- * LabelProjectContext.jsx). Until a label arrives (or if it can't be
- * translated), callers get null and show their own fallback.
+ * life of the page. Only values with letters outside the active locale's
+ * script are requested (needsTranslation) - in any locale, so Arabic model
+ * output still becomes English in the English UI - and nothing is requested
+ * when no project is in scope (see LabelProjectContext.jsx). Until a label
+ * arrives (or if it can't be translated), callers get null and show their
+ * own fallback.
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { translateLabels } from '../api/i18nApi.js';
 import { useLabelProjectId } from './LabelProjectContext.jsx';
-import { DEFAULT_LOCALE } from './locales.js';
 
 // Server-side cap per request (label_translation.MAX_LABELS_PER_REQUEST).
 const MAX_VALUES_PER_REQUEST = 200;
 const EMPTY = new Map();
+
+// The script each interface locale is written in - mirrors the backend's
+// label_translation.LOCALE_SCRIPTS.
+const LOCALE_SCRIPTS = {
+  en: /\p{Script=Latin}/u,
+  ar: /\p{Script=Arabic}/u,
+};
+
+// True when `value` has a letter outside `locale`'s script, i.e. isn't
+// already written in the interface language.
+export function needsTranslation(value, locale) {
+  const script = LOCALE_SCRIPTS[locale];
+  if (!script || typeof value !== 'string') return false;
+  for (const char of value) {
+    if (/\p{L}/u.test(char) && !script.test(char)) return true;
+  }
+  return false;
+}
 
 // Every map below is keyed by `${projectId}:${locale}` - a translation is
 // per project (server-side too), never reused for another project's labels.
@@ -107,26 +126,30 @@ function normalizeValues(values) {
 
 /**
  * Returns `labelFor(value)` - the translated label for one of `values` in
- * the active locale, or null when there isn't one (yet).
+ * the active locale, or null when there isn't one (yet) or it is already in
+ * that locale. `projectId` overrides the LabelProjectContext project, for a
+ * component that knows its own project better than the page does (an
+ * article's own project on its detail page).
  */
-export function useTranslatedLabels(values) {
+export function useTranslatedLabels(values, { projectId: projectIdOverride } = {}) {
   const { i18n } = useTranslation();
   const locale = i18n.language;
-  const projectId = useLabelProjectId();
-  const scope = projectId == null ? null : scopeKey(projectId, locale);
-  const key = JSON.stringify(normalizeValues(values));
+  const contextProjectId = useLabelProjectId();
+  const projectId = projectIdOverride ?? contextProjectId;
+  const scope = projectId == null || projectId === '' ? null : scopeKey(projectId, locale);
+  const key = JSON.stringify(normalizeValues(values).filter((value) => needsTranslation(value, locale)));
   const labels = useSyncExternalStore(subscribe, () => (scope && cache.get(scope)) || EMPTY);
 
   useEffect(() => {
-    if (locale === DEFAULT_LOCALE || scope == null) return;
+    if (scope == null) return;
     const list = JSON.parse(key);
     if (list.length) enqueue(scope, list);
-  }, [locale, scope, key]);
+  }, [scope, key]);
 
   return useCallback((value) => {
-    if (locale === DEFAULT_LOCALE || scope == null || typeof value !== 'string') return null;
+    if (scope == null || typeof value !== 'string') return null;
     return labels.get(value.trim()) || null;
-  }, [locale, scope, labels]);
+  }, [scope, labels]);
 }
 
 // Test hook: forget every cached/requested label.

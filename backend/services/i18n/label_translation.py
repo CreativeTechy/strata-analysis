@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import unicodedata
 
 import config
 import db
@@ -50,6 +51,24 @@ MAX_BATCH_CHARS = 2000
 # failure (FATAL_ANALYSIS_ERRORS), never by one batch the model mangled.
 FAILURE_CACHE_SECONDS = 300
 _failure_cache: dict[tuple[int, str], float] = {}
+
+
+# The script each interface locale is written in. A label whose letters are
+# all already in it needs no translation (an Arabic segment in the Arabic UI,
+# an English one in the English UI); one with letters from another script
+# does - in either direction, so Arabic model output still reads as English
+# in the English UI.
+LOCALE_SCRIPTS = {"en": "LATIN", "ar": "ARABIC"}
+
+
+def needs_translation(label: str, locale: str) -> bool:
+    script = LOCALE_SCRIPTS.get(locale)
+    if script is None:
+        return locale != config.DEFAULT_LOCALE
+    return any(
+        char.isalpha() and not unicodedata.name(char, "").startswith(script)
+        for char in str(label or "")
+    )
 
 
 def _recent_failure(project_id: int, locale: str) -> bool:
@@ -173,18 +192,21 @@ def translate_labels(project_id: int, labels: list[str], locale: str) -> dict[st
     """{label: translated label} for every label in `labels`, rendered for
     `project_id` (whose documents the labels came from).
 
-    Identity for the default locale. Otherwise cached labels are reused and
-    the rest translated in batches; a label the model can't translate keeps
+    A label already written in `locale`'s script comes back unchanged without
+    an LLM call (see needs_translation) - whichever locale that is, so the
+    default locale still translates labels written in another script.
+    Otherwise cached labels are reused and the rest translated in batches; a label the model can't translate keeps
     its original text. Only a provider-level failure (unreachable, auth,
     quota) stops the remaining batches and pauses further LLM attempts for
     this project and locale for FAILURE_CACHE_SECONDS.
     """
     locale = locale or config.DEFAULT_LOCALE
-    if locale == config.DEFAULT_LOCALE or not labels:
+    foreign = [label for label in labels if needs_translation(label, locale)]
+    if not foreign:
         return {label: label for label in labels}
 
-    translations = _load_cached(project_id, locale, labels)
-    missing = [label for label in labels if label not in translations]
+    translations = _load_cached(project_id, locale, foreign)
+    missing = [label for label in foreign if label not in translations]
     for batch in _batches(missing):
         if _recent_failure(project_id, locale):
             break

@@ -20,6 +20,7 @@ from services.articles.articles_query import (
     _normalize_tone,
 )
 from services.articles.articles_search import search_results
+from analysis.normalize import demographic_bucket
 
 
 # Idea types (see analysis/normalize.py's _FREQUENT_IDEA_TYPES) that count
@@ -246,7 +247,7 @@ def _demographic_sentiment_breakdown(rows, field):
     compute_dominant_demographics), not the per-opinion values."""
     buckets = defaultdict(Counter)
     for row in rows:
-        value = _normalize_text(row.get(field)) or "unknown"
+        value = demographic_bucket(field, row.get(field))
         buckets[value][_normalize_sentiment(row.get("sentiment"))] += 1
 
     breakdown = []

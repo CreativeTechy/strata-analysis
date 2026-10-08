@@ -39,6 +39,19 @@ from services.articles.articles_query import (
     list_project_sources,  # noqa: F401 - re-exported
 )
 from services.articles.articles_search import search_results
+from analysis.normalize import demographic_bucket
+
+
+def _with_canonical_region(rows):
+    """Rows with `region` in the same canonical form the dashboard's region
+    breakdown buckets it under (analysis.normalize.demographic_bucket), so an
+    article's region chip names the same country as the chart slice it was
+    opened from - including rows stored before canonicalization existed or
+    with an Arabic/aliased form. Display only; the stored column is untouched."""
+    for row in rows:
+        if isinstance(row, dict) and "region" in row:
+            row["region"] = demographic_bucket("region", row.get("region"))
+    return rows
 
 
 def list_articles(search=None, sentiment=None, category=None, project_id=None, limit=DEFAULT_LIMIT, offset=0, sort=DEFAULT_SORT, source_url=None, source_host=None, added_from=None, added_to=None, status=None, article_ids=None):
@@ -61,7 +74,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
             status=status,
         )
         rows = rows[offset:offset + limit]
-        rows = _attach_project_similarity_scores(rows, project_id)
+        rows = _with_canonical_region(_attach_project_similarity_scores(rows, project_id))
         return {
             "articles": rows,
             "total": total,
@@ -86,7 +99,7 @@ def list_articles(search=None, sentiment=None, category=None, project_id=None, l
         article_ids=article_ids,
         status=status,
     )
-    rows = _attach_project_similarity_scores(rows, project_id)
+    rows = _with_canonical_region(_attach_project_similarity_scores(rows, project_id))
     return {
         "articles": rows,
         "total": total,

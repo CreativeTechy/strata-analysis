@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import config
 import db
+from analysis.normalize import demographic_bucket
 from services.articles.source_trust import TIERS as TRUST_TIERS
 from services.articles.source_trust import resolve_many as resolve_source_trust
 from services.projects.projects_store import list_article_ids_for_project
@@ -883,7 +884,7 @@ def _shape_article_analysis(row: dict) -> dict:
         "writer_tone": writer_tone,
         "article_tone": article_tone,
         "overall_tone": compute_overall_tone(article_tone, writer_tone),
-        "region": row.get("region") or "unknown",
+        "region": demographic_bucket("region", row.get("region")),
         "summary": _normalize_text(insight.get("summary")),
         "insight_json": insight,
         "analysis_status": row.get("analysis_status") or "success",

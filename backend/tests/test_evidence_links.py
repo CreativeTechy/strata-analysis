@@ -84,6 +84,26 @@ class ResolveEvidenceTests(unittest.TestCase):
             with self.subTest(period=period, dimension="scope"):
                 self.assertEqual(len(self._resolve(period=period).article_ids), data["total"])
 
+    def test_region_variants_merge_into_one_country_bucket_that_opens_all_of_them(self):
+        """Stored region spellings of one country - an invisible direction
+        mark from an Arabic source, the Arabic name, an alias, a row stored
+        before canonicalization - are one slice, and its evidence link opens
+        every one of them."""
+        variants = ["Lebanon", "Lebanon\u200f", "لبنان", "Great Britain", "Scotland"]
+        rows = [{**ROWS[0], "id": index + 1, "region": region} for index, region in enumerate(variants)]
+        with patch.object(intelligence, "_fetch_project_rows", return_value=rows), \
+             patch.object(intelligence, "_fetch_pipeline_runs", return_value=[]), \
+             patch.object(intelligence, "_fetch_document_count", return_value=0), \
+             patch.object(intelligence, "_fetch_coverage", return_value={}), \
+             patch("services.articles.articles_query.resolve_source_trust", side_effect=_trust_for), \
+             patch("services.articles.articles_query.config.DATABASE_URL", "postgres://test"):
+            data = get_project_intelligence({"id": 7, "hashtags": [], "keywords": []}, period="all")
+            regions = {item["value"]: item["total"] for item in data["insights"]["region_breakdown"]}
+            self.assertEqual(regions, {"Lebanon": 3, "United Kingdom": 2})
+            for value, count in regions.items():
+                match = evidence_links.resolve_evidence(7, period="all", filters={"region": value})
+                self.assertEqual(len(match.article_ids), count)
+
     def test_sentiment_by_platform_cells_combine_both_filters(self):
         data = self._intelligence("all")
         for item in data["platforms"]:

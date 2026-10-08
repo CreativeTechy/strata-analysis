@@ -32,6 +32,7 @@ import { getPipelineRun } from '../api/pipelineRunsApi.js';
 import { formatNumber } from '../lib/i18nFormat.js';
 import { readEvidenceParams } from '../lib/evidenceLinks.js';
 import EvidenceFilterBar from './articles/EvidenceFilterBar.jsx';
+import { LabelProjectProvider, useLabelProjectId } from '../i18n/LabelProjectContext.jsx';
 import '../styles/Articles.css';
 
 const VIEW_MODES = [
@@ -356,6 +357,11 @@ export default function ArticlesPage({ project = null, projectId = null, project
   const hasNext = offset + limit < total;
   const isInitialLoading = loading && articles.length === 0;
   const isRefreshing = loading && articles.length > 0;
+  // Free-text labels (region chips, evidence chips) translate for the
+  // project the list is filtered to; across all projects they keep the
+  // dashboard's selected project, as before.
+  const inheritedLabelProjectId = useLabelProjectId();
+  const labelProjectId = projectFilter === 'all' ? inheritedLabelProjectId : Number(projectFilter);
   const scopeLabel = projectFilter === 'all' ? t('toolbar.allProjectsScope') : (activeProject?.display_name || activeProject?.name || t('toolbar.selectedProjectScope'));
 
   const visibleRange = useMemo(() => `${start}-${end}`, [start, end]);
@@ -536,6 +542,7 @@ export default function ArticlesPage({ project = null, projectId = null, project
   };
 
   return (
+    <LabelProjectProvider value={labelProjectId}>
     <div className="admin-page-shell articles-page-shell">
       <div className="content-shell">
         <div className="admin-page-header">
@@ -998,5 +1005,6 @@ export default function ArticlesPage({ project = null, projectId = null, project
         )}
       </div>
     </div>
+    </LabelProjectProvider>
   );
 }

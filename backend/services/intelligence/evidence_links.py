@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from analysis.normalize import demographic_bucket
 from services.intelligence import intelligence
 from services.intelligence.intelligence import (
     TONE_TO_EMOTION,
@@ -54,10 +55,9 @@ def _clean(value) -> str:
     return str(value or "").strip()
 
 
-def _bucket_text(value) -> str:
-    # Same bucketing as articles_analytics._demographic_sentiment_breakdown:
-    # stripped, case preserved, missing -> "unknown".
-    return _clean(value) or "unknown"
+def _bucket_text(column, value) -> str:
+    # Same bucketing as articles_analytics._demographic_sentiment_breakdown.
+    return demographic_bucket(column, value)
 
 
 def _language(row) -> str:
@@ -122,7 +122,7 @@ def resolve_evidence(project_id: int, period: str | None = None, run_id: str | N
         checks.append(lambda row, wanted=filters["language"].lower(): _language(row) == wanted)
     for column in ("region", "gender", "age_range", "segment"):
         if column in filters:
-            checks.append(lambda row, column=column, wanted=filters[column]: _bucket_text(row.get(column)) == wanted)
+            checks.append(lambda row, column=column, wanted=filters[column]: _bucket_text(column, row.get(column)) == wanted)
     if "emotion" in filters:
         checks.append(lambda row, wanted=filters["emotion"].lower(): _emotion(row) == wanted)
     if "date" in filters:

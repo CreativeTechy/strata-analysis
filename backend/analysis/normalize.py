@@ -8,9 +8,11 @@ instead of a second copy drifting out of sync.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from analysis import labels
 from services.competitors.countries import COUNTRIES, resolve_country_alias
+from services.competitors.country_names_ar import resolve_arabic_country
 
 VALID_CATEGORIES = set(labels.VALID_CATEGORIES)
 VALID_TONES = set(labels.VALID_TONES)
@@ -22,6 +24,19 @@ _COUNTRY_NAMES_BY_LOWER = {name.lower(): name for name in COUNTRIES.values()}
 
 def as_text(value) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def clean_label(value) -> str:
+    """A short label value as display/bucketing text: compatibility-normalized
+    (NFKC), invisible format characters dropped - the right-to-left/left-to-
+    right marks a model writing about Arabic sources often emits around a
+    word, which otherwise make "Lebanon\u200f" a different value from
+    "Lebanon" that looks identical - and whitespace collapsed."""
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKC", str(value))
+    text = "".join(char for char in text if unicodedata.category(char) != "Cf")
+    return " ".join(text.split())
 
 
 def as_list(value) -> list:
@@ -79,14 +94,14 @@ def normalize_sentiment(value) -> str:
 
 
 def normalize_gender(value) -> str:
-    gender = as_text(value).lower()
+    gender = clean_label(value).lower()
     if gender in VALID_GENDERS:
         return gender
     return labels.GENDER_ALIASES.get(gender, labels.DEFAULT_GENDER)
 
 
 def normalize_age_range(value) -> str:
-    age_range = as_text(value).lower().replace(" ", "")
+    age_range = clean_label(value).lower().replace(" ", "")
     if age_range in VALID_AGE_RANGES:
         return age_range
     return labels.AGE_RANGE_ALIASES.get(age_range, labels.DEFAULT_AGE_RANGE)
@@ -146,21 +161,42 @@ def normalize_region(value) -> str:
     trimmed free text (city, "Middle East", ...) rather than forced into the
     closed country list, since a quoted person's region isn't always a
     country. Blank stays "unknown"."""
-    text = as_text(value)
+    text = clean_label(value)
     if not text:
         return labels.DEFAULT_REGION
-    lowered = text.lower()
-    if lowered == labels.DEFAULT_REGION:
+    if text.lower() == labels.DEFAULT_REGION:
         return labels.DEFAULT_REGION
+    # Tried as given first ("U.S." is itself an alias), then without trailing
+    # sentence punctuation ("Lebanon." from a model echoing a sentence).
+    for candidate in dict.fromkeys((text, text.rstrip(".,;:،؛").strip())):
+        country = _country_name(candidate)
+        if country:
+            return country
+    return text
+
+
+def _country_name(text: str) -> str | None:
+    lowered = text.lower()
     if lowered in _COUNTRY_NAMES_BY_LOWER:
         return _COUNTRY_NAMES_BY_LOWER[lowered]
     upper = text.upper()
     if upper in COUNTRIES:
         return COUNTRIES[upper]
-    alias_code = resolve_country_alias(text)
-    if alias_code:
-        return COUNTRIES[alias_code]
-    return text
+    code = resolve_country_alias(text) or resolve_arabic_country(text)
+    return COUNTRIES[code] if code else None
+
+
+def demographic_bucket(field: str, value) -> str:
+    """The bucket one article's demographic column falls into - the single
+    definition articles_analytics' breakdowns and evidence_links' chart
+    filters share, so a slice's count and the articles it opens agree.
+    Region is canonicalized at read time too (normalize_region), so rows
+    stored before that canonicalization existed, or with an Arabic/aliased
+    form ("Great Britain", "لبنان"), land in the same country bucket as the
+    canonical name. Other columns are cleaned but keep their case."""
+    if field == "region":
+        return normalize_region(value)
+    return clean_label(value) or "unknown"
 
 
 def normalize_feedback_list(value) -> list:
@@ -255,7 +291,7 @@ def normalize_people_opinions(value) -> list:
             "age_range": age_range,
             "age_evidence": normalize_age_evidence(age_evidence_source, age_range),
             "region": normalize_region(item.get("region")),
-            "segment": as_text(item.get("segment")) or labels.DEFAULT_SEGMENT,
+            "segment": clean_label(item.get("segment")) or labels.DEFAULT_SEGMENT,
         })
     deduped = []
     seen = set()

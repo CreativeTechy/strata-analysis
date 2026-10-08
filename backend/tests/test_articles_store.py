@@ -163,5 +163,27 @@ class ListArticlesSearchRoutingTests(unittest.TestCase):
         self.assertEqual(result["articles"], rows)
 
 
+    def test_region_is_returned_in_its_canonical_country_form_on_both_paths(self):
+        """An article's region chip names the same country as the dashboard
+        slice it was opened from, however the region was stored."""
+        def rows():
+            return [
+                {"id": 1, "region": "Lebanon\u200f"},
+                {"id": 2, "region": "لبنان"},
+                {"id": 3, "region": "Great Britain"},
+                {"id": 4, "region": None},
+                {"id": 5, "region": "North Sea"},
+                {"id": 6, "title": "no region column"},
+            ]
+        expected = ["Lebanon", "Lebanon", "United Kingdom", "unknown", "North Sea", None]
+        with patch("services.articles.articles_store._fetch_articles", return_value=(rows(), 6)):
+            plain = articles_store.list_articles()
+        with patch("services.articles.articles_store.search_results", return_value=(rows(), 6)):
+            searched = articles_store.list_articles(search="lebanon")
+        for result in (plain, searched):
+            self.assertEqual([row.get("region") for row in result["articles"]], expected)
+            self.assertNotIn("region", result["articles"][5])
+
+
 if __name__ == "__main__":
     unittest.main()
