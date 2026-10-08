@@ -94,9 +94,9 @@ function languageLabel(t, locale, code) {
 
 // Same fixed tiers (and labels) the Sources tab uses - see sources.json's
 // trustTier.* and TRUST_TIER_ORDER above.
-// "Documents"/"Web" are the generic platform buckets intelligence.py's
-// classify_platform() assigns; everything else it returns is a platform's
-// own brand name (X, Reddit, ...), which stays as written.
+// Every value intelligence.py's classify_platform() can return has an entry
+// under dashboard:platforms (generic buckets and brand names alike); an
+// unrecognized value falls back to itself as written.
 function platformLabel(t, platform) {
   return t(`dashboard:platforms.${platform}`, platform);
 }
