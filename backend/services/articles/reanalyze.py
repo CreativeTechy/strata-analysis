@@ -97,6 +97,31 @@ def _primary_project_id_for_article(article_id: int) -> int | None:
     return int(ids[0]) if len(ids) == 1 else None
 
 
+def _project_context_for(project_id: int | None) -> str:
+    """The project's scope as one short text block, so the extraction stage's
+    `relevance_score` rates fit with *this project* rather than how
+    substantive the article is in general. Empty (the prompt's generic
+    fallback) when the article has no single project or the lookup fails -
+    an article linked to several projects has no one scope to rate against."""
+    if project_id is None:
+        return ""
+    try:
+        from services.projects.projects_store import get_project
+        project = get_project(project_id) or {}
+    except Exception:
+        return ""
+    parts = []
+    for label, value in (("Project", project.get("name")), ("Description", project.get("description")),
+                         ("Location", project.get("location"))):
+        text = " ".join(str(value or "").split())
+        if text:
+            parts.append(f"{label}: {text}")
+    keywords = [str(k).strip() for k in (project.get("keywords") or []) if str(k or "").strip()]
+    if keywords:
+        parts.append(f"Keywords: {', '.join(keywords)}")
+    return "\n".join(parts)[:1500]
+
+
 def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
     """Runs synchronously in whatever context calls it - the FastAPI routes
     in main.py invoke this via BackgroundTasks so the request itself
@@ -120,7 +145,9 @@ def reanalyze_article(article_id: int, run_id: str | None = None) -> dict:
 
         try:
             project_id = _primary_project_id_for_article(article_id)
-            result = analyze_article(dict(article), project_context="")
+            result = analyze_article(
+                dict(article), project_context=_project_context_for(project_id)
+            )
         except FATAL_ANALYSIS_ERRORS as e:
             # The provider itself is unusable (bad credentials, no quota,
             # unreachable host) - every remaining article would fail the exact

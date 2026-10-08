@@ -300,7 +300,12 @@ EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 # is ever silently dropped from analysis. Switch to "enforce" only after
 # reviewing that recorded output. "off" bypasses screening entirely. Cosine
 # similarity is not a probability, so these values are deliberately
-# configurable rather than presented as confidence percentages.
+# configurable rather than presented as confidence percentages. The defaults
+# are calibrated for multilingual-e5-small, which scores nearly every pair in
+# a narrow 0.7-0.9 band (an unrelated article measured 0.80-0.81 against a
+# fuel-crisis project, a relevant one 0.84-0.88): an accept line any lower
+# auto-accepts off-topic articles without the borderline LLM check. Re-measure
+# if EMBEDDING_MODEL changes.
 ARTICLE_RELEVANCE_SCREENING_MODE = os.environ.get(
     "ARTICLE_RELEVANCE_SCREENING_MODE", "observe"
 ).strip().lower()
@@ -308,10 +313,10 @@ if ARTICLE_RELEVANCE_SCREENING_MODE not in {"off", "observe", "enforce"}:
     ARTICLE_RELEVANCE_SCREENING_MODE = "observe"
 try:
     ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = float(
-        os.environ.get("ARTICLE_RELEVANCE_ACCEPT_THRESHOLD", "0.82")
+        os.environ.get("ARTICLE_RELEVANCE_ACCEPT_THRESHOLD", "0.88")
     )
 except ValueError:
-    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = 0.82
+    ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = 0.88
 ARTICLE_RELEVANCE_ACCEPT_THRESHOLD = max(-1.0, min(1.0, ARTICLE_RELEVANCE_ACCEPT_THRESHOLD))
 try:
     ARTICLE_RELEVANCE_EXCLUDE_THRESHOLD = float(
