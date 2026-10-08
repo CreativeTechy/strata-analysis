@@ -60,6 +60,7 @@ function analysisRunTitle(t, locale, run) {
 }
 
 function FindingCard({ finding, onOpen, t, locale }) {
+  const competitorName = finding.competitor_display_name || finding.competitor_name;
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
   const signals = Array.isArray(finding.signals) ? finding.signals : [];
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
@@ -71,10 +72,10 @@ function FindingCard({ finding, onOpen, t, locale }) {
         <div className="cs-card-top">
           <div className="cs-card-competitor">
             <span className="cs-avatar" style={{ background: avatarGradient(finding.competitor_name) }} aria-hidden="true">
-              {initials(finding.competitor_name)}
+              {initials(competitorName)}
             </span>
             <div style={{ minWidth: 0 }}>
-              <p className="cs-card-name" dir="auto">{finding.competitor_name}</p>
+              <p className="cs-card-name" dir="auto">{competitorName}</p>
               <p className="cs-card-domain" dir="auto">
                 {finding.competitor_domain || '-'}
                 {finding.size_tier ? ` · ${sizeTierLabel(t, finding.size_tier)}` : ''}
@@ -136,6 +137,7 @@ function FindingCard({ finding, onOpen, t, locale }) {
 }
 
 function FindingRow({ finding, onOpen, t, locale }) {
+  const competitorName = finding.competitor_display_name || finding.competitor_name;
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
 
   return (
@@ -144,10 +146,10 @@ function FindingRow({ finding, onOpen, t, locale }) {
         {impactLabel(t, finding.impact_level)}
       </span>
       <span className="cs-avatar cs-finding-row-avatar" style={{ background: avatarGradient(finding.competitor_name) }} aria-hidden="true">
-        {initials(finding.competitor_name)}
+        {initials(competitorName)}
       </span>
       <span className="cs-finding-row-main">
-        <span className="cs-finding-row-name" dir="auto">{finding.competitor_name}</span>
+        <span className="cs-finding-row-name" dir="auto">{competitorName}</span>
         <span className="cs-finding-row-headline" dir="auto">{finding.headline}</span>
       </span>
       <span className="cs-finding-row-meta">
@@ -451,7 +453,7 @@ export default function CompetitorWorkspace() {
             ) : null}
             {notice.skipped?.length ? (
               <> {t('workspace.notice.skipped', { count: notice.skipped.length })} —{' '}
-                {notice.skipped.map((item) => `${item.name}: ${skipReasonText(t, item)}`).join(' ')}</>
+                {notice.skipped.map((item) => `${item.display_name || item.name}: ${skipReasonText(t, item)}`).join(' ')}</>
             ) : null}
           </span>
         </div>

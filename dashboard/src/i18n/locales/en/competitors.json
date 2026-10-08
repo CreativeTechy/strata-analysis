@@ -241,6 +241,10 @@
     }
   },
   "competitorsPage": {
+    "nameLanguage": {
+      "label": "Competitor names language",
+      "hint": "Independent of the interface language - show competitor names in a specific language."
+    },
     "titleSuffix": "Competitors",
     "subtitle": "Named from this study’s approved document articles. Only tracked competitors get a report; untrack anything the documents mention but you aren’t watching.",
     "importCompetitorsBtn": "Import Competitors",

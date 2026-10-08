@@ -68,9 +68,10 @@ export const createStudy = (body) => request('/studies', { method: 'POST', body 
 export const getStudy = (id) => request(`/studies/${id}?locale=${encodeURIComponent(i18n.language)}`);
 export const updateStudy = (id, body) => request(`/studies/${id}`, { method: 'PUT', body });
 export const deleteStudy = (id) => request(`/studies/${id}`, { method: 'DELETE' });
-/** Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card. */
+/** Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card.
+ *  `locale` adds a translated `competitor_display_name` to each finding. */
 export const listStudyFindings = (id, { limit = 10, offset = 0 } = {}) =>
-  request(`/studies/${id}/findings/recent?limit=${limit}&offset=${offset}`);
+  request(`/studies/${id}/findings/recent?limit=${limit}&offset=${offset}&locale=${encodeURIComponent(i18n.language)}`);
 
 // --- business profile ------------------------------------------------------
 export const saveProfile = (id, body) => request(`/studies/${id}/profile`, { method: 'PUT', body });
@@ -106,8 +107,13 @@ export const approveAllDocumentArticles = (id) =>
 
 // --- competitors -----------------------------------------------------------
 /** Competitors are named by the backend from a study's approved document
- *  articles; these cover reviewing and correcting that set by hand. */
-export const listCompetitors = (id) => request(`/studies/${id}/competitors`);
+ *  articles; these cover reviewing and correcting that set by hand. `locale`
+ *  (the interface language unless given) adds a translated `display_name` to
+ *  each competitor - show that, but edit and match on `name`. `force` asks
+ *  for missing names to be translated now, even right after a provider
+ *  failure - the competitors card's own language switch. */
+export const listCompetitors = (id, { locale = i18n.language, force = false } = {}) =>
+  request(`/studies/${id}/competitors?locale=${encodeURIComponent(locale)}${force ? '&force=true' : ''}`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>
   request(`/competitors/${competitorId}/status`, { method: 'POST', body: { status } });
@@ -133,7 +139,10 @@ export const importCompetitors = (id, file) => {
  *  Poll pollAnalysisRun() until it reaches a terminal status - one LLM call per
  *  competitor runs for minutes against a local model. */
 export const analyze = (id, body) => request(`/studies/${id}/analyze`, { method: 'POST', body });
-export const getAnalysisStatus = (id, runId) => request(`/studies/${id}/analyze/${runId}`);
+/** `locale` adds translated competitor names to the terminal poll's
+ *  findings (`competitor_display_name`) and skipped entries (`display_name`). */
+export const getAnalysisStatus = (id, runId) =>
+  request(`/studies/${id}/analyze/${runId}?locale=${encodeURIComponent(i18n.language)}`);
 /** This study's documents annotated with approved-article counts and whether
  *  a completed run already analyzed each - what the run-analysis dialog's
  *  scope choices (and its hand-pick checklist) render from. */

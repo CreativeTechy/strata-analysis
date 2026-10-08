@@ -156,10 +156,20 @@ class _NoDbLookups(unittest.TestCase):
     stub both out (they have their own tests further down)."""
 
     def setUp(self):
-        for name, value in (("_source_tiers", {}), ("_idea_comparisons", {"items": [], "error": None, "project_wide": True})):
+        for name, value in (
+            ("_source_tiers", {}),
+            ("_idea_comparisons", {"items": [], "error": None, "project_wide": True}),
+            ("translate_texts", {}),
+        ):
             patcher = patch.object(report_data, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        names = patch.object(
+            report_data, "localize_project_names",
+            side_effect=lambda projects, locale=None: [{**p, "display_name": p.get("name")} for p in projects],
+        )
+        names.start()
+        self.addCleanup(names.stop)
 
 
 class BuildReportDataTests(_NoDbLookups):
@@ -200,6 +210,26 @@ class BuildReportDataTests(_NoDbLookups):
         self.assertEqual(data["executive_summary"]["text"], "new")
         self.assertEqual(gen.call_count, 2)
         self.assertTrue(gen.call_args_list[1].kwargs.get("force"))
+
+    def _top_article_build(self, locale, translations):
+        project = {"id": 1, "name": "Acme"}
+        rows = [_row(1, relevance=0.9, summary="Body one"), _row(2, relevance=0.5, summary="Body two")]
+        with patch.object(report_data, "_fetch_period_rows", return_value=rows),              patch.object(report_data, "generate_trend_summary", return_value={"summary": "s", "cached": True}),              patch.object(report_data, "translate_texts", return_value=translations) as tr:
+            data = report_data.build_report_data(project, period="all", run=None, locale=locale)
+        return data, tr
+
+    def test_arabic_export_translates_top_article_title_and_summary(self):
+        data, tr = self._top_article_build("ar", {"Article 1": "مقال 1", "Body one": "نص 1"})
+        first, second = data["top_articles"]
+        self.assertEqual((first["title"], first["short_summary"]), ("مقال 1", "نص 1"))
+        # A string missing from the result keeps its original text.
+        self.assertEqual((second["title"], second["short_summary"]), ("Article 2", "Body two"))
+        self.assertEqual(tr.call_args.kwargs["locale"], "ar")
+
+    def test_default_locale_export_does_not_translate_top_articles(self):
+        data, tr = self._top_article_build(report_data.config.DEFAULT_LOCALE, {"Article 1": "x"})
+        self.assertEqual(data["top_articles"][0]["title"], "Article 1")
+        tr.assert_not_called()
 
     def test_requests_the_executive_summary_in_the_export_locale(self):
         project = {"id": 1, "name": "Acme"}

@@ -58,7 +58,8 @@ export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
     return () => {
       cancelled = true;
     };
-  }, [canView, studyId, page]);
+    // Refetch on a language switch: competitor names are translated.
+  }, [canView, studyId, page, locale]);
 
   if (!canView) return null;
 
@@ -87,11 +88,11 @@ export default function CompetitorPulseCard({ studyId, backTo, backLabel }) {
                   className="cs-pulse-row"
                 >
                   <span className="cs-avatar" style={{ background: avatarGradient(finding.competitor_name), width: 28, height: 28, fontSize: '0.7rem' }}>
-                    {initials(finding.competitor_name)}
+                    {initials(finding.competitor_display_name || finding.competitor_name)}
                   </span>
                   <span className="cs-pulse-row-main">
                     <span className="cs-pulse-row-headline" dir="auto">{finding.headline}</span>
-                    <span className="cs-pulse-row-meta" dir="auto">{finding.competitor_name}</span>
+                    <span className="cs-pulse-row-meta" dir="auto">{finding.competitor_display_name || finding.competitor_name}</span>
                   </span>
                   <span className={`cs-pill cs-pill-${finding.impact_level}`}>{impactLabel(t, finding.impact_level)}</span>
                   <span className="cs-pulse-row-time">{formatRelativeTime(finding.generated_at, locale)}</span>
