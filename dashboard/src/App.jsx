@@ -41,6 +41,7 @@ import {
   listProjects, createProject as apiCreateProject, updateProject as apiUpdateProject,
   deleteProject as apiDeleteProject, setProjectUsers as apiSetProjectUsers, getProjectIntelligence,
 } from './api/projectsApi.js';
+import { LabelProjectProvider } from './i18n/LabelProjectContext.jsx';
 import { clearIntelligenceScope, readIntelligenceScope, writeIntelligenceScope } from './lib/intelligenceScope.js';
 
 export default function App() {
@@ -443,6 +444,7 @@ export default function App() {
   );
 
   return (
+    <LabelProjectProvider value={selectedProjectId}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAuth />}>
@@ -652,5 +654,6 @@ export default function App() {
         </Route>
       </Route>
     </Routes>
+    </LabelProjectProvider>
   );
 }

@@ -1,19 +1,12 @@
 import { useTranslation } from 'react-i18next';
 import { Link2, X } from 'lucide-react';
 import { EVIDENCE_DIMENSIONS } from '../../lib/evidenceLinks.js';
+import { useDemographicLabels } from '../../lib/demographicLabels.js';
 import { formatDate, formatLanguageName } from '../../lib/i18nFormat.js';
 
 const PERIOD_LABEL_KEYS = { '7d': 'dashboard:periods.last7d', '30d': 'dashboard:periods.last30d', all: 'dashboard:periods.allTime' };
 
-// Region/gender/age_range/segment buckets are open-ended analysis text - the
-// same plain transform the dashboard's distribution legends use, so the chip
-// reads exactly like the slice that was clicked.
-function bucketLabel(t, value) {
-  if (value === 'unknown') return t('dashboard:distributions.bucket.unknown');
-  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function dimensionValueLabel(t, locale, key, value) {
+function dimensionValueLabel(t, locale, key, value, bucketLabel) {
   switch (key) {
     case 'language': {
       if (value === 'unknown') return t('dashboard:distributions.language.unknown');
@@ -23,8 +16,11 @@ function dimensionValueLabel(t, locale, key, value) {
     case 'trust': return t(`sources:trustTier.${value}`, value);
     case 'emotion': return t(`dashboard:emotionAxis.${value}`, value);
     case 'date': return formatDate(value, locale, { month: 'short', day: 'numeric', year: 'numeric' }) || value;
-    case 'platform': return value;
-    default: return bucketLabel(t, value);
+    case 'platform': return t(`dashboard:platforms.${value}`, value);
+    // Region/gender/age_range/segment - the same labels the dashboard's
+    // distribution legends use, so the chip reads exactly like the slice
+    // that was clicked.
+    default: return bucketLabel(value);
   }
 }
 
@@ -50,6 +46,7 @@ export default function EvidenceFilterBar({ evidence, sentiment, run, onRemove, 
   const { t, i18n } = useTranslation(['articles', 'dashboard', 'sources']);
   const locale = i18n.language;
   const dimensions = EVIDENCE_DIMENSIONS.filter((key) => evidence[key]);
+  const bucketLabel = useDemographicLabels(['region', 'gender', 'age_range', 'segment'].map((key) => evidence[key]).filter(Boolean));
   const hasScope = Boolean(evidence.run_id || evidence.period);
   if (!hasScope && !dimensions.length) return null;
 
@@ -71,7 +68,7 @@ export default function EvidenceFilterBar({ evidence, sentiment, run, onRemove, 
           <Chip label={t('evidence.dimensions.sentiment')} value={t(`sentiment.${sentiment}`, sentiment)} onRemove={onRemoveSentiment} removeLabel={t('evidence.remove', { label: t(`sentiment.${sentiment}`, sentiment) })} />
         ) : null}
         {dimensions.map((key) => {
-          const value = dimensionValueLabel(t, locale, key, evidence[key]);
+          const value = dimensionValueLabel(t, locale, key, evidence[key], bucketLabel);
           return <Chip key={key} label={t(`evidence.dimensions.${key}`)} value={value} onRemove={() => onRemove(key)} removeLabel={t('evidence.remove', { label: value })} />;
         })}
       </div>

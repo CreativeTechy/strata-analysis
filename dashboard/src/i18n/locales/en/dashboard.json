@@ -130,6 +130,25 @@
       "unknown": "Unknown"
     }
   },
+  "demographics": {
+    "gender": {
+      "male": "Male",
+      "female": "Female"
+    },
+    "ageRange": {
+      "under_18": "Under 18",
+      "18-24": "18-24",
+      "25-34": "25-34",
+      "35-44": "35-44",
+      "45-54": "45-54",
+      "55-64": "55-64",
+      "65_plus": "65+"
+    }
+  },
+  "platforms": {
+    "Documents": "Documents",
+    "Web": "Web"
+  },
   "detailedBreakdowns": {
     "title": "Detailed breakdowns",
     "summary": "Language, region, gender, age range, segment and source trust",

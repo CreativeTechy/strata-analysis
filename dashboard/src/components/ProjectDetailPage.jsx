@@ -6,6 +6,7 @@ import ConfirmModal from './ConfirmModal';
 import RemoveProjectArticlesDialog from './articles/RemoveProjectArticlesDialog.jsx';
 import DemographicSentimentChart from './DemographicSentimentChart';
 import SurveyObservationsChart from './SurveyObservationsChart';
+import { LabelProjectProvider } from '../i18n/LabelProjectContext.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import { translateApiError } from '../lib/apiError.js';
 import { formatDate as formatDateIntl, formatDateTime as formatDateTimeIntl, formatNumber } from '../lib/i18nFormat.js';
@@ -31,6 +32,7 @@ import { startAnalysisRun } from '../api/pipelineRunsApi.js';
 import { listIdeaClusters, listIdeaClusterArticles } from '../api/projectsApi.js';
 import { listDocuments } from '../api/projectDocumentsApi.js';
 import { getArticleStats } from '../api/articlesApi.js';
+import { toneLabel } from '../lib/articleHelpers.jsx';
 import '../styles/ProjectDetail.css';
 
 const DOCUMENTS_PAGE_SIZE = 5;
@@ -303,6 +305,7 @@ export default function ProjectDetailPage({
   };
 
   return (
+    <LabelProjectProvider value={project?.id ?? null}>
     <div className="admin-page-shell project-detail-page">
       <div className="admin-page-header">
         <div>
@@ -610,14 +613,14 @@ export default function ProjectDetailPage({
                 <div className="admin-item-meta" style={{ marginBottom: 8 }}>
                   <span>{t('detail.insights.overallMood')}</span>
                 </div>
-                <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_mood || 'neutral')}</strong>
+                <strong style={{ fontSize: '0.98rem' }}>{toneLabel(t, articleStats?.insights?.overall_mood || 'neutral')}</strong>
               </div>
 
               <div className="admin-item-card" style={{ margin: 0 }}>
                 <div className="admin-item-meta" style={{ marginBottom: 8 }}>
                   <span>{t('detail.insights.overallTone')}</span>
                 </div>
-                <strong style={{ fontSize: '0.98rem' }}>{prettyLabel(articleStats?.insights?.overall_tone || 'neutral')}</strong>
+                <strong style={{ fontSize: '0.98rem' }}>{toneLabel(t, articleStats?.insights?.overall_tone || 'neutral')}</strong>
               </div>
             </div>
 
@@ -628,7 +631,7 @@ export default function ProjectDetailPage({
               <div className="admin-item-chips">
                 {(articleStats?.insights?.writer_tone_breakdown || []).length ? (
                   articleStats.insights.writer_tone_breakdown.map((item) => (
-                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({formatNumber(item.count, locale)})</span>
+                    <span key={item.tone} className="admin-tag muted">{toneLabel(t, item.tone)} ({formatNumber(item.count, locale)})</span>
                   ))
                 ) : (
                   <span className="admin-tag muted">{t('common:emptyState.noData')}</span>
@@ -643,7 +646,7 @@ export default function ProjectDetailPage({
               <div className="admin-item-chips">
                 {(articleStats?.insights?.article_tone_breakdown || []).length ? (
                   articleStats.insights.article_tone_breakdown.map((item) => (
-                    <span key={item.tone} className="admin-tag muted">{prettyLabel(item.tone)} ({formatNumber(item.count, locale)})</span>
+                    <span key={item.tone} className="admin-tag muted">{toneLabel(t, item.tone)} ({formatNumber(item.count, locale)})</span>
                   ))
                 ) : (
                   <span className="admin-tag muted">{t('common:emptyState.noData')}</span>
@@ -834,5 +837,6 @@ export default function ProjectDetailPage({
         onConfirm={handleDelete}
       />
     </div>
+    </LabelProjectProvider>
   );
 }

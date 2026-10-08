@@ -2,9 +2,10 @@ import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { ExternalLink, Calendar, CarFront, Tag, ChevronDown, Info } from 'lucide-react';
 import {
-  prettyLabel, formatMatchScore, highlightMatches,
+  categoryLabel, formatMatchScore, highlightMatches,
   articleSourceLink, articleSourceLabel, sentimentBadgeState,
 } from '../../lib/articleHelpers.jsx';
+import { useDemographicLabels } from '../../lib/demographicLabels.js';
 import { formatDate, formatDateTime, formatNumber, formatLanguageName } from '../../lib/i18nFormat.js';
 
 // Bounded enum (positive/negative/neutral/mixed) - only the displayed label
@@ -46,6 +47,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
   const locale = i18n.language;
   const sourceLink = articleSourceLink(article);
   const sentimentState = sentimentBadgeState(article);
+  const regionLabel = useDemographicLabels([article.region]);
   return (
     <motion.div
       layout
@@ -78,7 +80,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
         <div className="article-row-details">
           <div className="article-meta">
             <span className="badge category">
-              {prettyLabel(article.article_category || article.category || 'general_article')}
+              {categoryLabel(t, article.article_category || article.category || 'general_article')}
             </span>
             {article.author ? (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title={t('common.authorTitle')} dir="auto">
@@ -87,7 +89,7 @@ export default function ArticleRow({ article, search, index, isExpanded, isRefre
             ) : null}
             {article.region && article.region !== 'unknown' ? (
               <span className="panel-chip muted" style={{ textTransform: 'none', letterSpacing: 0 }} title={t('common.regionTitle')}>
-                {t('common.regionLabel', { region: prettyLabel(article.region) })}
+                {t('common.regionLabel', { region: regionLabel(article.region) })}
               </span>
             ) : null}
             {article.source_language ? (

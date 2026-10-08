@@ -84,6 +84,18 @@ export function prettyLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+// Article category (backend/analysis/labels.py's VALID_CATEGORIES) and tone
+// (VALID_TONES, plus "mixed" for the combined overall tone) are closed
+// enums, so they translate through a catalog; prettyLabel() is only the
+// fallback for a value outside it.
+export function categoryLabel(t, value) {
+  return t(`articles:categoryLabels.${value}`, prettyLabel(value));
+}
+
+export function toneLabel(t, value) {
+  return t(`copilot:toneLabels.${value}`, prettyLabel(value));
+}
+
 export function articleDate(value) {
   if (!value) return 'Unknown date';
   const parsed = new Date(value);
