@@ -155,6 +155,7 @@ export default function CompetitorReportPage() {
   }
 
   const { finding, rejected_evidence: rejectedEvidence = [], history = [] } = data;
+  const competitorName = finding.competitor_display_name || finding.competitor_name;
   const actions = Array.isArray(finding.actions) ? finding.actions : [];
   const signals = Array.isArray(finding.signals) ? finding.signals : [];
   const evidence = Array.isArray(finding.evidence) ? finding.evidence : [];
@@ -215,11 +216,11 @@ export default function CompetitorReportPage() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span className="cs-avatar" style={{ background: avatarGradient(finding.competitor_name), width: 42, height: 42, fontSize: '0.95rem' }} aria-hidden="true">
-              {initials(finding.competitor_name)}
+              {initials(competitorName)}
             </span>
             <div>
               <div style={{ fontSize: '1.02rem', fontWeight: 640, color: 'var(--text-dark)' }} dir="auto">
-                {finding.competitor_name}
+                {competitorName}
               </div>
               {finding.competitor_website ? (
                 <a href={finding.competitor_website} target="_blank" rel="noreferrer"
@@ -352,7 +353,7 @@ export default function CompetitorReportPage() {
             <div className="cs-answer-block">
               <h2><Filter size={13} /> {t('reportPage.filteredOutHeading', { count: rejectedEvidence.length })}</h2>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: 13, lineHeight: 1.6 }}>
-                {t('reportPage.filteredOutHint', { name: finding.competitor_name })}
+                {t('reportPage.filteredOutHint', { name: competitorName })}
               </p>
               <div className="cs-evidence">
                 {rejectedEvidence.map((item) => (

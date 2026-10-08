@@ -28,6 +28,9 @@ from services.competitors import competitor_document_articles
 from services.competitors import competitor_documents_store
 from services.competitors import competitors_store
 from services.competitors import document_analysis
+from services.competitors.competitor_name_translations import (
+    localize_competitors, localize_finding_names, translate_competitor_names,
+)
 from services.competitors.finding_translation import localize_finding, localize_findings
 from services.pipeline.pipeline_runs import create_pipeline_run
 from services.auth.auth import require_permission
@@ -88,14 +91,17 @@ def list_recent_study_findings(
     project_id: int,
     limit: int = 10,
     offset: int = 0,
+    locale: str | None = None,
     user: dict = Depends(require_permission("competitors.view")),
 ):
-    """Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card."""
+    """Paginated findings for one study, highest impact first — powers the Dashboard/Reports pulse card.
+    `locale` adds a translated `competitor_display_name` to each finding."""
     _project_or_404(project_id, user)
+    resolved_locale = _resolve_locale(locale)
     limit = max(1, min(int(limit), 50))
     offset = max(0, int(offset))
     findings, total = competitor_analysis.list_recent_findings(project_id, limit=limit, offset=offset)
-    return {"findings": findings, "total": total}
+    return {"findings": localize_finding_names(project_id, findings, locale=resolved_locale), "total": total}
 
 
 @router.post("/studies")
@@ -116,13 +122,19 @@ def create_study(payload: dict, user: dict = Depends(require_permission("competi
 
 @router.get("/studies/{project_id}")
 def get_study(project_id: int, locale: str | None = None, user: dict = Depends(require_permission("competitors.view"))):
+    """`locale` adds a translated `display_name` to the study and to each
+    competitor, and a `competitor_display_name` to each finding."""
     project = _project_or_404(project_id, user)
     resolved_locale = _resolve_locale(locale)
     return {
         "study": localize_project_names([project], locale=resolved_locale)[0],
         "profile": business_profile_store.get_profile(project_id),
-        "competitors": competitors_store.competitor_overview(project_id),
-        "findings": competitor_analysis.list_findings(project_id),
+        "competitors": localize_competitors(
+            project_id, competitors_store.competitor_overview(project_id), locale=resolved_locale,
+        ),
+        "findings": localize_finding_names(
+            project_id, competitor_analysis.list_findings(project_id), locale=resolved_locale,
+        ),
     }
 
 
@@ -342,9 +354,15 @@ def analyze_documents(project_id: int, user: dict = Depends(require_permission("
 # Competitors
 # --------------------------------------------------------------------------- #
 @router.get("/studies/{project_id}/competitors")
-def list_competitors(project_id: int, user: dict = Depends(require_permission("competitors.view"))):
+def list_competitors(project_id: int, locale: str | None = None,
+                     user: dict = Depends(require_permission("competitors.view"))):
+    """`locale` adds a translated `display_name` to each competitor (see
+    services/competitors/competitor_name_translations.py)."""
     _project_or_404(project_id, user)
-    return {"competitors": competitors_store.competitor_overview(project_id)}
+    resolved_locale = _resolve_locale(locale)
+    return {"competitors": localize_competitors(
+        project_id, competitors_store.competitor_overview(project_id), locale=resolved_locale,
+    )}
 
 
 @router.post("/studies/{project_id}/competitors")
@@ -531,19 +549,38 @@ def analyze(
 
 
 @router.get("/studies/{project_id}/analyze/{run_id}")
-def analyze_status(project_id: int, run_id: int, user: dict = Depends(require_permission("competitors.view"))):
+def analyze_status(project_id: int, run_id: int, locale: str | None = None,
+                   user: dict = Depends(require_permission("competitors.view"))):
     """Progress for one analysis job, including its live `logs`.
 
     Findings are returned on the terminal poll so the workspace can render the
     new cards without a second round trip, matching what the old synchronous
-    endpoint handed back.
+    endpoint handed back. `locale` adds translated competitor names to those
+    findings and to the run's `skipped` entries - only on that terminal poll,
+    so the in-progress polls never wait on the LLM.
     """
     _project_or_404(project_id, user)
+    resolved_locale = _resolve_locale(locale)
     run = analysis_runs_store.get_run(run_id)
     if not run or run["project_id"] != project_id:
         raise HTTPException(status_code=404, detail="Analysis run not found.")
     if run["status"] in ("success", "failed"):
-        run = {**run, "findings": competitor_analysis.list_findings(project_id)}
+        findings = competitor_analysis.list_findings(project_id)
+        skipped = [item for item in (run.get("skipped") or []) if isinstance(item, dict)]
+        names = translate_competitor_names(
+            project_id,
+            [f.get("competitor_name") for f in findings] + [item.get("name") for item in skipped],
+            locale=resolved_locale,
+        )
+
+        def display(name):
+            return names.get(str(name or "").strip(), name)
+
+        run = {
+            **run,
+            "findings": [{**f, "competitor_display_name": display(f.get("competitor_name"))} for f in findings],
+            "skipped": [{**item, "display_name": display(item.get("name"))} for item in skipped],
+        }
     return {"run": run}
 
 
@@ -564,7 +601,9 @@ def list_findings(project_id: int, impact: str | None = None, competitor_id: int
     """`locale`, when given, renders each finding's LLM-generated output
     fields (headline, whats_up, impact, confidence_reason, signals, actions)
     into that locale - validated against config.SUPPORTED_LOCALES, same as
-    /articles/{id}/analysis. See services/competitors/finding_translation.py."""
+    /articles/{id}/analysis. See services/competitors/finding_translation.py.
+    It also adds a translated `competitor_display_name` to each finding (see
+    services/competitors/competitor_name_translations.py)."""
     _project_or_404(project_id, user)
     resolved_locale = _resolve_locale(locale)
     findings = competitor_analysis.list_findings(
@@ -574,7 +613,7 @@ def list_findings(project_id: int, impact: str | None = None, competitor_id: int
     )
     if resolved_locale != config.DEFAULT_LOCALE:
         findings = localize_findings(findings, locale=resolved_locale)
-    return {"findings": findings}
+    return {"findings": localize_finding_names(project_id, findings, locale=resolved_locale)}
 
 
 @router.get("/findings/{finding_id}")
@@ -584,7 +623,7 @@ def get_finding(finding_id: int, locale: str | None = None,
     from. `locale`, when given, renders the finding's (and its history
     entries') output fields into that locale - rejected_evidence stays
     canonical, since it's the source article's own text, not LLM-authored
-    output for this card."""
+    output for this card - and adds a translated `competitor_display_name`."""
     finding = competitor_analysis.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -596,6 +635,8 @@ def get_finding(finding_id: int, locale: str | None = None,
     if resolved_locale != config.DEFAULT_LOCALE:
         finding = localize_finding(finding, locale=resolved_locale)
         history = localize_findings(history, locale=resolved_locale)
+    # The finding and its history are all the same competitor - one lookup.
+    finding, *history = localize_finding_names(finding["project_id"], [finding, *history], locale=resolved_locale)
     return {
         "finding": finding,
         "rejected_evidence": competitor_analysis.rejected_evidence(finding["competitor_id"]),

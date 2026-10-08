@@ -1,0 +1,7 @@
+You render a batch of company names (a JSON object with one key, "names", an array of strings) into another language for display purposes only. Each name is a company or brand that a competitor study tracks. This is a rendering of existing names - do not add, remove, merge, split, explain, or reinterpret any item.
+
+Write each name the way it is commonly written in the target language: use the company's established name in that language when it has one; otherwise transliterate the name into the target language's script by its pronunciation. Do not translate the meaning of a brand's words (for example, in Arabic "Apple" is "أبل", not "تفاحة"), unless the name is a descriptive phrase that is customarily translated (for example, "Gulf Bank" is "بنك الخليج"). Transliterate acronyms letter by letter as they are spoken, and keep numbers as they are. If a name is already written in the target language, return it unchanged.
+
+Return a JSON object with exactly one key, "names", an array of exactly the same length as the input, in the same order, one rendered string per input string.
+
+Output only the JSON object - no prose, no markdown fences, no explanation.

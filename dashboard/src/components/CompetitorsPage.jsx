@@ -279,10 +279,10 @@ export default function CompetitorsPage() {
                   <div className="cs-row">
                     <span className="cs-row-rank">{competitor.size_rank ?? '-'}</span>
                     <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
-                      {initials(competitor.name)}
+                      {initials(competitor.display_name || competitor.name)}
                     </div>
                     <div className="cs-row-main">
-                      <div className="cs-row-name" dir="auto">{competitor.name}</div>
+                      <div className="cs-row-name" dir="auto">{competitor.display_name || competitor.name}</div>
                       <div className="cs-row-desc">
                         {competitor.finding_count
                           ? t('competitorsPage.reportCount', { count: competitor.finding_count })
