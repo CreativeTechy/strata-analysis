@@ -283,6 +283,30 @@ describe('DashboardOverview', () => {
     await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
   });
 
+  // SM-141 follow-up: the Region distribution kept "Lebanon"/"Israel" in
+  // English in the Arabic UI when the values weren't spelled exactly like
+  // the canonical country name (an invisible direction mark, an Arabic name).
+  it('names country regions in Arabic however they were stored', async () => {
+    resetTranslatedLabelsCache();
+    await i18n.changeLanguage('ar');
+    renderDashboard({
+      intelligence: {
+        ...INTELLIGENCE,
+        insights: {
+          ...INTELLIGENCE.insights,
+          region_breakdown: [{ value: 'Lebanon\u200f', total: 7 }, { value: '\u200fIsrael', total: 5 }],
+          gender_breakdown: [{ value: 'unknown', total: 13 }],
+          age_range_breakdown: [{ value: 'unknown', total: 13 }],
+        },
+      },
+    });
+    openDetailedBreakdowns();
+    expect(screen.getAllByText('لبنان').length).toBeGreaterThan(0);
+    expect(screen.getByText('إسرائيل')).toBeInTheDocument();
+    expect(screen.queryByText(/Lebanon|Israel/)).not.toBeInTheDocument();
+    await screen.findByText(/لا توجد مقارنات بين المصادر بعد/);
+  });
+
   it('translates every demographic bucket and platform in Arabic', async () => {
     resetTranslatedLabelsCache();
     await i18n.changeLanguage('ar');

@@ -35,6 +35,38 @@ class TranslateLabelsTests(unittest.TestCase):
         mock_chat.assert_not_called()
         mock_load.assert_not_called()
 
+    def test_default_locale_translates_labels_written_in_another_script(self):
+        with patch.object(label_translation, "_load_cached", return_value={}), \
+             patch.object(label_translation, "_save_cached") as mock_save, \
+             patch.object(label_translation, "chat_completion",
+                          return_value=json.dumps({"labels": ["Government employee"]})) as mock_chat:
+            result = label_translation.translate_labels(7, ["موظف حكومي", "Retired"], config.DEFAULT_LOCALE)
+        self.assertEqual(result, {"موظف حكومي": "Government employee", "Retired": "Retired"})
+        sent = json.loads(mock_chat.call_args.kwargs["messages"][-1]["content"])["labels"]
+        self.assertEqual(sent, ["موظف حكومي"])
+        mock_save.assert_called_once_with(7, config.DEFAULT_LOCALE, {"موظف حكومي": "Government employee"})
+
+    def test_labels_already_in_the_target_script_skip_the_llm(self):
+        with patch.object(label_translation, "chat_completion") as mock_chat, \
+             patch.object(label_translation, "_load_cached") as mock_load:
+            result = label_translation.translate_labels(7, ["متقاعد", "18-24"], "ar")
+        self.assertEqual(result, {"متقاعد": "متقاعد", "18-24": "18-24"})
+        mock_chat.assert_not_called()
+        mock_load.assert_not_called()
+
+    def test_needs_translation(self):
+        self.assertTrue(label_translation.needs_translation("Middle East", "ar"))
+        self.assertTrue(label_translation.needs_translation("لبنان", "en"))
+        self.assertTrue(label_translation.needs_translation("Beirut / بيروت", "en"))
+        self.assertFalse(label_translation.needs_translation("الشرق الأوسط", "ar"))
+        self.assertFalse(label_translation.needs_translation("Middle East", "en"))
+        self.assertFalse(label_translation.needs_translation("65+", "ar"))
+        # A locale with no known script: everything but the default locale
+        # goes to the model.
+        with patch.object(label_translation, "LOCALE_SCRIPTS", {}):
+            self.assertTrue(label_translation.needs_translation("Gulf", "ar"))
+            self.assertFalse(label_translation.needs_translation("Gulf", config.DEFAULT_LOCALE))
+
     def test_translates_only_cache_misses_and_saves_them(self):
         with patch.object(label_translation, "_load_cached", return_value={"Middle East": "الشرق الأوسط"}), \
              patch.object(label_translation, "_save_cached") as mock_save, \

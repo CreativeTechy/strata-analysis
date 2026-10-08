@@ -311,5 +311,42 @@ class FrequentIdeasTests(unittest.TestCase):
         self.assertEqual(result[0]["frequency_estimate"], 1)
 
 
+
+class DemographicCanonicalizationTests(unittest.TestCase):
+    """Region/demographic values as the dashboard buckets and labels them -
+    see normalize.demographic_bucket."""
+
+    def test_invisible_direction_marks_do_not_make_a_different_country(self):
+        for value in ("Lebanon\u200f", "\u200fLebanon", "\u202bLebanon\u202c", "Lebanon\u00a0", "Lebanon\ufeff"):
+            with self.subTest(value=repr(value)):
+                self.assertEqual(normalize.normalize_region(value), "Lebanon")
+
+    def test_arabic_country_names_canonicalize_to_the_english_name(self):
+        cases = {"لبنان": "Lebanon", "إسرائيل": "Israel", "اسرائيل": "Israel", "الأردن": "Jordan",
+                 "الاردن": "Jordan", "فلسطين": "Palestine", "السعودية": "Saudi Arabia", "مصر": "Egypt"}
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(normalize.normalize_region(value), expected)
+
+    def test_trailing_punctuation_is_tolerated_without_breaking_dotted_aliases(self):
+        self.assertEqual(normalize.normalize_region("Lebanon."), "Lebanon")
+        self.assertEqual(normalize.normalize_region("U.S."), "United States")
+        self.assertEqual(normalize.normalize_region("U.K."), "United Kingdom")
+
+    def test_free_text_region_passes_through_cleaned(self):
+        self.assertEqual(normalize.normalize_region(" Middle\u200f  East "), "Middle East")
+        self.assertEqual(normalize.normalize_region("Unknown"), "unknown")
+
+    def test_gender_and_age_survive_direction_marks(self):
+        self.assertEqual(normalize.normalize_gender("female\u200f"), "female")
+        self.assertEqual(normalize.normalize_age_range("\u200e25-34"), "25-34")
+
+    def test_demographic_bucket(self):
+        self.assertEqual(normalize.demographic_bucket("region", "Great Britain"), "United Kingdom")
+        self.assertEqual(normalize.demographic_bucket("region", None), "unknown")
+        self.assertEqual(normalize.demographic_bucket("segment", " Retired\u200f "), "Retired")
+        self.assertEqual(normalize.demographic_bucket("gender", ""), "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()
