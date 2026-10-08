@@ -41,6 +41,7 @@ from services.intelligence.intelligence import (
     normalize_period,
 )
 from services.intelligence.trend_summary import generate_trend_summary
+from services.articles.idea_comparison_translation import translate_texts
 from services.projects.project_name_translations import localize_project_names
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,16 @@ def build_report_data(
     tiers = _source_tiers(project_id, [row for row in analyzed_rows if row.get("id") in top_ids])
     for item in top_articles:
         item["source_tier"] = tiers.get(item["article_id"]) or {"tier": "unknown", "is_default": True}
+
+    if (locale or config.DEFAULT_LOCALE) != config.DEFAULT_LOCALE and top_articles:
+        # Display-only, like the project name below: the article rows stay
+        # canonical, the report just shows title/summary in its language. A
+        # string that fails to translate keeps its original text.
+        texts = [t for item in top_articles for t in (item["title"], item["short_summary"])]
+        translations = translate_texts(texts, project_id=project_id, locale=locale)
+        for item in top_articles:
+            item["title"] = translations.get(item["title"].strip(), item["title"])
+            item["short_summary"] = translations.get(item["short_summary"].strip(), item["short_summary"])
 
     project_name = project.get("name") or f"Project {project_id}"
     if (locale or config.DEFAULT_LOCALE) != config.DEFAULT_LOCALE and project.get("name"):

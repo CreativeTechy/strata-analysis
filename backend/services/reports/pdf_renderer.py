@@ -99,9 +99,9 @@ AR_TRUST_TIER_LABELS = {
 BASE_CSS = """
 * { font-family: sans-serif; }
 body { font-size: 10.5px; line-height: 1.45; color: #1a1a1a; }
-body[dir="rtl"] { direction: rtl; text-align: right; }
-body[dir="rtl"] th, body[dir="rtl"] td { text-align: right; }
-body[dir="rtl"] table.stats td { text-align: center; }
+/* No explicit text-align for RTL: the Story engine mirrors left/right under
+   dir="rtl" (text-align:right lays text out at the LEFT edge), so the plain
+   rules below already read right-aligned in an Arabic report. */
 h1 { font-size: 18px; margin: 0 0 4px 0; }
 h2 { font-size: 13.5px; margin: 16px 0 6px 0; padding-bottom: 3px;
      border-bottom: 1px solid #cccccc; }
@@ -153,7 +153,6 @@ table.bars td { border: none; padding: 3px 4px; }
 .consolidated-section { page-break-before: always; }
 .toc-item { font-size: 10px; margin: 3px 0; }
 """
-
 
 def _esc(value) -> str:
     if value is None:

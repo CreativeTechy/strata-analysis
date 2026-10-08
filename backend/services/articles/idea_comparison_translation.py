@@ -168,6 +168,18 @@ def localize_idea_comparisons(comparisons: list[dict], *, project_id: int, local
     return [_apply(comparison, translations) for comparison in comparisons]
 
 
+def translate_texts(texts: list[str], *, project_id: int, locale: str) -> dict[str, str]:
+    """text -> translation for free-standing strings (e.g. the report's top
+    article titles and summaries), sharing this module's per-text cache. A
+    no-op ({}) for the default locale; a text that fails to translate is
+    simply absent so the caller keeps the original."""
+    locale = locale or config.DEFAULT_LOCALE
+    distinct = sorted({str(t).strip() for t in texts if t and str(t).strip()})
+    if locale == config.DEFAULT_LOCALE or not distinct:
+        return {}
+    return _translate_missing(distinct, project_id=project_id, locale=locale)
+
+
 def _detail_strings(comparison: dict) -> list[str]:
     values = [comparison.get("idea"), comparison.get("summary")]
     for source in comparison.get("sources") or []:
