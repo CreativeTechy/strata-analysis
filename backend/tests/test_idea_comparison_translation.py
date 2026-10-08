@@ -65,6 +65,18 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(out[0]["idea"], "Slow checkout")
         self.assertEqual(tr.call_count, first_calls)
 
+    def test_translate_texts_fails_fast_without_item_retries(self):
+        texts = [f"text {i}" for i in range(20)]
+        with patch(f"{MOD}._load_cached", return_value={}), patch(f"{MOD}._save_cached"),              patch(f"{MOD}._translate", side_effect=RuntimeError("timeout")) as tr:
+            out = t.translate_texts(texts, project_id=1, locale="ar")
+        self.assertEqual(out, {})
+        self.assertEqual(tr.call_count, 1)
+
+    def test_translate_texts_is_noop_for_default_locale(self):
+        with patch(f"{MOD}._translate_missing") as m:
+            self.assertEqual(t.translate_texts(["a"], project_id=1, locale=config.DEFAULT_LOCALE), {})
+        m.assert_not_called()
+
     def test_detail_keeps_canonical_fact_text_for_editing(self):
         with patch(f"{MOD}._load_cached", return_value={}), patch(f"{MOD}._save_cached"), \
              patch(f"{MOD}._translate", side_effect=fake_translate):
