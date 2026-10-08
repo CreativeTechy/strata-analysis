@@ -26,6 +26,66 @@ class PrimaryProjectIdForArticleTests(unittest.TestCase):
             self.assertIsNone(reanalyze._primary_project_id_for_article(1))
 
 
+class ProjectContextForTests(unittest.TestCase):
+    PROJECT = {
+        "name": "Fuel crisis", "description": "Shortages and prices of gasoline and diesel.",
+        "location": "Lebanon", "keywords": ["fuel", "diesel", " ", None],
+    }
+
+    def test_includes_name_description_location_and_keywords(self):
+        with patch("services.projects.projects_store.get_project", return_value=dict(self.PROJECT)):
+            context = reanalyze._project_context_for(7)
+        self.assertIn("Project: Fuel crisis", context)
+        self.assertIn("Description: Shortages and prices of gasoline and diesel.", context)
+        self.assertIn("Location: Lebanon", context)
+        self.assertIn("Keywords: fuel, diesel", context)
+
+    def test_no_single_project_yields_empty_context_without_lookup(self):
+        with patch("services.projects.projects_store.get_project") as mock_get:
+            self.assertEqual(reanalyze._project_context_for(None), "")
+        mock_get.assert_not_called()
+
+    def test_failing_or_missing_project_yields_empty_context(self):
+        with patch("services.projects.projects_store.get_project", side_effect=RuntimeError("boom")):
+            self.assertEqual(reanalyze._project_context_for(7), "")
+        with patch("services.projects.projects_store.get_project", return_value=None):
+            self.assertEqual(reanalyze._project_context_for(7), "")
+
+    def test_context_is_truncated_at_1500_characters(self):
+        project = {**self.PROJECT, "description": "d" * 5000}
+        with patch("services.projects.projects_store.get_project", return_value=project):
+            self.assertEqual(len(reanalyze._project_context_for(7)), 1500)
+
+
+class ReanalyzePassesProjectContextTests(unittest.TestCase):
+    ARTICLE_ROW = {"id": 1, "url": "https://example.com/a", "title": "t", "text": "x" * 300}
+    PROJECT = {"name": "Fuel crisis", "description": "Fuel shortages", "location": "Lebanon", "keywords": ["fuel"]}
+
+    def _run(self, linked_rows, project=None, project_error=None):
+        get_project = patch("services.projects.projects_store.get_project",
+                            side_effect=project_error, return_value=project)
+        with patch("services.articles.reanalyze.load_article_for_reanalysis", return_value=dict(self.ARTICLE_ROW)), \
+             patch("services.articles.reanalyze.db.fetch_all", return_value=linked_rows), \
+             patch("services.articles.reanalyze.analyze_article",
+                   return_value={"analysis_status": "success", "analysis_error": None}) as mock_analyze, \
+             patch("services.articles.reanalyze.save_articles", return_value=(1, {})), \
+             get_project:
+            reanalyze.reanalyze_article(1)
+        return mock_analyze.call_args.kwargs["project_context"]
+
+    def test_single_linked_project_context_reaches_analyze_article(self):
+        context = self._run([{"project_id": 7}], project=dict(self.PROJECT))
+        for expected in ("Fuel crisis", "Fuel shortages", "Lebanon", "fuel"):
+            self.assertIn(expected, context)
+
+    def test_zero_or_multiple_linked_projects_pass_empty_context(self):
+        self.assertEqual(self._run([], project=dict(self.PROJECT)), "")
+        self.assertEqual(self._run([{"project_id": 7}, {"project_id": 8}], project=dict(self.PROJECT)), "")
+
+    def test_failing_project_lookup_passes_empty_context(self):
+        self.assertEqual(self._run([{"project_id": 7}], project_error=RuntimeError("boom")), "")
+
+
 class ArticleSourceFieldsTests(unittest.TestCase):
     def test_includes_source_provenance(self):
         """store._resolved_publisher_url() (verified/source_domain) prefers
