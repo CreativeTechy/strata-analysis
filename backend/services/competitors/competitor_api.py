@@ -354,14 +354,16 @@ def analyze_documents(project_id: int, user: dict = Depends(require_permission("
 # Competitors
 # --------------------------------------------------------------------------- #
 @router.get("/studies/{project_id}/competitors")
-def list_competitors(project_id: int, locale: str | None = None,
+def list_competitors(project_id: int, locale: str | None = None, force: bool = False,
                      user: dict = Depends(require_permission("competitors.view"))):
     """`locale` adds a translated `display_name` to each competitor (see
-    services/competitors/competitor_name_translations.py)."""
+    services/competitors/competitor_name_translations.py). `force` is the
+    competitors card's own language switch: translate missing names now,
+    even if the provider failed within the last few minutes."""
     _project_or_404(project_id, user)
     resolved_locale = _resolve_locale(locale)
     return {"competitors": localize_competitors(
-        project_id, competitors_store.competitor_overview(project_id), locale=resolved_locale,
+        project_id, competitors_store.competitor_overview(project_id), locale=resolved_locale, force=force,
     )}
 
 

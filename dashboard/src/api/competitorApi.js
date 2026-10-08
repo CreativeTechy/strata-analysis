@@ -108,9 +108,12 @@ export const approveAllDocumentArticles = (id) =>
 // --- competitors -----------------------------------------------------------
 /** Competitors are named by the backend from a study's approved document
  *  articles; these cover reviewing and correcting that set by hand. `locale`
- *  adds a translated `display_name` to each competitor - show that, but edit
- *  and match on `name`. */
-export const listCompetitors = (id) => request(`/studies/${id}/competitors?locale=${encodeURIComponent(i18n.language)}`);
+ *  (the interface language unless given) adds a translated `display_name` to
+ *  each competitor - show that, but edit and match on `name`. `force` asks
+ *  for missing names to be translated now, even right after a provider
+ *  failure - the competitors card's own language switch. */
+export const listCompetitors = (id, { locale = i18n.language, force = false } = {}) =>
+  request(`/studies/${id}/competitors?locale=${encodeURIComponent(locale)}${force ? '&force=true' : ''}`);
 export const addCompetitor = (id, body) => request(`/studies/${id}/competitors`, { method: 'POST', body });
 export const setCompetitorStatus = (competitorId, status) =>
   request(`/competitors/${competitorId}/status`, { method: 'POST', body: { status } });

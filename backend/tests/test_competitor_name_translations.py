@@ -66,6 +66,20 @@ class TranslateCompetitorNamesTests(unittest.TestCase):
         self.assertEqual(chat.call_count, 1)
         save.assert_not_called()
 
+    def test_force_retries_through_the_failure_pause(self):
+        with patch.object(cnt, "_load_cached", return_value={}), \
+             patch.object(cnt, "_save_cached"), \
+             patch.object(cnt, "chat_completion", side_effect=[LLMConnectionError("down"), _fake_chat]) as chat:
+            first = cnt.localize_competitors(1, [{"name": "Acme"}], locale="ar")
+            paused = cnt.localize_competitors(1, [{"name": "Acme"}], locale="ar")
+            chat.side_effect = _fake_chat
+            forced = cnt.localize_competitors(1, [{"name": "Acme"}], locale="ar", force=True)
+        self.assertEqual(first[0]["display_name"], "Acme")
+        self.assertEqual(paused[0]["display_name"], "Acme")
+        self.assertEqual(forced[0]["display_name"], "ar:Acme")
+        self.assertEqual(chat.call_count, 2)
+        self.assertNotIn("ar", cnt._failure_cache)
+
     def test_mangled_batch_keeps_source_names_without_pausing(self):
         names = [f"C{i:03d}" for i in range(cnt.TRANSLATION_BATCH_SIZE + 1)]
         responses = [json.dumps({"names": []}), json.dumps({"names": ["ar:last"]})]

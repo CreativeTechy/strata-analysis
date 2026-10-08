@@ -104,10 +104,12 @@ def _translate_names(names: list[str], locale: str) -> list[str]:
     return [str(v).strip() or n for v, n in zip(translated, names)]
 
 
-def translate_competitor_names(project_id: int, names, *, locale: str) -> dict[str, str]:
+def translate_competitor_names(project_id: int, names, *, locale: str, force: bool = False) -> dict[str, str]:
     """{name: display name} for every non-blank name in `names` (competitors
     of study `project_id`). Identity for the default locale; otherwise cached
-    names are reused and the rest rendered in batches."""
+    names are reused and the rest rendered in batches. `force` is an explicit
+    "translate these now" from the viewer: it ignores the provider-failure
+    pause, so names that failed a moment ago are tried again."""
     distinct = sorted({str(name).strip() for name in names or [] if str(name or "").strip()})
     locale = locale or config.DEFAULT_LOCALE
     if locale == config.DEFAULT_LOCALE or not distinct:
@@ -116,7 +118,7 @@ def translate_competitor_names(project_id: int, names, *, locale: str) -> dict[s
     translations = _load_cached(project_id, locale, distinct)
     missing = [name for name in distinct if name not in translations]
     for start in range(0, len(missing), TRANSLATION_BATCH_SIZE):
-        if _recent_failure(locale):
+        if not force and _recent_failure(locale):
             break
         batch = missing[start:start + TRANSLATION_BATCH_SIZE]
         try:
@@ -142,9 +144,12 @@ def _display(translations: dict[str, str], name) -> str | None:
     return translations.get(str(name).strip(), name)
 
 
-def localize_competitors(project_id: int, competitors: list[dict], *, locale: str) -> list[dict]:
+def localize_competitors(project_id: int, competitors: list[dict], *, locale: str,
+                         force: bool = False) -> list[dict]:
     """`competitors` (rows with a `name`) with a `display_name` on each."""
-    translations = translate_competitor_names(project_id, [c.get("name") for c in competitors], locale=locale)
+    translations = translate_competitor_names(
+        project_id, [c.get("name") for c in competitors], locale=locale, force=force,
+    )
     return [{**c, "display_name": _display(translations, c.get("name"))} for c in competitors]
 
 

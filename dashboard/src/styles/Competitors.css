@@ -119,6 +119,20 @@
   color: var(--text-dark);
 }
 
+/* Panel title with controls on the far side (the competitors card's name
+   language switch); the controls drop under the title when space is tight. */
+.cs-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 12px;
+}
+.cs-panel-head .cs-panel-title { margin: 0; }
+.cs-panel-head-side { display: flex; align-items: center; gap: 10px; }
+.cs-panel-head-side .cs-panel-hint { margin: 0; }
+
 .cs-panel-hint {
   margin: 0 0 18px;
   font-size: 0.84rem;
@@ -468,8 +482,9 @@
 
 .cs-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 10px 14px;
   padding: 13px 15px;
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 13px;
@@ -493,8 +508,13 @@
   flex-shrink: 0;
 }
 
-.cs-row-main { flex: 1; min-width: 0; }
-.cs-row-name { font-size: 0.9rem; font-weight: 600; color: var(--text-dark); }
+/* The name keeps a usable width next to its avatar; when the row is too
+   narrow for it plus .cs-row-side's pills and buttons, those wrap onto a
+   second line instead of squashing the name over them. */
+.cs-row-main { flex: 1 1 200px; min-width: 0; }
+/* Shrink-wrapped so a name in the other script (dir="auto") still sits next
+   to its avatar instead of flushing to the far edge of the row. */
+.cs-row-name { font-size: 0.9rem; font-weight: 600; color: var(--text-dark); width: fit-content; max-width: 100%; }
 .cs-row-desc {
   font-size: 0.79rem;
   color: var(--text-light);
@@ -504,7 +524,14 @@
   white-space: nowrap;
   max-width: 60ch;
 }
-.cs-row-side { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+.cs-row-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  max-width: 100%;
+}
 
 /* --- data source mode cards (wizard step 1) ------------------------------ */
 .cs-mode-grid {
