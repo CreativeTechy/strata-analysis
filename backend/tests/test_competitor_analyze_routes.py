@@ -136,9 +136,35 @@ class AnalyzeRouteTests(unittest.TestCase):
         self.assertIn("Opens third roastery", " ".join(e["message"] for e in run["logs"]))
         # Findings ride along on the terminal poll so the workspace renders the
         # new cards without a second round trip.
-        self.assertEqual(run["findings"], findings)
+        self.assertEqual(run["findings"], [{**findings[0], "competitor_display_name": None}])
         self.assertEqual(run["findings"][0]["confidence_reason"],
                          "Three independent outlets carried it.")
+
+    def test_terminal_poll_renders_competitor_names_into_the_locale(self):
+        """The new cards and the skipped notice name competitors in the
+        interface language; the canonical name stays alongside."""
+        findings = [{"id": 1, "competitor_name": "Cafe Younes", "headline": "Opens third roastery"}]
+        skipped = [{"competitor_id": 9, "name": "Bean Co", "reason": "no evidence", "reason_code": "no_evidence"}]
+
+        def fake_job(run_id, project_id, scope, document_ids=None):
+            self.fake.mark_success(run_id, 1, skipped, {"scanned": 3})
+
+        names = {"Cafe Younes": "مقهى يونس", "Bean Co": "بين كو"}
+        with patch.object(competitor_analysis, "run_analysis_job", side_effect=fake_job), \
+             patch("services.competitors.competitor_api.project_has_articles", return_value=True), \
+             patch.object(competitor_analysis, "list_findings", return_value=findings), \
+             patch("services.competitors.competitor_api.translate_competitor_names",
+                   side_effect=lambda project_id, values, locale: {v: names[v] for v in values}) as translate:
+            run_id = self.client.post("/api/competitor/studies/5/analyze", json={"scope": "all"}).json()["run_id"]
+            status = self.client.get(f"/api/competitor/studies/5/analyze/{run_id}?locale=ar")
+
+        run = status.json()["run"]
+        translate.assert_called_once()
+        self.assertEqual(translate.call_args.kwargs["locale"], "ar")
+        self.assertEqual(run["findings"][0]["competitor_name"], "Cafe Younes")
+        self.assertEqual(run["findings"][0]["competitor_display_name"], "مقهى يونس")
+        self.assertEqual(run["skipped"][0]["name"], "Bean Co")
+        self.assertEqual(run["skipped"][0]["display_name"], "بين كو")
 
     def test_second_click_attaches_to_the_run_already_in_flight(self):
         """Double-clicking "Run analysis" must not start a second round of LLM

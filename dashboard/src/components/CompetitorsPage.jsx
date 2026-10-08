@@ -10,13 +10,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 import {
-  AlertTriangle, Check, ChevronRight, FileText, Layers, Pencil, Tags, Upload,
+  AlertTriangle, Check, ChevronRight, FileText, Languages, Layers, Pencil, Tags, Upload,
 } from 'lucide-react';
 import {
   SIZE_TIER_LABELS, avatarGradient, getStudy, importCompetitors, initials,
   listCompetitors, setCompetitorStatus, updateCompetitor,
 } from '../api/competitorApi.js';
 import { countryLabel } from '../constants/countries.js';
+import {
+  DEFAULT_LOCALE, LOCALE_NATIVE_NAMES, SUPPORTED_LOCALES, isRtlLocale, isSupportedLocale,
+} from '../i18n/locales.js';
 import { useAuth } from '../auth/useAuth.js';
 import {
   RunAnalysisButton, RunAnalysisChoiceModal, RunAnalysisLog,
@@ -79,8 +82,18 @@ export default function CompetitorsPage() {
 
   const [study, setStudy] = useState(null);
   const [competitors, setCompetitors] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [studyLoading, setStudyLoading] = useState(true);
+  const [competitorsLoaded, setCompetitorsLoaded] = useState(false);
+  const [namesLoading, setNamesLoading] = useState(false);
   const [error, setError] = useState('');
+  // The competitor names' own language - the same per-card switch as the
+  // workspace's report language. Until it's touched it follows the interface
+  // language; once picked it stays put when the interface language changes.
+  // `nonce` makes every pick a fresh, forced request (translate what's still
+  // missing now, even right after a provider failure).
+  const [nameChoice, setNameChoice] = useState({ locale: null, nonce: 0 });
+  const interfaceLocale = isSupportedLocale(i18n.language) ? i18n.language : DEFAULT_LOCALE;
+  const nameLocale = nameChoice.locale || interfaceLocale;
   const [notice, setNotice] = useState(null);
   const [trackingBusy, setTrackingBusy] = useState({});
   const [expandedAliases, setExpandedAliases] = useState(() => new Set());
@@ -90,20 +103,15 @@ export default function CompetitorsPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      setStudyLoading(true);
       setError('');
       try {
-        const [detail, competitorList] = await Promise.all([
-          getStudy(studyId),
-          listCompetitors(studyId),
-        ]);
-        if (cancelled) return;
-        setStudy(detail.study);
-        setCompetitors(competitorList.competitors || []);
+        const detail = await getStudy(studyId);
+        if (!cancelled) setStudy(detail.study);
       } catch (caught) {
         if (!cancelled) setError(caught.message);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setStudyLoading(false);
       }
     })();
     return () => {
@@ -112,9 +120,32 @@ export default function CompetitorsPage() {
     // Refetch on a language switch: the study's display_name is translated.
   }, [studyId, i18n.language]);
 
+  // Separate from the study load so the card's language switch re-reads
+  // only the competitors, in place, rather than reloading the whole page.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setNamesLoading(true);
+      try {
+        const result = await listCompetitors(studyId, { locale: nameLocale, force: nameChoice.nonce > 0 });
+        if (!cancelled) setCompetitors(result.competitors || []);
+      } catch (caught) {
+        if (!cancelled) setError(caught.message);
+      } finally {
+        if (!cancelled) {
+          setNamesLoading(false);
+          setCompetitorsLoaded(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId, nameLocale, nameChoice.nonce]);
+
   const refreshCompetitors = async () => {
     try {
-      const result = await listCompetitors(studyId);
+      const result = await listCompetitors(studyId, { locale: nameLocale });
       setCompetitors(result.competitors || []);
     } catch (caught) {
       setError(caught.message);
@@ -184,7 +215,7 @@ export default function CompetitorsPage() {
     }
   };
 
-  if (loading) {
+  if ((studyLoading && !study) || !competitorsLoaded) {
     return (
       <div className="cs-page">
         <div className="cs-skeleton" style={{ height: 34, width: 280, marginBottom: 12 }} />
@@ -262,7 +293,37 @@ export default function CompetitorsPage() {
       ) : null}
 
       <div className="cs-panel">
-        <h2 className="cs-panel-title"><Layers size={16} /> {t('competitorsPage.competitorCount', { count: competitors.length })}</h2>
+        <div className="cs-panel-head">
+          <h2 className="cs-panel-title"><Layers size={16} /> {t('competitorsPage.competitorCount', { count: competitors.length })}</h2>
+          <div className="cs-panel-head-side">
+            {namesLoading ? (
+              <span className="cs-panel-hint" role="status">{t('outputLanguage.translating')}</span>
+            ) : null}
+            <div
+              className="language-switcher"
+              role="group"
+              aria-label={t('competitorsPage.nameLanguage.label')}
+              title={namesLoading ? t('outputLanguage.translating') : t('competitorsPage.nameLanguage.hint')}
+              aria-busy={namesLoading}
+            >
+              <Languages size={14} aria-hidden="true" className={`language-switcher-icon${namesLoading ? ' spin' : ''}`} />
+              {SUPPORTED_LOCALES.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  lang={code}
+                  dir={isRtlLocale(code) ? 'rtl' : 'ltr'}
+                  className={`language-switcher-option${code === nameLocale ? ' is-active' : ''}`}
+                  aria-pressed={code === nameLocale}
+                  disabled={namesLoading}
+                  onClick={() => setNameChoice((current) => ({ locale: code, nonce: current.nonce + 1 }))}
+                >
+                  {LOCALE_NATIVE_NAMES[code]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
         {competitors.length === 0 ? (
           <div className="cs-empty">
@@ -271,7 +332,7 @@ export default function CompetitorsPage() {
             <p>{t('competitorsPage.emptyBody')}</p>
           </div>
         ) : (
-          <div className="cs-rows">
+          <div className="cs-rows" style={{ opacity: namesLoading ? 0.6 : 1, transition: 'opacity 0.15s ease' }}>
             {competitors.map((competitor) => {
               const aliasesOpen = expandedAliases.has(competitor.id);
               return (
@@ -279,10 +340,10 @@ export default function CompetitorsPage() {
                   <div className="cs-row">
                     <span className="cs-row-rank">{competitor.size_rank ?? '-'}</span>
                     <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
-                      {initials(competitor.name)}
+                      {initials(competitor.display_name || competitor.name)}
                     </div>
                     <div className="cs-row-main">
-                      <div className="cs-row-name" dir="auto">{competitor.name}</div>
+                      <div className="cs-row-name" dir="auto">{competitor.display_name || competitor.name}</div>
                       <div className="cs-row-desc">
                         {competitor.finding_count
                           ? t('competitorsPage.reportCount', { count: competitor.finding_count })

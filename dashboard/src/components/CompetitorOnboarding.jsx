@@ -642,7 +642,7 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               </label>
               <div className="cs-pills">
                 {competitors.map((competitor) => (
-                  <span key={competitor.id} className="cs-pill" dir="auto">{competitor.name}</span>
+                  <span key={competitor.id} className="cs-pill" dir="auto">{competitor.display_name || competitor.name}</span>
                 ))}
               </div>
             </div>
@@ -704,10 +704,10 @@ export default function CompetitorOnboarding({ onStudyCreated }) {
               {competitors.map((competitor) => (
                 <div key={competitor.id} className="cs-row">
                   <div className="cs-avatar" style={{ background: avatarGradient(competitor.name), width: 30, height: 30, fontSize: '0.72rem' }} aria-hidden="true">
-                    {initials(competitor.name)}
+                    {initials(competitor.display_name || competitor.name)}
                   </div>
                   <div className="cs-row-main">
-                    <div className="cs-row-name" dir="auto">{competitor.name}</div>
+                    <div className="cs-row-name" dir="auto">{competitor.display_name || competitor.name}</div>
                     {competitor.description ? <div className="cs-row-desc" dir="auto">{competitor.description}</div> : null}
                   </div>
                   <div className="cs-row-side">
