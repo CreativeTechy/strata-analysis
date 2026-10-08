@@ -25,7 +25,7 @@ import time
 import config
 import db
 from analysis.json_utils import JSONParseError, parse_json_response
-from llm_client import chat_completion
+from llm_client import LLMRateLimitError, LLMTimeoutError, LLMUnavailableError, chat_completion
 from prompt_loader import load_prompt
 from services.articles.analysis_defaults import FATAL_ANALYSIS_ERRORS
 from services.i18n.locales import language_instruction
@@ -39,10 +39,12 @@ TRANSLATION_SYSTEM_PROMPT = load_prompt("competitor_name_translation_system_prom
 TRANSLATION_BATCH_SIZE = 20
 
 # A down LLM must not cost a request timeout on every competitor page load.
-# Only a provider-level failure (FATAL_ANALYSIS_ERRORS) arms this - one batch
+# Only a provider-level failure (FATAL_ANALYSIS_ERRORS, or a timeout /
+# unavailable / rate-limit, which a slow local model hits first) arms this - one batch
 # the model mangled just leaves those names untranslated this time.
 FAILURE_CACHE_SECONDS = 300
 _failure_cache: dict[str, float] = {}
+_PAUSING_ERRORS = FATAL_ANALYSIS_ERRORS + (LLMTimeoutError, LLMUnavailableError, LLMRateLimitError)
 
 
 def _recent_failure(locale: str) -> bool:
@@ -123,7 +125,7 @@ def translate_competitor_names(project_id: int, names, *, locale: str, force: bo
         batch = missing[start:start + TRANSLATION_BATCH_SIZE]
         try:
             new = dict(zip(batch, _translate_names(batch, locale)))
-        except FATAL_ANALYSIS_ERRORS:
+        except _PAUSING_ERRORS:
             logger.exception("Competitor name translation provider failed for locale=%s", locale)
             _failure_cache[locale] = time.monotonic()
             break

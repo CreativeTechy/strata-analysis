@@ -12,7 +12,7 @@ from unittest.mock import patch
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 import config
-from llm_client import LLMConnectionError
+from llm_client import LLMConnectionError, LLMTimeoutError
 from services.competitors import competitor_name_translations as cnt
 
 
@@ -65,6 +65,13 @@ class TranslateCompetitorNamesTests(unittest.TestCase):
         self.assertEqual(first[0]["display_name"], "Acme")
         self.assertEqual(chat.call_count, 1)
         save.assert_not_called()
+
+    def test_timeout_pauses_like_a_provider_failure(self):
+        names = [f"C{i:03d}" for i in range(cnt.TRANSLATION_BATCH_SIZE + 1)]
+        with patch.object(cnt, "_load_cached", return_value={}),              patch.object(cnt, "_save_cached"),              patch.object(cnt, "chat_completion", side_effect=LLMTimeoutError("slow")) as chat:
+            cnt.translate_competitor_names(1, names, locale="ar")
+            cnt.translate_competitor_names(1, names, locale="ar")
+        self.assertEqual(chat.call_count, 1)
 
     def test_force_retries_through_the_failure_pause(self):
         with patch.object(cnt, "_load_cached", return_value={}), \
