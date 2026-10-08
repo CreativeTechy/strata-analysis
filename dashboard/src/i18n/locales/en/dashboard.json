@@ -147,7 +147,14 @@
   },
   "platforms": {
     "Documents": "Documents",
-    "Web": "Web"
+    "Web": "Web",
+    "X": "X",
+    "Reddit": "Reddit",
+    "Telegram": "Telegram",
+    "LinkedIn": "LinkedIn",
+    "Threads": "Threads",
+    "Facebook": "Facebook",
+    "Instagram": "Instagram"
   },
   "detailedBreakdowns": {
     "title": "Detailed breakdowns",

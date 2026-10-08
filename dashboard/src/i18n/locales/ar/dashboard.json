@@ -163,7 +163,14 @@
   },
   "platforms": {
     "Documents": "المستندات",
-    "Web": "الويب"
+    "Web": "الويب",
+    "X": "إكس",
+    "Reddit": "ريديت",
+    "Telegram": "تيليجرام",
+    "LinkedIn": "لينكد إن",
+    "Threads": "ثريدز",
+    "Facebook": "فيسبوك",
+    "Instagram": "إنستغرام"
   },
   "detailedBreakdowns": {
     "title": "التوزيعات التفصيلية",
