@@ -8,7 +8,7 @@
  *   - gender / age_range are closed enums (backend/analysis/labels.py's
  *     VALID_GENDERS / VALID_AGE_RANGES) -> dashboard:demographics.*
  *   - a region that names a country - its canonical English name (what the
- *     backend's normalize_region stores and buckets by), its ISO code, or
+ *     backend's normalize_region stores and buckets by), or
  *     its name as Intl knows it in English or Arabic - is mapped to its code
  *     and named in the active locale (Intl.DisplayNames; offline, no catalog
  *     to maintain).
@@ -94,14 +94,14 @@ function countryCodesByNameMap() {
   return countryCodesByName;
 }
 
-// The ISO code a region value names, or null when it isn't a country.
+// The ISO code a region value names by name, or null when it isn't a
+// country. Bare 2-letter codes are deliberately not matched: this runs on
+// every demographic dimension, and a segment like "IT" or "HR" is not Italy
+// or Croatia. The backend already canonicalizes region codes to names.
 export function countryCodeFor(value) {
   const text = cleanLabelValue(value);
   if (!text) return null;
   for (const candidate of new Set([text, text.replace(/[.,;:،؛]+$/u, '').trim()])) {
-    if (/^[A-Za-z]{2}$/.test(candidate) && COUNTRY_NAMES_BY_CODE.has(candidate.toUpperCase())) {
-      return candidate.toUpperCase();
-    }
     const code = countryCodesByNameMap().get(lookupKey(candidate));
     if (code) return code;
   }

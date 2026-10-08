@@ -294,7 +294,7 @@ describe('DashboardOverview', () => {
         ...INTELLIGENCE,
         insights: {
           ...INTELLIGENCE.insights,
-          region_breakdown: [{ value: 'Lebanon\u200f', total: 7 }, { value: '\u200fIsrael', total: 5 }, { value: 'LB', total: 1 }],
+          region_breakdown: [{ value: 'Lebanon\u200f', total: 7 }, { value: '\u200fIsrael', total: 5 }],
           gender_breakdown: [{ value: 'unknown', total: 13 }],
           age_range_breakdown: [{ value: 'unknown', total: 13 }],
         },

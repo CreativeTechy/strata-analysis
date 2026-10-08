@@ -39,8 +39,7 @@ describe('demographicLabel', () => {
     expect(demographicLabel(tFor('ar'), 'ar', 'Israel')).toBe('إسرائيل');
   });
 
-  it('names a country given its ISO code or its Arabic name, in either UI language', () => {
-    expect(demographicLabel(tFor('ar'), 'ar', 'LB')).toBe('لبنان');
+  it('names a country given its Arabic name, in either UI language', () => {
     expect(demographicLabel(tFor('en'), 'en', 'لبنان')).toBe('Lebanon');
     expect(demographicLabel(tFor('en'), 'en', 'اسرائيل')).toBe('Israel');
     expect(demographicLabel(tFor('en'), 'en', 'الاردن')).toBe('Jordan');
@@ -55,6 +54,13 @@ describe('demographicLabel', () => {
     expect(isFreeTextValue('female')).toBe(false);
     expect(isFreeTextValue('unknown')).toBe(false);
     expect(isFreeTextValue('')).toBe(false);
+  });
+
+  it('does not read a bare 2-letter segment as a country code', () => {
+    expect(demographicLabel(tFor('ar'), 'ar', 'IT', 'تقنية المعلومات')).toBe('تقنية المعلومات');
+    expect(demographicLabel(tFor('en'), 'en', 'HR')).toBe('HR');
+    expect(isFreeTextValue('IT')).toBe(true);
+    expect(countryCodeFor('HR')).toBeNull();
   });
 
   it('resolves country codes', () => {
