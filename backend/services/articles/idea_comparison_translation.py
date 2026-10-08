@@ -120,10 +120,13 @@ def _apply(comparison: dict, translations: dict[str, str]) -> dict:
 CHUNK_SIZE = 8
 
 
-def _translate_chunked(texts: list[str], locale: str) -> dict[str, str]:
+def _translate_chunked(texts: list[str], locale: str, *, fail_fast: bool = False) -> dict[str, str]:
     """Translate in small chunks so one long excerpt can't sink the batch; a
     chunk the model answers with the wrong shape is retried item by item.
-    Returns only what was translated - a failing item simply stays absent."""
+    Returns only what was translated - a failing item simply stays absent.
+    `fail_fast` (for a caller blocking a request, e.g. the report export)
+    skips the item-by-item retry and stops at the first failing chunk, so a
+    slow or hung model costs one timeout rather than one per string."""
     result: dict[str, str] = {}
     for start in range(0, len(texts), CHUNK_SIZE):
         chunk = texts[start:start + CHUNK_SIZE]
@@ -131,6 +134,9 @@ def _translate_chunked(texts: list[str], locale: str) -> dict[str, str]:
             result.update(zip(chunk, _translate(chunk, locale)))
             continue
         except Exception:
+            if fail_fast:
+                logger.warning("Idea comparison chunk translation failed (%d items); giving up (fail fast)", len(chunk))
+                break
             logger.warning("Idea comparison chunk translation failed (%d items); retrying one by one", len(chunk))
         for text in chunk:
             try:
@@ -140,13 +146,13 @@ def _translate_chunked(texts: list[str], locale: str) -> dict[str, str]:
     return result
 
 
-def _translate_missing(texts: list[str], *, project_id: int, locale: str) -> dict[str, str]:
+def _translate_missing(texts: list[str], *, project_id: int, locale: str, fail_fast: bool = False) -> dict[str, str]:
     """text -> translation for every text in `texts`: cached ones as-is, the
     rest translated in one LLM call and cached. Texts that fail stay absent."""
     translations = _load_cached(project_id, locale, texts)
     missing = [text for text in texts if text not in translations]
     if missing and not _recent_failure(project_id, locale):
-        new = _translate_chunked(missing, locale)
+        new = _translate_chunked(missing, locale, fail_fast=fail_fast)
         if new:
             _failure_cache.pop((project_id, locale), None)
             _save_cached(project_id, locale, new)
@@ -166,6 +172,19 @@ def localize_idea_comparisons(comparisons: list[dict], *, project_id: int, local
     distinct = sorted({text for comparison in comparisons for text in _strings_of(comparison)})
     translations = _translate_missing(distinct, project_id=project_id, locale=locale)
     return [_apply(comparison, translations) for comparison in comparisons]
+
+
+def translate_texts(texts: list[str], *, project_id: int, locale: str) -> dict[str, str]:
+    """text -> translation for free-standing strings (e.g. the report's top
+    article titles and summaries), sharing this module's per-text cache. A
+    no-op ({}) for the default locale; a text that fails to translate is
+    simply absent so the caller keeps the original. Fails fast (one timeout,
+    no per-item retries) because the report export waits on it."""
+    locale = locale or config.DEFAULT_LOCALE
+    distinct = sorted({str(t).strip() for t in texts if t and str(t).strip()})
+    if locale == config.DEFAULT_LOCALE or not distinct:
+        return {}
+    return _translate_missing(distinct, project_id=project_id, locale=locale, fail_fast=True)
 
 
 def _detail_strings(comparison: dict) -> list[str]:
